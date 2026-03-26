@@ -1,0 +1,371 @@
+Title: Motion-Adaptive Temporal Attention for Lightweight Video Generation with Stable Diffusion
+
+URL Source: https://arxiv.org/pdf/2603.17398v1
+
+Published Time: Thu, 19 Mar 2026 00:52:21 GMT
+
+Number of Pages: 6
+
+Markdown Content:
+# Motion-Adaptive Temporal Attention for Lightweight Video Generation with Stable Diffusion 
+
+Rui Hong; George Mason University; Fairfax, VA, USA Shuxue Quan; Independent Researcher 
+
+## Abstract 
+
+We present a motion-adaptive temporal attention mechanism for parameter-efficient video generation built upon frozen Stable Diffusion models. Rather than treating all video content uni-formly, our method dynamically adjusts temporal attention recep-tive fields based on estimated motion content: high-motion se-quences attend locally across frames to preserve rapidly chang-ing details, while low-motion sequences attend globally to enforce scene consistency. We inject lightweight temporal attention mod-ules into all UNet transformer blocks via a cascaded strategy— global attention in down-sampling and middle blocks for seman-tic stabilization, motion-adaptive attention in up-sampling blocks for fine-grained refinement. Combined with temporally corre-lated noise initialization and motion-aware gating, the system adds only 25.8M trainable parameters (2.9% of the base UNet) while achieving competitive results on WebVid validation when trained on 100K videos. We demonstrate that the standard de-noising objective alone provides sufficient implicit temporal reg-ularization, outperforming approaches that add explicit tempo-ral consistency losses. Our ablation studies reveal a clear trade-off between noise correlation and motion amplitude, providing a practical inference-time control for diverse generation behaviors. 
+
+## Introduction 
+
+Text-to-video generation has emerged as a frontier challenge in generative modeling. While text-to-image diffusion models such as Stable Diffusion [1] have achieved remarkable quality, ex-tending them to temporally coherent video remains difficult. The core challenge is twofold: maintaining visual consistency across frames while producing meaningful motion that aligns with the text prompt. Existing approaches to video diffusion fall broadly into two categories. Full video diffusion models [2, 3, 4] train end-to-end on large-scale video datasets, achieving strong results but at enormous computational cost. Parameter-efficient methods such as AnimateDiff [6] instead inject trainable temporal layers into frozen image diffusion models, learning motion patterns from video data while preserving the spatial generation quality of the base model. However, these methods treat all video content uni-formly, applying identical temporal attention regardless of mo-tion characteristics. This one-size-fits-all strategy is suboptimal: a slow panning landscape and a fast-moving animal require fun-damentally different temporal modeling. We propose a Motion-Adaptive Temporal UNet that ad-dresses this limitation through three key innovations. First, we introduce motion-adaptive attention bias , where the temporal attention mechanism dynamically adjusts its receptive field based on estimated motion content—high-motion sequences attend to nearby frames to preserve detail, while low-motion sequences at-tend globally to enforce consistency. Second, we employ motion-aware gating that modulates the strength of temporal contribu-tions at each network layer according to motion intensity. Third, we adopt a cascaded injection strategy in which down-sampling and middle blocks apply global temporal stabilization, while up-sampling blocks apply motion-adaptive local refinement. Our temporal modules are injected into a frozen Stable Diffusion UNet, adding only 25.8M trainable parameters (2.9% of the base model). Combined with temporally correlated noise initialization, the approach produces temporally coher-ent videos while adapting to diverse motion patterns. Train-ing is conducted on a 100K subset of WebVid [11], demon-strating strong parameter efficiency compared to methods such as AnimateDiff, whose motion modules require 417M parame-ters. Code is available at https://github.com/hongrui16/ motion-adaptive-video .
+
+## Related Work 
+
+Latent Diffusion Models 
+
+Latent Diffusion Models (LDMs) [1] perform the diffusion process in a compressed latent space learned by a variational autoencoder (VAE), greatly reducing computational cost com-pared to pixel-space diffusion. Stable Diffusion, an open-source LDM, uses a UNet architecture with spatial self-attention and text-conditioned cross-attention to generate high-quality images from text prompts. Our method builds upon this frozen image generation backbone. 
+
+Video Diffusion Models 
+
+Early video diffusion models [2, 3] extended image diffu-sion to video by jointly modeling spatial and temporal dimen-sions, typically requiring end-to-end training on large video cor-pora. Video LDM [4] demonstrated that temporal layers could be added to pretrained image LDMs, training only the temporal com-ponents while keeping spatial layers frozen. This paradigm was further developed by AnimateDiff [6], which proposed domain-agnostic motion modules that can be combined with various per-sonalized text-to-image models. More recent work such as Stable Video Diffusion [5] and ModelScopeT2V [7] has continued to ad-vance temporal modeling within the latent diffusion framework. 
+
+Motion-Aware Generation 
+
+Several works have explored conditioning video generation on motion signals. MotionCtrl [8] conditions on camera trajecto-ries, while DragAnything [9] allows point-based motion control. MCDiff [10] uses stroke-based motion conditioning for control-lable video synthesis. However, these methods require explicit 
+
+> arXiv:2603.17398v1 [cs.CV] 18 Mar 2026
+
+motion inputs at inference time. Our approach instead estimates motion characteristics from the content itself and adapts the tem-poral modeling accordingly, requiring no additional user input be-yond the text prompt. 
+
+## Method 
+
+Overview 
+
+Figure 1 illustrates the overall pipeline. Our method builds upon a pretrained Stable Diffusion model, which operates in the latent space of a frozen VAE. During training, input video frames are reshaped to x ∈ R(B·T )×C×H×W (batch size B, T =8 frames, 
+
+C=3 RGB channels, H=W =256) and encoded by the VAE en-coder E into latent representations z0 ∈ R(B·T )×c×h×w, where 
+
+h=w=32, c=4. Noise is added via the forward diffusion pro-cess, and a UNet denoiser εθ learns to predict the added noise. Text conditioning is provided through a frozen CLIP text encoder via cross-attention. At inference, the denoising process iteratively removes noise from random latents, and the VAE decoder D re-constructs video frames from the denoised latents. Our key modification is the injection of lightweight, train-able temporal attention modules into the UNet blocks. Within each UNet transformer block, the original frozen spatial pro-cessing (spatial self-attention, text cross-attention, and feed-forward layers) is preserved as a black box. After the spatial transformer produces per-frame features, our temporal attention block operates across the frame dimension, enabling inter-frame communication at every denoising step. This is wrapped in a 
+
+SpatialTemporalWrapper that is transparent to the rest of the UNet. 
+
+Temporal Attention Block 
+
+Each injected temporal attention block operates on the in-termediate UNet feature tensor after spatial processing. Let 
+
+z ∈ R(B·T )×c×h×w denote these features, which are reshaped to ˜z ∈ R(B·h·w)×T ×c so that attention is computed across the tempo-ral dimension T independently at each spatial position. Figure 2 illustrates the two variants. 
+
+Global Temporal Attention 
+
+The global block applies standard multi-head temporal self-attention uniformly across all frames. Learnable temporal posi-tional encodings P ∈ R1×T ×c are added to the input before atten-tion, giving ˆ z = ˜z + P. The block then computes: 
+
+z(1) = ˜z + Attn (LN (ˆz)) (1) 
+
+z(2) = z(1) + FFN 
+
+
+
+LN (z(1))
+
+
+
+(2) where LN (·) is layer normalization, Attn (·) is multi-head self-attention along the temporal dimension T , and FFN (·) is a two-layer feed-forward network. The output z(2) is reshaped back to 
+
+(B · T ) × c × h × w.
+
+Adaptive Temporal Attention 
+
+The adaptive block extends the global formulation with two motion-conditioned components, given motion score m ∈ [0, 1] es-timated from the video content. 
+
+Motion-adaptive attention bias. A distance-based bias matrix bm ∈ RT ×T is injected into the attention logits, where 
+
+i, j ∈ { 1, . . . , T } index the query and key frames: 
+
+bm(i, j) = −λ (m) · | i − j|, λ (m) = 0.05 + 0.45 m (3) 
+
+z(1) = ˜z + Attn (LN (ˆz), bm) (4) where λ (m) is the motion-dependent decay coefficient. When 
+
+m → 1 (high motion), λ is large and attention decays steeply with frame distance, focusing each position on nearby frames. When 
+
+m → 0 (low motion), λ is small and attention spans all frames globally. 
+
+Motion-aware gating. After the feed-forward step (identi-cal to Eq. 2), a learned scalar gate g(m) ∈ (0, 1) modulates the strength of the temporal residual: 
+
+zout = ˜z + g(m) ·
+
+
+
+z(2) − ˜z
+
+
+
+, g(m) = σ (φ (m)) (5) where σ (·) is the sigmoid function and φ (m) is a two-layer MLP with scalar output. The gate parameters are initialized such that 
+
+g(m) ≈ 0, so the block begins as a near-identity mapping and gradually learns its temporal contribution. 
+
+Zero Initialization 
+
+All output projection layers ( WO and the final FFN layer) are zero-initialized. Combined with the residual connections, this en-sures that at initialization both block variants are exact identity mappings, following the principle established in ControlNet [16], and do not disturb the pretrained UNet weights at the start of train-ing. 
+
+Cascaded Injection Strategy 
+
+We inject temporal attention into all transformer blocks of the UNet, but with a cascaded strategy that assigns different modes based on network depth. Down-sampling and middle blocks use global mode : standard temporal self-attention (no dis-tance bias) stabilizes the semantic content and background con-sistency across frames at lower spatial resolutions. Up-sampling blocks use adaptive mode : motion-adaptive attention bias pro-tects fine-grained features from temporal blurring, particularly in regions with significant motion. This design is motivated by the observation that low-resolution features encode scene-level se-mantics that should be consistent across all frames, while high-resolution features encode local details that are sensitive to inter-frame motion. 
+
+Temporally Correlated Noise 
+
+Standard diffusion training and inference use independently sampled Gaussian noise for each frame. However, when the UNet processes each frame largely independently (before temporal at-tention takes effect), independent noise leads to completely diver-gent scene content across frames. We introduce temporally correlated noise via an autoregres-sive process: 
+
+ε f = ρ · ε f −1 +
+
+q
+
+1 − ρ2 · ξ f , ξ f ∼ N (0, I) (6) where f ∈ { 1, . . . , T } is the frame index, ρ ∈ [0, 1] is the correla-tion coefficient, and ε0 ∼ N (0, I). Each ε f remains marginally standard Gaussian, but adjacent frames share correlated noise Pixel Space Latent Space Diffusion Process Temporal Attn (global) 
+
+> Spatial Transformer
+> ResNet +Down
+
+Down Block Temporal Attn (adaptive) 
+
+> Spatial Transformer
+> ResNet +Up
+
+Up Block Temporal Attn (global) 
+
+> Spatial Transformer
+> ResNet
+
+Mid Block 
+
+> Latent Sampler
+
+Denoising U-Net Condition Text Text Encoder Figure 1. Architecture overview. The overall pipeline follows the Latent Diffusion Model framework: video frames are encoded into latent space by a frozen VAE encoder ( E ), processed by the denoising UNet with injected temporal attention modules (shown in red), conditioned on text via CLIP, and the VAE decoder D
+
+> reconstructs the frames back to pixel space. All spatial components (ResNet, Spatial Transformer) are frozen (snowflake); only temporal attention blocks are trained (flame). Down and mid blocks use global temporal attention; up blocks use motion-adaptive attention.
+
+structure. This provides a strong prior for scene consistency with-out constraining the learned temporal dynamics. Correlated noise is applied during both training and infer-ence. The correlation coefficient ρ controls a trade-off between scene consistency and motion amplitude, with ρ = 0.6 used dur-ing training and varied at inference for different generation behav-iors (see ablation in Section ). 
+
+Training Objective 
+
+The primary training objective is the standard denoising loss: 
+
+Ldenoise = Ez0,ε,t
+
+h
+
+∥ε − εθ (zt ,t, c)∥2i
+
+(7) where z0 are the clean latent encodings of video frames, t is the diffusion timestep, ε = [ ε1, . . . , εT ] is the temporally correlated noise from Eq. 6, and zt = √ ¯αt z0 +√1 − ¯αt ε is the noisy latent at timestep t. c is the text conditioning. Only the temporal attention parameters are updated; the base UNet, VAE, and text encoder remain frozen. We additionally explored a temporal consistency loss that penalizes inter-frame differences in the predicted clean latents, weighted by both motion intensity and noise level: 
+
+Ltemp = Et, f
+
+h
+
+wm · wt · ∥ ˆz( f +1) 
+
+> 0
+
+− ˆz( f ) 
+
+> 0
+
+∥2i
+
+(8) where f ∈ {1, . . . , T −1} is the frame index, ˆz( f ) 
+
+> 0
+
+=
+
+z( f ) 
+
+> t
+
+− √1 − ¯αt ε θ
+
+> f
+
+
+
+/√ ¯αt is the clean latent of frame f
+
+estimated via the posterior mean, wm = 0.1 + 0.9 · (1 − m) assigns higher weight to low-motion videos, and wt = ¯αt down-weights the loss at high noise levels. The total loss is: 
+
+L = Ldenoise + λtemp · Ltemp (9) As shown in our ablation (Section ), we find that the denois-ing loss alone ( λtemp = 0) produces better results than including the temporal consistency term, as the temporal attention modules learn sufficient implicit temporal regularization from the video training data. 
+
+Motion Estimation 
+
+During training, per-video motion scores are computed from the input frames as the mean absolute pixel difference between consecutive frames, normalized to [0, 1] using dataset-level statis-tics (5th and 95th percentiles for robust normalization). At in-ference, the motion level is estimated automatically from prompt semantics—keywords such as “running” or “dancing” map to high motion, while “still” or “landscape” map to low—or can be set manually by the user. 
+
+## Experiments 
+
+Setup 
+
+Architecture 
+
+Temporal attention blocks are injected into all 16 trans-former blocks of the UNet: 6 in the down-sampling path, 1 in the middle block, and 9 in the up-sampling path. Each temporal block uses 4 attention heads with dimension 64 per head and a feed-forward inner dimension of 512. This adds 25.8M trainable parameters (2.9% of the 860M base UNet). We evaluate with two frozen base models: SD 1.5 (sd-legacy/stable-diffusion-v1-5 ) and SD 2.1-base (stabilityai/stable-diffusion-2-1-base ), the 512 ×512 variant distinct from the 768 ×768 stable-diffusion-2-1 
+
+model. Our main comparison uses SD 2.1-base. 
+
+Training Data 
+
+We train on a 100K-video subset of WebVid-10M [11] for all experiments. We sample 8 frames per video at a frame interval Input z:  [B*T, c, h, w]             
+
+> Reshape to [B*h*w, T, c]
+> Pos Encoder
+> LayerNorm
+> QKV
+> MatMul
+> Softmax
+> MatMul
+> Linear
+> LayerNorm
+> MLP
+> Reshape to: [ B*T, c, h, w ]
+> Output Input z: [B*T, c, h, w]
+> Reshape to [B*h*w, T, c]
+> Pos Encoder
+> LayerNorm
+> QKV
+> MatMul
+> Softmax
+> MatMul
+> Linear
+> LayerNorm
+> MLP
+> Reshape to: [ B*T, c, h, w ]
+> Output
+> Motion Scores [B]
+> Motion-Adaptive
+> Temporal Bias
+> Motion-Aware Gating Figure 2. Temporal attention block variants. Left: Global mode (down/mid blocks) — uniform temporal self-attention, no motion conditioning. Right: Adaptive mode (up blocks) — motion-adaptive attention bias bmand motion-aware gate g(m)are both conditioned on the per-video motion score m.
+
+of 2 and resize to 256 ×256. Motion scores are pre-computed for the entire training set using robust percentile normalization. 
+
+Training Details 
+
+Training uses AdamW with learning rate 1 ×10 −4, cosine schedule with 500 warm-up steps, and gradient norm clipping at 1.0. We train for 30 epochs with batch size 55 per GPU across A100 GPUs using mixed-precision (FP16) and gradient check-pointing. The noise correlation coefficient is ρ = 0.6 during train-ing. 
+
+Inference 
+
+We use DPM-Solver++ [15] with Karras noise schedule for 50 denoising steps, classifier-free guidance scale of 7.5, and res-olution 256 ×256 with 8 frames per video. The noise correlation coefficient is adjustable at inference time without retraining. 
+
+Evaluation Metrics 
+
+We evaluate on 400 uniformly sampled captions from the WebVid validation set using the following metrics. CLIP-SIM :
+
+Comparison with AnimateDiff on WebVid validation (400 sam-ples, ρ=0.6, λtemp =0, 100K training videos). † AnimateDiff re-trained on the same 100K WebVid subset with T =8, 256 ×256 ,matching inference settings. ‡ Base SD 1.5 without tempo-ral modules; high MM reflects incoherent frame-independent generation. 
+
+Method CLIP ↑ FC MM ↑ FID ↓ FVD ↓
+
+AnimateDiff † 0.308 0.969 0.062 81.63 79.61 
+
+SD 1.5 ‡ 0.267 0.777 0.326 180.48 211.02 Ours (SD 1.5) 0.302 0.980 0.051 89.96 85.99 Ours (SD 2.1) 0.303 0.983 0.040 92.09 92.49 
+
+average CLIP [12] cosine similarity between each frame and its text prompt, measuring text-video alignment. Frame Consis-tency (FC) : average CLIP cosine similarity between consecu-tive frame embeddings, measuring temporal coherence; a very low FC indicates incoherence, while an excessively high FC may reflect static output rather than good generation quality. Mo-tion Magnitude (MM) : mean absolute pixel difference between consecutive frames in pixel space, measuring motion amplitude. 
+
+FVD : Fr´ echet Video Distance [13] measuring overall video qual-ity against real WebVid videos. FID : Fr´ echet Inception Dis-tance [14] computed per-frame, measuring single-frame image quality. 
+
+Comparison with AnimateDiff 
+
+Table 1 compares our method against AnimateDiff [6] under equal training conditions. To ensure a fair comparison, we retrain AnimateDiff’s motion modules on the same 100K-video WebVid subset with identical settings ( T =8 frames, 256 ×256, same eval-uation protocol). We also include a baseline using SD 1.5 with correlated noise but without temporal modules to isolate the con-tribution of our temporal attention. Removing the temporal mod-ules causes FID to rise from 89.96 to 180.48 and FVD from 85.99 to 211.02, while frame consistency drops sharply from 0.980 to 0.777, confirming that temporal attention is the primary driver of inter-frame coherence. AnimateDiff achieves better FID and FVD under these equal-data conditions, which we attribute to its larger motion module capacity (417M parameters). Importantly, our temporal modules add only 25.8M trainable parameters— 16 × fewer—making our approach substantially more parameter-efficient. 
+
+Ablation Studies 
+
+Unless otherwise noted, ablation experiments use SD 2.1 trained on the 100K subset, evaluated on 400 WebVid validation captions. The base model comparison (Table 4) additionally in-cludes SD 1.5 under identical settings. 
+
+Effect of Temporal Consistency Loss 
+
+Table 2 compares training with the combined loss ( λtemp =
+
+2.0) versus denoising loss only ( λtemp = 0). Removing the ex-plicit temporal loss produces videos with larger motion amplitude (0 .040 vs. 0 .025). The temporal attention mechanism provides sufficient implicit regularization through the denoising objective Effect of temporal consistency loss ( λtemp ). SD 2.1, 100K, 
+
+> ρ=0.6.
+
+λtemp CLIP ↑ FC MM ↑ FID ↓ FVD ↓
+
+2.0 0.305 0.990 0.025 95.82 97.21 
+
+0 0.303 0.983 0.040 92.09 92.49     
+
+> Effect of noise correlation ρat inference. SD 2.1, 100K,
+> λtemp =0.
+
+ρ CLIP ↑ FC MM ↑ FID ↓ FVD ↓
+
+0.4 0.278 0.929 0.158 105.85 108.22 
+
+0.6 0.303 0.983 0.040 92.09 92.49 
+
+0.85 0.298 0.999 0.008 130.87 140.11 
+
+applied to temporally coherent video data, making the explicit consistency term unnecessary and even counterproductive for mo-tion diversity. 
+
+Effect of Noise Correlation 
+
+Table 3 reports the effect of the noise correlation coefficient 
+
+ρ at inference time, using a model trained with ρ=0.6. Higher correlation suppresses motion amplitude: at ρ=0.85, motion magnitude collapses to 0 .008 (effectively static video). Lower correlation allows more diverse inter-frame content. This parame-ter provides a user-controllable trade-off at inference time without retraining. 
+
+Effect of Base Model 
+
+Table 4 compares Stable Diffusion 1.5 and 2.1 as base mod-els under otherwise identical settings (100K training, ρ=0.6, 
+
+λtemp =0). SD 1.5 achieves slightly better FID and FVD, likely because the WebVid reference statistics are closer to SD 1.5’s training distribution, and produces slightly larger motion ampli-tude. Both models benefit substantially from temporal attention modules. 
+
+Qualitative Results 
+
+Figure 3 shows the first and last frame (frames 1 and 8) of generated sequences from our method and the retrained Animate-Diff baseline for two representative WebVid validation prompts. Displaying the temporal endpoints highlights scene consistency: a method with poor temporal coherence would show visible subject or background drift between frame 1 and frame 8. Our method maintains consistent subject identity and scene appearance across the full sequence, with natural motion appropriate to the content. 
+
+## Discussion 
+
+Implicit vs. explicit temporal regularization. A key find-ing is that the denoising loss alone suffices for temporal learning, and explicit temporal smoothness losses are counterproductive. We hypothesize that the temporal attention modules learn to pro-duce consistent noise predictions because inconsistent predictions are penalized by the denoising loss when trained on video frames that are inherently temporally coherent. The explicit temporal loss over-constrains the system by penalizing all inter-frame variation,   
+
+> Effect of base model. 100K, ρ=0.6,λtemp =0.
+
+Base Model CLIP ↑ FC MM ↑ FID ↓ FVD ↓
+
+SD 1.5 0.302 0.980 0.051 89.96 85.99 
+
+SD 2.1 0.303 0.983 0.040 92.09 92.49 
+
+suppressing natural motion diversity. 
+
+Role of correlated noise. Temporally correlated noise serves as a crucial initialization prior. Without it, the UNet— which processes each frame through frozen spatial attention independently—produces completely divergent scene content across frames, creating an impossible task for the lightweight tem-poral attention to correct. Correlated noise ensures that frames start from similar noise patterns, providing a foundation that the temporal attention can then refine. The correlation coefficient pro-vides a practical inference-time knob that does not require retrain-ing. 
+
+Motion amplitude trade-off. Our ablations reveal that 
+
+ρ directly controls motion amplitude. At ρ=0.85, videos are effectively static (MM = 0.008); at ρ=0.4, motion is rich (MM = 0.158) but at some cost to CLIP alignment (0.278). The operating point ρ=0.6 strikes a practical balance for diverse video prompts. 
+
+Limitations. Our method generates 8 frames at 256 ×256, which is below the resolution and duration of state-of-the-art video generators trained on orders of magnitude more data. The FID and FVD scores remain above AnimateDiff’s even under equal training data, reflecting the capacity advantage of Animate-Diff’s larger motion modules. Future work will explore scaling to higher resolutions, longer sequences, and integration with more modern architectures such as DiT-based diffusion models [17]. 
+
+## Conclusion 
+
+We presented a motion-adaptive temporal attention mech-anism for parameter-efficient video generation with frozen Sta-ble Diffusion models. By injecting lightweight temporal mod-ules (25.8M parameters, 2.9% of the base UNet) with motion-adaptive attention bias, motion-aware gating, and a cascaded global-to-adaptive injection strategy, our method produces tempo-rally coherent videos while adapting to diverse motion character-istics. Combined with temporally correlated noise, the approach achieves competitive results with 16 × fewer parameters than Ani-mateDiff under identical training conditions (100K videos, T =8). Our analysis reveals that implicit temporal regularization through the denoising objective alone outperforms explicit temporal con-sistency losses, and that the noise correlation coefficient provides a convenient inference-time control for balancing consistency and motion amplitude—a trade-off not typically exposed by fixed-architecture methods. 
+
+## References   
+
+> [1] R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer, High-resolution image synthesis with latent diffusion models, Proc. CVPR, pg. 10684–10695 (2022). [2] J. Ho, T. Salimans, A. Gritsenko, W. Chan, M. Norouzi, and D. J. Fleet, Video diffusion models, Proc. NeurIPS, 35, 8633–8646 (2022).
+
+[3] U. Singer, A. Polyak, T. Hayes, X. Yin, J. An, S. Zhang, Q. Hu, H. Yang, O. Ashual, O. Gafni, D. Parikh, S. Gupta, and Y. Taigman, Make-A-Video: Text-to-video generation without text-video data, arXiv preprint arXiv:2209.14792 (2022). [4] A. Blattmann, R. Rombach, H. Ling, T. Dockhorn, S. W. Kim, S. Fi-dler, and K. Kreis, Align your latents: High-resolution video syn-thesis with latent diffusion models, Proc. CVPR, pg. 22563–22575 (2023). [5] A. Blattmann, T. Dockhorn, S. Kulal, D. Mendelevitch, M. Kilian, D. Lorenz, Y. Levi, Z. English, V. Voleti, A. Letts, V. Jampani, and R. Rombach, Stable Video Diffusion: Scaling latent video diffusion models to large datasets, arXiv preprint arXiv:2311.15127 (2023). [6] Y. Guo, C. Yang, A. Rao, Z. Liang, Y. Wang, Y. Qiao, M. Agrawala, D. Lin, and B. Dai, AnimateDiff: Animate your personalized text-to-image diffusion models without specific tuning, Proc. ICLR (2024). [7] J. Wang, H. Yuan, D. Chen, Y. Zhang, X. Wang, and S. Zhang, ModelScope text-to-video technical report, arXiv preprint arXiv:2308.06571 (2023). [8] Z. Wang, Z. Yuan, X. Wang, T. Chen, M. Xia, P. Luo, and Y. Shan, MotionCtrl: A unified and flexible motion controller for video gen-eration, Proc. ACM SIGGRAPH (2024). [9] W. Wu, Z. Li, Y. Gu, R. Zhao, Y. He, D. J. Zhang, M. Z. Shou, Y. Li, T. Gao, and D. Zhang, DragAnything: Motion control for anything using entity representation, Proc. ECCV (2024). [10] T.-S. Chen, C. H. Lin, H.-Y. Tseng, T.-Y. Lin, and M.-H. Yang, Motion-conditioned diffusion model for controllable video synthe-sis, arXiv preprint arXiv:2304.14404 (2023). [11] M. Bain, A. Nagrani, G. Varol, and A. Zisserman, Frozen in time: A joint video and image encoder for end-to-end retrieval, Proc. ICCV, pg. 1728–1738 (2021). [12] A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agar-wal, G. Sastry, A. Askell, P. Mishkin, J. Clark, G. Krueger, and I. Sutskever, Learning transferable visual models from natural lan-guage supervision, Proc. ICML, pg. 8748–8763 (2021). [13] T. Unterthiner, S. van Steenkiste, K. Kurach, R. Marinier, M. Michalski, and S. Gelly, Towards accurate generative mod-els of video: A new metric and challenges, arXiv preprint arXiv:1812.01717 (2019). [14] M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochre-iter, GANs trained by a two time-scale update rule converge to a local Nash equilibrium, Proc. NeurIPS, 30 (2017). [15] C. Lu, Y. Zhou, F. Bao, J. Chen, C. Li, and J. Zhu, DPM-Solver++: Fast solver for guided sampling of diffusion probabilistic models, arXiv preprint arXiv:2211.01095 (2022). [16] L. Zhang, A. Rao, and M. Agrawala, Adding conditional control to text-to-image diffusion models, Proc. ICCV, pg. 3836–3847 (2023). [17] W. Peebles and S. Xie, Scalable diffusion models with transformers, Proc. ICCV, pg. 4195–4205 (2023). 
+
+## Author Biography 
+
+Rui Hong is a PhD student at George Mason University. His re-search interests include sign language translation and generation, 3D pose estimation, multimodality AI, and generative AI. 
+
+Shuxue Quan is an independent researcher with interests in arti-ficial intelligence, computer vision, camera systems, and AR/VR/XR/MR technologies. 
+
+(a) “Time lapse of sky clouds storm” 
+
+Ours (SD 1.5) 
+
+Ours (SD 2.1) 
+
+AnimateDiff †
+
+(b) “Pacific black duck, anas superciliosa, relaxing” 
+
+Ours (SD 1.5) 
+
+Ours (SD 2.1) 
+
+AnimateDiff †

@@ -1,0 +1,666 @@
+Title: Static Scene Reconstruction from Dynamic Egocentric Videos
+
+URL Source: https://arxiv.org/pdf/2603.22450v1
+
+Published Time: Wed, 25 Mar 2026 00:12:27 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Static Scene Reconstruction from Dynamic Egocentric Videos 
+
+# Qifei Cui Patrick Chen Department of Computer and Information Science University of Pennsylvania 
+
+# Abstract 
+
+Egocentric videos present unique challenges for 3D recon-struction due to rapid camera motion and frequent dynamic interactions. State-of-the-art static reconstruction systems, such as MapAnything, often degrade in these settings, suf-fering from catastrophic trajectory drift and ”ghost” ge-ometry caused by moving hands. We bridge this gap by proposing a robust pipeline that adapts static reconstruc-tion backbones to long-form egocentric video. Our ap-proach introduces a mask-aware reconstruction mechanism that explicitly suppresses dynamic foreground in the atten-tion layers, preventing hand artifacts from contaminating the static map. Furthermore, we employ a chunked re-construction strategy with pose-graph stitching to ensure global consistency and eliminate long-term drift. Experi-ments on HD-EPIC and indoor drone datasets demonstrate that our pipeline significantly improves absolute trajectory error and yields visually clean static geometry compared to naive baselines, effectively extending the capability of foun-dation models to dynamic first-person scenes. 
+
+# 1. Introduction 
+
+Egocentric video offers a unique, richly structured view of human activities: hands manipulate objects at close range, tools occlude and reveal surfaces, and the camera under-goes aggressive motion through cluttered environments. These properties make egocentric streams an attractive sig-nal for learning object-centric representations, affordances, and downstream manipulation policies. However, they also pose severe challenges for 3D reconstruction. Recent methods such as MapAnything [3] demonstrate impressive performance on static scenes, providing dense metric geometry and accurate camera trajectories. Yet, when applied to dynamic, first-person videos from datasets such as HD-EPIC [5] or indoor drone footage, we observe systematic failures: (i) long sequences accumulate drift, flattening entire buildings; (ii) camera initialization is frag-ile, sometimes incurring 180 ◦ orientation flips; and (iii) large, frequently moving hands and objects are interpreted as part of the static world, leading to severe ghosting and physically impossible geometry. In this paper, we ask: 
+
+How can we adapt a static reconstruction back-bone like MapAnything to egocentric video, such that we obtain a reliable static map while explic-itly accounting for dynamic foreground without retraining or funing the model? 
+
+Our answer is a mask-aware, chunked pipeline that pro-gressively stabilizes static geometry and isolates dynamic content. We build our story around the concrete experience of deploying MapAnything on the most recent represen-tative egocentric settings HD-EPIC kitchen activities with strong hand motion. 
+
+# 2. Background Information 
+
+EPIC-KITCHENS HD (HD-EPIC) HD-EPIC is a large-scale egocentric video dataset comprising 41 hours of un-scripted cooking activities captured from a first-person per-spective. The dataset features rich semantic annotations, including 59,000 fine-grained action segments and over 20,000 object interaction events accompanied by 3D masks and trajectories [5]. Furthermore, HD-EPIC provides 3D reconstructions of kitchen environments, enabling spatially grounded analysis over time. 
+
+Static scene reconstruction. Transformer-based mod-els like MapAnything have recently shown impressive re-sults in regressing 3D geometry directly from egocentric video frames. By predicting dense depth maps and cam-era poses in a single forward pass, MapAnything produces metrically accurate spatial reconstructions [3]. These capa-bilities enable spatially grounded understanding of object-object relations, crucial for manipulation tasks. However, the method assumes static environments and often fails in highly dynamic first-person scenes, where foreground motion—particularly hands—causes ghosting artifacts or catastrophic pose drift. This fragility is especially evident in long sequences from datasets like HD-EPIC [5], where moving hands are incorrectly fused into the static map.        
+
+> arXiv:2603.22450v1 [cs.CV] 23 Mar 2026 Figure 1. Overall pipeline. Module A constructs a binary dynamic activity prior Dtfrom VLM (Gemini) prompts and SAM3 video seg-mentation/tracking, optionally gated by interaction time windows. Module B runs chunk-wise reconstruction and fusion (MapAnything) while ignoring dynamic pixels indicated by Dt, then stitches chunks using overlap-based Sim(3) alignment to obtain globally consistent poses and a fused static map.
+
+Therefore, to relief these, we need a temporal consistent ob-ject tracker. 
+
+Temporal object tracking with SAM3. To isolate dynamic content, we employ Segment Anything Model 3 (SAM3) , an open-vocabulary segmentation model trained on over 4 million concept-labeled masks [1]. SAM3 extends Meta AI’s original SAM with DETR-style detection and a memory-based transformer tracker, enabling prompt-driven segmentation and long-term instance tracking. Its support for both text and image prompts allows flexible identifica-tion of dynamic agents—such as hands and tools—in ego-centric videos. Beyond generating temporally consistent masks, SAM3 can also models object appearance, making it well-suited for mask-aware dynamic filtering. 
+
+Egocentric data as a learning signal. Egocentric video data offers distinct advantages over third-person per-spectives by focusing on the wearer’s field of interac-tion—primarily hands and objects—thereby capturing sub-tle human-object relations [2]. Prior research demonstrates that modeling the hand’s shape and viewpoint in 2D egocen-tric frames significantly enhances object recognition per-formance [4]. These insights motivate the extension to 3D egocentric modeling, where methods like MapAnything can integrate metric spatial context with SAM3’s concept-level segmentation. In our project, we aim to fuse static scene ge-ometry from MapAnything with temporally consistent dy-namic object tracking via SAM3. This integration allows us to mask out dynamic manipulators such as hands and tools during 3D reconstruction, mitigating artifacts and pose drift in highly interactive settings—ultimately enabling robust reconstruction pipelines for real-world egocentric video. 
+
+# 3. Methodology 
+
+Our goal is to reconstruct a static scene map, which has a fused point cloud with a globally aligned camera trajec-tory, from long egocentric RGB videos that contain frequent hands and manipulated objects. A key failure mode of stan-dard monocular reconstruction on such data is that dynamic foreground regions still produce visually consistent features across frames (hands, grasped objects, reflections, etc.), leading the reconstructor to form incorrect cross-frame cor-respondences and to aggregate these regions as if they were static. This results in characteristic “ghosting” artifacts and, more critically for chunked pipelines, unstable pose/scale estimates that accumulate into cross-chunk alignment drift. We mitigate this by injecting an explicit interaction-aware dynamic prior into the reconstruction pipeline. To build a global static map, we use (A) per-frame instance masks from SAM3 initialized by language cues to iden-tify candidate dynamic entities, (B) precise interaction onset times from a skill/interaction segmentation pipeline to acti-vate masks only after motion begins and keep them active thereafter, and (C) chunk-wise reconstruction with overlap-based Sim(3) stitching, where we estimate the similarity transform between consecutive chunks via Umeyama align-ment on overlapping camera centers. 
+
+3.1. Problem Setup 
+
+Let {It}Tt=1 be a long egocentric RGB video. Our goal is to recover a static 3D scene representation (a fused dense point cloud) from this sequence, despite frequent hands and manipulated objects. We do not assume access to globally consistent poses a priori. In principle one could process the entire video jointly. However, MapAnything’s video reconstructor operates on dense 2D tokens with temporal attention, making end-to-end inference on long sequences prohibitively expensive in memory and runtime (and often infeasible on commodity GPUs). We therefore process the video in overlapping temporal chunks, obtain chunk-local reconstructions, and construct a global frame via overlap-based alignment. 
+
+Interaction-aware dynamic prior. We construct a per-frame binary suppression mask Dt ∈ {0, 1}H×W that combines two components: (i) a hand mask that is active throughout the sequence, and (ii) an object mask that be-comes active only after an interaction onset and then re-mains active cumulatively. Specifically, a SymSkill-style interaction/skill segmentor partitions the long video into short clips and outputs subject-predicate-object (S-P-O) predictions. An LLM then selects motion-inducing predi-cates to identify candidate objects and their interaction on-set times. Given these candidates, a VLM provides coarse localization cues (tags/boxes) that are converted into prompt specifications and fed to SAM3, which tracks instances over time and returns per-frame masks with persistent IDs. Us-ing the onset time ai for each tracked object instance, we activate object masks only when t ≥ ai (cumulative there-after) and finally union them with the always-on hand mask to form Dt. The pixel-level mask Dt is further mapped to the tokenizer’s 2D token grid to produce a token indicator used for attention masking in MapAnything. 
+
+Chunked reconstruction (with dynamic priors). We partition the video into overlapping chunks of length K with overlap O frames (in our experiments K=192 , O =96 ), and run MapAnything per chunk while injecting the token-level dynamic prior (as an attention mask over 2D tokens) to sup-press dynamic regions during inference. For each chunk c,MapAnything outputs per-frame depth and camera intrin-sics (estimated internally), together with chunk-local cam-era poses { ˆT (c) 
+
+> t
+
+} and a dense point cloud ˆP(c) expressed in the chunk coordinate frame. 
+
+Global frame construction via Umeyama stitching. Be-cause each chunk reconstruction is defined up to an un-known similarity transform, we align consecutive chunks using the overlapping frames. Let Sc ∈ Sim(3) denote the similarity transform that maps chunk c into the global frame. We estimate Sc with Umeyama alignment on the overlap camera centers/trajectory, then obtain global poses and a fused static map by Tt := Sc(t) ˆT (c(t))  
+
+> t
+
+and P := 
+
+S 
+
+> c
+
+Sc( ˆP(c)), where the global frame is initialized by set-ting Sc=1 as the identity (the first chunk as the origin). 
+
+3.2. Module A: Dynamic Prior Masks 
+
+Module A constructs an interaction-aware dynamic prior that identifies (i) hands to be suppressed throughout the se-quence and (ii) manipulated objects to be suppressed only after they begin to move. The resulting per-frame binary mask is later mapped to the 2D token grid and injected as an attention mask in MapAnything (§3.3). An overview of the complete pipeline in Module A is illustrated in Fig. 2. 
+
+A1: Skill-segmented clips and motion-inducing object candidates. We first segment the long video into short interaction-centric clips using a SymSkill skill segmentor. For each clip, the segmentor produces subject-predicate-object (S-P-O) predictions. We then use an LLM to se-lect motion-inducing predicates (e.g., pick up , place ,
+
+open , close , pour ) and extract the corresponding ob-ject candidates that are likely to undergo pose change. This step yields a set of candidate object names per clip and an interaction onset time for each candidate instance. 
+
+A2: VLM localization and a unified prompt schema. 
+
+Given each clip and its candidate object list, we localize these objects via a VLM that outputs coarse spatial pri-ors. We represent prompts in a unified JSON schema with fields {track id, name, box=(x,y,w,h) } and op-tionally sparse point prompts {(x,y) } when only point cues are available. These prompts are used to initialize instance-conditioned tracking in SAM3. When needed, we provide lightweight human-in-the-loop sparse point prompts on a few keyframes to initialize or correct tracks under occlusion and small-object drift. 
+
+A3: SAM3 video segmentation and persistent instance tracking. Conditioned on the prompts from Step A2 (VLM-derived coarse localization), and optionally refined via human-in-the-loop sparse clicks, SAM3 performs video segmentation and returns per-frame instance masks with 
+
+persistent IDs: 
+
+Mt = Mt,i ∈ { 0, 1}H×W Nt
+
+> i=1
+
+, (1) where i indexes tracked instances (objects and hands). In practice, prompts may be provided on multiple keyframes via lightweight human-in-the-loop point clicks (e.g., to ini-tialize small objects, handle brief occlusions, or correct drift). We inject all human-refined keyframes into the SAM3 inference session before running video propagation, so that later key frame refinements are respected when pro-ducing the final mask tracks. The output of this step is thus a temporally aligned set of instance masks {Mt,i } suitable for downstream interaction activation and binary prior con-struction. Figure 2. Module A: interaction-aware dynamic prior pipeline. Given egocentric video frames (or reconstruction chunks), a VLM se-lects scene-relevant semantic categories and text prompts (e.g., hand , plate , cup ). SAM3 then performs concept-driven video segmentation and tracking to produce per-category instance masks with consistent IDs. We aggregate these masks into a per-frame dynamic prior Dt
+
+(union over categories, optionally filtered by proximity to the hand to isolate manipulated objects). Finally, MapAnything consumes Dt to suppress dynamic regions and reconstruct the static scene with reduced ghosting artifacts. 
+
+A4: Interaction onset times and cumulative activation. 
+
+Let ai ∈ { 1, . . . , T } denote the interaction onset time of object instance i (from the skill segmentor; EPIC-HD inter-action annotations can be used as an oracle for rapid itera-tion). We use cumulative activation: once an object is first touched or moved, we treat it as dynamic and mask it for the remainder of the video. Define the activated instance set 
+
+At = {i | ai ≤ t}. (2) Cumulative masking prioritizes static-map purity by pre-venting a moved object from re-entering the static map after its pose changes even when objects return to their original pose. 
+
+A5: From instance masks to a binary dynamic prior. 
+
+We form two components: a hand mask that is always ac-tive and an object mask that is activated only after onset. Let Dhand  
+
+> t
+
+be the union of all hand instance masks at time t,
+
+Dhand  
+
+> t
+
+(x) = 1
+
+n
+
+x ∈ [
+
+> i∈H t
+
+Mt,i 
+
+o
+
+, (3) where Ht denotes the set of hand instances at time t. For manipulated objects, the union baseline aggregates only ac-tivated instances: 
+
+Dobj  
+
+> t
+
+(x) = 1
+
+n
+
+x ∈ [
+
+> i∈A t
+
+Mt,i 
+
+o
+
+. (4) Optionally, we restrict activated object instances using a hand-centric proximity filter (an ablation that reduces false positives when multiple similar objects are present). Let 
+
+M hand  
+
+> t
+
+be the union of all hand masks at time t. We dilate the hand mask by r pixels and keep instance i if it overlaps the dilated hand region above a threshold τ :
+
+π(Mt,i , M hand  
+
+> t
+
+) = 1
+
+ |Mt,i ∩ dilate( M hand  
+
+> t
+
+, r )||Mt,i | ≥ τ
+
+
+
+.
+
+(5) This defines a filtered activated set 
+
+Anh  
+
+> t
+
+=  i ∈ A t π Mt,i , M hand 
+
+> t
+
+ = 1 , (6) and we obtain the corresponding object prior by replacing 
+
+At in Eq. (4) with Anh  
+
+> t
+
+.Finally, our dynamic activity prior unions hands and (ac-tivated) objects: 
+
+Dt(x) = Dhand  
+
+> t
+
+(x) ∨ Dobj  
+
+> t
+
+(x). (7) We export {Dt} as strict binary masks (0/255) for visu-alization and for integration into reconstruction. Figure 3. Interaction-activated dynamic prior. We show a SAM3 tracking frame with instance IDs together with the cor-responding interaction-activated binary prior Dt (hands always masked; objects masked cumulatively after onset), which is used to construct attention masks in the reconstruction module. 
+
+3.3. Module B: Chunk-wise Reconstruction with Token-Level Dynamic Gating 
+
+For each temporal chunk c, we run MapAnything to obtain per-frame depth, intrinsics (estimated internally), chunk-local camera poses { ˆT (c) 
+
+> t
+
+}, and a dense point cloud ˆP(c). To prevent dynamic content (hands and manipulated objects) from contaminating the static reconstruction, we inject the interaction-aware prior Dt (§3.2) as an attention mask over 2D image tokens during inference. This is an inference-time modification (no retraining or parameter updates). 
+
+B1: 2D token grid and pixel-to-token masking. MapA-nything represents each frame using a 2D grid of image to-kens produced by a DINOv2-style patch tokenizer. Let It be transformed (resize/crop/pad) into the tokenizer input reso-lution H′ × W ′ as part of the standard MapAnything pre-processing; we apply the same geometric transform to the binary pixel mask Dt to obtain ˜Dt ∈ { 0, 1}H′×W ′
+
+. Let the tokenizer partition ˜Dt into a token grid with patch size P
+
+and cell index (u, v ). Define the pixel set covered by each cell: 
+
+Ω( u, v ) = {(x, y ) | uP ≤ x < (u+1) P, vP ≤ y < (v+1) P },
+
+(8) and compute a token-level indicator by max-pooling: 
+
+mt, (u,v ) = max 
+
+> (x,y )∈Ω( u,v )
+
+˜Dt(x, y ). (9) Thus a token is masked if any pixel in its covered region is marked dynamic. In our experiments, MapAnything uses a fixed H′=W ′=800 and patch size P =14 , but the construc-tion above applies to any tokenizer resolution. 
+
+B2: Attention masking in MapAnything. MapAnything updates 2D image tokens via temporal 2D self-attention and updates 3D latent tokens via 2D →3D cross-attention. Let    
+
+> Figure 4. Dynamic prior injection for robust 3D reconstruc-tion. We augment the standard transformer attention between 3D query tokens (cameras / 3D points) and image tokens (pixel patches) by gating cross-attention with a dynamic mask Dt. To-kens marked as dynamic (red) are suppressed, so 3D queries attend primarily to static regions (green), reducing motion-induced con-tamination and ghosting artifacts in the reconstructed scene.
+
+an attention module have logits αij = q⊤  
+
+> ikj
+> √d
+
+and weights 
+
+Aij = softmax j (αij ). We implement dynamic suppression by adding an infinite negative bias to masked keys/values :
+
+bj =
+
+(
+
+0, mj = 0 
+
+−∞ , mj = 1 , ˜αij = αij + bj , (10) 
+
+Aij = softmax j (˜ αij ), (11) which guarantees Aij = 0 for masked tokens after the softmax. We apply this masking (i) in temporal 2D self-attention to prevent dynamic evidence from propagating across frames, and (ii) in 2D →3D cross-attention so that dynamic 2D tokens cannot update 3D tokens as shown in Fig. 4. Consequently, the reconstructed depth, poses, and dense point clouds are driven primarily by static regions. 
+
+B3: Pose convention and overlap camera centers. Be-cause MapAnything is not a SLAM system, chunk-local re-constructions may lie in independent coordinate frames and can exhibit scale drift. We therefore stitch chunks sequen-tially using overlap-based Sim(3) alignment on the overlap trajectory as shown in Fig. 5. For each chunk c, MapAnything outputs per-frame 
+
+camera-to-world poses 
+
+ˆT (c) 
+
+> t
+
+= [ ˆR(c) 
+
+> t
+
+| ˆt(c) 
+
+> t
+
+] ∈ SE (3) (12) for frames t in the chunk. Under this convention, the camera center in the chunk coordinate frame is simply the transla-tion component: 
+
+ˆc(c) 
+
+> t
+
+= ˆ t(c) 
+
+> t
+
+∈ R3. (13) Figure 5. Module B3&4: chunk-wise reconstruction and overlap-based Sim(3) stitching. We split a long egocentric RGB video into overlapping temporal chunks (here K=192 frames with overlap O=96 ). Each chunk is reconstructed independently by MapAnything, producing chunk-local camera poses and dense point clouds. To obtain a globally aligned trajectory and static map, we estimate a similarity transform between consecutive chunks by Umeyama alignment on overlap camera centers , anchoring the global frame with the first chunk (s=1 , R =I, t=0). We then apply the estimated Sim(3) transform to map each chunk into the global frame and fuse transformed point clouds (with optional subsampling for memory control), yielding a stitched global camera trajectory and a fused point cloud with reduced cross-chunk misalignment. 
+
+Let chunk c overlap with chunk c−1 on L frames with in-dices Oc = {t1, . . . , t L}. Stacking overlap centers yields 
+
+X ∈ RL×3 for the current chunk, Xk = ˆ c(c) 
+
+> tk
+
+, and Y ∈
+
+RL×3 for the already-stitched global trajectory at the same frame indices. 
+
+B4: Umeyama Sim(3) alignment and scale anchoring. 
+
+We estimate a similarity transform Sc = ( sc, R c, tc) ∈
+
+Sim(3) by Umeyama: 
+
+min 
+
+> s,R, t
+> L
+
+X
+
+> k=1
+
+∥Yk − (sR Xk + t)∥22 , R ∈ SO (3) , s > 0.
+
+(14) We anchor the global frame by setting the first chunk as the origin and scale: S1 = (1 , I, 0). For c ≥ 2, we map the chunk-c camera centers and 3D points into the global frame using Sc:
+
+ct = scRcˆc(c) 
+
+> t
+
++ tc, P := [
+
+> c
+
+Sc( ˆP(c)), (15) thereby maintaining a consistent global scale across stitched chunks. In practice, we apply the same (sc, R c, tc) to all chunk-local points, and compose the chunk-local poses with 
+
+(Rc, tc) while applying sc to the translational component. 1
+
+We aggregate transformed dense point clouds across chunks with subsampling to control memory, yielding a stitched global camera trajectory and a global static point cloud.    
+
+> 1Equivalently, scacts on 3D points and camera positions, while pose rotations remain in SO (3) .
+
+3.4. Outputs 
+
+The pipeline produces (i) per-frame binary dynamic priors 
+
+{Dt} (hands always masked; objects masked cumulatively after onset), (ii) chunk-wise reconstructions mapped into a global frame after overlap-based Umeyama Sim(3) stitch-ing, and (iii) an aggregated dense point cloud for down-stream tasks. 
+
+# 4. Experiments 
+
+We evaluate whether (i) overlap-based Sim(3) stitching pro-duces a stable globally aligned trajectory and point cloud from chunk-local reconstructions, and (ii) interaction-aware dynamic priors injected as token-level attention masks re-duce dynamic contamination (ghosting) in the static map. During development we found that several seemingly rea-sonable “ghosting” proxies can be dominated by depth com-pleteness effects. We therefore report (a) trajectory/overlap consistency, (b) depth coverage, and (c) density-normalized 
+
+dynamic contamination metrics, together with qualitative point-cloud comparisons. 
+
+4.1. Experimental Setup 
+
+Data. We evaluate on long egocentric sequences from EPIC-HD/HD-EPIC. We report results on sequence 
+
+20240414-172534 (participant P04 ), containing 3565 
+
+frames at 30 FPS. Hands and manipulated objects appear frequently throughout the sequence. Reconstruction backbone and chunking. We use Ma-pAnything as the reconstruction backbone. Due to GPU memory/runtime limits of dense-token temporal attention, we run inference in overlapping temporal chunks. For the 30 FPS run ( full len ), we use chunk length K=180 
+
+with overlap O=90 frames, producing 40 chunks over 3565 
+
+frames. For most ablations we downsample temporally to 
+
+6 Hz (keep every 5th frame), yielding 713 frames; with the same K=180 , O =90 we obtain 8 chunks. Each chunk outputs per-frame depth, intrinsics (estimated internally), chunk-local poses { ˆT (c) 
+
+> t
+
+}, and a dense point cloud ˆP(c).We stitch chunks sequentially via overlap-based Umeyama alignment on camera centers. 
+
+Interaction-aware dynamic priors and mask variants. 
+
+We follow §3.2. Briefly, a SymSkill-style interaction/skill segmentor partitions the video into short clips and outputs SPO predictions. An LLM selects motion-inducing pred-icates to identify candidate manipulated objects and their interaction onsets. A VLM provides coarse localization cues (tags/boxes) used to initialize SAM3, which tracks in-stances and produces per-frame masks. We consider two suppression mask strategies during re-construction: (i) dynamic-only masking, which suppresses only pixels predicted dynamic at time t, and (ii) cumulative / full-time masking, which keeps an object masked after its first interaction onset (our intended design in §3.2). 
+
+Evaluation masks: instantaneous vs. footprint. For evaluation (metric conditioning), we use two binary mask sets: union mask dynamics (per-frame instantaneous dynamic regions) and union mask fulltime (dynamic footprint / full-time union). The latter is useful to avoid counting “stale” ghost geometry (left behind by moved ob-jects) as belonging to the static region. Unless stated otherwise, we condition static-region met-rics (e.g., Bstatic , Dstatic ) on union mask fulltime to ensure that any pixel ever occupied by hands/objects is ex-cluded from the static evaluation region. 
+
+Implementation details. All experiments run on RTX-5090 with 32 GB. Average runtime is 49 sec/chunk and 
+
+6 min 13 sec/sequence (including stitching) in the 6 Hz set-ting. 
+
+4.2. Metrics 
+
+We report both stitching/trajectory consistency metrics and reconstruction-level contamination metrics. All metrics are computed from per-chunk raw outputs (depth, intrinsics, poses), without relying on the final globally fused point cloud. 
+
+Pose convention and camera centers. MapAnything outputs per-frame poses as camera-to-world transforms 
+
+T =
+
+ R t0⊤ 1
+
+
+
+, i.e., pw = R pc + t. We define the camera center as c = t and use it consistently for overlap alignment and trajectory metrics. 
+
+(A) Multi-surface ratio (auxiliary ghosting proxy). We keep the multi-surface ratio ρ (Eq. (19) in §4.2 of the origi-nal draft) as an auxiliary proxy, computed with (i) visibility gating ( zproj ≤ zdepth + ε, with ε=0 .05 ), (ii) mask dilation radius 3 for region conditioning, and (iii) a cnt ≥ 2 de-nominator to reduce single-hit noise. Empirically, ρ can be dominated by depth holes and is not always aligned with qualitative ghosting; we therefore do not use it as the pri-mary quantitative evidence of contamination reduction. 
+
+(B) Overlap geometry consistency (primary overlap metric). For overlap frame t ∈ Oc+1 , let Q(c) 
+
+> t
+
+and 
+
+Q(c+1)  
+
+> t
+
+be back-projected point sets from depth in chunks 
+
+c and c+1 . We map the latter into chunk-c coordinates by 
+
+eQ(c+1)  
+
+> t
+
+:= Sc+1 (Q(c+1)  
+
+> t
+
+). Define 
+
+d(x, A) := min  
+
+> a∈A
+
+∥x − a∥2. (16) and compute a symmetric nearest-neighbor distance: 
+
+dgeo  
+
+> t
+
+= 12
+
+ 1
+
+| eQ(c+1)  
+
+> t
+
+|
+
+X 
+
+> q∈eQ(c+1)
+> t
+
+d(q, Q(c) 
+
+> t
+
+) + 1
+
+|Q (c) 
+
+> t
+
+|
+
+X
+
+> p∈Q (c)
+> t
+
+d(p, eQ(c+1)  
+
+> t
+
+)
+
+
+
+(17) We report Ball = E[dgeo  
+
+> t
+
+]. We also report Bstatic by building 
+
+Qt only from pixels where the evaluation mask is static. 
+
+(C) Density-normalized dynamic contamination (pri-mary ghosting metric). To avoid being dominated by to-tal point coverage, we introduce density-style contamination metrics. Given a chunk-level point cloud P(c) (subsampled) projected into a frame t, define: • Ndyn (t): number of projected points landing in dynamic region Ωdyn (t),• Hdyn (t): number of dynamic pixels hit by at least one projected point, • similarly Nstatic (t) and Hstatic (t) on Ωstatic (t).We report three normalized ratios (dyn/static): 
+
+Cden ratio =
+
+E
+
+h Ndyn (t)
+
+> |Ωdyn (t)|
+
+i
+
+E
+
+h Nstatic (t)
+
+> |Ωstatic (t)|
+
+i , (18) 
+
+Cocc ratio =
+
+E
+
+h Hdyn (t)
+
+> |Ωdyn (t)|
+
+i
+
+E
+
+h Hstatic (t)
+
+> |Ωstatic (t)|
+
+i , (19) 
+
+Cod ratio =
+
+E
+
+h Ndyn (t)
+
+> Hdyn (t)+ ϵ
+
+i
+
+E
+
+h Nstatic (t)
+
+> Hstatic (t)+ ϵ
+
+i , (20) where Cden ratio is the main “points-per-pixel” contamination density, Cocc ratio is a “hit-rate” occupancy proxy, and Cod ratio 
+
+measures overdraw / thickness. All are lower-is-better (less dynamic contamination relative to static). 
+
+Scale stability. Umeyama returns a per-transition scale 
+
+sc. We report the mean scale ¯s as a drift proxy (near 1 indicates stable scale across chunk transitions). 
+
+(D) Depth coverage / completeness. A key confound we found is that more aggressive masking can reduce depth completeness, which in turn can inflate overlap geometry errors and can also change ray-based “ghosting” proxies. We therefore report valid-depth ratios computed directly from predicted depth and the evaluation masks: 
+
+Dall = #{(u, v ) : z(u, v ) finite and z(u, v ) > 0}
+
+HW , (21) 
+
+Ddyn = #{(u, v ) ∈ Ωdyn : z(u, v ) valid }|Ωdyn | , (22) 
+
+Dstatic = #{(u, v ) ∈ Ωstatic : z(u, v ) valid }|Ωstatic | . (23) 
+
+(E) Overlap camera-center residual (trajectory sanity check). For each chunk transition c → c+1 , let Oc+1 de-note overlap frames. After estimating Sc+1 ∈ Sim(3) by Umeyama on overlap camera centers, we compute: 
+
+ecen  
+
+> c+1
+
+=
+
+vuut 1
+
+|O c+1 |
+
+X
+
+> t∈O c+1
+
+c(c) 
+
+> t
+
+− Sc+1 
+
+ c(c+1) 
+
+> t
+
+ 22
+
+. (24) We report the mean/median over all transitions. 
+
+4.3. Baselines and Ablations 
+
+We evaluate four variants: • MapAnything (baseline) : chunk-wise reconstruction with Sim(3) stitching, no dynamic suppression. • Naive blackout (pixel-level) : blank masked pixels in the input frames using the same mask set as the suppression prior, without modifying attention. • Attention gating (dynamic-only) : inject per-frame dy-namic masks as a token-level attention mask (Eq. (10-11) in §3.3). • Attention gating (cumulative / full-time) (ours) : inject interaction-activated cumulative masks (objects remain masked after onset), also as token-level attention masks. 
+
+4.4. Overlap-Based Stitching and Cross-Chunk Sta-bility 
+
+We first report overlap-based stitching metrics in the 6 Hz setting (8 chunks, 7 overlaps). Table 2 summarizes overlap consistency and completeness. 
+
+Key observation: overlap errors correlate with com-pleteness. Compared to baseline, attention gating in-creases Ball from 0.035132 to 0.083331 (dynamic-only) and 0.100158 (cumulative), while Dall drops from 0.945419 to 0.800966 and 0.780635. This indicates that overlap geom-etry inconsistency is strongly influenced by missing depth/-coverage. The camera-center residual ecen also increases (0.019497 → 0.051678 / 0.072496), but scale remains near 1, suggesting instability is not dominated by scale drift. 
+
+4.5. Dynamic Priors Reduce Dynamic Contamina-tion (Ghosting) 
+
+Qualitative reconstruction comparison. Fig. 6 shows a representative static-map comparison. Baseline MapAny-thing exhibits severe ghosting near hands and manipulated objects. Naive blackout can remove some dynamic tex-ture, but often harms reconstruction completeness and over-lap stability. Token-level attention gating produces visibly cleaner static geometry in the final point cloud, especially in interaction-heavy regions. 
+
+Why the original contamination ratio can be misleading. 
+
+A simple “fraction of projected points falling inside the dy-namic mask” decreases under masking, but this number is entangled with overall point/depth coverage. For example, under footprint evaluation (union mask fulltime ), this ratio decreases from 0.167551 (baseline) to 0.137780 (dynamic-only gating) and 0.133309 (cumulative gating), but Table 2 shows that depth completeness Dall also drops substantially, which can reduce the numerator by creating holes. 
+
+Density-normalized contamination reveals true suppres-sion. Table 3 reports our density-style contamination met-rics under two evaluation masks: instantaneous dynamic re-gions ( union mask dynamics ) and dynamic footprints (union mask fulltime ). Variant Suppression Mask strategy Stitching                                                    
+
+> Baseline none -Sim(3) Blackout pixel dynamic-only / cumulative Sim(3) Attn gating (dynamic-only) attention per-frame Sim(3) Attn gating (cumulative) attention after-onset, persistent Sim(3) Table 1. Summary of evaluated variants.
+> Variant ecen ↓Ball ↓Bstatic ↓Dall ↑Dstatic ↑¯s
+> Baseline 0.019497 0.035132 0.034525 0.945419 0.952275 1.004606 Blackout 0.024591 0.043171 0.042285 0.951403 0.960077 0.998633 Attn gating (dynamic-only) 0.051678 0.083331 0.083431 0.800966 0.828438 0.997084 Attn gating (cumulative) (ours) 0.072496 0.100158 0.096840 0.780635 0.809198 1.003003 Table 2. Overlap consistency and completeness (6 Hz, 8 chunks). We condition static-region metrics ( Bstatic ,Dstatic ) on the footprint evaluation mask union mask fulltime to avoid counting any ever-dynamic pixels as static. Dynamic suppression increases over-lap residuals and geometry discrepancy, and is accompanied by a large drop in depth completeness ( Dall from 0.945419 to 0.800966 / 0.780635). Scale remains stable (mean scale ¯s≈1).
+
+Trade-off: cleaner static map vs. reduced complete-ness and overlap stability. Density-normalized contam-ination improves substantially with attention gating (Ta-ble 3), but completeness decreases (Table 2), which also in-flates overlap geometry discrepancy. This quantitatively ex-plains why B increases despite improved visual static-map purity: overlap Chamfer distances are sensitive to missing geometry, and camera/geometry overlap constraints weaken when large foreground regions are suppressed. 
+
+Multi-surface ratio is not aligned with visual ghost-ing in this setting. With the improved (visibility-gated, static-conditioned) multi-surface metric, the mean multi-surface ratio on the 6 Hz run is: Aall =0 .067817 (baseline), 
+
+0.046814 (blackout), but increases to 0.102210 (dynamic-only gating) and 0.125036 (cumulative gating). This con-tradicts the qualitative reduction in dynamic ghosting, in-dicating that ρ is dominated by depth incompleteness/holes under masking and should be treated as auxiliary rather than primary evidence. 
+
+4.6. Temporal Downsampling Ablation 
+
+Protocol. We downsample the 30 FPS sequence by keep-ing every 5th frame (30 Hz → 6 Hz), yielding 713 frames. We run the same chunked reconstruction and stitching pipeline with K=180 , O =90 on the downsampled se-quence. This reduces compute while preserving enough temporal support via overlap. 
+
+Notes on comparability. Overlap metrics at 6 Hz vs. 30 Hz are not directly comparable in absolute value because the temporal baseline between frames changes; we there-fore use downsampling primarily as a practical setting for controlled ablations of masking strategies. 
+
+4.7. Overlap-Based Stitching Improves Global Con-sistency 
+
+We first validate that overlap-based Umeyama stitching is necessary to construct a stable global frame from chunk-local reconstructions. 
+
+Overlap residual before/after Sim(3) alignment. We vi-sualize camera-center trajectories over the temporal overlap for two adjacent chunks, before and after Umeyama Sim(3) alignment. As shown in Fig. 7, raw chunk-local trajec-tories can disagree substantially in the overlap (RMSE =1.596 m ), while Sim(3) alignment (allowing scale) yields tight agreement (RMSE = 0 .008 m ). This supports our choice of Sim(3) stitching when monocular chunks exhibit mild scale inconsistency. 
+
+4.8. Failed Experiments and Lessons Learned 
+
+Metric pitfall: coverage-dominated “ghosting” proxies. 
+
+A major failure mode in our initial evaluation was that sev-eral ghosting proxies were confounded by coverage. In particular, overlap geometry consistency B can “explode” when depth completeness drops, even if the remaining ge-ometry is cleaner; similarly, multi-surface ratios can change due to holes and reduced point support rather than true ghosting reduction. This motivated adding (D) depth cover-age and (C) density-normalized contamination. 
+
+Tracking without interaction activation. We initially at-tempted long-horizon semantic instance tracking and post-hoc ID merging. Occlusions and viewpoint changes caused Full 
+
+Scene 
+
+Zoom -In Figure 6. Static reconstruction with/without dynamic suppression. Columns (left →right): baseline MapAnything (no suppression), naive pixel-level blackout, and our token-level attention gating. Rows (top →bottom): full-scene view and a zoom-in on an interaction-heavy region. Our method removes dynamic ghosting while better preserving clean static geometry than pixel blackout. 
+
+Instantaneous mask (cov=0.077415) Footprint mask (cov=0.168951) 
+
+Variant Cden ratio ↓ Cocc ratio ↓ Cod ratio ↓ Cden ratio ↓ Cocc ratio ↓ Cod ratio ↓
+
+Baseline 0.998740 1.003221 0.988921 1.087414 1.088884 0.997985 Blackout 0.992527 1.010007 0.974469 1.072562 1.085382 0.986884 Attn gating (dynamic-only) 0.823669 0.848722 0.961242 0.976011 0.988040 0.990571 Attn gating (cumulative) (ours) 0.807543 0.835834 0.955473 0.963738 0.978473 0.988066 Table 3. Density-style contamination (6 Hz, 8 chunks). Lower indicates fewer projected points supported in dynamic regions relative to static regions. Instantaneous evaluation shows strong suppression: Cden ratio drops from 0.998740 (baseline) to 0.823669 (dynamic-only) and 0.807543 (cumulative). Footprint evaluation (harder, less diluted by “currently static” pixels) still shows consistent reductions from 1.087414 to 0.976011 and 0.963738. Naive blackout yields only minor changes compared to attention gating.  
+
+> (a) Raw (unstitched) overlap. RMSE
+> = 1 .596 m .
+> (b) After Umeyama Sim(3) align-ment. RMSE = 0 .008 m .
+
+Figure 7. Overlap alignment for stitching. Camera-center tra-jectories over the overlap between two adjacent chunks. Left: raw (unstitched). Right: after Umeyama Sim(3) alignment with scale. 
+
+ID fragmentation and drift, making instance-level supervi-sion brittle for long videos. 
+
+Lesson. For static reconstruction, perfect long-horizon in-stance tracking is unnecessary. Instead, reliable identifica-tion of regions that become dynamic after interaction on-set is sufficient, and injecting this prior directly in attention provides a controllable way to suppress dynamic evidence. 
+
+4.9. Limitations 
+
+Suppression vs. completeness trade-off. While atten-tion gating reduces dynamic contamination density, it can reduce depth completeness and overlap stability, especially in interaction-heavy segments where large image areas be-come masked. This suggests future work on mask-aware regularization or static-only correspondence mechanisms to preserve geometric completeness. 
+
+Interaction onset and object selection. Errors in skill segmentation, predicate selection, or object localization Baseline Blackout Dynamin (ours) Overall-mask 
+
+Figure 8. EPIC-KITCHENS Sense point-cloud reconstructions comparing four masking strategies across three scenes (rows). Baseline (no masking) exhibits severe hand ghosting. Blackout removes dynamic regions at the image level, resulting in large black voids. Dynamin 
+
+(ours) suppresses most ghosting while preserving sufficient static context to maintain spatial consistency. Overall-mask removes all moving objects from the beginning, often leading to unstable or incomplete structure due to missing spatial cues. 
+
+can propagate to mask activation. Fully automatic perfor-mance depends on the upstream SymSkill/LLM/VLM com-ponents. 
+
+Mask quality and over/under-suppression. Imperfect SAM3 masks can leak dynamic content (residual contam-ination) or over-mask static pixels (missing geometry). Im-proving robustness to mask noise and handling object re-entry remain future work. 
+
+No loop closure / global optimization. Our stitching is sequential overlap-based alignment without global pose-graph optimization or loop closure, so long-range drift may remain in extremely long sequences. 
+
+# References 
+
+[1] Nicolas Carion, Laura Gustafson, Yuan-Ting Hu, Shoub-hik Debnath, Ronghang Hu, Didac Suris, Chaitanya Ryali, Kalyan Vasudev Alwala, Haitham Khedr, Andrew Huang, Jie Lei, Tengyu Ma, Baishan Guo, Arpit Kalla, Markus Marks, Joseph Greer, Meng Wang, Peize Sun, Roman R¨ adle, Triantafyllos Afouras, Effrosyni Mavroudi, Katherine Xu, Tsung-Han Wu, Yu Zhou, Liliane Momeni, Rishi Hazra, Shuangrui Ding, Sagar Vaze, Francois Porcher, Feng Li, Siyuan Li, Aishwarya Kamath, Ho Kei Cheng, Piotr Doll´ ar, Nikhila Ravi, Kate Saenko, Pengchuan Zhang, and Christoph Feichtenhofer. Sam 3: Segment anything with concepts, 2025. 2[2] Kunyuan Deng, Yi Wang, and Lap-Pui Chau. Egocentric human-object interaction detection: A new benchmark and method, 2025. 2 [3] Nikhil Keetha, Norman M¨ uller, Johannes Sch¨ onberger, Lorenzo Porzi, Yuchen Zhang, Tobias Fischer, Arno Knapitsch, Duncan Zauss, Ethan Weber, Nelson Antunes, Jonathon Luiten, Manuel Lopez-Antequera, Samuel Rota Bul` o, Christian Richardt, Deva Ramanan, Sebastian Scherer, and Peter Kontschieder. MapAnything: Universal feed-forward metric 3D reconstruction, 2025. arXiv preprint arXiv:2509.13414. 1 [4] Yizhou Lin, Gang Hua, and Philippos Mordohai. Egocen-tric object recognition leveraging the 3d shape of the grasping hand. In Computer Vision - ECCV 2014 Workshops , pages 746–762, Cham, 2015. Springer International Publishing. 2 [5] Toby Perrett, Ahmad Darkhalil, Saptarshi Sinha, Omar Emara, Sam Pollard, Kranti Kumar Parida, Kaiting Liu, Pra-jwal Gatti, Siddhant Bansal, Kevin Flanagan, Jacob Chalk, Zhifan Zhu, Rhodri Guerrier, Fahd Abdelazim, Bin Zhu, Da-vide Moltisanti, Michael Wray, Hazel Doughty, and Dima Damen. Hd-epic: A highly-detailed egocentric video dataset. In 2025 IEEE/CVF Conference on Computer Vision and Pat-tern Recognition (CVPR) , pages 23901–23913, 2025. 1 5. Supplementary Material 
+
+5.1. Additional Details: Tracking Attempts and Failure Modes 
+
+This appendix summarizes tracking approaches explored prior to our final interaction-aware dynamic prior, and docu-ments their failure modes on long egocentric videos. These details support §4.8. 
+
+Grounded-SAM2: semantic grounding with ID frag-mentation. Grounded-SAM2 combines text-conditioned grounding (e.g., Grounding-DINO) with SAM-style mask prediction, enabling semantically targeted segmentation. In long videos with occlusions and viewpoint changes, we ob-served frequent ID switches and fragmentation: the same physical object could be assigned many short-lived IDs. To partially mitigate this, we implemented a post-hoc matching module that re-associates detections to tracks using multiple cues: 
+
+S = α · IoU + β · exp( −dgeo ) + γ · sim DINO , (25) where IoU measures mask overlap with recent frames, 
+
+dgeo captures geometric consistency (e.g., centroid and box changes), and sim DINO is cosine similarity of DINOv2 fea-tures computed over the masked region. While this reduced fragmentation (e.g., max IDs 17 → 7 on a representative kitchen clip), track breaks persisted under long occlusions and re-entry, limiting downstream use for reconstruction. 
+
+SAM-Track + DeAOT: temporal stability with over-segmentation. We also tested SAM-Track, which initial-izes masks on keyframes and uses DeAOT for temporal propagation with long-term memory. This improves ID re-tention and can recover objects after temporary occlusions. However, because SAM-Track lacks semantic filtering, it progressively segments and tracks many irrelevant regions in long videos, accumulating hundreds of tracks and con-suming substantial memory and compute. This made out-puts difficult to curate and impractical as a robust dynamic prior for mapping. 
+
+Takeaway for the final pipeline. These experiments sug-gest a semantic-vs-temporal trade-off: methods with strong semantic grounding fragment IDs under occlusion, while methods with strong temporal propagation tend to over-segment without category awareness. For our primary goal (static scene reconstruction), we therefore use SAM3 pri-marily as a mask generator and tracker to identify dynamic regions, combined with interaction-aware activation to pre-vent moved objects from contaminating the static map. 
+
+5.2. Exploratory Results: SAM3D for Single-Frame Object Reconstruction 
+
+Although our main scope is static scene reconstruction, we explored SAM3D as a future direction for object-level re-construction. SAM3D can generate textured 3D meshes from a single RGB image, which reduces reliance on long-horizon tracking. On representative frames from kitchen scenes (plates, spatulas, spray bottles) and ScanNet++ ob-jects, SAM3D produced plausible geometry and textures. A natural future direction is to combine SAM3 tracking for temporal identification and keyframe selection with SAM3D for per-frame mesh reconstruction, followed by mesh registration and fusion. (a) Baseline Grounded-SAM2 (before refinement). (b) With post-hoc matching refinement (after). 
+
+Figure 9. Semantic grounding vs. ID fragmentation (Grounded-SAM2). Grounded-SAM2 provides semantic relevance but exhibits severe ID fragmentation in long egocentric videos; our post-hoc matching reduces the number of fragmented IDs but does not fully resolve failures under heavy occlusion and re-entry. 
+
+Figure 10. Temporal stability vs. over-segmentation (SAM-Track + DeAOT). While long-term memory improves ID reten-tion, the method progressively segments and tracks many irrele-vant regions in long videos, yielding an explosion in tracked ob-jects without semantic filtering. (a) Plate (input) (b) Plate (mesh) (c) Spatula (input) (d) Spatula (mesh)    
+
+> (e) Spray bottle (input) (f) Spray bottle (mesh) (g) Bottle (input) (h) Bottle (mesh)
+
+Figure 11. SAM3D single-frame reconstruction (exploratory). For each object category, we show the input image (with mask) and the generated textured mesh. While outside our main scope, these results suggest a future direction for object-level reconstruction on top of our static mapping pipeline.
