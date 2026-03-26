@@ -1,0 +1,483 @@
+Title: VideoAtlas: Navigating Long-Form Video in Logarithmic Compute
+
+URL Source: https://arxiv.org/pdf/2603.17948v1
+
+Published Time: Thu, 19 Mar 2026 01:40:15 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# ( VideoAtlas: Navigating Long-Form Video in Logarithmic Compute 
+
+# Mohamed Eltahir 1 Ali Habibullah 1* Yazan Alshoibi 1*
+
+# Lama Ayash 1,2 Tanveer Hussain 3† Naeemullah Khan 1‡ 
+
+> 1
+
+# King Abdullah University of Science and Technology (KAUST), Thuwal, Saudi Arabia  
+
+> 2
+
+# Department of Computer Science, King Khalid University (KKU), Abha, Saudi Arabia  
+
+> 3
+
+# Department of Computer Science, Edge Hill University, Ormskirk, England 
+
+# {mohamed.hamid, ali.habibullah, yazen.shaebi, lama.ayash }@kaust.edu.sa hussaint@edgehill.ac.uk, naeemullah.khan@kaust.edu.sa 
+
+# Abstract 
+
+Extending language models to video introduces two chal-lenges: representation , where existing methods rely on lossy approximations such as uniform sampling, and long-context , where caption- or agent-based pipelines collapse video into text and lose visual fidelity. To overcome this, we introduce VideoAtlas, a task-agnostic environment to rep-resent video as a hierarchical grid that is simultaneously lossless, navigable, scalable, caption- and preprocessing-free. An overview of the video is available at a glance, and any region can be recursively zoomed into, with the same visual representation used uniformly for the video, interme-diate investigations, and the agent’s memory, eliminating lossy text conversion end-to-end. This hierarchical struc-ture ensures access depth grows only logarithmically with video length. For long-context, Recursive Language Mod-els (RLMs) recently offered a powerful solution for long text, but extending them to visual domain requires a struc-tured environment to recurse into, which VideoAtlas pro-vides. VideoAtlas as a Markov Decision Process unlocks Video-RLM: a parallel Master-Worker architecture where a Master coordinates global exploration while Workers con-currently drill into assigned regions to accumulate lossless visual evidence. We demonstrate three key findings: (1) log-arithmic compute growth with video duration, in contrast to the linear cost of baselines, further amplified by a 30-60% multimodal cache hit rate arising from the grid’s struc-tural reuse. (2) environment budgeting, where bounding the maximum exploration depth provides a principled compute-accuracy hyperparameter. (3) emergent adaptive compute allocation that scales with question granularity. When scal-ing from 1-hour to 10-hour benchmarks, Video-RLM re-mains the most duration-robust method with minimal ac-curacy degradation while baselines degrade significantly, demonstrating that structured environment navigation is a viable and scalable paradigm for video understanding.         
+
+> *Equal Contribution
+> †Corresponding Author
+> ‡Principal Investigator (PI)
+> §Code: github.com/mohammad2012191/VideoAtlas 1m 10m 1h 3h 5h 10h
+> Video Duration (log scale)
+> 0
+> 200
+> 400
+> 600
+> 800
+> 1000
+> 1200
+> 1400
+> 1600
+> Average Tokens per Video (K)
+> 68K
+> 85K 96K 148K
+> 144K
+> 720K
+> 1.4M
+> 256K
+> 9.7 ×
+> Tokens = 18 log(t) -61
+> Compute Scales Logarithmically with Video Duration
+> Caption-based (Linear Scaling, lossy)
+> Standard VLM (Uniform, lossy)
+> Video-RLM (Ours, lossless, Qwen)
+
+Figure 1. Logarithmic compute scaling with video duration. Video-RLM’s hierarchical grid grows sub-linearly ( O(log T )), re-quiring up to 9.7 × fewer tokens than linear-scaling baselines. A uniform VLM maxes out its 256K context trading off sampled frame count with resolution. 
+
+# 1. Introduction 
+
+Understanding long-form video requires locating sparse, task-relevant evidence within a massive temporal space: an hour video has 90,000 frames at 25 fps, yet the answer to a query often resides in a few seconds. When a movies editor faces the same challenge, the solution is well-established: a contact sheet (a single composite image showing sam-pled shots) to identify promising regions at a glance before zooming into only those clips. This loop of overview, iden-tify, zoom is the key to efficient visual navigation, and it is precisely what current VLMs lack. Existing approaches to long-form video understanding can be broadly categorized into four paradigms: uniform sampling, composite grids, caption-based, and agentic-based approaches. Uniform sampling [6, 20] introduces se-vere temporal sparsity, i.e., at practical budgets, frames are sampled minutes apart, resulting in short events being sys-tematically missed. Moreover, within a fixed context win-dow, increasing the number of sampled frames forces a pro-
+
+> arXiv:2603.17948v1 [cs.CV] 18 Mar 2026
+
+portional decrease in per-frame resolution, creating a fun-damental coverage-vs-fidelity tradeoff. Composite grids [5, 10] pack frames into a single representative image, improv-ing token efficiency but remaining a fixed, lossy snapshot. Caption-based and agentic approaches [17, 22, 25] rely on text as their primary reasoning medium (captioning clips, storing text summaries, or converting visual observations into language before planning). Even when these systems adaptively sample frames, their intermediate memory and decision-making operate over text, not over a structured vi-sual space. Any visual detail overlooked during transcrip-tion or abstraction cannot be recovered by subsequent rea-soning. These paradigms also face distinct scalability bot-tlenecks i.e., standard VLM pipelines [2] must decode the video, extract frames, and perform visual tokenization on CPU before any reasoning begins. For long videos, this pre-processing alone can exhaust hundreds of gigabytes of sys-tem RAM. Caption-based and agentic methods avoid this by converting video to text first, but incur a different cost: an offline captioning stage that scales linearly with video du-ration and irreversibly discards visual fidelity. While some agentic methods [22] perform this conversion online, they still rely on text as the intermediate representation, inherit-ing the same information loss. We claim that a useful video representation must be simultaneously lossless (frame-level access at any res-olution), navigable (agent-directed), scalable (no con-text ceiling), caption-free (native visual reasoning), and 
+
+preprocessing-free (no offline decoding). As detailed in Tab. 1, current approaches typically optimize for a subset of these properties at the expense of others. 
+
+VideoAtlas. We propose a task-agnostic environment that represents any video as a navigable, hierarchical K ×K
+
+image grid (Fig. 2). The root grid renders the full video as a contact sheet. By invoking E XPAND (a recursive descent action that generates a new, finer-resolution sub-grid for a selected cell) an agent achieves sub-second temporal pre-cision in O(log T ) steps, where T is the video duration in seconds. The design is uniform throughout: the video, in-termediate investigations, and the agent’s internal evidence scratchpad (a lossless multimodal memory that stores col-lected frames, subtitles, timestamps, and descriptions) are all rendered as grids. This completely eliminates caption-ing, offline preprocessing, and context-window ceilings, satisfying all properties in the aforementioned paragraph. Crucially, VideoAtlas also escapes the coverage-vs-fidelity tradeoff inherent to uniform VLMs: within a fixed context window, sampling more frames forces lower per-frame res-olution, and vice versa. VideoAtlas sidesteps this entirely (each grid image is always rendered at full resolution, and the agent zooms only where needed, never sacrificing vi-sual fidelity for temporal coverage). Structurally, the hierar-chy yields logarithmic compute growth: as video length in-creases, only a few additional depth layers are needed rather than linearly more frames. Moreover, the fixed hierarchical grid is inherently cache-friendly : root grids and overlapping sub-grids are naturally reused across exploration rounds, achieving 30-60% multimodal cache hit rates that further reduce effective GPU compute (see Appendix Sec. C.1). 
+
+From representation to reasoning. With a lossless and navigable video representation in hand, a crucial observa-tion follows: the long-video problem reduces to a long-context problem. The video is the context, and what is needed is a mechanism for agents to explore it recur-sively without compressing it. Recursive Language Models (RLMs) [23] provide exactly this mechanism for text, al-lowing agents to query arbitrarily long contexts through re-cursive subagent calls and accumulate exact symbolic vari-ables. RLMs, however, require a structured environment to recurse into. VideoAtlas is precisely that structure. We deploy Master-Worker Agents (Video-RLM ) within this environment to extend RLMs to the video domain, yielding depth-controlled compute budgeting and logarithmic cost growth. Following are our main contributions. 1. VideoAtlas. We formulate video understanding as nav-igation within a formally defined geometric environ-ment. The hierarchical grid is lossless, caption-free, preprocessing-free, and strategy-agnostic, with logarith-mic access depth, parallelizable subgrids, and a struc-tural cache-friendliness. 2. Video-RLM. A parallel Master-Worker architecture ex-tending Recursive Language Models to video. Workers explore grid subtrees concurrently and accumulate ev-idence in a lossless Visual Scratchpad, while a Master steers exploration via uncertainty analysis. 3. Configurable Traversal Strategies. Breadth-First and Depth-First instantiations plus a query-adaptive policy that selects traversal order automatically, all composable with the environment without modification. 4. Environment Budgeting. We budget the environment ,not the agent: bounding exploration depth d directly con-trols temporal resolution and compute, providing a prin-cipled compute-accuracy hyperparameter. Beyond these architectural contributions, experiments re-veal that the formulation produces emergent scaling be-haviors (adaptive compute allocation and logarithmic cost growth) that we detail in Sec. 4. 
+
+# 2. Related Work 
+
+Long-Form Video Understanding. Standard Video-Language Models process videos by uniformly sampling a fixed number of frames in a single forward pass [6, 20]. This introduces two structural problems. First, at any prac-tical budget (e.g., 64 frames in an hour), the temporal stride is ∼56 seconds per frame, so short events, fine-grained vi-sual details, and scene transitions are easily missed. Second, the context window imposes a hard ceiling: beyond a few hundred high-resolution frames, the model truncates input or degrades. One practical workaround is to pack multiple frames into a single K × K composite image (a contact-sheet grid) [5, 10], which improves token efficiency. How-ever, a single-resolution grid is still fundamentally lossy : it represents the video with a fixed sample of moments and Table 1. Comparison of long-video QA methods. “Caption-Free” = no text captions used as intermediate representation. “Lossless” = no information lost between input and reasoning. “ ∞ Context” = can handle arbitrarily long videos without context overflow. “Par-allel” = workers explore concurrently. Method Caption-Free Lossless ∞ Context Parallel VLM (Uniform) ✓ ✗ ✗ ✗                    
+
+> LLoVi [24] ✗✗✗✗
+> MR.Video [12] ✗✗✗✓
+> VideoARM [22] ✗✗✗✗
+> DVD [25] ✗✗✗✗
+> Ours ✓✓✓✓
+
+cannot recover the events in between. Grids alleviate the context-packing problem, but they do not resolve the cover-age problem. 
+
+Caption-Based Approaches. A prominent line of work avoids the frame-count limit by first transcribing the video into text captions and then reasoning over them. LLoVi [24] converts densely sampled short clips into text summaries and aggregates them with an LLM. MR.Video [12] scales this with a MapReduce design: clips are captioned in paral-lel, standardized, and then synthesized into a final answer by a reducer LLM. Video to Text conversion is standard practice, although systems that explicitly observe video frames at a coarse step immediately convert those obser-vations into text before any planning or memory update. Pang et al . [12] explicitly acknowledge that video-to-text modality transitions cause reasoning failures on scene tran-sitions and fine-grained visual details. 
+
+Agentic, Hierarchical, and Memory Approaches. An-other set of approaches treat long-video understanding as agentic search. DVD [25] constructs a multi-granular database (global summaries, clip captions/embeddings, and indexed raw frames) and queries it with tools (Global Browse, Clip Search, Frame Inspect). VideoARM [22] per-forms on-the-fly coarse-to-fine search via a set of predefined tools (e.g., captioning, temporal localization, visual QA) over a hierarchical multimodal memory, avoiding exhaus-tive preprocessing. VideoTree [18] builds a query-adaptive hierarchical representation to guide efficient exploration. On the memory side, WorldMM [21] organizes long-video memory into episodic, semantic, and visual components, re-trieved adaptively per query [8]. Despite their diversity, these systems share a common limitation: intermediate evidence is stored as captions, text summaries, or compressed embeddings, never as raw visual frames, meaning none provide lossless, navigable access to any arbitrary video moment by construction. 
+
+Long Context as the Core Challenge. Recursive Lan-guage Models (RLMs) [23] address long text contexts by letting agents access context through recursive subagent calls, storing results in lossless symbolic variables rather than compressing them into the model’s context window. The RLM insight transfers naturally to video, but only if an environment is defined in which agents can navi-gate the video visually. Existing video “environments” are built around clip databases and text-based retrieval [22, 25]. No visual, lossless, recursively navigable environment for video has been proposed. VideoAtlas fills precisely this gap. 
+
+Environment Budgeting vs. Prior Compute Adapta-tion. Chain-of-thought reasoning [19] and adaptive test-time compute allocation [15] have shown that allocating more inference compute consistently improves performance on language and reasoning tasks. In the video domain, the closest analog is VideoARM [22], which adaptively chooses how many frames N1 to sample per localized interval, a form of density adaptation that improves efficiency. How-ever, this controls sampling quantity (how many frames), not structural resolution (how fine the temporal decompo-sition is): within each interval, sampling remains uniform, and events falling between sample points can still be missed regardless of N1. MR.Video [12] offers no such control at all. Its captioning cost is fixed by video duration regard-less of the query. A fundamentally different form of bud-geting is absent from prior works: controlling the temporal resolution of the environment itself , where each depth level geometrically subdivides time, providing formal precision guarantees calibrated to video length and query granularity. We introduce exactly this form of budgeting with VideoAt-las. 
+
+What Is Missing? Tab. 1 summarizes the key properties of representative methods. In the next section, we introduce VideoAtlas, which addresses all the aforementioned gaps. 
+
+# 3. Methodology 
+
+We present our methodology in two parts. First, we in-troduce VideoAtlas (Sec. 3.1): a task-agnostic environ-ment that renders any video as a navigable, hierarchical grid with formally defined state, action, and observation spaces (Fig. 2). Second, we describe Video-RLM (Sec. 3.2): a parallel Master-Worker agent architecture that operates within VideoAtlas to answer questions about arbitrarily long videos (Fig. 3). 
+
+3.1. VideoAtlas 
+
+Hierarchical Grid. At the core of VideoAtlas is a re-cursive K × K image grid (default K=8 , yielding 64 cells). Given a video of duration T seconds, the root grid 
+
+S0 assigns each cell ci to a contiguous temporal interval 
+
+[tstart  
+
+> i
+
+, t end  
+
+> i
+
+] and displays a representative frame sampled at the interval midpoint, providing a “bird’s-eye view” of the entire video (Fig. 3). Every cell is addressable : applying EXPAND to cell ci deterministically generates a child grid 
+
+Sd+1 for that cell’s sub-interval, increasing temporal reso-lution by a factor of K2. At depth d, the temporal resolu-Figure 2. The VideoAtlas Environment . (Left) The state space is a hierarchical grid stack S0, S 1, . . . , S D , where S0 is the root grid covering the entire video of duration T . Each grid has K2 cells. Deeper levels d provide finer temporal resolution ∆td = T /K 2( d+1) .(Top Right) The discrete action space A is divided into navigation (e.g., Expand to St+1 ), perception, and commit actions. (Bottom Right) The visual scratchpad memory M+ accumulates multimodal evidence (images, timestamps, QA pairs) across exploration rounds. 
+
+tion is ∆td = T /K 2( d+1) , and reaching any frame requires at most Dmax = ⌈log K2 (T · fps) ⌉ steps, achieving sub-second precision even for 10-hour videos. Sub-grids are generated on-the-fly with no offline preprocessing. Agents interact with raw frames at every level. 
+
+Action Space. Unlike agentic methods [22] whose ac-tions perform video-processing operations (captioning, translating), VideoAtlas exposes environment-navigation 
+
+actions grouped into three categories (Fig. 2, right): 
+
+Navigation (move through the hierarchy): E XPAND (ci)
+
+descends into cell ci, generating a child grid. BACK -
+
+> TRACK
+
+() returns to the parent grid. MARK PROMIS -
+
+> ING
+
+(ci, c j , . . . ) flags cells for later exploration via a FIFO queue (BFS mode only). 
+
+Perception (sense the environment): ZOOM (ci) re-turns a full-resolution frame for cell ci. INVESTI -
+
+> GATE
+
+(ci, direction (before/after) ) generates a temporal con-text scan of the frames immediately before or after a cell, used when an anchor event is found but the answer lies in neighboring frames. 
+
+Commit (record evidence): ADD TOSCRATCH -
+
+> PAD
+
+(items ) stores evidence tuples to the scratchpad. FINISHED () declares the current region fully explored. The available action set is state-dependent: EXPAND 
+
+is removed when cell span drops below a threshold (e.g., 
+
+<1 s), B ACKTRACK is removed at the root, and BFS and DFS workers receive different action sets. The agent can-not select what it cannot see , eliminating invalid actions by construction, while deciding its own explore-exploit bal-ance from visual cues. 
+
+Memory. Positive memory (M+, Visual Scratchpad): a lossless multimodal memory that stores evidence as tuples 
+
+(Iimg , s, τ, c, d ) representing image patch, subtitle, times-tamp, confidence score, and a text description relating the evidence to the query. When presented to the VLM, M+ is rendered as a grid image with timestamps, subtitles, and in-dices burned into pixel space, enabling unambiguous cross-referencing. Negative memory (M−, Dead Zones): inter-vals explored with no relevant findings are marked as dead zones. The grid renderer enforces this visually by blacking out overlapping cells, physically preventing the VLM from hallucinating details in already-explored regions. Figure 3. Video-RLM overview. The query is converted into a search task. In each round r, the Master examines the root grid S0 (with dead zones masked) and the scratchpad M+, then assigns promising cells to Workers. Each Worker autonomously explores its assigned region via navigation, perception, and commit actions. After all Workers return, M+ and M− are updated. The Master performs an uncertainty analysis: if evidence is sufficient, the final answer is produced. Otherwise, a new round begins. 
+
+Formal Environment Definition. At any step, the envi-ronment state S comprises five components: the current temporal position p = ( center , span ), the depth d in the hi-erarchy, the positive and negative memories M+ and M−,and the navigation stack σ for backtracking. The observa-tion is the grid image rendered for the interval defined by p
+
+at depth d, together with aligned subtitle context filtered for the current temporal window. This state definition, together with the action space, for-mally defines a Markov Decision Process (MDP). The re-ward is task-defined (e.g., answer correctness for QA, tem-poral IoU for grounding) making VideoAtlas a general sub-strate for any task reducible to “find relevant moments in a video.” In this work we solve it via zero-shot VLM reason-ing, but the formal MDP opens a direct path to reinforce-ment learning. The environment exhibits four structural properties: (1) Parallelizable : the grid decomposes into in-dependent subtrees explorable concurrently. (2) Traversal-agnostic : BFS, DFS, beam search, or learned policies can govern expansion order without modifying the environ-ment. (3) Depth-controlled compute : bounding d yields a principled compute-accuracy hyperparameter. (4) Loga-rithmic overhead : as video duration grows, the hierarchy adds depth levels logarithmically, yielding O(log T ) scaling rather than O(T ). Notably, the depth parameter d interpo-lates between uniform sampling ( d=0 , equivalent to a sin-gle composite grid of K2 frames) and full recursive explo-ration ( d=Dmax ); prior uniform-sampling and composite-grid methods are thus degenerate cases of VideoAtlas with no exploration. 
+
+3.2. Video-RLM: Master-Worker Architecture 
+
+We extend Recursive Language Models [23] to videos by deploying agents in VideoAtlas. Agents access video con-text through recursive subagents (workers) and store out-puts in the Visual Scratchpad M+. Exploration proceeds in discrete rounds : in each round r, the Master assigns cells to Workers, Workers explore in parallel, and results are merged into M+ and M− before the next round begins (Fig. 3). 
+
+Search Task Extraction. Before visual exploration, a text-only step converts the raw query into a concrete search task. For example: “What treaty was signed after the Lon-don conference?” → “Find the London conference scene. Look immediately after for treaty names in text overlays or subtitles.” This search task guides all subsequent prompts. 
+
+Master Agent. The Master holds the global view: it ex-amines the root grid S0 (with dead zones masked) and the current scratchpad M+, then selects promising cells for the next round ( Global Probing ). A priority queue with Vir-tual Loss [3] ensures that cells already assigned to workers are deprioritized, preventing redundant exploration. After each round, the Master performs Uncertainty Analysis : (a) a sufficiency check, (b) temporal interpolation to suggest tar-geted search bounds from gaps between evidence anchors, and (c) dynamic memory pruning. 
+
+Worker Agents. Each worker receives one cell from the frontier and explores it autonomously. Two modes are sup-ported: Depth-First Search (DFS) mode where the worker EXPAND s deeper into the timeline with a multi-step budget, ideal for localizing specific details. Breadth-First Search (BFS) mode where the worker scans one level with a single-step budget, ideal for evidence spread across the video. The traversal queue is re-prioritized via the Master’s visual scor-ing. 
+
+Query-Adaptive Traversal. The Master selects the traversal strategy before any frames are processed by an-alyzing the query’s linguistic traits: DFS for specific detail localization, BFS for sequence or flow understanding. 
+
+Sufficiency, Stopping, and Final Decision. Exploration stops at three levels: (1) worker-level (budget exhausted or FINISHED ), (2) master-level (sufficiency check passes after round r), (3) global (total compute budget reached). Once exploration terminates, the Master synthesizes the answer from M+: it sees the actual collected evidence frames (ren-dered as a grid with burned-in labels), not text summaries, and evaluates each candidate against the visual evidence. 
+
+# 4. Experiments 
+
+4.1. Experimental Setup 
+
+Benchmarks. We evaluated VideoRLM on the long sub-sets of two benchmarks: LongVideoBench [20] (LVB, 15-60 min videos) and Video-MME [6] (VMME, without sub-titles). To stress-test scalability beyond VLM context limits, we constructed 10-hour variants by concatenating multi-ple videos from each benchmark. Each query targeted a single source video placed at a random position among dis-tractors. Subtitle tracks were merged with correct temporal offsets. This isolates the “needle in a haystack” challenge at extreme durations. For VMME, we evaluated the system 
+
+without subtitles to verify that the system genuinely under-stands visual content rather than relying on textual cues. 
+
+Model. Our primary experiments used Qwen3.5-35B-A3B [13] (35B total parameters, 3B active per forward pass) for both Master and Workers, differentiated via separate system prompts and action sets, served through vLLM [11] on 4 ×A100 80 GB GPUs. Each image in the grids used throughout the system was rendered at a unified resolu-tion of 320 × 320 pixels. We use grid size K = 8.To demonstrate VLM-agnosticism, we additionally evalu-ate with Gemini-3-Flash as the backbone (Tab. 2). 
+
+Baselines. We compared against five categories. (1) Pro-prietary Models : GPT-4o, GPT-5, Gemini-3-Flash, and Claude-Opus-4.5. (2) Open-Source VLMs InternVL3.5 241B (28B active) and GLM-4.5V-106B (12B active), uniform-sampling baselines with significantly larger active parameters than ours. (3) Caption Reliant Agentic Meth-ods : DVD [25], MR.Video [12], and VideoARM [22], re-ported from their original papers. (4) Uniform Sampling :Qwen3.5-35B-A3B with 160 uniformly sampled frames at a resolution of 320 × 320 pixels (similar to our framework) along with their temporally aligned subtitles, representing Table 2. Video QA accuracy (%) on the standard (Long) subsets. LVB: LongVideoBench. VMME: Video-MME (no subs). Method Active LVB VMME                                         
+
+> Proprietary Models
+> GPT-4o [9] Prop. 66.7 65.3 GPT-5 [14] Prop. 72.6 81.8
+> Gemini-3-Flash [16] Prop. 74.5 —Claude-Opus-4.5 [1] Prop. 67.2 77.6
+> Open-Source VLMs
+> InternVL3.5-241B [4] 28B 67.1 72.9 GLM-4.5V-106B [7] 12B 76.7 74.6
+> Caption-Reliant Agentic Methods
+> MR.Video [12] (Gemini+GPT-4o) Prop. 61.6 61.8 VideoARM [22] (Qwen3-VL-235B) 22B —54.9 VideoARM [22] (GPT-o3+GPT-4o) Prop. 76.4 81.2
+> Same-Backbone Baselines
+> Qwen3.5 (uniform, 160 fr.) 3B 61.5 63.8 LLM over Captions ⋆Prop. +3B 62.4 64.2
+> VideoAtlas (Ours)
+> Video-RLM (Qwen3.5-35B) 3B 52.5 50.4
+> Video-RLM (Gemini-3-Flash) Prop. 72.0 76.2
+> ⋆GPT-4o captions (MR.Video repo), answered by Qwen3.5-35B-A3B.
+
+the strongest single-pass baseline within our hardware bud-get. (5) LLM over Captions : following LLoVi [24], GPT-4o captions (from the MR.Video repository) are concate-nated temporally and answered by Qwen3.5-35B-A3B, iso-lating the benefit of visual exploration over textual summa-rization. 
+
+4.2. Main Results 
+
+Tab. 2 compares all methods on the standard long-video benchmarks. Tab. 3 evaluates the 10-hour extended-duration variants, alongside average token consumption per question. 
+
+Standard benchmarks. At standard durations (Tab. 2), Video-RLM (3B active parameters) achieves accuracy com-petitive with substantially larger open-source VLMs (12-28B active) and proprietary baselines. Importantly, Qwen 3.5 is video-finetuned, whereas Video-RLM assumes a purely zero-shot agent with no video-specific training, achieving these results without any intermediate text repre-sentation or captioning. The accuracy gap between zero-shot navigation and finetuned uniform sampling narrows with a stronger backbone: Video-RLM (Gemini) reaches 72.0% on LVB, within 2.5 points of Gemini-3-Flash’s di-rect performance (74.5%), confirming VideoAtlas is VLM-agnostic and performance scales with backbone capability. 
+
+Extended duration (10 hours). The 10-hour variants (Tab. 3) reveal a more significant comparison. LLM over                                   
+
+> Table 3. 10-hour variant: accuracy (%) and average tokens per question. ∆: accuracy drop from standard benchmarks (Tab. 2). Method Acc. ∆Avg. Tokens
+> LVB-10hr
+> Qwen3.5 (uniform) 49.2 -12.3 212K LLM over Captions ∗62.1 -0.3 207K ‡
+> Video-RLM (Qwen) 47.7 -4.8 146K †
+> Video-RLM (Gemini) 70.1 -1.9 307K
+> VMME-10hr (no subs)
+> Qwen3.5 (uniform) 50.6 -13.2 232K LLM over Captions ∗36.0 -28.2 235K ‡
+> Video-RLM (Qwen) 49.7 -0.7 403K †
+> Video-RLM (Gemini) 69.1 -7.1 390K
+> ∗GPT-4o captions + Qwen3.5 (exceeds 256K context in many samples). †Effective tokens after vLLM multimodal prefix cache (avg. 36-42% hit rate). ‡QA tokens only, excludes GPT-4o captioning cost.
+
+Captions collapses to 36.0% on VMME-10hr: concate-nated captions exceed Qwen’s 256K context window, forc-ing truncation and information loss, demonstrating linear captioning fails beyond context limits. Notably, captions degrade only −0.3% on LVB-10hr (where subtitle tracks are available) but −28 .2% on VMME-10hr (no subtitles), exposing a heavy reliance on textual cues rather than gen-uine visual understanding. Uniform Qwen degrades mod-erately (63.8% →50.6% VMME) as sampling becomes pro-hibitively sparse. Video-RLM maintains highly stable per-formance across durations (e.g., Qwen VMME drops only 0.7% vs uniform 13.2% and Captions 28.2%), validating that VideoAtlas buffers the agent against duration scal-ing. On VMME-10hr, the absence of subtitles forces the purely zero-shot Qwen agent into extensive visual explo-ration (403K effective tokens), while the stronger Gemini backbone zeroes in on the answer faster (390K tokens), an emergent adaptive compute property where weaker percep-tion necessitates more search steps. Crucially, the recur-sive nature of the environment is inherently cache-friendly :workers re-examine the same grid view across multiple rea-soning steps that do not change the navigation state, creat-ing repeated visual token prefixes. For self-hosted Qwen (vLLM), automatic multimodal prefix caching exploits this redundancy transparently, achieving 36-42% hit rates at 10 hours (up to 61% for shorter videos, see Appendix Sec. C1). Video-RLM (Gemini) achieves 70.1% on LVB-10hr with near-zero degradation (-1.9%) from the standard bench-mark. 
+
+Error analysis. Manual inspection of failure cases re-veals three dominant error modes: VLM perception er-rors (misreading text overlays, confusing visually similar scenes), premature sufficiency (the Master declares evi-dence sufficient despite contradictions), and text latching (anchoring on phrases in evidence that superficially match a candidate answer). All three are model-dependent, as confirmed by the substantial accuracy improvement when switching from Qwen (3B active) to Gemini-3-Flash with-out any changes to VideoAtlas. We discuss these errors in more detail in the Appendix Sec. A. 
+
+4.3. Logarithmic Compute Scaling 
+
+Fig. 1 demonstrates the fundamental efficiency advantage of hierarchical navigation using LVB-10hr. As video duration grows from 1 minute to 10 hours (a 600 × increase), Video-RLM’s compute cost increases sub-linearly: the hierarchy adds depth levels logarithmically ( ⌈log K2 (T · fps )⌉), and the sufficiency mechanism halts exploration once evidence is found. Caption-based pipelines scale linearly, where ev-ery clip must be captioned regardless of the query, requir-ing over 1.4M tokens per query at 10 hours. Video-RLM achieves comparable accuracy using only 148K effective to-kens (a 9.7 × reduction), and unlike uniform VLMs whose cost is fixed, depth can always be extended to accommodate longer videos. 
+
+4.4. Environment Budgeting and Adaptive Com-pute 
+
+Fig. 4(a) shows accuracy vs. maximum exploration depth on 30 questions sampled from LVB-10hr. Accuracy rises from 30% ( d=0 , root grid only) to 43.3% ( d=2 , 137 ms span), then plateaus at depths 3-4 where the finest resolution drops below one millisecond, well beyond any meaningful visual granularity. In practice, we set the maximum depth to the first sub-second layer, which automatically adapts to video duration (a 1-minute video reaches sub-second at 
+
+d=1 , a 10-hour video at d=2 ). Depth d is thus a princi-pled compute-accuracy hyperparameter that directly con-trols temporal resolution rather than frame quantity .Fig. 4(b) verifies that compute allocation adapts to ques-tion difficulty without explicit supervision. Grouping LVB questions by the number of ground-truth temporal positions containing answer evidence, scattered answers (3+ posi-tions) consume 40% more tokens (322K vs. 230K) than lo-calized ones. This emergent behavior arises from the inter-action between the Master’s uncertainty analysis, the suffi-ciency mechanism, and the hierarchical structure. 
+
+4.5. Worker Scaling 
+
+We vary the number of workers ∈ { 1, 3, 5, 7} on 30 ques-tions sampled from LVB-10hr (Fig. 5). After normalizing for workload differences, wall-clock time decreases from 588s (1 workers) to 257s (7 workers), a 2.25 × speedup, while accuracy remains stable (40-47%). This is a structural property of the environment: each subtree is self-contained, so adding workers improves throughput without modifying the search protocol. 
+
+# 5. Limitations 
+
+We identify four principal limitations. (1) VLM percep-tion bottleneck : the system’s perceptual ceiling is set en-tirely by the backbone VLM. Our error analysis reveals three dominant failure modes, all VLM-dependent rather 0
+
+> (9 min)
+> 1
+> (8.8s)
+> 2
+> (137ms)
+> 3
+> (2.1ms)
+> 4
+> (0.0ms)
+
+Maximum Exploration Depth ( d)
+
+20 
+
+30 
+
+40 
+
+50  
+
+> Accuracy (%)
+> First sub-second layer
+> gives the best results.
+> beyond sub-second
+> (diminishing returns)
+> 30.0%
+> 33K
+> 36.7%
+> 181K
+> 43.3%
+> 229K 36.7%
+> 293K
+> 40.0%
+> 274K
+
+(a) Environment Budgeting via Depth 
+
+> 1
+> (localized)
+> 2
+> (distributed)
+> 3+
+> (scattered)
+
+Answer Positions (ground truth) 
+
+200 
+
+225 
+
+250 
+
+275 
+
+300 
+
+325 
+
+350 
+
+> Average Total Tokens (K)
+> 230K
+> 282K
+> 322K
+
+(b) Compute Scales with Answer Spread 
+
+> Figure 4. (a) Environment budgeting: accuracy and tokens vs. max depth on subset of LVB-10hr (temporal span annotated). Green: optimal depth (first sub-second layer). (b) Adaptive compute: av-erage tokens scale with evidence spread without ground-truth su-pervision.
+
+than environment-dependent: (a) perception errors (mis-reading text overlays, confusing visually similar scenes), (b) premature sufficiency, where the Master declares ev-idence sufficient despite contradictions rather than direct-ing further exploration, and (c) text latching, where the agent over-relies on subtitle cues when available. Crucially, switching from Qwen (3B active) to Gemini-3-Flash elim-inates a substantial portion of these errors without any ar-chitectural changes (Tab. 2), confirming that performance scales directly with backbone capability and will improve as VLMs advance. (2) No-anchor exploration overhead :when the root grid S0 contains no visually obvious anchor for the query, the agent may require additional exploration rounds before finding relevant regions. The Master miti-gates this progressively, as each round’s newly collected evidence refines subsequent cell assignments. Developing methods to surface semantically relevant information into upper depth layers could substantially improve efficiency and is a promising direction for future work. (3) Evaluation 1 3 5 7
+
+Number of Workers  
+
+> 0
+> 100
+> 200
+> 300
+> 400
+> 500
+> 600
+> 700
+> Wall-Clock Time (s, normalized)
+> 43.3%
+> 588s 40.0%
+> 303s
+> 43.3%
+> 289s
+> 46.7%
+> 257s
+
+Worker Scaling Figure 5. Wall-clock time (normalized to equal workload) vs. number of workers 30 questions sampled from LVB-10hr. Ac-curacy (annotated) remains stable across all configurations. 
+
+scope : we validate on multiple-choice QA. The MDP for-mulation supports temporal grounding, summarization, and anomaly detection (only the reward signal changes. The en-vironment does not), but these remain to be demonstrated empirically. (4) Zero-shot only : we solve the MDP en-tirely via zero-shot VLM reasoning, the weakest possible agent. The discrete, finite action space makes VideoAtlas directly compatible with RL training (PPO, DQN), which would likely improve exploration efficiency, but we leave this to future work. 
+
+# 6. Conclusion 
+
+We introduced VideoAtlas, a formulation that reframed video understanding as navigation within a formally de-fined hierarchical environment, and Video-RLM, a parallel Master-Worker agent that operates within it. Three prop-erties emerged from the formulation: logarithmic compute growth with duration, principled environment budgeting via depth control, and emergent adaptive compute allocation. This environment defines the state, action, and observation spaces of a complete MDP opening a direct path from zero-shot reasoning to learned exploration policies, and from question answering to any task reducible to “find relevant moments in a video.” 
+
+# Acknowledgements 
+
+We are grateful to the KAUST Academy for its gener-ous support, and especially to Prof. Sultan Albarakati that made this work possible. For computer time, this research used Ibex managed by the Supercomputing Core Labora-tory at King Abdullah University of Science & Technology (KAUST) in Thuwal, Saudi Arabia. 
+
+# References 
+
+[1] Anthropic, A.: The claude 3 model family: Opus, sonnet, haiku. Claude-3 Model Card 1(1), 4 (2024) [2] Bai, S., Cai, Y., Chen, R., Chen, K., Chen, X., Cheng, Z., Deng, L., Ding, W., Gao, C., Ge, C., et al.: Qwen3-vl tech-nical report. arXiv preprint arXiv:2511.21631 (2025) [3] Chaslot, G.M.B., Winands, M.H., van den Herik, H.J.: Par-allel monte-carlo tree search. In: Computers and Games. Lecture Notes in Computer Science, vol. 5131, pp. 60–71. Springer, Berlin, Heidelberg (2008) [4] Chen, Z., Wu, J., Wang, W., Su, W., Chen, G., Xing, S., Zhong, M., Zhang, Q., Zhu, X., Lu, L., et al.: Internvl: Scal-ing up vision foundation models and aligning for generic visual-linguistic tasks. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 24185–24198 (2024) [5] Eltahir, M., Habibullah, A., Ayash, L., Hussain, T., Khan, N.: Vote-in-context: Turning vlms into zero-shot rank fusers. arXiv preprint arXiv:2511.01617 (2025) [6] Fu, C., Dai, Y., Luo, Y., Li, L., Ren, S., Zhang, R., Wang, Z., Zhou, C., Shen, Y., Zhang, M., et al.: Video-mme: The first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 24108–24118 (2025) [7] Glm, T., Zeng, A., Xu, B., Wang, B., Zhang, C., Yin, D., Zhang, D., Rojas, D., Feng, G., Zhao, H., et al.: Chatglm: A family of large language models from glm-130b to glm-4 all tools. arXiv preprint arXiv:2406.12793 (2024) [8] Hu, Y., Shi, W., Fu, X., Roth, D., Ostendorf, M., Zettle-moyer, L., Smith, N.A., Krishna, R.: Visual sketchpad: Sketching as a visual chain of thought for multimodal lan-guage models. Advances in Neural Information Processing Systems 37 , 139348–139379 (2024) [9] Hurst, A., Lerer, A., Goucher, A.P., Perelman, A., Ramesh, A., Clark, A., Ostrow, A., Welihinda, A., Hayes, A., Radford, A., et al.: Gpt-4o system card. arXiv preprint arXiv:2410.21276 (2024) [10] Kim, W., Choi, C., Lee, W., Rhee, W.: An image grid can be worth a video: Zero-shot video question answering using a vlm. IEEE Access 12 , 193057–193075 (2024) [11] Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C.H., Gonzalez, J.E., Zhang, H., Stoica, I.: Efficient memory management for large language model serving with page-dattention (2023), https://arxiv.org/abs/2309. 06180 
+
+[12] Pang, Z., Wang, Y.X.: Mr. video: Mapreduce as an effective principle for long video understanding. In: The Thirty-ninth Annual Conference on Neural Information Processing Sys-tems [13] Qwen Team: Qwen3.5: Towards native multimodal agents (February 2026), https://qwen.ai/blog?id= qwen3.5 
+
+[14] Singh, A., Fry, A., Perelman, A., Tart, A., Ganesh, A., El-Kishky, A., McLaughlin, A., Low, A., Ostrow, A., Anan-thram, A., et al.: Openai gpt-5 system card. arXiv preprint arXiv:2601.03267 (2025) [15] Snell, C.V., Lee, J., Xu, K., Kumar, A.: Scaling llm test-time compute optimally can be more effective than scaling parameters for reasoning. In: The Thirteenth International Conference on Learning Representations (2025) [16] Team, G., Anil, R., Borgeaud, S., Alayrac, J.B., Yu, J., Sori-cut, R., Schalkwyk, J., Dai, A.M., Hauth, A., Millican, K., et al.: Gemini: a family of highly capable multimodal mod-els. arXiv preprint arXiv:2312.11805 (2023) [17] Wang, X., Zhang, Y., Zohar, O., Yeung-Levy, S.: Videoa-gent: Long-form video understanding with large language model as agent. In: European Conference on Computer Vi-sion. pp. 58–76. Springer (2024) [18] Wang, Z., Yu, S., Stengel-Eskin, E., Yoon, J., Cheng, F., Bertasius, G., Bansal, M.: Videotree: Adaptive tree-based video representation for llm reasoning on long videos. In: Proceedings of the Computer Vision and Pattern Recogni-tion Conference. pp. 3272–3283 (2025) [19] Wei, J., Wang, X., Schuurmans, D., Bosma, M., Xia, F., Chi, E., Le, Q.V., Zhou, D., et al.: Chain-of-thought prompting elicits reasoning in large language models. Advances in neu-ral information processing systems 35 , 24824–24837 (2022) [20] Wu, H., Li, D., Chen, B., Li, J.: Longvideobench: A bench-mark for long-context interleaved video-language under-standing. Advances in Neural Information Processing Sys-tems 37 , 28828–28857 (2024) [21] Yeo, W., Kim, K., Yoon, J., Hwang, S.J.: Worldmm: Dy-namic multimodal memory agent for long video reasoning (2025), https://arxiv.org/abs/2512.02425 
+
+[22] Yin, Y., Meng, Q., Chen, M., Ding, J., Shao, Z., Yu, Z.: Videoarm: Agentic reasoning over hierarchical mem-ory for long-form video understanding. arXiv preprint arXiv:2512.12360 (2025) [23] Zhang, A.L., Kraska, T., Khattab, O.: Recursive language models. arXiv preprint arXiv:2512.24601 (2025) [24] Zhang, C., Lu, T., Islam, M.M., Wang, Z., Yu, S., Bansal, M., Bertasius, G.: A simple llm framework for long-range video question-answering. In: Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing. pp. 21715–21737 (2024) [25] Zhang, X., Jia, Z., Guo, Z., Li, J., Li, B., Li, H., Lu, Y.: Deep video discovery: Agentic search with tool use for long-form video understanding. arXiv preprint arXiv:2505.18079 (2025) Appendix 
+
+We present a complete end-to-end trace of Video-RLM answering “How many yellow cards were given in this video?” on a 25-minute FIFA World Cup Final highlight reel (90,117 frames). Figures 6 to 8 show the three stages of the pipeline. 
+
+> (a) Initial root grid (Round 0)
+
+⇓           
+
+> (b) After 8 rounds of exploration Figure 6. Navigation grid before and after exploration. (a) The Master’s initial 8 ×8 root grid provides a temporal overview of the full 25-minute video; each cell covers ∼23 s. (b) After 8 DFS rounds, explored regions are blacked out (24 of 64 cells), visually showing the coverage pattern. The system explored 4.7% of total frames.
+> Figure 7. Final evidence scratchpad. The system’s lossless vi-sual memory after 8 rounds of exploration: 51 collected frames with burned-in labels [A]-[AY], each paired with a timestamp and natural-language description. Representative entries include
+> “[D] @86.3 s: Referee shows yellow card to Marcus Thuram (Minute 18),” “[O] @371.1 s: Referee gives yellow card to Enzo Fern´ andez (39 ′),” Not all items are yellow-card events: the scratchpad also captures contextual evidence such as match score overlays, player close-ups, and celebration scenes, enabling the Master to cross-reference events against the full match timeline. This grid image is passed directly to the Master for the final deci-sion.
+
+# A. Detailed Error Analysis 
+
+We extend the error analysis from Sec. 4 with a systematic characterization of failure modes. To isolate environment failures from backbone limitations, we analyze all ques-tions where our two backbone configurations (Qwen3.5-35B-A3B, 3B active; Gemini-3-Flash) disagree under iden-tical VideoAtlas configurations. Across LongVideoBench-Long and VideoMME-Long combined, we observe 522 dis-agreement cases; the stronger backbone is correct in 423 of these (81%), confirming that the dominant failure modes are backbone-dependent rather than architectural. We identify three systematic patterns from these cases, described below. These patterns are not mutually exclusive: a single failure may exhibit more than one. 
+
+A.1. VLM Perception Errors 
+
+The agent navigates to the correct temporal region but mis-perceives the visual content. Two sub-patterns emerge. 
+
+(i) Attribute confusion. The agent correctly identifies the scene and entities but misreads fine-grained attributes like colors, materials, spatial relationships, or on-screen text. This is especially common when the question hinges on a single distinguishing visual feature (e.g., the color of a spe-cific object, the label on a chart axis). 
+
+(ii) Cross-frame inconsistency. The backbone produces contradictory descriptions of the same scene across differ-Figure 8. Exploration trace. Condensed log of the 8-round DFS exploration. The Master probes the root grid and dispatches 3 parallel Workers (W) per round to the highest-scored Cells (C). Workers use Z OOM , I NVESTIGATE , E XPAND , and B ACKTRACK to drill into their assigned regions and collect evidence via A DD TO SCRATCHPAD . After each round, the Master runs an uncertainty analysis to decide whether to continue or declare sufficiency. Evidence grows from 0 to 51 items across 8 rounds (97 VLM calls, 449K tokens), with the Master declaring F INAL DECISION after identifying 8 distinct yellow card events, which is the correct answer. ent frames, then arbitrarily selects one rather than reconcil-ing the conflict. For example, describing the same object as “purple/pink” in one frame, “white against blue” in another, and “blue” in a third. 
+
+A.2. Surface-Text Latching 
+
+A reasoning failure where the agent anchors on a phrase in the evidence/subtitle that superficially matches a candidate answer, without verifying whether the match is contextually correct. The agent’s reasoning frequently contains high-confidence language (“the evidence explicitly states . . . ,” “this directly supports candidate X”) but that confidence is built on literal pattern-matching rather than understanding. This is particularly problematic in documentary and educa-tional videos, where narrators use rhetorical phrasings that contain candidate-answer keywords without implying them as the correct answer. 
+
+A.3. Early Evidence Anchoring 
+
+The agent commits to an answer based on the first plausible evidence item it encounters, failing to integrate later evi-dence that would contradict or refine its conclusion. This failure mode interacts with the system’s sufficiency mech-anism: the Master may declare evidence “sufficient” af-ter a single supporting item, rather than verifying coverage across all candidate answers. 
+
+A.4. Impact of Backbone Quality 
+
+All three failure patterns are backbone-dependent : switch-ing to a stronger VLM under identical VideoAtlas configu-ration, prompts, and exploration budget resolves the major-ity of these errors without any architectural changes. The 4:1 to 5:1 win ratio across both benchmarks reflects this consistently. Figure 9 illustrate two representative cases. These results reinforce the main paper’s finding that VideoAtlas performance scales directly with backbone ca-pability, and suggest that the framework is well-positioned to benefit from future advances in VLM quality. 
+
+# B. Per-Category Accuracy Breakdown 
+
+LongVideoBench annotates questions along three axes: 
+
+question type , reasoning level , and topic . Tabs. 4 to 6 re-port Video-RLM (Qwen3.5, 3B active) accuracy on both LVB-Long and LVB-10hr. Several patterns emerge: (1) Sequence-type questions are hardest : SSS (Scene Sequence Summary, 21.4%) and SAA (33.3%) require ordering multiple events across the full video, demanding both broad coverage and temporal precision. (2) Perception degrades more than relation at 10 hours : L1-Perception drops 9.6 points (59.4 →49.8) vs. L2-Relation dropping 2.7 points (47.6 →44.9), suggesting that the additional temporal distance primarily harms low-level visual recognition rather than relational reasoning. (3) Life-Vlogs are consistently hardest : at 35.3% (1hr) and 26.7% (10hr), these videos feature rapid visual changes, informal framing, and minimal subtitles, stressing the VLM’s per-ception most severely.                                                                                                                                    
+
+> Table 4. Accuracy (%) by question type. Categories present only in one split are marked with –.
+> LVB-Long LVB-10hr
+> Question Type nAcc nAcc S2A 30 66.7 27 63.0 T2E 33 63.6 33 60.6 S2E 42 61.9 42 50.0 S2O 33 60.6 33 42.4 O3O 30 60.0 ––SOS 42 57.1 ––TOS 21 57.1 ––T2O 18 55.6 18 44.4 T2A 42 54.8 42 47.6 E3E 51 54.9 48 54.2 O2E 24 54.2 ––TAA 36 52.8 36 44.4 E2O 12 50.0 12 25.0 T3O 39 48.7 33 30.3 T3E 33 48.5 30 46.7 SAA 36 33.3 ––SSS 42 21.4 ––Table 5. Accuracy (%) by reasoning level.
+> LVB-Long LVB-10hr
+> Level nAcc nAcc L1 – Perception 234 59.4 207 49.8 L2 – Relation 330 47.6 147 44.9 Table 6. Accuracy (%) by topic category.
+> LVB-Long LVB-10hr
+> Topic nAcc nAcc Cooking-Recipes 42 64.3 30 56.7 Knowledge-Geography 54 63.0 45 46.7 Travel-Guides 54 61.1 30 53.3 Knowledge-STEM 75 54.7 48 52.1 Knowledge-History 69 53.6 42 54.8 Movie-Recaps 63 52.4 36 47.2 News-Programs 48 52.1 27 40.7 Knowledge-CS 51 47.1 30 40.0 Knowledge-Art 57 42.1 36 52.8 Life-Vlogs 51 35.3 30 26.7
+
+# C. Compute Breakdown 
+
+Tab. 7 decomposes the average token consumption per ques-tion into Master and Worker contributions. The Master ac-counts for a small fraction of total tokens (global probing, uncertainty analysis, final decision), while the bulk of com-pute is spent on Worker exploration. This confirms that the parallel architecture efficiently distributes work: the Master acts as a lightweight coordinator while Workers perform the heavy visual exploration. At 10 hours, Worker tokens increase by 80% (121K →219K) while Master tokens increase by only 10% Failure mode: VLM Perception Error Question: “Which direction is the narrator in red facing relative to the narrator in green?” 
+
+Correct answer: Right front (A) 
+
+Lightweight (3B) Strong Backbone 
+
+“No narrator in red appears in any frame. . . neither is wearing red or green.” Identified both hosts by name from on-screen graph-ics across 5 evidence items. Concluded entity does not exist. Reasoned through spatial geometry of desk layout. 
+
+✗ Impossible to determine ✓ Right front 
+
+Failure mode: Surface-Text Latching Question: “What is the primary reason for the appearance of giraffe images on the rocks?” 
+
+Correct answer: Climate change (C) 
+
+Lightweight (3B) Strong Backbone 
+
+“Items [A], [J], [L] explicitly state the narration at-tributes giraffe images to ‘the creativity of the an-cients.’ ” Synthesized items [M]–[O] showing whale skeletons and large animal remains in desert dunes. Matched rhetorical phrase to option B. Linked all evidence to a dramatic past climate shift. 
+
+✗ Creativity of the ancients ✓ Climate change 
+
+Figure 9. Representative backbone failure cases. Top: Perception error: the lightweight backbone cannot perceive a clearly visible host wearing red and concludes the entity does not exist; the stronger backbone identifies both hosts and reasons about their spatial relationship. 
+
+Bottom: Surface-text latching: the lightweight backbone matches a rhetorical narrator phrase to a candidate answer with high confidence; the stronger backbone synthesizes broader evidence to identify the underlying scientific explanation. Both runs use identical VideoAtlas configurations. Table 7. Average per-question compute breakdown for Video-RLM (Qwen3.5, 3B active). Avg. Tokens Suff. Expl. Evid. Benchmark Master Worker Total Checks Rounds Items LVB-Long 28K 121K 149K 1.8 2.0 6.2 LVB-10hr 30K 219K 250K 1.9 2.3 7.2 
+
+(27.5K →30.4K), confirming that the Master’s coordination overhead scales minimally with video duration. The addi-tional Worker cost reflects deeper exploration (2.3 vs. 2.0 rounds) needed to locate evidence in a 10 × longer video, yet the increase is far sub-linear relative to the 10 × dura-tion increase, consistent with the logarithmic scaling prop-erty described in Sec. 4.3. Evidence items increase mod-estly (6.2 →7.2), suggesting the system explores more but collects evidence at a similar density. 
+
+C.1. Multimodal Token Efficiency 
+
+During DFS exploration, each worker re-examines the same grid view across multiple reasoning steps (e.g., ADD TO SCRATCHPAD steps that do not change the nav-igation state), creating inherent redundancy in visual to-ken processing. For Qwen (self-hosted via vLLM) , this is handled transparently: vLLM’s automatic multimodal pre-fix caching detects repeated image token prefixes across re-quests and serves KV cache hits without any code changes. Tab. 8 reports the measured hit rates across video durations. 
+
+Table 8. vLLM multimodal prefix cache hit rates for Qwen3.5 across video durations. Duration Avg. Hit Rate (%) Std. (%) 
+
+LongVideoBench 
+
+1 min 60.9 7.0 10 min 48.2 7.1 1 hr 42.7 7.5 3 hr 50.7 12.4 5 hr 48.9 11.2 10 hr 41.6 8.8 
+
+Video-MME (no subs) 
+
+10 hr 35.5 8.9 
+
+# D. Prompt Templates 
+
+We include the complete prompt templates used by VideoAtlas. All prompts are zero-shot (no in-context exam-ples). The same templates are used across all benchmarks and video durations without modification. 
+
+D.1. Search Task Extraction 
+
+A text-only call that converts the raw query and answer can-didates into a concrete visual search task. 
+
+Convert this question + choices into a concrete SEARCH TASK for exploring a video. Question: "{query}" Choices: {candidates} Describe EXACTLY what to look for visually. Be specific about scenes, objects, text overlays, or transitions that would confirm each choice. Output only the search task, no preamble. 
+
+D.2. Master: Global Probing 
+
+The Master examines the root grid (with dead zones blacked out) and ranks the top-N cells for worker assignment. 
+
+You are analyzing a KxK grid of frames sampled from a SINGLE video in chronological order (left-to-right, top-to-bottom). **QUERY:** "{query}" **GRID CELLS:** {context_str} Pick EXACTLY {top_n} cells (no more, no fewer) most likely to help answer the query. **OUTPUT (raw JSON, EXACTLY {top_n} entries):** {"top": [{"id": <cell_id>}, ...]} 
+
+D.3. Master: Uncertainty Analysis 
+
+After each round with new evidence, the Master performs three tasks in one call: sufficiency check, explore sugges-tions, and noise erasure. 
+
+**UNCERTAINTY ANALYSIS** You are the MASTER coordinator analyzing search progress for a video question. **QUERY:** "{query}" **ANSWER CHOICES:** {candidates} **EVIDENCE COLLECTED SO FAR:** {evidence_text} **EXPLORATION PROGRESS:** {progress_text} **NAVIGATION GRID (blacked-out = explored):** {context_str} **YOUR 3 TASKS (do all in one response):** 1. **UNCERTAINTY CHECK:** For each answer choice, do you have sufficient evidence? 2. **EXPLORE SUGGESTIONS:** Suggest up to {N} regions. ONLY suggest non-blacked-out cells. - Cell IDs from the grid - Custom time ranges {"start","end"} (<60s) 3. **ERASE NOISE:** ONLY erase evidence completely unrelated to query, task, and ALL choices. Keep partial evidence. When in doubt, keep it. **If sufficient:** {"action": "FINAL_DECISION",...} **Otherwise:** {"action": "CONTINUE", "reasoning": "...", "explore": [...], "erase": [...]} 
+
+D.4. Worker: Exploration Step 
+
+Each worker receives a grid view of its assigned region and the available tool set. The prompt includes a 1-sentence summary of the previous step’s outcome (conversation his-tory). 
+
+SEARCH TASK: "{search_task}" QUERY: "{query}" You are exploring [{start}-{end}s] ({pct}% through a {duration}s video, depth {d}). Grid: {K}x{K}, chronological L-to-R, T-to-B. **CELLS:** {context_str} **PREVIOUS:** {prev_summary} **RULES:** - EXPAND into promising cells to zoom in - Use ZOOM only when you found a relevant scene and need a closer high-resolution look - Use INVESTIGATE only when you found the anchor scene and need to check what happens before/after - ADD_TO_SCRATCHPAD with timestamp, description, and confidence when you find evidence - FINISHED when region has no relevant content Pick ONE action. Be precise with timestamps. 
+
+D.5. Master: Final Decision 
+
+After exploration terminates, the Master sees the evidence scratchpad grid and evaluates each candidate. 
+
+You are making a FINAL DECISION based on all collected visual evidence. QUERY: "{query}" ANSWER CHOICES: {candidates} EVIDENCE (see grid image with burned-in labels): {evidence_descriptions} For EACH choice: state which evidence supports or contradicts it. Then select the best-supported answer. **OUTPUT:** {"answer": <choice index>, "reasoning": "..."}

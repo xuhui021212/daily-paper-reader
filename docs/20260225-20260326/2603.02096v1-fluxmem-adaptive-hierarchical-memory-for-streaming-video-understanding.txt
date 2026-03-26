@@ -1,0 +1,368 @@
+Title: FluxMem: Adaptive Hierarchical Memory for Streaming Video Understanding
+
+URL Source: https://arxiv.org/pdf/2603.02096v1
+
+Published Time: Tue, 03 Mar 2026 04:08:26 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# FluxMem: Adaptive Hierarchical Memory for Streaming Video Understanding 
+
+## Yiweng Xie 1,2,3, Bo He 4, Junke Wang 1,3, Xiangyu Zheng 1,3, Ziyi Ye 1,3†, Zuxuan Wu 1,2,3†
+
+> 1
+
+## Institute of Trustworthy Embodied AI, Fudan University, 2Shanghai Innovation Institute 
+
+> 3
+
+## Shanghai Key Laboratory of Multimodal Embodied AI, 4University of Maryland, College Park 
+
+Figure 1. FluxMem is an adaptive hierarchical memory framework to progressively reduce visual tokens for efficient streaming video understanding. Bottom left: GPU memory usage vs. video frame length for FluxMem and other methods during inference. 
+
+## Abstract 
+
+This paper presents FluxMem , a training-free framework for efficient streaming video understanding. FluxMem adaptively compresses redundant visual memory through a hierarchical, two-stage design: (1) a Temporal Adjacency Selection (TAS) module removes redundant visual tokens across adjacent frames, and (2) a Spatial Domain Con-solidation (SDC) module further merges spatially repeti-tive regions within each frame into compact representa-tions. To adapt effectively to dynamic scenes, we intro-duce a self-adaptive token compression mechanism in both TAS and SDC, which automatically determines the com-pression rate based on intrinsic scene statistics rather than manual tuning. Extensive experiments demonstrate that FluxMem achieves new state-of-the-art results on exist-ing online video benchmarks, reaching 76.4 on Stream-ingBench and 67.2 on OVO-Bench under real-time set-tings, while reducing latency by 69.9% and peak GPU memory by 34.5% on OVO-Bench. Furthermore, it main-tains strong offline performance, achieving 73.1 on MLVU while using 65% fewer visual tokens. Code is available at https://github.com/YiwengXie/FluxMem. 
+
+> †Corresponding author.
+
+## 1. Introduction 
+
+Recently, Multimodal Large Language Models (MLLMs) have achieved significant success in offline video under-standing [1, 3, 17, 24, 25, 33, 48, 53]. However, real-world applications such as robotic manipulation [28], autonomous driving [6], and smart glasses [23] demand real-time pro-cessing of streaming visual inputs. This poses a criti-cal challenge in effectively memorizing long-term temporal context and producing causal responses to user queries in an online manner [11, 31, 47, 50, 58, 59, 61–63, 65]. To process continuous visual streams in real-time, ex-isting research has primarily focused on three directions: reducing visual tokens prior to the LLM [62, 63], manag-ing the KV cache during the prefill stage [11, 31, 61], and employing text query-guided filtering [7, 37, 62]. Among these, token compression emerges as a more promising ap-proach due to two advantages: (1) unlike KV cache man-agement, it performs deduplication before tokens enter the LLM, offering greater flexibility; (2) unlike query-guided methods, it decouples textual and visual information, en-abling the model to dynamically process the visual stream prior to query arrival. However, existing token compression methods such as TimeChat-Online [62] apply a single prun-ing/merging policy across the stream, overlooking the time-1
+
+> arXiv:2603.02096v1 [cs.CV] 2 Mar 2026
+
+dependent utility of memory in streaming video. Recent frames require dense preservation for grounding, while dis-tant history tolerates stronger compression. A global policy thus tends to under-prune long-term context and over-prune short-term details critical for causal reasoning. To address this gap, we introduce FluxMem , a training-free framework with an efficient adaptive visual memory design for streaming video understanding. FluxMem seg-ments the visual context into three levels of memory: short-term, mid-term, and long-term, based on their temporal ad-jacency to the query moment. Accordingly, we propose a progressive visual token reduction strategy based on the hi-erarchical memory structure: 1) Short-term Memory: all vi-sual information is retained to preserve the immediate per-ceptual grounding for the current query; 2) Mid-term Mem-ory: Temporal Adjacency Selection ( TAS ) is applied to re-duce temporal redundancy by comparing adjacent frames and removing spatially aligned tokens; 3) Long-term Mem-ory: spatial redundancy within each frame is further re-duced by grouping neighboring regions into representative anchors and removing repetitive tokens via Spatial Domain Consolidation ( SDC ). Unlike previous approaches [4, 42, 58, 62] that rely on manually tuned ratios for token reten-tion or similarity-based thresholds, we derive frame-wise adaptive thresholds based on Otsu’s method [34] for token reduction in the mid- and long-term memory. This adap-tive design eliminates manual hyperparameter tuning and ensures robust performance across diverse scene dynamics. We validate the effectiveness of FluxMem on five video understanding benchmarks across both online and offline tasks. The results demonstrate that FluxMem achieves new state-of-the-art or highly competitive performance across diverse settings. For example, it achieves 53.3 on OVO-Bench [32] and 76.4 on StreamingBench [27] for streaming tasks, and 65.3 on VideoMME [14], 73.1 on MLVU [68], and 61.1 on LongVideoBench [57] for offline evaluation. These results suggest that a single training-free memory framework can consistently improve online and offline video understanding with high efficiency and robustness. In summary, our main contributions are as follows: • We introduce a novel training-free hierarchical memory with two lightweight adaptive modules, which equips MLLMs with coherent short- and long-term video mod-eling for both online and offline settings. • Our approach achieves state-of-the-art performance on various video tasks in both online and offline settings while discarding 60–70% of visual tokens and reducing latency and GPU memory usage. • We demonstrate that an adaptive token reduction thresh-old, based on video-specific information density, outper-forms fixed-rule methods. This adaptive capability is na-tively supported by TAS and SDC .
+
+## 2. Related Work 
+
+2.1. Multimodal Large Language Models 
+
+Recent advances in Multimodal Large Language Models (MLLMs) [25, 51] have broadened their application to video understanding. Typically, these models comprise a visual encoder for extracting frame-level representations, a modality projector to map visual features into the language space, and a Large Language Model (LLM) to generate con-textual responses [3, 25, 29, 44, 55, 64, 67]. While these models achieve strong results on standard video bench-marks, they are inherently designed for static, offline set-tings where the input is the pre-loaded full video rather than a continuous stream. As a result, they fail to adapt to dy-namic, real-world scenarios where video frames are pro-cessed sequentially and require real-time, temporally coher-ent, or even proactive responses [20, 27, 32]. 
+
+2.2. Streaming Video Understanding 
+
+In contrast to its offline counterpart, streaming video un-derstanding requires models to sequentially process in-coming video and generate real-time responses as user queries arrive [20, 27, 32, 35]. In real-world scenarios such as robotic manipulation [28] and autonomous driv-ing [6], models must efficiently manage historical informa-tion while focusing on the present context to produce timely and accurate reactions. To address these challenges, re-cent research has proposed several distinct approaches [11– 13, 30, 31, 47, 52, 59, 61, 65]. One line of research con-centrates on memory design, which optimizes the storage and retrieval of historical information to alleviate the la-tency and GPU memory bottlenecks induced by large vol-umes of visual tokens [31, 61, 65]. A second strategy de-velops efficient visual token representations, compressing redundant information to improve computational efficiency without compromising semantic fidelity [4, 62]. A third approach introduces additional lightweight MLLMs to en-able conventional offline models to proactively respond in streaming settings, effectively transforming them into on-line models [22, 47]. 
+
+2.3. Visual Token Reduction 
+
+Among the numerous visual tokens in MLLM-based video understanding, only a small fraction carries essential se-mantics, while large portions correspond to repetitive or static regions that contribute little to the overall meaning. This redundancy not only causes significant computational and memory overhead during inference but also compli-cates cross-modal alignment. To address this issue, visual token reduction is a common solution for the inherent re-dundancy in videos and the imbalance between the visual and language modalities [10, 16, 38, 40, 49]. Recent stud-ies on visual token reduction can be categorized into three 2primary directions. The first focuses on memory compres-sion or temporal redundancy modeling to aggregate long-term information and prevent the accumulation of unnec-essary historical tokens [18, 31, 61]. A second strategy is to design adaptive token merging or pruning strategies that dynamically adjust token counts across spatial and tempo-ral dimensions [4, 19, 26, 45, 56, 60]. A third approach introduces language-guided mechanisms that leverage user queries to select the most relevant visual content and effi-ciently condense visual information [11, 42]. 
+
+## 3. Method 
+
+We propose FluxMem (Fig. 2), an Adaptive Hierarchical Memory for spatiotemporal token reduction. FluxMem pro-cesses frames on the fly, retaining informative tokens and discarding redundancy in three cooperative parts. (1) a streaming hierarchical memory with short-, mid-, and long-term memory (Sec. 3.1). (2) two lightweight components, Temporal Adjacency Selection ( TAS ) and Spatial Domain Consolidation ( SDC ), to guide the dropping and compres-sion of visual tokens (Sec. 3.2). (3) a distribution-adaptive thresholding scheme that derives data-driven thresholds from visual statistics (Sec. 3.3). 
+
+3.1. Streaming Hierarchical Memory 
+
+The streaming hierarchical memory maintains three cas-caded modules to progressively compress while preserving causal consistency [2]. At timestep t, the streaming video frame Ft is encoded by a vision encoder into a set of vi-sual tokens Vt ∈ RHW ×D , where each token vt,h,w ∈ RD
+
+corresponds to spatial position (h, w ) within the frame. The memory is composed of Ms, Mm, Ml with capac-ity cs, c m, c l. Visual tokens Vt are first buffered in short-term memory. Tokens evicted from this level are tempo-rally compressed by TAS (Sec. 3.2) and stored in mid-term memory. If the token count exceeds capacity cm, the ear-liest tokens are evicted to long-term memory, where they are spatially consolidated by SDC (Sec. 3.2). When a user query arrives or a proactive response is triggered (Sec. 3.2), the tokens stored across the memory hierarchy are concate-nated while preserving their spatiotemporal structure and then provided to the LLM as visual input for response gen-eration. The streaming procedure is summarized in Algo-rithm 1. 
+
+3.2. Spatiotemporal Token Reduction 
+
+To prune visual tokens, FluxMem applies two lightweight, training-free modules: Temporal Adjacency Selection (TAS ) at the short-to-mid boundary and Spatial Domain Consolidation ( SDC ) at the mid-to-long boundary as to-kens progress forward through the memory hierarchy. Concretely, we use the cosine distance d(x, y ) = 1 −
+
+Algorithm 1 Streaming procedure of FluxMem                                                                            
+
+> Memory: Ms,Mm,Mlwith capacities cs, c m, c l
+> modules: TAS( ·),SDC( ·),ACT( ·);Threshold: γ
+> 1: while streaming frame Ftdo
+> 2: Vt←Encoder( Ft);r−
+> t←ACT( Vt);Ms.push( Vt)
+> 3: // response via query or activation trigger
+> 4: if (query Qarrives) or (taexists and r−
+> t> γ )then
+> 5: R←LLM( Ml⊕M m⊕M s, Q );ta←t
+> 6: // adaptive hierarchical memory update
+> 7: if |M s|> c sthen
+> 8: Ost← M s.pop; Imt←TAS( Ost); Mm.push( Imt)
+> 9: if |M m|> c mthen
+> 10: Omt← M m.pop; Ilt←SDC( Omt); Ml.push( Ilt)
+> 11: if |M l|> c lthen
+> 12: Ml.evict oldest
+> 13: t←t+ 1
+
+cos( x, y ) and a per-frame, Otsu’s method-derived thresh-old Θt (Sec. 3.3) [34] that allows the policy to adapt au-tomatically to scene dynamics. With the arrival of new vi-sual tokens, the hierarchy shifts from motion-centric selec-tion ( TAS ) to structure-centric consolidation ( SDC ), turn-ing short-lived dynamics into compact long-range context. 
+
+Temporal Adjacency Selection ( TAS ). When the short-term memory overflows at time t, TAS selectively retains tokens that exhibit significant semantic changes between adjacent temporal frames. Since both neighboring frames are already stored in the short-term buffer when TAS is ap-plied, the causal structure of the token stream is preserved. For each spatial location (h, w ), we compute the token score as the minimum distance within a 3×3 window across ad-jacent frames: 
+
+s− 
+
+> t,h,w
+
+= min  
+
+> (i,j )∈N 3×3(h,w )
+
+d vt,h,w , v t−1,i,j 
+
+, (1) 
+
+s+ 
+
+> t,h,w
+
+= min  
+
+> (i,j )∈N 3×3(h,w )
+
+d vt,h,w , v t+1 ,i,j 
+
+. (2) Then we compute two separate, data-driven thresholds by applying Otsu’s method (Sec. 3.3) to the distributions of backward-looking scores s− 
+
+> t,h,w
+
+and forward-looking scores 
+
+s+ 
+
+> t,h,w
+
+independently, yielding Θ− 
+
+> t
+
+and Θ+ 
+
+> t
+
+, respectively. A token (h, w ) is passed forward as the mid-term mem-ory input if it is considered novel against either the past or the future frame, i.e., if (s− 
+
+> t,h,w
+
+> Θ− 
+
+> t
+
+) ∨ (s+ 
+
+> t,h,w
+
+> Θ+ 
+
+> t
+
+).This union operation ensures that tokens are kept if they represent a significant change from the previous frame or asignificant change to the next frame. Overall, by detecting redundant tokens via comparing each token to both adjacent frames with a small spatial window, TAS is robust to local misalignment from motion or camera jitter, while highlight-ing truly changing content without requiring optical flow or 3Figure 2. Overview of FluxMem: Adaptive Hierarchical Memory. Each incoming frame is encoded into visual tokens and written to FluxMem in a cascaded short–mid–long process. On short-term memory overflow, Temporal Adjacency Selection ( TAS ) retains temporally variant tokens for mid-term memory; on mid-term memory overflow, Spatial Domain Consolidation ( SDC ) merges spatially redundant regions into compact anchors for long-term memory. The overflow process is guided by distribution-adaptive thresholds, autonomously calibrating retention strength to the video’s temporal dynamics. Notably, the similarity metric against the preceding frame, required for 
+
+> TAS , is computed upon the token’s entry into the short-term memory, enabling it to serve as a zero-overhead trigger for active LLM output.
+
+additional heads. The procedure is strictly causal, single-pass, and O(HW ) per overflow event. 
+
+Spatial Domain Consolidation ( SDC ). When the mid-term memory reaches its capacity cm, SDC consolidates locally redundant regions from an older frame by operating exclusively on the set of tokens already retained by TAS .For each retained token, we examine other retained tokens that lie within its original 3×3 spatial neighborhood and link them if their distance is ≤ Θt, which constructs a sparse, 8-connected graph defined only over this retained set. Here, 
+
+Θt is computed from the distribution of these pairwise spa-tial distances using Otsu’s method (Sec. 3.3). A union-find pass yields connected components {C t,k }k. Each compo-nent is then replaced by its single mean anchor: 
+
+at,k = 1
+
+|C t,k |
+
+X
+
+> (i,j )∈C t,k
+
+vt,i,j . (3) 
+
+At = {at,k }k is then appended to the long-term mem-ory, with the union-find operator running in near-linear time complexity. Note that this graph is inherently sparse as it is built upon a pre-filtered set of tokens rather than the uncom-pressed tokens. Replacing each locally coherent region with its barycentric anchor, SDC removes the spatial redundancy while keeping necessary information. 
+
+Proactive Response Triggering. Online video under-standing requires models to develop proactive output abil-ity [47, 54, 62]. We implement this with a zero-cost trigger by reusing TAS statistics to detect scene changes and decide when to respond. Specifically, when frame Ft enters short-term memory, TAS already computes the backward scores 
+
+s− 
+
+> t,h,w
+
+(Eq. (1)). Using these scores, we directly apply Otsu to s− 
+
+> t,h,w
+
+to obtain Θ− 
+
+> t
+
+and define: 
+
+r− 
+
+> t
+
+= 1
+
+> HW
+
+X
+
+> h,w
+
+1s− 
+
+> t,h,w
+
+> Θ−
+
+> t
+
+. (4) We declare a scene switch when r− 
+
+> t
+
+> γ . Here, γ ∈ [0 , 1] 
+
+is a tunable parameter that controls the trigger sensitivity. 
+
+3.3. Adaptive Thresholding 
+
+Both the TAS and SDC modules rely on a threshold to filter redundant tokens. A fixed, manually-tuned thresh-old would fail to account for the highly variable dynam-ics of streaming video, performing poorly in scenes with either very low or high motion. To ensure that our frame-work is robust and data-driven, we automatically compute all thresholds using Otsu’s method [34]. Otsu’s method is a classic, non-parametric, and efficient algorithm that finds an optimal threshold to partition our similarity scores into two distinct groups for keeping and dropping. It operates by ex-haustively searching for the threshold θ that maximizes the 4Table 1. Results on the real-time subtasks of OVO-Bench and StreamingBench. OVO-Bench real-time encompasses: [OCR] Optical Character Recognition; [ACR] Action Recognition; [ATR] Attribute Recognition; [STU] Spatial Understanding; [FPD] Future Prediction; [OJR] Object Recognition. StreamingBench real-time encompasses: [OP] Object Perception; [CR] Causal Reasoning; [CS] Clip Sum-marization; [ATP] Attribute Perception; [EU] Event Understanding; [TR] Text-Rich Understanding; [PR] Prospective Reasoning; [SU] Spatial Understanding; [ACP] Action Perception; [CT] Counting. Best results among open-source models are in bold and the best results among training-free methods are underlined. † indicates the reproduced results. Method Size Frames OVO-Bench real-time StreamingBench real-time OCR ACR ATR STU FPD OJR Avg. OP CR CS ATP EU TR PR SU ACP CT Avg.                                                                                                                                                                                                                                                                                                                                                                                                     
+
+> Human
+> Human ––94.0 92.6 94.8 92.7 91.1 94.0 93.2 89.5 92.0 93.6 91.5 95.7 92.5 88.0 88.8 89.7 91.3 91.5
+> Proprietary Models
+> Gemini 1.5 Pro [46] –1 fps 85.9 67.0 79.3 58.4 63.4 62.0 69.3 79.0 80.5 83.5 79.7 80.0 84.7 77.8 64.2 72.0 48.7 75.7 GPT-4o [21] –64 69.8 64.2 71.6 51.1 70.3 59.8 64.5 77.1 80.5 83.9 76.5 70.2 83.8 66.7 62.2 69.1 49.2 73.3
+> Open-source Offline MLLMs
+> LongVA [66] 7B 128 –––––––70.0 63.3 61.2 70.9 62.7 59.5 61.1 53.7 54.7 34.7 60.0 LongVU [39] 7B 1 fps 55.7 49.5 59.5 48.3 68.3 63.0 57.4 –––––––––––LLaVA-Video [67] 7B 64 69.1 58.7 68.8 49.4 74.3 59.8 63.5 –––––––––––LLaVA-OneVision [25] 7B 64/32 66.4 57.8 73.3 53.4 71.3 62.0 64.0 80.4 74.2 76.0 80.7 72.7 71.7 67.6 65.5 65.7 45.1 71.1 InternVL2 [9] 8B 64/16 67.1 60.6 63.8 46.1 68.3 56.5 60.4 68.1 60.9 69.4 77.1 67.7 62.9 59.3 53.3 55.0 56.5 63.7 Qwen2.5-VL [3] 7B 64 –––––––78.3 80.5 79.8 82.4 75.5 80.4 74.1 62.6 67.6 51.1 73.9
+> Open-source Online MLLMs (Training-Based)
+> VideoLLM-Online [5] [CVPR 2024] 8B 2 fps 8.1 23.9 12.1 14.0 45.5 21.2 20.8 39.1 40.1 34.5 31.1 46.0 32.4 31.5 34.2 42.5 27.9 36.0 Dispider [36] [CVPR 2025] 7B 1 fps 57.7 49.5 62.1 44.9 61.4 51.6 54.6 74.9 75.5 74.1 73.1 74.4 59.9 76.1 62.9 62.2 45.8 67.6 Flash-VStream [65] [ICCV 2025] 7B 1 fps 24.2 29.4 28.5 33.7 25.7 28.8 28.4 25.9 43.6 24.9 23.9 27.3 13.1 18.5 25.2 23.9 48.7 23.2 ViSpeak [15] [ICCV 2025] 7B 1 fps 75.2 58.7 71.6 51.1 74.3 66.9 66.3 79.8 88.3 83.3 81.1 76.4 75.1 70.4 65.9 77.3 34.2 74.4 TimeChat-Online [62] [ACM MM 2025] 7B 1 fps 74.5 48.6 68.1 48.3 69.3 59.8 61.4 80.8 79.7 80.8 83.3 74.8 78.8 78.7 64.2 68.8 58.0 75.3 StreamForest [63] [NeurIPS 2025] 7B 1 fps 68.5 53.2 71.6 47.8 65.4 60.9 61.2 83.1 82.8 82.7 84.3 77.5 78.2 76.9 69.1 75.6 54.4 77.3
+> Open-source Online MLLMs (Training-Free)
+> ReKV [11] [ICLR 2025] 7B 0.5 fps –––––––74.4 78.9 78.6 77.1 68.3 67.9 67.6 62.6 64.3 44.6 69.1 LiveVLM [31] [arXiv 2025] 7B 0.5 fps –––––––81.5 78.1 83.3 79.1 69.6 74.1 75.0 69.1 67.7 40.4 72.9 Qwen2.5-VL †7B 1 fps 79.2 53.2 67.2 51.7 71.3 57.1 63.3 78.3 80.5 79.8 82.4 75.5 80.4 74.1 62.6 67.6 51.1 73.9
+> FluxMem 7B 1 fps 81.2 59.6 70.7 53.4 75.2 63.0 67.2 80.2 81.1 81.4 85.3 78.0 83.8 80.6 65.9 69.6 52.1 76.4
+
+inter-class variance σ2
+
+B (θ). The optimal, data-driven thresh-old Θt at time t is thus found by: 
+
+Θt = arg max 
+
+θ
+
+h
+
+ω1(θ)ω2(θ) μ1(θ) − μ2(θ)2i
+
+. (5) where ω1(θ) and ω2(θ) represent the class probabilities, and 
+
+μ1(θ) and μ2(θ) are the class means for the two clusters partitioned by the potential threshold θ. This process finds the partition that best separates the distribution. Instead of using a fixed value, we compute the threshold 
+
+Θt at runtime based on the target distribution: for TAS ,it analyzes the distribution of temporal similarity scores (s−
+
+t,h,w and s+
+
+t,h,w ) to adaptively determine the intensity of temporal change; while for SDC , it takes into consideration the distribution of pairwise spatial distances to dynamically assess spatial adjacency relationships. This distribution-adaptive approach allows our reduction policies to automat-ically adjust their sensitivity to the input data, effectively raising the threshold in high-motion scenes and lowering the threshold in static ones without relying on learnable pa-rameters or manual calibration. 
+
+3.4. Discussion: Advantages of FluxMem 
+
+FluxMem offers four key properties critical for streaming video understanding: (i) training-free operation, (ii) strict online causality, (iii) hierarchical memory organization, and (iv) adaptive compression. 
+
+Training-free vs. Training-based. Online MLLMs, such as Flash-VStream [65], require task-specific fine-tuning, which increases deployment costs and limits model general-ity. In contrast, FluxMem addresses this limitation by oper-ating as a training-free, plug-and-play module. It leverages on-the-fly similarity statistics through its TAS and SDC 
+
+components, ensuring seamless compatibility with any pre-trained MLLM without the need for additional fine-tuning. 
+
+Online-causal vs. Offline-global. Unlike conventional of-fline systems that rely on global keyframe selection [43] or retrospective memory construction [40], FluxMem pro-cesses data in a strictly causal, hierarchical cascade. This design ensures real-time processing and long-horizon ap-plicability, making FluxMem well-suited for continuous streaming tasks where temporal causality must be main-tained throughout. 5Table 2. Results on the online video understanding benchmarks OVO-Bench and StreamingBench real-time , as well as on the offline benchmarks VideoMME (w/o sub.) , MLVU , and LongVideoBench . Here, “w/o sub.” denotes evaluation on VideoMME without subtitles. Best overall results are in bold and the best results among training-free methods are underlined. † indicates the reproduced results.                                                                                                                                                                                                                              
+
+> Method Size Frames Online Video Offline Video StreamingBench OVO-Bench VideoMME MLVU LongVideoBench Real-Time Overall Short Medium Long All M-Avg Val
+> Open-source Offline MLLMs
+> LongVA [66] 7B 128 60.0 –61.1 50.4 46.2 52.6 56.3 –LongVU [39] 7B 1 fps –48.5 –––60.6 65.4 –LLaVA-Video [67] 7B 1 fps –53.1 –––63.3 70.8 –LLaVA-OneVision [25] 7B 32 71.1 52.9 70.1 56.4 48.8 58.4 64.7 56.5 InternVL2.5 [8] 8B 64 –––––64.2 68.9 60.0 Qwen2.5-VL [3] 7B 768 73.7 ––––65.1 70.2 56.0
+> Open-source Online MLLMs (Training-Based)
+> VideoLLM-Online [5] [CVPR 2024] 8B 2 fps 36.0 –––––––Dispider [36] [CVPR 2025] 7B 1 fps 67.6 41.8 –53.7 49.7 57.2 61.7 –VideoChat-Online [20] [CVPR 2025] 4B 2 fps ––––44.9 52.8 ––Flash-VStream [65] [ICCV 2025] 7B 1 fps 23.2 33.6 72.0 61.1 50.3 61.2 ––TimeChat-Online [62] [ACM MM 2025] 7B 1 fps 75.3 47.6 ––52.4 63.3 65.4 57.7 StreamForest [63] [NeurIPS 2025] 7B 1 fps 77.3 55.6 –––61.9 69.6 –
+> Open-source Online MLLMs (Training-Free)
+> MovieChat [41] [CVPR 2024] 7B 2048 ––––33.4 38.2 ––ReKV [11] [ICLR 2025] 7B 0.5 fps 69.1 –––––68.5 –StreamChat [58] [ICLR 2025] 8B 1 fps 64.7 –––––––LiveVLM [31] [arXiv 2025] 7B 0.5/0.2 fps 72.9 –66.7 56.4 48.8 57.3 66.3 –StreamMem [61] [arXiv 2025] 7B 4.0/0.5 fps ––71.5 62.4 52.3 62.1 65.9 –Qwen2.5-VL †7B 1 fps 73.9 49.8 73.8 62.4 53.8 63.3 67.9 60.7
+> FluxMem 7B 1 fps 76.4 (+2.5) 53.3 (+3.5) 76.9 (+3.1) 65.1 (+2.7) 54.0 (+0.2) 65.3 (+2.0) 73.1 (+5.2) 61.1 (+0.4)
+
+Hierarchical vs. Monolithic memory. Most prior memory designs rely on a flat buffer or a single-stage pruning mod-ule, which can disrupt temporal coherence or spatial struc-ture. FluxMem adopts a hierarchical, cascaded scheme: 
+
+TAS preserves temporally novel tokens, while SDC con-solidates spatial redundancies at a coarser granularity. This staged organization aligns with the intrinsic spatiotempo-ral hierarchy of video data, allowing the model to preserve salient long-range dependencies while yielding compact, spatial-preserving representations during streaming. 
+
+Adaptive vs. Fixed Heuristics. Typical pruning-based methods [4, 62] rely on fixed ratios or manually tuned thresholds, which fail to adapt to dynamic scene varia-tions. In contrast, FluxMem employs per-frame Otsu-based thresholds that automatically adjust the pruning strength, ensuring effective reduction while preserving important in-formation in both static and fast-moving scenes. 
+
+## 4. Experiments 
+
+4.1. Implementation Details 
+
+In our experiments, we implement FluxMem based on Qwen2.5-VL-7B [3], since it is the current state-of-the-art video-language model. For online benchmarks, videos are sampled at 1 fps to simulate real-time input, with up to 256 visual tokens per frame and 256 frames per video. We set short-term memory length to 8 frames, mid-term memory length to 64, and assign the remaining frames to long-term memory, which can preserve long-range temporal context. For offline benchmarks, we also use 1 fps, reducing per-frame tokens to 64 and limiting the maximum sequence length to 1024 frames. We set short-, mid-, and long-term memory lengths as 8, 512, and the rest of the frames, re-spectively. This provides a balanced trade-off between ef-ficiency and the global temporal coverage. All experiments are conducted on 8 × A100 GPUs. 
+
+4.2. Benchmarks 
+
+To evaluate the effectiveness of the FluxMem, we con-duct experiments on both online and offline video un-derstanding benchmarks. For the online evaluation, we adopt OVO-Bench [32] and StreamingBench [27]. OVO-Bench evaluates timestamp-based understanding of stream-ing video, covering historical retrieval, real-time awareness, and proactive response. StreamingBench evaluates mod-els on real-time visual, omni-source, and contextual under-standing. Our analysis concentrates on the real-time sub-task. For the offline evaluation, we choose VideoMME [14], MLVU [68], and LongVideoBench [57]. VideoMME of-fers full-spectrum multimodal assessment across diverse domains and durations; MLVU targets long-video multi-task understanding with minutes- to hours-long clips; and LongVideoBench focuses on long-context referring reason-ing with extended video-language sequences. 
+
+4.3. Results on Online Video Understanding 
+
+As shown in Table 1, FluxMem achieves strong per-formance in real-time evaluation. On StreamingBench, 6(a) Memory bank compression methods ablation. (b) Mid-term memory drop curve. (c) Long-term memory drop curve. 
+
+> Figure 3. Ablation of FluxMem. (a) Method comparison across drop ratios on the MLVU dataset. (b) and (c) Comparison of our adaptive and fixed thresholds in the mid- and long-term memory banks. The cosine distance of each token is compared against these thresholds to determine whether it is kept or dropped. The shaded area presents the distribution of average per-video drop ratios for the adaptive and optimal fixed thresholds, aggregated across all videos in the MLVU benchmark.
+
+FluxMem improves the Qwen2.5-VL from 73.9 to 76.4 while compressing roughly 70% of visual tokens. On OVO-Bench, FluxMem improves real-time and overall from 63.3 to 67.2 and from 49.8 to 53.3, respectively (Table 2). No-tably, significant gains could be observed in tasks that de-mand both short-horizon cues and stable temporal con-text, such as Prospective Reasoning (+6.5) and Spatial Un-derstanding (+3.3) on StreamingBench, as well as Action Recognition (+6.4) and Object Recognition (+5.9) on OVO-Bench. We believe these improvements result from the hi-erarchical memory that preserves recent details while re-ducing temporal and spatial redundancy through TAS and 
+
+SDC jointly. Among online MLLMs, FluxMem achieves strong overall performance, surpassing LiveVLM [31] and TimeChat-Online [62]. These results highlight the ability of FluxMem to distill salient information from highly redun-dant video streams and deliver state-of-the-art online rea-soning without task-specific training. 
+
+4.4. Results on Offline Video Understanding 
+
+As shown in Table 2, FluxMem outperforms the base-line on offline video QA benchmarks, despite being de-signed for online understanding and using significantly fewer tokens. Specifically, it achieves 65.3 (vs. 63.3) on VideoMME, 73.1 (vs. 67.9) on MLVU, and 61.1 (vs. 60.7) on LongVideoBench. These results surpass all training-free and training-based methods, validating FluxMem as a highly generalizable, training-free framework that demon-strates strong efficacy on offline long-video benchmarks by excelling at salient information distillation. Experiments on VideoMME subtasks validate the efficacy of FluxMem. The model achieves significant gains in both short (from 73.8 to 76.9) and medium (from 62.4 to 65.1) contexts. More crit-                               
+
+> Table 3. Efficiency comparison between the baseline and FluxMem. “ ↓” indicates reduction vs. baseline.
+> Dataset Method Latency ↓(ms) Peak Mem ↓(GB) Perf. ↑
+> MLVU Baseline 3614 41.3 67.9 FluxMem 2014 ( ↓44 .3% )28.4 ( ↓31 .2% )73.1 OVO-Bench Baseline 2701 35.8 49.8 FluxMem 812 ( ↓69 .9% )23.5 ( ↓34 .5% )53.3
+
+ically, performance in long contexts remains stable (from 53.8 to 54.0) even under an aggressive token reduction regime approaching 90%. These results indicate that the hierarchical design integrating TAS and SDC successfully retains salient tokens while discarding redundancy, thereby enhancing global understanding. 
+
+4.5. Ablation Studies 
+
+Efficiency. Beyond accuracy, FluxMem substantially im-proves deployment efficiency. To isolate the contribution of the memory mechanism, we pre-extract frame-level visual features and measure the cost after vision encoding in Ta-ble 3. On OVO-Bench, FluxMem cuts latency by 69.9% and memory by 34.5% while improving accuracy by +3.5. On MLVU, it reduces latency and memory by 44.3% and 31.2% with +5.2 accuracy. In the online setting, the per-frame update introduces only 4.1 ms overhead in total (1.3 ms for TAS , 2.4 ms for SDC and 0.4 ms for others), pre-serving real-time efficiency. 
+
+Effect of Hierarchical Memory. To evaluate the contri-butions of short-term (S), mid-term (M), and long-term (L) memory components, we conduct ablations by selectively 7Table 4. Ablation of the memory module. “↓” denotes average token drop ratio across all benchmarks. Best results are in bold .                                                                   
+
+> Memory part MLVU VideoMME StreamingBench Score SMLVisual Tokens M-Avg w/o sub. real-time Avg.
+> ✓✗✗↓0.0% 67.8 63.3 73.9 68.3
+> ✗✓✗↓43 .2% 69.9 65.5 74.7 70.0
+> ✗✗✓↓85 .1% 70.9 62.0 75.9 69.6
+> ✓✓✗↓42 .4% 70.0 65.6 74.9 70.2
+> ✓✗✓↓83 .6% 70.9 61.9 77.0 69.9
+> ✗✓✓↓65 .6% 73.1 65.4 75.8 71.4
+> ✓✓✓↓64 .3% 73.1 65.3 76.4 71.6
+
+enabling or removing each module. The results in Table 4 yield three consistent observations: (i) Complementary ef-fects across different levels of memory. On MLVU, com-bining M and L reaches the highest accuracy of 73.1 while removing 65.6% of visual tokens, outperforming models us-ing only M or L. This indicates that TAS captures temporal variation and SDC captures spatial structure, and their roles become mutually reinforcing. (ii) Necessity of short-term memory for online perception. On real-time streaming tasks in StreamingBench, preserving the short-term memory sta-bilizes short-horizon perception. The S+L configuration at-tains an accuracy of 77.0, higher than using only S at 73.9 or only L at 75.9, showing that fine-grained short-range cues remain crucial for online understanding even when long-term memory is aggressively compressed. (iii) Balanced accuracy–efficiency trade-off. The full (S+M+L) hierarchy attains the highest overall accuracy of 71.6 with 64.3% of token reduction, remaining stable across both online and offline tasks. Using only S preserves too much redundancy, while using only L can remove subtle but important cues. 
+
+Comparison of Different Token Reduction Methods. 
+
+Figure 3(a) compares our method with different token re-duction strategies, including FIFO, Uniform, Random, and DTD [62]. All methods exhibit a similar trend: perfor-mance first improves and then gradually declines as the drop ratio increases. Within the practical 50–70% range, FluxMem consistently outperforms all counterparts, in-cluding the training-free DTD method used in TimeChat-Online [62]. Notably, FluxMem achieves an accuracy of 73.1 on MLVU at a 64% drop ratio, and still maintains 70.1 even under an aggressive 85% token drop. We believe the superior performance stems from the structured hierarchical memory built upon the TAS and SDC modules. 
+
+Analysis of Adaptive Thresholding. We compare adap-tive and fixed thresholds on MLVU [68] in Figure 3(b) and Figure 3(c). In the mid-term memory, the best fixed threshold achieves 65.5 ( ♦ in (b)) at a 29.4% drop ratio, whereas the adaptive threshold attains 65.6 ( ★ in (b)) at         
+
+> Table 5. Ablation study of FluxMem and SFT on the Qwen2.5-VL. Performance is evaluated on OVO-Bench (Overall) and Stream-ingBench (real-time). The SFT was performed on a subset of data from TimeChat-Online-139K [62] and VideoChatOnline-IT [20]. Method OVO-Bench StreamingBench Qwen2.5-VL 49.8 73.9 + FluxMem 53.3 (+3.5) 76.4 (+2.5) + FluxMem + SFT 61.4 (+11.6) 76.7 (+2.8)
+
+a substantially higher 42.8% drop ratio, indicating more efficient compression without sacrificing accuracy. In the long-term memory, the best fixed threshold reaches 65.6 ( ♦
+
+in (c)) at 63.8% compression, while the adaptive thresh-old obtains a comparable 65.4 ( ★ in (c)) at a much higher 84.5% drop ratio. Beyond this accuracy–compression trade-off, the threshold distributions further reveal distinct behav-iors across memory levels: in the mid-term memory, adap-tive thresholds form a clear multi-peak distribution that re-flects diverse inter-frame dynamics, whereas fixed thresh-olds collapse into a diffuse single mode; in the long-term memory, adaptive thresholds concentrate into a sharp sin-gle peak, suggesting a stable operating point induced by the more regular spatial redundancy and further reinforced by SDC , while fixed thresholds remain scattered. Overall, these results show that adaptive thresholding flexibly cap-tures temporal variability in mid-term memory while main-taining stable spatial reduction in long-term memory, con-sistently delivering stronger hierarchical token compression without manual tuning. 
+
+Training-free vs. SFT. As shown in Table 5, FluxMem not only improves the Qwen2.5-VL baseline under the training-free setting, but also remains competitive with su-pervised fine-tuning. Specifically, after applying SFT on a small subset of online video datasets [20, 62], the per-formance of our model is significantly improved on both OVO-Bench overall and StreamingBench real-time. 
+
+## 5. Conclusion 
+
+This paper introduces FluxMem, a training-free, plug-and-play framework that enables large multimodal models to ef-fectively and efficiently process long streaming video se-quences. FluxMem maintains a hierarchical memory with two key components: Temporal Adjacency Selection and Spatial Domain Consolidation, which mitigate spatiotem-poral redundancy while respecting causality. Experiments across both online and offline benchmarks have demon-strated that FluxMem consistently outperforms all existing training-free methods, and even surpasses training-based methods. We believe FluxMem offers valuable insights for future research on streaming video understanding. 8Acknowledgments 
+
+This work was supported by the National Natural Sci-ence Foundation of China (No.62472098) and the Sci-ence and Technology Commission of Shanghai Municipal-ity (No.24511103100). 
+
+## References 
+
+[1] Anthropic. Claude Sonnet 4.5. https : / / www . anthropic . com / news / claude - sonnet - 4 - 5 ,2025. 1 [2] Richard C. Atkinson and Richard M. Shiffrin. Human mem-ory: A proposed system and its control processes. In The Psychology of Learning and Motivation , pages 89–195. Aca-demic Press, 1968. 3 [3] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, Humen Zhong, Yuanzhi Zhu, Mingkun Yang, Zhao-hai Li, Jianqiang Wan, Pengfei Wang, Wei Ding, Zheren Fu, Yiheng Xu, Jiabo Ye, Xi Zhang, Tianbao Xie, Zesen Cheng, Hang Zhang, Zhibo Yang, Haiyang Xu, and Jun-yang Lin. Qwen2.5-vl technical report. arXiv preprint arXiv:2502.13923 , 2025. 1, 2, 5, 6 [4] Daniel Bolya, Cheng-Yang Fu, Xiaoliang Dai, Peizhao Zhang, Christoph Feichtenhofer, and Judy Hoffman. Token merging: Your ViT but faster. In ICLR , 2023. 2, 3, 6 [5] Joya Chen, Zhaoyang Lv, Shiwei Wu, Kevin Qinghong Lin, Chenan Song, Difei Gao, Jia-Wei Liu, Ziteng Gao, Dongxing Mao, and Mike Zheng Shou. Videollm-online: Online video large language model for streaming video. In CVPR , 2024. 5, 6 [6] Li Chen, Penghao Wu, Kashyap Chitta, Bernhard Jaeger, An-dreas Geiger, and Hongyang Li. End-to-end autonomous driving: Challenges and frontiers. IEEE Transactions on Pat-tern Analysis and Machine Intelligence , 2024. 1, 2 [7] Liang Chen, Haozhe Zhao, Tianyu Liu, Shuai Bai, Junyang Lin, Chang Zhou, and Baobao Chang. An image is worth 1/2 tokens after layer 2: Plug-and-play inference acceleration for large vision-language models. In ECCV , pages 19–35. Springer, 2024. 1 [8] Zhe Chen, Weiyun Wang, Yue Cao, Yangzhou Liu, Zhang-wei Gao, Erfei Cui, Jinguo Zhu, Shenglong Ye, Hao Tian, Zhaoyang Liu, et al. Expanding performance boundaries of open-source multimodal models with model, data, and test-time scaling. arXiv preprint arXiv:2412.05271 , 2024. 6 [9] Zhe Chen, Weiyun Wang, Hao Tian, Shenglong Ye, Zhang-wei Gao, Erfei Cui, Wenwen Tong, Kongzhi Hu, Jiapeng Luo, Zheng Ma, et al. How far are we to gpt-4v? closing the gap to commercial multimodal models with open-source suites. Science China Information Sciences , 67(12):220101, 2024. 5 [10] Chuanqi Cheng, Jian Guan, Wei Wu, and Rui Yan. Scaling video-language models to 10k frames via hierarchical differ-ential distillation. ICML , 2025. 2 [11] Shangzhe Di, Zhelun Yu, Guanghao Zhang, Haoyuan Li, Hao Cheng, Bolin Li, Wanggui He, Fangxun Shu, Hao Jiang, et al. Streaming video question-answering with in-context video kv-cache retrieval. In ICLR , 2025. 1, 2, 3, 5, 6 [12] Xin Ding, Hao Wu, Yifan Yang, Shiqi Jiang, Donglin Bai, Zhibo Chen, and Ting Cao. Streammind: Unlocking full frame rate streaming video dialogue through event-gated cognition. ICCV , 2025. [13] Saul Jos´ e Rodrigues dos Santos, Ant´ onio Farinhas, Daniel C McNamee, and Andr´ e FT Martins. ∞-video: A training-free approach to long video understanding via continuous-time memory consolidation. ICML , 2025. 2 [14] Chaoyou Fu, Yuhan Dai, Yongdong Luo, Lei Li, Shuhuai Ren, Renrui Zhang, Zihan Wang, Chenyu Zhou, Yunhang Shen, Mengdan Zhang, et al. Video-mme: The first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis. In CVPR , 2025. 2, 6 [15] Shenghao Fu, Qize Yang, Yuan-Ming Li, Yi-Xing Peng, Kun-Yu Lin, Xihan Wei, Jian-Fang Hu, Xiaohua Xie, and Wei-Shi Zheng. Vispeak: Visual instruction feedback in streaming videos. ICCV , 2025. 5 [16] Tianyu Fu, Tengxuan Liu, Qinghao Han, Guohao Dai, Shen-gen Yan, Huazhong Yang, Xuefei Ning, and Yu Wang. Framefusion: Combining similarity and importance for video token reduction on large visual language models. 
+
+ICCV , 2025. 2 [17] Google DeepMind. Gemini 2.5 Pro. https : / / deepmind.google/models/gemini/pro/ , 2025. 1 [18] Bo He, Hengduo Li, Young Kyun Jang, Menglin Jia, Xuefei Cao, Ashish Shah, Abhinav Shrivastava, and Ser-Nam Lim. Ma-lmm: Memory-augmented large multimodal model for long-term video understanding. CVPR , 2024. 3 [19] Xiaohu Huang, Hao Zhou, and Kai Han. Prunevid: Visual token pruning for efficient video large language models. In 
+
+ACL , 2025. 3 [20] Zhenpeng Huang, Xinhao Li, Jiaqi Li, Jing Wang, Xiangyu Zeng, Cheng Liang, Tao Wu, Xi Chen, Liang Li, and Limin Wang. Online video understanding: Ovbench and videochat-online. In CVPR , pages 3328–3338, 2025. 2, 6, 8 [21] Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perel-man, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Weli-hinda, Alan Hayes, Alec Radford, et al. Gpt-4o system card. 
+
+arXiv:2410.21276 , 2024. 5 [22] Peng Jin, Ryuichi Takanobu, Caiwan Zhang, Xiaochun Cao, and Li Yuan. Chat-univi: Unified visual representation em-powers large language models with image and video under-standing. CVPR , 2024. 2 [23] Lik-Hang Lee and Pan Hui. Interaction methods for smart glasses: A survey. IEEE access , 6:28712–28732, 2018. 1 [24] Jie Lei, Linjie Li, Luowei Zhou, Zhe Gan, Tamara L Berg, Mohit Bansal, and Jingjing Liu. Less is more: Clipbert for video-and-language learning via sparse sampling. In CVPR ,2021. 1 [25] Bo Li, Yuanhan Zhang, Dong Guo, Renrui Zhang, Feng Li, Hao Zhang, Kaichen Zhang, Peiyuan Zhang, Yanwei Li, Zi-wei Liu, et al. Llava-onevision: Easy visual task transfer. 
+
+arXiv preprint arXiv:2408.03326 , 2024. 1, 2, 5, 6 [26] Yanwei Li, Chengyao Wang, and Jiaya Jia. Llama-vid: An image is worth 2 tokens in large language models. In ECCV ,pages 323–340. Springer, 2024. 3 
+
+9[27] Junming Lin, Zheng Fang, Chi Chen, Zihao Wan, Fuwen Luo, Peng Li, Yang Liu, and Maosong Sun. Streamingbench: Assessing the gap for mllms to achieve streaming video un-derstanding. arXiv preprint arXiv:2411.03628 , 2024. 2, 6 [28] Yang Liu, Weixing Chen, Yongjie Bai, Xiaodan Liang, Guanbin Li, Wen Gao, and Liang Lin. Aligning cyber space with physical world: A comprehensive survey on embodied ai. IEEE/ASME Transactions on Mechatronics , 2025. 1, 2 [29] Muhammad Maaz, Hanoona Rasheed, Salman Khan, and Fa-had Shahbaz Khan. Video-chatgpt: Towards detailed video understanding via large vision and language models. In ACL ,2024. 2 [30] Ming Nie, Dan Ding, Chunwei Wang, Yuanfan Guo, Jian-hua Han, Hang Xu, and Li Zhang. Slowfocus: Enhancing fine-grained temporal understanding in video llm. NIPS , 37: 81808–81835, 2024. 2 [31] Zhenyu Ning, Guangda Liu, Qihao Jin, Wenchao Ding, Minyi Guo, and Jieru Zhao. Livevlm: Efficient online video understanding via streaming-oriented kv cache and retrieval. 
+
+arXiv preprint arXiv:2505.15269 , 2025. 1, 2, 3, 5, 6, 7 [32] Junbo Niu, Yifei Li, Ziyang Miao, Chunjiang Ge, Yuanhang Zhou, Qihao He, Xiaoyi Dong, Haodong Duan, Shuangrui Ding, Rui Qian, et al. Ovo-bench: How far is your video-llms from real-world online video understanding? In CVPR ,pages 18902–18913, 2025. 2, 6 [33] OpenAI. GPT-5. https://openai.com/gpt- 5/ ,2025. 1 [34] Nobuyuki Otsu. A threshold selection method from gray-level histograms. IEEE Transactions on Systems, Man, and Cybernetics , 9(1):62–66, 1979. 2, 3, 4 [35] Rui Qian, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Shuan-grui Ding, Dahua Lin, and Jiaqi Wang. Streaming long video understanding with large language models. NIPS , 37: 119336–119360, 2024. 2 [36] Rui Qian, Shuangrui Ding, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Yuhang Cao, Dahua Lin, and Jiaqi Wang. Dispider: Enabling video llms with active real-time interaction via dis-entangled perception, decision, and reaction. In CVPR , 2025. 5, 6 [37] Shuhuai Ren, Linli Yao, Shicheng Li, Xu Sun, and Lu Hou. Timechat: A time-sensitive multimodal large language model for long video understanding. In CVPR , 2024. 1 [38] Kele Shao, Keda Tao, Kejia Zhang, Sicheng Feng, Mu Cai, Yuzhang Shang, Haoxuan You, Can Qin, Yang Sui, and Huan Wang. When tokens talk too much: A survey of multimodal long-context token compression across images, videos, and audios. arXiv preprint arXiv:2507.20198 , 2025. 2 [39] Xiaoqian Shen, Yunyang Xiong, Changsheng Zhao, Lemeng Wu, Jun Chen, Chenchen Zhu, Zechun Liu, Fanyi Xiao, Bal-akrishnan Varadarajan, Florian Bordes, et al. Longvu: Spa-tiotemporal adaptive compression for long video-language understanding. In ICML , 2025. 5, 6 [40] Yan Shu, Peitian Zhang, Zheng Liu, Minghao Qin, Junjie Zhou, Tiejun Huang, and Bo Zhao. Video-xl: Extra-long vision language model for hour-scale video understanding. 
+
+CVPR , 2025. 2, 5 [41] Enxin Song, Wenhao Chai, Guanhong Wang, Yucheng Zhang, Haoyang Zhou, Feiyang Wu, Haozhe Chi, Xun Guo, Tian Ye, Yanting Zhang, et al. Moviechat: From dense token to sparse memory for long video understanding. In CVPR ,2024. 6 [42] Enxin Song, Wenhao Chai, Tian Ye, Jenq-Neng Hwang, Xi Li, and Gaoang Wang. Moviechat+: Question-aware sparse memory for long video question answering. PAMI , 2025. 2, 3[43] Xi Tang, Jihao Qiu, Lingxi Xie, Yunjie Tian, Jianbin Jiao, and Qixiang Ye. Adaptive keyframe sampling for long video understanding. CVPR , 2025. 5 [44] Yunlong Tang, Jing Bi, Siting Xu, Luchuan Song, Susan Liang, Teng Wang, Daoan Zhang, Jie An, Jingyang Lin, Rongyi Zhu, et al. Video understanding with large language models: A survey. IEEE Transactions on Circuits and Sys-tems for Video Technology , 2025. 2 [45] Keda Tao, Can Qin, Haoxuan You, Yang Sui, and Huan Wang. Dycoke: Dynamic compression of tokens for fast video large language models. In CVPR , 2025. 3 [46] Gemini Team, Petko Georgiev, Ving Ian Lei, Ryan Burnell, Libin Bai, Anmol Gulati, Garrett Tanzer, Damien Vincent, Zhufeng Pan, Shibo Wang, et al. Gemini 1.5: Unlocking multimodal understanding across millions of tokens of con-text. arXiv:2403.05530 , 2024. 5 [47] Haibo Wang, Bo Feng, Zhengfeng Lai, Mingze Xu, Shiyu Li, Weifeng Ge, Afshin Dehghan, Meng Cao, and Ping Huang. Streambridge: Turning your offline video large language model into a proactive streaming assistant. NIPS , 2025. 1, 2, 4[48] Junke Wang, Dongdong Chen, Zuxuan Wu, Chong Luo, Lu-owei Zhou, Yucheng Zhao, Yujia Xie, Ce Liu, Yu-Gang Jiang, and Lu Yuan. Omnivl: One foundation model for image-language and video-language tasks. In NeurIPS ,2022. 1 [49] Junke Wang, Xitong Yang, Hengduo Li, Li Liu, Zuxuan Wu, and Yu-Gang Jiang. Efficient video transformers with spatial-temporal token selection. In ECCV , 2022. 2 [50] Junke Wang, Dongdong Chen, Chong Luo, Xiyang Dai, Lu Yuan, Zuxuan Wu, and Yu-Gang Jiang. Chatvideo: A tracklet-centric multimodal and versatile video understand-ing system. arXiv preprint arXiv:2304.14407 , 2023. 1 [51] Junke Wang, Lingchen Meng, Zejia Weng, Bo He, Zuxuan Wu, and Yu-Gang Jiang. To see is to believe: Prompting gpt-4v for better visual instruction tuning. arXiv preprint arXiv:2311.07574 , 2023. 2 [52] Junke Wang, Dongdong Chen, Chong Luo, Bo He, Lu Yuan, Zuxuan Wu, and Yu-Gang Jiang. Omnivid: A generative framework for universal video understanding. In CVPR ,2024. 2 [53] Weiyun Wang, Zhangwei Gao, Lixin Gu, Hengjun Pu, Long Cui, Xingguang Wei, Zhaoyang Liu, Linglin Jing, Sheng-long Ye, Jie Shao, Zhaokai Wang, Zhe Chen, Hongjie Zhang, Ganlin Yang, Haomin Wang, Qi Wei, Jinhui Yin, Wenhao Li, Erfei Cui, Guanzhou Chen, Zichen Ding, Changyao Tian, Zhenyu Wu, Jingjing Xie, Zehao Li, Bowen Yang, Yuchen Duan, Xuehui Wang, Zhi Hou, Haoran Hao, Tianyi Zhang, Songze Li, Xiangyu Zhao, Haodong Duan, Nianchen Deng, Bin Fu, Yinan He, Yi Wang, Conghui He, Botian Shi, Jun-jun He, Yingtong Xiong, Han Lv, Lijun Wu, Wenqi Shao, 
+
+10 Kaipeng Zhang, Huipeng Deng, Biqing Qi, Jiaye Ge, Qipeng Guo, Wenwei Zhang, Songyang Zhang, Maosong Cao, Jun-yao Lin, Kexian Tang, Jianfei Gao, Haian Huang, Yuzhe Gu, Chengqi Lyu, Huanze Tang, Rui Wang, Haijun Lv, Wanli Ouyang, Limin Wang, Min Dou, Xizhou Zhu, Tong Lu, Dahua Lin, Jifeng Dai, Weijie Su, Bowen Zhou, Kai Chen, Yu Qiao, Wenhai Wang, and Gen Luo. Internvl3.5: Advanc-ing open-source multimodal models in versatility, reasoning, and efficiency. arXiv preprint arXiv:2508.18265 , 2025. 1 [54] Yueqian Wang, Xiaojun Meng, Yuxuan Wang, Jianxin Liang, Jiansheng Wei, Huishuai Zhang, and Dongyan Zhao. Videollm knows when to speak: Enhancing time-sensitive video comprehension with video-text duet interaction for-mat, 2024. 4 [55] Yi Wang, Xinhao Li, Ziang Yan, Yinan He, Jiashuo Yu, Xi-angyu Zeng, Chenting Wang, Changlian Ma, Haian Huang, Jianfei Gao, Min Dou, Kai Chen, Wenhai Wang, Yu Qiao, Yali Wang, and Limin Wang. Internvideo2.5: Empower-ing video mllms with long and rich context modeling. arXiv preprint arXiv:2501.12386 , 2025. 2 [56] Yuetian Weng, Mingfei Han, Haoyu He, Xiaojun Chang, and Bohan Zhuang. Longvlm: Efficient long video understand-ing via large language models. In ECCV , pages 453–470. Springer, 2024. 3 [57] Haoning Wu, Dongxu Li, Bei Chen, and Junnan Li. Longvideobench: A benchmark for long-context interleaved video-language understanding. NeurIPS , 2024. 2, 6 [58] Haomiao Xiong, Zongxin Yang, Jiazuo Yu, Yunzhi Zhuge, Lu Zhang, Jiawen Zhu, and Huchuan Lu. Streaming video understanding and multi-round interaction with memory-enhanced knowledge. In ICLR , 2025. 1, 2, 6 [59] Ruyi Xu, Guangxuan Xiao, Yukang Chen, Liuning He, Kelly Peng, Yao Lu, and Song Han. Streamingvlm: Real-time understanding for infinite video streams. arXiv preprint arXiv:2510.09608 , 2025. 1, 2 [60] Senqiao Yang, Yukang Chen, Zhuotao Tian, Chengyao Wang, Jingyao Li, Bei Yu, and Jiaya Jia. Visionzip: Longer is better but not necessary in vision language models. In 
+
+CVPR , 2025. 3 [61] Yanlai Yang, Zhuokai Zhao, Satya Narayan Shukla, Aashu Singh, Shlok Kumar Mishra, Lizhu Zhang, and Mengye Ren. Streammem: Query-agnostic kv cache memory for stream-ing video understanding. arXiv preprint arXiv:2508.15717 ,2025. 1, 2, 3, 6 [62] Linli Yao, Yicheng Li, Yuancheng Wei, Lei Li, Shuhuai Ren, Yuanxin Liu, Kun Ouyang, Lean Wang, Shicheng Li, Sida Li, et al. Timechat-online: 80% visual tokens are naturally redundant in streaming videos. In ACM MM , 2025. 1, 2, 4, 5, 6, 7, 8 [63] Xiangyu Zeng, Kefan Qiu, Qingyu Zhang, Xinhao Li, Jing Wang, Jiaxin Li, Ziang Yan, Kun Tian, Meng Tian, Xinhai Zhao, et al. Streamforest: Efficient online video understand-ing with persistent event memory. NIPS , 2025. 1, 5, 6 [64] Hang Zhang, Xin Li, and Lidong Bing. Video-llama: An instruction-tuned audio-visual language model for video un-derstanding. EMNLP , 2023. 2 [65] Haoji Zhang, Yiqin Wang, Yansong Tang, Yong Liu, Jiashi Feng, Jifeng Dai, and Xiaojie Jin. Flash-vstream: Memory-based real-time understanding for long video streams. In 
+
+ICCV , 2025. 1, 2, 5, 6 [66] Peiyuan Zhang, Kaichen Zhang, Bo Li, Guangtao Zeng, Jingkang Yang, Yuanhan Zhang, Ziyue Wang, Haoran Tan, Chunyuan Li, and Ziwei Liu. Long context transfer from language to vision. arXiv preprint arXiv:2406.16852 , 2024. 5, 6 [67] Yuanhan Zhang, Jinming Wu, Wei Li, Bo Li, Zejun Ma, Zi-wei Liu, and Chunyuan Li. Llava-video: Video instruction tuning with synthetic data. arXiv preprint arXiv:2410.02713 ,2024. 2, 5, 6 [68] Junjie Zhou, Yan Shu, Bo Zhao, Boya Wu, Zhengyang Liang, Shitao Xiao, Minghao Qin, Xi Yang, Yongping Xiong, Bo Zhang, Tiejun Huang, and Zheng Liu. Mlvu: Benchmarking multi-task long video understanding. In 
+
+CVPR , 2025. 2, 6, 8 
+
+11

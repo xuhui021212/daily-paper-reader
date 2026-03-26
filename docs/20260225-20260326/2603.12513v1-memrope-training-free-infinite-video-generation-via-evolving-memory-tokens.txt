@@ -1,0 +1,910 @@
+Title: MemRoPE: Training-Free Infinite Video Generation via Evolving Memory Tokens
+
+URL Source: https://arxiv.org/pdf/2603.12513v1
+
+Published Time: Mon, 16 Mar 2026 00:16:53 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# MemRoPE: Training-Free Infinite Video Generation via Evolving Memory Tokens 
+
+## Youngrae Kim ∗ Qixin Hu ∗ C.-C. Jay Kuo Peter A. Beerel University of Southern California 
+
+Project Page: https://memrope.github.io 5min 10min 15min 20min 25min 30min 
+
+35min 40min 45min 50min 55min 1hour 
+
+> Prompt: A stylish woman walks down a bustling Tokyo street filled with warm glowing neon…
+
+Figure 1. Training-free unbounded video generation. Our MemRoPE requires no additional training and enables unlimited generation 
+
+with a fixed-size KV cache. We demonstrate a continuous one-hour generation process that perfectly preserves both subject identity and visual fidelity throughout. 
+
+## Abstract 
+
+Autoregressive diffusion enables real-time frame stream-ing, yet existing sliding-window caches discard past con-text, causing fidelity degradation, identity drift, and motion stagnation over long horizons. Current approaches pre-serve a fixed set of early tokens as attention sinks, but this static anchor cannot reflect the evolving content of a grow-ing video. We introduce MemRoPE, a training-free frame-work with two co-designed components. Memory Tokens continuously compress all past keys into dual long-term and short-term streams via exponential moving averages, main-taining both global identity and recent dynamics within a fixed-size cache. Online RoPE Indexing caches unrotated keys and applies positional embeddings dynamically at at-tention time, ensuring the aggregation is free of conflict-ing positional phases. These two mechanisms are mutu-ally enabling: positional decoupling makes temporal ag-gregation well-defined, while aggregation makes fixed-size caching viable for unbounded generation. Extensive exper-iments validate that MemRoPE outperforms existing meth-ods in temporal coherence, visual fidelity, and subject con-
+
+> ∗Equal contribution.
+
+sistency across minute- to hour-scale generation. 
+
+## 1. Introduction 
+
+Recent video diffusion models [24, 28, 37, 46] excel at pro-ducing cinematic-quality clips, but are inherently limited to fixed lengths in a single forward pass. Beyond mere short-clip synthesis, the broader objective is to simulate evolving visual worlds that maintain persistent identity and temporal coherence over minutes to hours. This long-form genera-tion is essential for powering advanced applications such as continuous world simulation [2, 12, 17, 35, 45], cinematic long takes [11, 32], and synthetic data generation [18, 33]. Extending them to achieve arbitrarily long, coherent videos requires a fundamentally different generation paradigm. Autoregressive video diffusion generates frames sequen-tially from a pretrained model, naturally enabling variable-length generation. CausVid [50] distills a bidirectional DiT into a causal generator via DMD [49] for real-time syn-thesis, and Self Forcing [19] closes the train-inference gap by conditioning on self-generated frames. LongLive [44] introduces streaming long tuning that enables long video training to align training and inference. While these models produce high-quality frames in real-time, they are limited to 1
+
+> arXiv:2603.12513v1 [cs.CV] 12 Mar 2026
+
+1 2 3 0 4 5 6
+
+> KV Cache
+> Cache Size
+> Evicted
+
+7 8 9       
+
+> KV Cache
+> Cache Size
+> (a) FIFO Eviction (b) Deep Forcing (c) MemRoPE (Ours)
+> : Denoised : Compressed : Long -term Memory : Short -term Memory : Sink
+
+3 4 5 6
+
+> Cache Size
+
+7 8 9            
+
+> KV Cache Figure 2. KV cache structures for long video generation. (a) FIFO eviction [19, 44, 47, 50] maintains an initial sink frame while discarding the oldest remaining frames when the cache is full, losing distant context. (b) Deep Forcing [48] dedicates over half the cache to static sink tokens and selects a small number of compressed tokens via attention-based importance scoring, which often causes temporal instability in the generated sequence (see Fig. 3). (c) MemRoPE preserves a sink frame and manages distinct long-and short-term memories (Sec. 4.1). By storing all keys without RoPE , it prevents positional interference from corrupting the stored features, thereby enabling stable memory aggregation (Sec. 4.2).
+
+a finite temporal horizon. ∞-RoPE [34, 47] resolves the re-sulting positional extrapolation by block-relative RoPE, en-abling generation beyond the 1024-frame limit. However, FIFO eviction (Fig. 2(a)) in the sliding-window KV cache still discards past context as generation proceeds, leading to progressive error accumulation [19, 44, 47, 48]. To retain past context during extended generation, sev-eral approaches adapt sliding windows by leveraging the attention sink phenomenon [41], preserving initial frames as fixed anchors [27, 44, 47, 48]. Deep Forcing [48] goes further with Participative Compression, selecting cached to-kens by cumulative attention score (Fig. 2(b)). However, as shown in Fig. 3, the selected set rapidly converges to long-persisted tokens, and newly admitted tokens carry dis-proportionately high scores, causing abrupt visual shifts at each cache update. Current approaches either evict past context entirely or converge to a stagnant token set that shifts abruptly when-ever the cache updates. None maintains a smoothly evolving representation that adapts as the video unfolds. 
+
+We introduce MemRoPE , a training-free infinite long video generation framework with two co-designed compo-nents. Memory Tokens continuously compress all past keys into dual long-term and short-term streams via expo-nential moving averages (EMA), maintaining both persis-tent identity and recent dynamics within a fixed-size cache. This aggregation requires keys free of positional encoding, since merging keys from different timesteps would other-wise mix incompatible rotary phases. Online RoPE In-dexing enables this by storing keys without positional em-bedding (Fig. 2(c)) and applying block-relative indices at attention time, which also resolves positional extrapolation. MemRoPE is entirely training-free and supports unbounded generation with constant memory; Fig. 1 demonstrates a continuous one-hour example that preserves temporal con-sistency throughout. Our contributions are as follows: • We propose MemRoPE , a training-free framework for infinite-length video generation that jointly addresses context retention and positional extrapolation, enabling the generation of hours-long videos. • We introduce Memory Tokens , an EMA-based dual memory mechanism that continuously compresses gener-ation history into the long-term and short-term represen-tations within a fixed-size cache. • We present Online RoPE Indexing , which decouples content from position in the KV cache, simultaneously enabling clean temporal aggregation and resolving posi-tional extrapolation without post-hoc corrections. • We demonstrate that MemRoPE outperforms state-of-the-art training-free methods in visual fidelity and consis-tency across video generation tasks ranging from minute-scale to hour-long sequences. 
+
+## 2. Related Work 
+
+2.1. Autoregressive Video Generation 
+
+Autoregressive video generation spans several paradigms: token-based methods [10, 23, 43, 52, 53] quantize video for next-token prediction; chunk-level diffusion [4, 21, 36] denoises multi-frame chunks; and FramePack [55] and StreamDiT [22] reduce memory via compressed contexts and window attention. Most relevant to our work is frame-level autoregres-sive diffusion. CausVid [50] distills a bidirectional DiT into a causal generator via DMD, and Self Forcing [19] closes the train-test gap by conditioning on self-generated frames. Self-Forcing++ [8] extends this to four min-utes with teacher-guided error correction, Rolling Forc-ing [27] introduces a rolling denoising window, and Causal Forcing [60] improves distillation via ODE initialization. LongLive [44] aligns training with inference-time roll-out for 240-second generation. FAR [15] compresses 20 20 40 60 80 100 120 
+
+> Video Time (s)
+> 0
+> 250
+> 500
+> 750
+> 1000
+> 1250
+> 1500
+> Selected Tokens per Frame
+> Compressed frames
+> New frames
+
+(a) Token selection 20 40 60 80 100 120  
+
+> Video Time (s)
+> 8.34
+> 8.36
+> 8.38
+> 8.40
+> 8.42
+> Attention Score
+
+(b) Attention score 0 20 40 60 80 100 120  
+
+> Video Time (s)
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Consecutive Frame SSIM
+> Deep Forcing (PC)
+> Ours (EMA)
+
+(c) Consecutive SSIM 0 20 40 60 80 100 120  
+
+> Video Time (s)
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> Consecutive Frame LPIPS
+> Deep Forcing (PC)
+> Ours (EMA)
+
+(d) Consecutive LPIPS 
+
+Figure 3. Failure mode of Participative Compression. (a) Participative Compression (PC), proposed in Deep Forcing [48], rapidly converges to retaining the same long-persisted tokens in the compressed frames, discarding most newly arriving tokens. (b) The few newly admitted tokens carry high attention scores, so each rare cache update exerts a disproportionately strong influence on generation. (c, d) 
+
+This causes frame-to-frame instability: consecutive SSIM drops and LPIPS spikes indicate abrupt visual shifts whenever the cache content changes. Our EMA memory evolves continuously, maintaining smooth transitions. 
+
+distant frames via aggressive patchification and proposes FlexRoPE for 16 × temporal extrapolation; while conceptu-ally related to our dual-rate memory, FAR requires training from scratch, whereas MemRoPE is training-free. 
+
+2.2. Long-Horizon Context in Long Video Genera-tion 
+
+Extending autoregressive generation beyond the training horizon raises two challenges: retaining useful past context and maintaining valid positional encoding. 
+
+Context retention and memory mechanism. KV cache compression has been widely studied for LLMs through attention-based token selection [26, 58], token merging [39, 57], dynamic budget allocation [38], and correlation-aware eviction [13], but these techniques operate within a fixed-length cache and cannot recover information once evicted [55]. EMA-based temporal aggregation has also been explored as an architectural primitive [29, 30], but re-quires modifications to the model architecture and training from scratch. Our memory tokens instead operate on the KV cache of an unmodified pretrained model. To retain context beyond the window, StreamingLLM [41] identified the attention sink phe-nomenon, and video generation methods adopted asimilar strategy of preserving initial frames as static anchors [27, 44]. Deep Forcing [48] goes beyond this with Participative Compression, but the selected tokens quickly collapse to a fixed set during the generation process (Fig. 3). Other approaches introduce long-context streaming tun-ing [6], memory modules within the diffusion-forcing paradigm [3, 16], compressed video histories [40, 54–56], or geometric priors from 3D representations [25, 42, 51]. However, these methods either incur growing memory that becomes impractical at hour-length scales or rely on rigid priors that transfer poorly to open-ended synthesis. In contrast, MemRoPE maintains a fixed-size, continu-ously evolving memory within a causal autoregressive KV cache, adapting to new content without increasing memory cost regardless of the total generated video length. 
+
+Positional extrapolation. Extending RoPE [34] beyond its trained range has been studied in LLMs through posi-tion interpolation [5], frequency scaling [1], and their com-binations [31], but LoL [9] shows these induce a quality-dynamics tradeoff in video diffusion. In the video do-main, ∞-RoPE [47] confines indices to the trained range via a block-relative coordinate system, and RIFLEx [59] targets bidirectional settings. However, these methods store keys with RoPE already applied and re-rotate them upon eviction; since RoPE does not distribute over addition (Eq. (5)), averaging such keys from different timesteps pro-duces invalid representations, preventing temporal aggrega-tion (Sec. 4.2). Our Online RoPE Indexing instead stores keys without positional encoding and applies block-relative RoPE for the first time at each attention step, which makes EMA-based aggregation well-defined while resolving posi-tional extrapolation. 
+
+## 3. Background 
+
+Autoregressive inference. Autoregressive video diffu-sion generates video one frame chunk at a time [8, 9, 19, 27, 44, 48, 50]. Given the KV cache of all previously generated frames {x1, . . . , x t−1}, the transformer Gθ denoises a noisy input x(σ) 
+
+> t
+
+through a small number of diffusion steps: 
+
+ˆxt = Gθ
+
+ x(σ) 
+
+> t
+
+, σ, K<t , V<t 
+
+. (1) The resulting key-value pairs (WK ˆxt, W V ˆxt) are then ap-pended to the KV cache as conditioning for the next step. Because the model uses causal attention, keys and values of past frames can be cached and reused in subsequent gener-ation steps, avoiding redundant computation. Since storing all past KV states is infeasible for long video generations, a sliding window retains only the most recent frames, evicting older ones via FIFO (Fig. 2(a)) [8, 9, 19, 27, 44, 48, 50]. 3Cache Size 
+
+> Cache Size
+
+DiT 
+
+> Cache Size
+> Store
+
+DiT 
+
+DiT Block 
+
+DiT Block 
+
+DiT Block             
+
+> ……
+> RoPE Indexing
+> 0123456
+> Multi -Head
+> Self -Attention
+> …
+> 789
+> …
+> : Denoised : Long -term Memory : Short -term Memory : Sink : To be stored : KV Cache
+
+(a) Overall Pipeline (b) Online RoPE     
+
+> : Current Figure 4. Overview of MemRoPE. (a) At each autoregressive step, the three-tier KV cache (sink, memory, and recent tokens) is con-catenated with the current noisy chunk and fed into the DiT. When the local window is full, the oldest frames are absorbed into the long-and short-term memory tokens via dual EMA updates. (b) All cached keys are stored without RoPE, enabling temporal aggregation for memory tokens. At attention time, contiguous block-relative indices are assigned to the full sequence, and RoPE is applied on the fly, ensuring that indices never exceed the training range.
+
+Rotary Position Embedding. Positional ordering is often encoded via 3D-RoPE in video generation [34, 37], which incorporates the temporal and spatial coordinates of query and key tokens using the following relation: 
+
+˜qi = Ri qi, ˜kj = Rj kj , (2) where Ri ∈ Rd×d is a rotation matrix encoding the spa-tiotemporal coordinates of token i. The key property is that the dot product ˜q⊤ 
+
+> i
+
+˜kj = q⊤ 
+
+> i
+
+Ri−j kj depends only on the 
+
+relative distance i − j, enabling the model to learn position-invariant attention patterns. In standard practice, RoPE is applied at cache time: each key is stored as ˜kj = Rj kj ,permanently binding it to its exact spatiotemporal position 
+
+j. Value states are not rotated and are cached as-is. 
+
+## 4. Method 
+
+We propose MemRoPE , a training-free framework that is implemented through two co-designed mechanisms: 
+
+Memory Tokens (Sec. 4.1) and Online RoPE Indexing 
+
+(Sec. 4.2). Fig. 4 provides a comprehensive visual overview. 
+
+4.1. Memory Tokens 
+
+Why existing cache management fails. FIFO eviction irrecoverably discards past frames, causing identity drift, scene inconsistency, and motion stagnation over long hori-zons [19, 44, 47, 48]. To mitigate this, several meth-ods [27, 44, 48] retain the initial frames as attention sinks 
+
+alongside the sliding window, inspired by the attention sink phenomenon in LLMs [41]. This is well motivated, as early frames lie within the training horizon and tend to be the highest quality in DMD-distilled models; however, these sinks are frozen at generation start and cannot reflect later changes in scene content or subject identity. Deep Forcing [48] extends this with Participative Com-pression (PC), which dynamically selects cached tokens by cumulative attention score. However, the selection mecha-nism suffers from a self-reinforcing bias: tokens that have persisted in the cache accumulate higher attention scores, making them increasingly likely to be retained regardless of their current relevance. As shown in Fig. 3(a), the se-lected set rapidly converges to a stagnant, fixed group of long-persisted tokens. Moreover, when a new token is fi-nally admitted, it carries a disproportionately high attention score relative to the entrenched set (Fig. 3(b)), producing abrupt, highly noticeable visual shifts at each cache update (Fig. 3(c,d)). Across all existing methods, preserved context is either a static snapshot of early frames or subject to discrete token selection that converges to a stale set. We instead propose a 
+
+continuously evolving representation. 
+
+Dual EMA memory. We propose Memory Tokens: afixed-size buffer evolving throughout generation via expo-nential moving averages (EMA). As chunks exit the win-dow, their spatially pooled key ¯knew updates two parallel 4streams: 
+
+μ(t) 
+
+> L
+
+= (1 − αL) μ(t−1)  
+
+> L
+
++ αL ¯knew , (3) 
+
+μ(t) 
+
+> S
+
+= (1 − αS ) μ(t−1)  
+
+> S
+
++ αS ¯knew , (4) where αL ≪ αS : the long-term stream accumulates the full generation history into a stable representation, while the short-term stream tracks recent dynamics. The same update applies to value states. Memory size is constant regardless of video length, enabling unbounded generation within a fixed budget. 
+
+4.2. Online RoPE Indexing 
+
+The memory token updates in Eqs. (3) and (4) average keys from different timesteps. However, conventional KV caches store keys with RoPE already applied: ˜kj = Rj kj . Averag-ing such keys mixes incompatible rotary phases: 
+
+α R j kj + (1 −α) Rj′ kj′̸ = Rϕ
+
+ α k j + (1 −α) kj′
+
+ (5) for any rotation Rϕ, since RoPE does not distribute over ad-dition. As a consequence, the averaged key no longer corre-sponds to any valid temporal position, breaking the relative-position structure that attention relies on. We resolve this aggregation barrier together with the positional extrapolation problem through a single design change: store all keys without RoPE, and dynamically as-sign block-relative temporal indices at each attention step. 
+
+Position-free caching. Every individual key is computed in its raw, unrotated form without positional embeddings before entering the cache: 
+
+kcache  
+
+> j
+
+= kj (no RoPE ). (6) EMA updates (Eqs. (3) and (4)) aggregate these position-free keys in the cache, and the resulting memory tokens op-erate as valid key vectors that can dynamically receive any positional index at attention time. 
+
+Block-relative index assignment. At each generation step, we treat the cache as a single block and assign a con-tiguous index map ϕ starting from zero:         
+
+> [0 , . . . , S −1]
+> |{z }
+> sink
+> [S, . . . , S +2 M−1]
+> |{z }
+> memory
+> [S+2 M, . . . , S +2 M+L−1]
+> |{z }
+> local
+
+(7) where S, M , L are the sink, memory, and local win-dow sizes. The current query receives indices starting from S+2 M +L. RoPE is then applied on the fly: ˜kj =
+
+Rϕ(j) kcache  
+
+> j
+
+for every cached key, and ˜qi = Rϕ(i) qi for ev-ery current query. Value states are not rotated. Since all in-dices are recomputed from zero at every generation step, no position ever exceeds the total cache size C = S+2 M +L,which remains within the range seen during training. 
+
+Algorithm 1 MemRoPE Inference 
+
+Require: Diffusion Transformer Gθ , denoising steps N , EMA rates αL, α S
+
+Notation: x(s) 
+
+> t
+
+: noisy latent of chunk t at denoising step s;
+
+ˆxt = x(N ) 
+
+> t
+
+: final denoised chunk  
+
+> 1:
+
+ˆx0 ← G θ (x(0) 0 , N ) 
+
+> 2:
+
+Ksink , Vsink ← WK ˆx0, W V ˆx0 ▷ w/o RoPE  
+
+> 3:
+
+μkL, μ vL, μ kS , μ vS ← 0; Klocal , Vlocal ← ∅  
+
+> 4:
+
+for t = 1 , 2, . . . do ▷ chunk loop  
+
+> 5:
+
+for s = 1 , . . . , N do ▷ denoising steps  
+
+> 6:
+
+qs, k s, v s ← WQx(s) 
+
+> t
+
+, W K x(s) 
+
+> t
+
+, W V x(s) 
+
+> t
+> 7:
+
+K ← [Ksink ∥μkL∥μkS ∥Klocal ∥ks] ▷ w/o RoPE  
+
+> 8:
+
+V ← [Vsink ∥μvL∥μvS ∥Vlocal ∥vs] 
+
+> 9:
+
+ϕ ← [0 , . . . , |K|− 1] ▷ Online RoPE  
+
+> 10:
+
+Apply Rϕ to qs, K 
+
+> 11:
+
+x(s+1)  
+
+> t
+
+← DiT -Block( Rϕqs, R ϕK, V) 
+
+> 12:
+
+end for  
+
+> 13:
+
+ˆxt ← x(N ) 
+
+> t
+
+▷ denoised chunk  
+
+> 14:
+
+Append WK ˆxt, W V ˆxt to Klocal , Vlocal ▷ w/o RoPE  
+
+> 15:
+
+if |Klocal | > L then ▷ evict & update memory  
+
+> 16:
+
+¯k ← SpatialPool( Klocal [0])  
+
+> 17:
+
+¯v ← SpatialPool( Vlocal [0])  
+
+> 18:
+
+μkL ← (1 −αL)μkL + αL ¯k 
+
+> 19:
+
+μvL ← (1 −αL)μvL + αL ¯v 
+
+> 20:
+
+μkS ← (1 −αS )μkS + αS ¯k 
+
+> 21:
+
+μvS ← (1 −αS )μvS + αS ¯v 
+
+> 22:
+
+Evict oldest chunk from Klocal , Vlocal  
+
+> 23:
+
+end if  
+
+> 24:
+
+end for 
+
+Relationship to block-relative RoPE. ∞-RoPE [47] re-anchors cached keys backward at each step to keep the newest block at the maximum trained index, requiring per-step phase rotations on keys already stored with RoPE. Our Online RoPE Indexing instead stores keys without RoPE and applies positional encoding once at attention time, elim-inating per-step rotations and enabling temporal aggrega-tion via EMA, which is ill-defined over keys stored with conflicting rotary phases (Eq. (5)). We map the cache com-pactly to [0 , C −1] rather than [flimit − C, f limit ], where 
+
+flimit is the maximum position index seen during pre-training, so that the sink tokens always receive the lowest indices and memory tokens occupy consistent positions in the sequence. 
+
+Relationship to Dynamic RoPE. Rolling Forcing [27] stores raw keys for its sink tokens and reapplies RoPE dy-namically at attention time, an approach conceptually close to our Online RoPE Indexing. However, this is limited to the static sink frames; keys in the rolling window are still stored with monotonically increasing RoPE indices, which both precludes temporal aggregation and reintroduces posi-tional extrapolation as the generated sequence grows. We generalize position-free storage to the entire cache, includ-ing the sink, memory, and local window alike. This makes 5Table 1. Quantitative comparison on long video generation. We report VBench-Long [20] metrics. Within each base model group, best results are bold with darker background and second best are with lighter background. ∆ denotes the average improvement over the respective base model.                                                                                                                                                    
+
+> Method Aesthetic Quality ↑Background Consistency ↑Imaging Quality ↑Motion Smoothness ↑Subject Consistency ↑Temporal Flickering ↑Average ↑∆
+> 120 seconds Results on Self-Forcing [19] Self-Forcing [19] 55.11 95.41 65.95 97.17 95.35 96.53 84.25 –Deep Forcing [48] 56.86 94.58 65.02 97.07 94.17 95.33 83.84 −0.41
+> ∞-RoPE [47] 52.82 95.66 61.07 98.48 96.30 97.50 83.64 −0.61
+> MemRoPE (Ours) 56.77 95.54 68.44 97.90 96.37 96.33 85.23 +0.98
+> Results on LongLive [44] LongLive [44] 57.21 95.96 67.13 98.56 97.06 97.12 85.51 –Deep Forcing [48] 59.16 96.13 68.07 98.51 96.79 97.38 86.01 +0.50
+> ∞-RoPE [47] 57.87 96.46 64.84 99.00 97.29 98.00 85.58 +0.07
+> MemRoPE (Ours) 59.25 96.29 69.43 98.73 97.54 97.47 86.45 +0.94
+> 240 seconds Results on Self-Forcing [19] Self-Forcing [19] 51.00 95.01 61.52 98.18 95.83 96.72 83.04 –Deep Forcing [48] 52.20 93.91 59.50 96.72 92.28 95.38 81.66 −1.38
+> ∞-RoPE [47] 50.51 95.52 58.81 98.47 96.24 97.48 82.84 −0.20
+> MemRoPE (Ours) 55.54 95.45 67.77 97.93 96.30 96.39 84.89 +1.85
+> Results on LongLive [44] LongLive [44] 56.70 95.80 66.90 98.52 97.02 97.04 85.33 –Deep Forcing [48] 57.75 96.03 66.48 98.50 96.65 97.47 85.48 +0.15
+> ∞-RoPE [47] 57.47 96.34 63.38 98.99 97.11 97.94 85.21 −0.12
+> MemRoPE (Ours) 58.90 96.39 68.93 98.59 97.37 97.13 86.22 +0.89
+
+EMA aggregation well-defined across all cache slots while keeping all indices within the training range. 
+
+4.3. Three-Tier Cache 
+
+The complete MemRoPE cache at step t is: 
+
+K(t) =  Ksink 
+
+| {z } 
+
+> S
+
+∥ Kmem 
+
+| {z } 
+
+> 2M
+
+∥ Klocal 
+
+| {z } 
+
+> L
+
+, (8) with the value cache V(t) structured identically. This or-dering mirrors the temporal structure of the video: Ksink 
+
+anchors the earliest high-quality frames, Kmem = [ μL∥μS ]
+
+summarizes the evolving history via dual EMA, and Klocal 
+
+captures the recent sliding window. All keys are stored position-free (Fig. 2); block-relative RoPE indices (Eq. (7)) are applied at every attention call. The full inference procedure is given in Algorithm 1. 
+
+## 5. Experiments 
+
+5.1. Setup 
+
+Implementation details. We build on the Wan2.1-T2V-1.3B architecture [37] and evaluate MemRoPE on two base models: Self-Forcing [19] and LongLive [44]. Since MemRoPE is training-free, it can be plugged into any au-toregressive video diffusion model without modification. Video is generated autoregressively in chunks of 3 la-tent frames with a 4-step denoising schedule at timesteps 
+
+{1000 , 750 , 500 , 250 }. The three-tier cache consists of S =3 sink tokens, M = 1 memory token per stream (long-term and short-term), and a local window of L = 4 frames, with EMA decay rates αL = 0 .01 and αS = 0 .1. The KV cache is updated only after the final denoising step of each chunk, ensuring that only fully denoised keys and values en-ter the cache. Deep Forcing [48] and ∞-RoPE [47] are also training-free methods; we apply them on both base models under the same protocol for fair comparison. 
+
+Evaluation protocol. We generate videos from text prompts sampled from MovieGenBench [32] at 480 × 832 
+
+resolution and 16 fps. For 120 and 240 seconds, we use 128 prompts; for 480 seconds, 20 randomly sampled prompts; for 1 hour, 10 randomly sampled prompts; and for abla-tion studies, 20 randomly sampled prompts at 60 seconds. Following Deep Forcing [48] and Self-Forcing [19], all prompts are refined using Qwen2.5-7B-Instruct. We report metrics from VBench-Long [20], and further validate with a user study following the 2AFC protocol [48] and VLM-based evaluation using Gemini 3.1-Pro [7]. 6+MemRoPE          
+
+> (Ours)
+> LongLive
+> (Base Model )
+> +Deep Forcing
+> +∞-RoPE
+> 2min 0
+> Prompt: A Lunar New Year celebration video featuring a Chinese dragon performing acrobatic dances…
+> Prompt: A litter of playful golden retriever puppies popping their heads out of the snowy ground …
+> +MemRoPE
+> (Ours)
+> Self -Forcing
+> (Base Model )
+> +Deep Forcing
+> +∞-RoPE
+> 2min 0Figure 5. Qualitative comparison on 2-minute video generation. MemRoPE maintains subject identity and background consistency throughout, whereas baselines exhibit progressive degradation, including structural collapse and color corruption.
+
+5.2. Results 
+
+Quantitative results. Tab. 1 summarizes the quantitative comparison at 120 and 240 seconds on two base mod-els ( i.e. , Self-Forcing, LongLive). MemRoPE achieves the highest average score across all settings, consistently im-proving over both base models. In contrast, Deep Forc-ing and ∞-RoPE degrade the Self-Forcing base at both durations, with Deep Forcing falling 1.38 points below at 240 seconds. On LongLive, Deep Forcing provides moderate gains at 120 seconds but nearly vanishes at 240 seconds, while ∞-RoPE remains near or slightly below the baseline. MemRoPE maintains stable improvement at both durations. Per-metric analysis reveals that MemRoPE leads in Aesthetic Quality, Imaging Quality, and Subject Consistency—the dimensions most sensitive to long-range context retention—while ∞-RoPE tends to score higher on Motion Smoothness and Temporal Flickering, which pri-marily measure local frame-to-frame stability. This pattern suggests that ∞-RoPE preserves short-range smoothness but lacks the evolving memory needed to maintain visual 7Table 2. Ultra-long video generation. We report VBench-Long [20] metrics. Within each base model group, best results are bold with darker background.                                                            
+
+> Method Aesthetic Quality ↑Background Consistency ↑Imaging Quality ↑Motion Smoothness ↑Subject Consistency ↑Temporal Flickering ↑Average ↑
+> 480 seconds Results on Self-Forcing [19]
+> ∞-RoPE [47] 48.35 95.45 56.00 98.59 96.46 97.71 82.09
+> MemRoPE (Ours) 56.12 95.65 68.23 97.96 96.87 96.42 85.21
+> Results on LongLive [44]
+> ∞-RoPE [47] 56.77 96.25 61.32 99.05 97.16 97.95 84.75
+> MemRoPE (Ours) 57.96 96.12 67.52 98.66 97.37 97.23 85.81
+> 1 hour Results on LongLive [44]
+> ∞-RoPE [47] 60.87 96.42 70.42 99.01 97.71 97.62 87.01
+> MemRoPE (Ours) 63.05 96.77 72.71 99.07 98.18 98.14 87.99
+
+fidelity and identity over longer horizons. 
+
+Qualitative results. Fig. 5 presents frame-by-frame com-parisons over 2-minute generations on both base models. On Self-Forcing, the base model degrades to the point where subjects become unrecognizable by the end of gener-ation. Deep Forcing retains rough shapes but loses all fine detail, while ∞-RoPE suffers from severe color instability with no meaningful preservation of the original appearance. On LongLive, both the base model and Deep Forcing fail to maintain subject consistency—the number of puppies fluc-tuates from three to four or five across frames, and Deep Forcing additionally shifts the overall color tone. ∞-RoPE exhibits the most aggressive error accumulation, with the background collapsing into unrecognizable forms. Mem-RoPE preserves subject count, identity, and background consistency throughout on both base models, producing the most temporally stable results across both prompts. 
+
+Ultra-long generation. Tab. 2 extends the comparison to 480 seconds and 1 hour. Besides context retention, ultra-long video generation is also constrained by the length of RoPE. The maximum generation length of both Self-Forcing and LongLive is 4 minutes and 15 seconds, limited by the 1024-frame latent sequence. Among our baselines, only ∞-RoPE resolves this through a block-relative coordi-nate system that confines indices to the trained range. On-line RoPE Indexing similarly confines indices to the trained range, enabling both MemRoPE and ∞-RoPE to generate beyond this limit. At 480 seconds, MemRoPE outperforms ∞-RoPE by over 3 points on Self-Forcing and 1 point on LongLive in average score. Consistent with shorter durations, the gap is driven by Aesthetic Quality and Imaging Quality, while ∞-RoPE scores higher on Motion Smoothness and Temporal Flickering on both base models. At 1 hour on LongLive, MemRoPE leads across all six metrics with an average of 87.99 versus 87.01, demonstrating that the dual EMA mem-ory scales gracefully to hour-length generation. 
+
+Table 3. User study (% favoring Ours).                                 
+
+> Baseline Color Cons. Subject Cons. Bg. Cons. Text Align. Motion Smo. Overall Pref. Self-Forcing [19] 93.0 93.0 97.4 91.6 95.7 98.3 Rolling Forcing [27] 90.4 77.4 79.1 80.7 88.7 82.6
+> Results on LongLive [44] LongLive [44] 81.6 70.2 83.3 66.1 71.9 71.1 Deep Forcing [48] 79.0 75.2 81.9 70.5 72.4 72.6
+> ∞-RoPE [47] 81.3 76.4 77.6 74.5 73.8 70.1
+
+User study. To complement the automated metrics, we conducted a user study with 30 participants following the 2AFC protocol [48]; all data was collected anonymously and handled in accordance with ethical guidelines. Each participant compared 20 pairs of 120-second videos (Mem-RoPE vs. a baseline) across six perceptual dimensions listed in Tab. 3. Participants consistently preferred MemRoPE across all aspects, corroborating the quantitative results. 
+
+Table 4. Visual stability (VLM).         
+
+> Method Stability Self-Forcing [19] 1.55 Rolling Forcing [27] 3.40
+> Results on LongLive [44] LongLive [44] 4.10 Deep Forcing [48] 3.90
+> ∞-RoPE [47] 4.05
+> MemRoPE (Ours) 4.15
+
+VLM evaluation. 
+
+We further assess long-horizon visual stability using the advanced multimodal vision-language model Gemini 3.1-Pro [14]. Following the protocol of Self-Forcing++ [8] and Deep Forcing [48], we prompt the VLM to score each 120-second generated video in terms of exposure stability and degradation. The prompt and corresponding examples can be found in the supplementary material. As shown in 8Prompt: A Samoyed and a Golden Retriever dog are playfully romping through a neon -lit futuristic city at night… 
+
+Prompt: A woman in a red tennis outfit serving a powerful shot on a tennis court. She has long blonde hair… 
+
+> t
+> t
+
+: Long -term attended : Short -term attended Figure 6. Spatial attention distribution between the dual memory streams. Yellow indicates higher attention to long-term memory. Red indicates higher attention to short-term memory. Temporally consistent regions attend more to long-term memory, while rapidly changing regions attend more to short-term memory. Table 5. Ablation on memory components. While using only long-term memory ( μL) achieves the highest Subject Consistency, combining both memories yields the highest scores in overall av-erage.                          
+
+> Long-term Memory ( μL)Short-term Memory ( μS)Aesthetic Quality ↑Imaging Quality ↑Subject Consistency ↑Avg ↑
+> Results on LongLive [44] 58.09 65.29 97.40 85.48
+> ✓58.69 66.31 97.62 85.84
+> ✓58.73 66.63 97.61 85.95
+> ✓✓58.76 67.09 97.61 85.97
+
+Tab. 4, MemRoPE achieves the highest stability scores, consistent with both the automated metrics and the user study. 
+
+Memory component ablation. Tab. 5 isolates the con-tribution of each memory stream. Any memory configura-tion improves over the no-memory baseline, with the largest gain observed in Imaging Quality (+1.8 points). Combining both streams yields the highest average and the best Imag-ing Quality among all configurations, suggesting that the two streams capture complementary information: μL sum-marizes the stable aspects of the scene while μS reflects re-cent changes. Fig. 6 supports this: temporally consistent regions attend more to long-term memory, while rapidly changing regions rely more on short-term memory. 
+
+EMA decay rate sensitivity. MemRoPE introduces two hyperparameters: the long-term decay αL and the short-term decay αS . Fig. 7 plots five VBench metrics across all 12 combinations of αL ∈ { 0.001 , 0.01 , 0.05 } together with αS ∈ { 0.05 , 0.1, 0.3, 0.5}. The average score varies by less than 0.7 across the entire grid, indicating that Mem-RoPE is robust to the choice of EMA hyperparameters. We use αL=0 .01 and αS =0 .1 for all other experiments. 
+
+EMA vs. attention-based cache management. Deep Forcing’s participative compression [48] is the only other 0.05 0.1 0.3 0.5                
+
+> S
+> 97.2
+> 97.4
+> 97.6
+> 97.8
+> 98.0
+> Score
+> Subject
+> Consistency
+> L=0.001
+> L=0.01
+> L=0.05
+> 0.05 0.1 0.3 0.5
+> S
+> 96.0
+> 96.2
+> 96.4
+> 96.6
+> 96.8
+> Background
+> Consistency
+> L=0.001
+> L=0.01
+> L=0.05
+> 0.05 0.1 0.3 0.5
+> S
+> 98.4
+> 98.6
+> 98.8
+> 99.0
+> 99.2
+> Motion
+> Smoothness
+> L=0.001
+> L=0.01
+> L=0.05
+> 0.05 0.1 0.3 0.5
+> S
+> 56
+> 58
+> 60
+> 62
+> 64
+> Score
+> Aesthetic
+> Quality
+> L=0.001
+> L=0.01
+> L=0.05
+> 0.05 0.1 0.3 0.5
+> S
+> 62
+> 64
+> 66
+> 68
+> 70
+> Imaging
+> Quality
+> L=0.001
+> L=0.01
+> L=0.05
+> 0.05 0.1 0.3 0.5
+> S
+> 82.5
+> 83.0
+> 83.5
+> 84.0
+> 84.5
+> 85.0
+> Average
+> L=0.001
+> L=0.01
+> L=0.05
+
+Figure 7. Sensitivity to EMA decay rates. All metrics remain stable across 12 combinations of αL and αS , with the average score varying by less than 0.7. 
+
+training-free method that goes beyond static sinks for cache management. As shown in Fig. 3(c,d), its discrete token selection produces a cache that rarely updates yet causes abrupt visual shifts when it does, whereas our continuous EMA aggregation absorbs every evicted frame smoothly, maintaining stable transitions throughout generation. 
+
+## 6. Conclusion 
+
+We present MemRoPE, a training-free framework for long video generation from autoregressive diffusion models. Memory Tokens smoothly preserve evolving context into dual EMA streams, while Online RoPE Indexing makes this well-defined by applying relative positional indices at atten-tion time, enabling unbounded generation within a fixed-size cache. Comprehensive experiments consistently val-idate the effectiveness of MemRoPE across all tested du-rations and evaluation protocols. Our results suggest that the key to long-horizon coherence lies not in retaining more frames, but in remembering them better. 9Limitations. As a training-free method built on a frozen checkpoint, MemRoPE’s per-frame quality is bounded by the base model. The EMA aggregation is also lossy by design, which may limit precise recall of distant content. Incorporating learned memory compression could address this in future work. 
+
+## References 
+
+[1] bloc97. NTK-aware scaled RoPE allows LLaMA models to have extended (8k+) context size without any fine-tuning and minimal perplexity degradation. Reddit post, 2023. 3 [2] Tim Brooks, Bill Peebles, Connor Holmes, Will DePue, Yufei Guo, Leo Jing, David Schnurr, Joe Taylor, Troy Luh-man, Eric Luhman, et al. Video generation models as world simulators. OpenAI Blog , 1(8):1, 2024. 1 [3] Boyuan Chen, Diego Mart´ ı Mons´ o, Yilun Du, Max Sim-chowitz, Russ Tedrake, and Vincent Sitzmann. Diffusion forcing: Next-token prediction meets full-sequence diffu-sion. Advances in Neural Information Processing Systems ,37:24081–24125, 2024. 3, 13 [4] Guibin Chen, Dixuan Lin, Jiangping Yang, Chunze Lin, Junchen Zhu, Mingyuan Fan, Hao Zhang, Sheng Chen, Zheng Chen, Chengcheng Ma, et al. Skyreels-v2: Infinite-length film generative model. arXiv preprint arXiv:2504.13074 , 2025. 2, 13, 14 [5] Shouyuan Chen, Sherman Wong, Liangjian Chen, and Yuandong Tian. Extending context window of large lan-guage models via positional interpolation. arXiv preprint arXiv:2306.15595 , 2023. 3 [6] Shuo Chen, Cong Wei, Sun Sun, Ping Nie, Kai Zhou, Ge Zhang, Ming-Hsuan Yang, and Wenhu Chen. Context forc-ing: Consistent autoregressive video generation with long context. arXiv preprint arXiv:2602.06028 , 2026. 3 [7] Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Marcel Blis-tein, Ori Ram, Dan Zhang, Evan Rosen, et al. Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. arXiv preprint arXiv:2507.06261 , 2025. 6 [8] Justin Cui, Jie Wu, Ming Li, Tao Yang, Xiaojie Li, Rui Wang, Andrew Bai, Yuanhao Ban, and Cho-Jui Hsieh. Self-forcing++: Towards minute-scale high-quality video genera-tion. arXiv preprint arXiv:2510.02283 , 2025. 2, 3, 8, 17 [9] Justin Cui, Jie Wu, Ming Li, Tao Yang, Xiaojie Li, Rui Wang, Andrew Bai, Yuanhao Ban, and Cho-Jui Hsieh. Lol: Longer than longer, scaling video generation to hour. arXiv preprint arXiv:2601.16914 , 2026. 3 [10] Haoge Deng, Ting Pan, Haiwen Diao, Zhengxiong Luo, Yufeng Cui, Huchuan Lu, Shiguang Shan, Yonggang Qi, and Xinlong Wang. Autoregressive video generation without vector quantization. In The Thirteenth International Confer-ence on Learning Representations , 2025. 2, 13, 14 [11] Mohamed Elmoghany, Ryan Rossi, Seunghyun Yoon, Sub-hojyoti Mukherjee, Eslam Mohamed Bakr, Puneet Mathur, Gang Wu, Viet Dac Lai, Nedim Lipka, Ruiyi Zhang, et al. A survey on long-video storytelling generation: architectures, consistency, and cinematic quality. In Proceedings of the IEEE/CVF International Conference on Computer Vision ,pages 7023–7035, 2025. 1 [12] Ruili Feng, Han Zhang, Zhantao Yang, Jie Xiao, Zhilei Shu, Zhiheng Liu, Andy Zheng, Yukun Huang, Yu Liu, and Hongyang Zhang. The matrix: Infinite-horizon world generation with real-time moving control. arXiv preprint arXiv:2412.03568 , 2024. 1 [13] Ravi Ghadia, Avinash Kumar, Gaurav Jain, Prashant Nair, and Poulami Das. Dialogue without limits: Constant-sized kv caches for extended responses in llms. arXiv preprint arXiv:2503.00979 , 2025. 3 [14] Google DeepMind. Gemini 3.1 pro model card, 2026. 8, 17, 18 [15] Yuchao Gu, Weijia Mao, and Mike Zheng Shou. Long-context autoregressive video modeling with next-frame pre-diction. arXiv preprint arXiv:2503.19325 , 2025. 2 [16] Roberto Henschel, Levon Khachatryan, Hayk Poghosyan, Daniil Hayrapetyan, Vahram Tadevosyan, Zhangyang Wang, Shant Navasardyan, and Humphrey Shi. Streamingt2v: Con-sistent, dynamic, and extendable long video generation from text. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 2568–2577, 2025. 3 [17] Yicong Hong, Yiqun Mei, Chongjian Ge, Yiran Xu, Yang Zhou, Sai Bi, Yannick Hold-Geoffroy, Mike Roberts, Matthew Fisher, Eli Shechtman, et al. Relic: Interac-tive video world model with long-horizon memory. arXiv preprint arXiv:2512.04040 , 2025. 1 [18] Anthony Hu, Lloyd Russell, Hudson Yeo, Zak Murez, George Fedoseev, Alex Kendall, Jamie Shotton, and Gian-luca Corrado. Gaia-1: A generative world model for au-tonomous driving. arXiv preprint arXiv:2309.17080 , 2023. 1[19] Xun Huang, Zhengqi Li, Guande He, Mingyuan Zhou, and Eli Shechtman. Self forcing: Bridging the train-test gap in autoregressive video diffusion. In The Thirty-ninth An-nual Conference on Neural Information Processing Systems ,2025. 1, 2, 3, 4, 6, 8, 13, 14, 15, 17 [20] Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si, Yuming Jiang, Yuanhan Zhang, Tianxing Wu, Qingyang Jin, Nattapol Chanpaisit, et al. Vbench: Comprehensive bench-mark suite for video generative models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 21807–21818, 2024. 6, 8, 13, 14 [21] Yang Jin, Zhicheng Sun, Ningyuan Li, Kun Xu, Kun Xu, Hao Jiang, Nan Zhuang, Quzhe Huang, Yang Song, Yadong MU, and Zhouchen Lin. Pyramidal flow matching for effi-cient video generative modeling. In The Thirteenth Interna-tional Conference on Learning Representations , 2025. 2 [22] Akio Kodaira, Tingbo Hou, Ji Hou, Markos Georgopou-los, Felix Juefei-Xu, Masayoshi Tomizuka, and Yue Zhao. Streamdit: Real-time streaming text-to-video generation. 
+
+arXiv preprint arXiv:2507.03745 , 2025. 2 [23] Dan Kondratyuk, Lijun Yu, Xiuye Gu, Jos´ e Lezama, Jonathan Huang, Grant Schindler, Rachel Hornung, Vigh-nesh Birodkar, Jimmy Yan, Ming-Chang Chiu, et al. Videopoet: A large language model for zero-shot video gen-eration. arXiv preprint arXiv:2312.14125 , 2023. 2 
+
+10 [24] Weijie Kong, Qi Tian, Zijian Zhang, Rox Min, Zuozhuo Dai, Jin Zhou, Jiangfeng Xiong, Xin Li, Bo Wu, Jianwei Zhang, et al. Hunyuanvideo: A systematic framework for large video generative models. arXiv preprint arXiv:2412.03603 , 2024. 1[25] Runjia Li, Philip Torr, Andrea Vedaldi, and Tomas Jakab. Vmem: Consistent interactive video scene generation with surfel-indexed view memory. In Proceedings of the IEEE/CVF International Conference on Computer Vision ,pages 25690–25699, 2025. 3 [26] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. Snapkv: Llm knows what you are looking for before generation. Advances in Neural Informa-tion Processing Systems , 37:22947–22970, 2024. 3 [27] Kunhao Liu, Wenbo Hu, Jiale Xu, Ying Shan, and Shijian Lu. Rolling forcing: Autoregressive long video diffusion in real time. arXiv preprint arXiv:2509.25161 , 2025. 2, 3, 4, 5, 8, 13, 14 [28] Yixin Liu, Kai Zhang, Yuan Li, Zhiling Yan, Chujie Gao, Ruoxi Chen, Zhengqing Yuan, Yue Huang, Hanchi Sun, Jian-feng Gao, et al. Sora: A review on background, technology, limitations, and opportunities of large vision models. arXiv preprint arXiv:2402.17177 , 2024. 1 [29] Xuezhe Ma, Chunting Zhou, Xiang Kong, Junxian He, Liangke Gui, Graham Neubig, Jonathan May, and Luke Zettlemoyer. Mega: Moving average equipped gated atten-tion. arXiv preprint arXiv:2209.10655 , 2022. 3 [30] Xuezhe Ma, Xiaomeng Yang, Wenhan Xiong, Beidi Chen, Lili Yu, Hao Zhang, Jonathan May, Luke Zettlemoyer, Omer Levy, and Chunting Zhou. Megalodon: Efficient llm pretraining and inference with unlimited context length. 
+
+Advances in Neural Information Processing Systems , 37: 71831–71854, 2024. 3 [31] Bowen Peng, Jeffrey Quesnelle, Honglu Fan, and Enrico Shippole. Yarn: Efficient context window extension of large language models. arXiv preprint arXiv:2309.00071 , 2023. 3 [32] Adam Polyak, Amit Zohar, Andrew Brown, Andros Tjandra, Animesh Sinha, Ann Lee, Apoorv Vyas, Bowen Shi, Chih-Yao Ma, Ching-Yao Chuang, et al. Movie gen: A cast of media foundation models. arXiv preprint arXiv:2410.13720 ,2024. 1, 6 [33] Xuanchi Ren, Yifan Lu, Tianshi Cao, Ruiyuan Gao, Shengyu Huang, Amirmojtaba Sabour, Tianchang Shen, Tobias Pfaff, Jay Zhangjie Wu, Runjian Chen, et al. Cosmos-drive-dreams: Scalable synthetic driving data generation with world foundation models. arXiv preprint arXiv:2506.09042 ,2025. 1 [34] Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. Roformer: Enhanced transformer with rotary position embedding. Neurocomputing , 568:127063, 2024. 2, 3, 4 [35] Wenqiang Sun, Haiyu Zhang, Haoyuan Wang, Junta Wu, Zehan Wang, Zhenwei Wang, Yunhong Wang, Jun Zhang, Tengfei Wang, and Chunchao Guo. Worldplay: Towards long-term geometric consistency for real-time interactive world modeling. arXiv preprint arXiv:2512.14614 , 2025. 1 [36] Hansi Teng, Hongyu Jia, Lei Sun, Lingzhi Li, Maolin Li, Mingqiu Tang, Shuai Han, Tianning Zhang, WQ Zhang, Weifeng Luo, et al. Magi-1: Autoregressive video genera-tion at scale. arXiv preprint arXiv:2505.13211 , 2025. 2, 13, 14 [37] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianxiao Yang, et al. Wan: Open and advanced large-scale video gen-erative models. arXiv preprint arXiv:2503.20314 , 2025. 1, 4, 6 [38] Zhongwei Wan, Xinjian Wu, Yu Zhang, Yi Xin, Chaofan Tao, Zhihong Zhu, Xin Wang, Siqi Luo, Jing Xiong, and Mi Zhang. D2o: Dynamic discriminative operations for ef-ficient generative inference of large language models. arXiv preprint arXiv:2406.13035 , 2, 2024. 3 [39] Zheng Wang, Boxiao Jin, Zhongzhi Yu, and Minjia Zhang. Model tells you where to merge: Adaptive kv cache merging for llms on long-context tasks. arXiv preprint arXiv:2407.08454 , 2024. 3 [40] Ruiqi Wu, Xuanhua He, Meng Cheng, Tianyu Yang, Yong Zhang, Zhuoliang Kang, Xunliang Cai, Xiaoming Wei, Chunle Guo, Chongyi Li, et al. Infinite-world: Scaling inter-active world models to 1000-frame horizons via pose-free hi-erarchical memory. arXiv preprint arXiv:2602.02393 , 2026. 3[41] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. In The Twelfth International Conference on Learning Representations , 2024. 2, 3, 4 [42] Zeqi Xiao, Yushi Lan, Yifan Zhou, Wenqi Ouyang, Shuai Yang, Yanhong Zeng, and Xingang Pan. Worldmem: Long-term consistent world simulation with memory. arXiv preprint arXiv:2504.12369 , 2025. 3 [43] Wilson Yan, Yunzhi Zhang, Pieter Abbeel, and Aravind Srinivas. Videogpt: Video generation using vq-vae and trans-formers. arXiv preprint arXiv:2104.10157 , 2021. 2 [44] Shuai Yang, Wei Huang, Ruihang Chu, Yicheng Xiao, Yuyang Zhao, Xianbang Wang, Muyang Li, Enze Xie, Ying-Cong Chen, Yao Lu, Song Han, and Yukang Chen. Longlive: Real-time interactive long video generation. In The Four-teenth International Conference on Learning Representa-tions , 2026. 1, 2, 3, 4, 6, 8, 9, 13, 14, 15, 16, 17 [45] Ying Yang, Zhengyao Lv, Tianlin Pan, Haofan Wang, Binxin Yang, Hubery Yin, Chen Li, Ziwei Liu, and Chenyang Si. Stableworld: Towards stable and consistent long interactive video generation. arXiv preprint arXiv:2601.15281 , 2026. 1 [46] Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng Xu, Yuanming Yang, Wenyi Hong, Xiao-han Zhang, Guanyu Feng, et al. Cogvideox: Text-to-video diffusion models with an expert transformer. arXiv preprint arXiv:2408.06072 , 2024. 1 [47] Hidir Yesiltepe, Tuna Han Salih Meral, Adil Kaan Akan, Kaan Oktay, and Pinar Yanardag. Infinity-rope: Action-controllable infinite video generation emerges from autore-gressive self-rollout. arXiv preprint arXiv:2511.20649 ,2025. 2, 3, 4, 5, 6, 8, 13, 14, 15, 16 [48] Jung Yi, Wooseok Jang, Paul Hyunbin Cho, Jisu Nam, Heeji Yoon, and Seungryong Kim. Deep forcing: Training-free 
+
+11 long video generation with deep sink and participative com-pression. arXiv preprint arXiv:2512.05081 , 2025. 2, 3, 4, 6, 8, 9, 13, 14 [49] Tianwei Yin, Micha¨ el Gharbi, Richard Zhang, Eli Shecht-man, Fredo Durand, William T Freeman, and Taesung Park. One-step diffusion with distribution matching distillation. In 
+
+Proceedings of the IEEE/CVF conference on computer vi-sion and pattern recognition , pages 6613–6623, 2024. 1 [50] Tianwei Yin, Qiang Zhang, Richard Zhang, William T Free-man, Fredo Durand, Eli Shechtman, and Xun Huang. From slow bidirectional to fast autoregressive video diffusion mod-els. In Proceedings of the IEEE/CVF Conference on Com-puter Vision and Pattern Recognition , pages 22963–22974, 2025. 1, 2, 3, 13, 14 [51] Jiwen Yu, Jianhong Bai, Yiran Qin, Quande Liu, Xintao Wang, Pengfei Wan, Di Zhang, and Xihui Liu. Context as memory: Scene-consistent interactive long video generation with memory retrieval. In Proceedings of the SIGGRAPH Asia 2025 Conference Papers , pages 1–11, 2025. 3 [52] Lijun Yu, Yong Cheng, Kihyuk Sohn, Jos´ e Lezama, Han Zhang, Huiwen Chang, Alexander G Hauptmann, Ming-Hsuan Yang, Yuan Hao, Irfan Essa, et al. Magvit: Masked generative video transformer. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 10459–10469, 2023. 2 [53] Lijun Yu, Jose Lezama, Nitesh Bharadwaj Gundavarapu, Luca Versari, Kihyuk Sohn, David Minnen, Yong Cheng, Agrim Gupta, Xiuye Gu, Alexander G Hauptmann, Boqing Gong, Ming-Hsuan Yang, Irfan Essa, David A Ross, and Lu Jiang. Language model beats diffusion - tokenizer is key to visual generation. In The Twelfth International Conference on Learning Representations , 2024. 2 [54] Yifei Yu, Xiaoshan Wu, Xinting Hu, Tao Hu, Yangtian Sun, Xiaoyang Lyu, Bo Wang, Lin Ma, Yuewen Ma, Zhongrui Wang, et al. Videossm: Autoregressive long video gen-eration with hybrid state-space memory. arXiv preprint arXiv:2512.04519 , 2025. 3 [55] Lvmin Zhang and Maneesh Agrawala. Packing input frame context in next-frame prediction models for video genera-tion. arXiv e-prints , pages arXiv–2504, 2025. 2, 3 [56] Lvmin Zhang, Shengqu Cai, Muyang Li, Chong Zeng, Bei-jia Lu, Anyi Rao, Song Han, Gordon Wetzstein, and Ma-neesh Agrawala. Pretraining frame preservation in au-toregressive video memory compression. arXiv preprint arXiv:2512.23851 , 2025. 3 [57] Yuxin Zhang, Yuxuan Du, Gen Luo, Yunshan Zhong, Zhenyu Zhang, Shiwei Liu, and Rongrong Ji. Cam: Cache merging for memory-efficient llms inference. In Forty-first international conference on machine learning , 2024. 3 [58] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher R´ e, Clark Barrett, et al. H2o: Heavy-hitter ora-cle for efficient generative inference of large language mod-els. Advances in Neural Information Processing Systems , 36: 34661–34710, 2023. 3 [59] Min Zhao, Guande He, Yixiao Chen, Hongzhou Zhu, Chongxuan Li, and Jun Zhu. RIFLEx: A free lunch for length extrapolation in video diffusion transformers. In 
+
+Forty-second International Conference on Machine Learn-ing , 2025. 3 [60] Hongzhou Zhu, Min Zhao, Guande He, Hang Su, Chongx-uan Li, and Jun Zhu. Causal forcing: Autoregressive diffu-sion distillation done right for high-quality real-time inter-active video generation. arXiv preprint arXiv:2602.02214 ,2026. 2 
+
+12 Appendix 
+
+This appendix is organized as follows: • Quantitative results on shorter videos (Appendix A) • Ablation on position-free caching (Appendix B) • VBench-Long score trends across durations (Ap-pendix C) • Additional qualitative comparisons (Appendix D) • Inference latency measurements (Appendix E) • User study and VLM evaluation details (Appendix F) 
+
+## A. Quantitative Results on Shorter Videos 
+
+The main paper reports VBench-Long [20] results at 120, 240, 480 seconds and 1 hour, where cumulative degradation makes the differences between methods most pronounced. Here we provide complete results at 30 and 60 seconds to demonstrate that MemRoPE is effective even at shorter du-rations where degradation is minimal. In addition to the Self-Forcing [19] and LongLive [44] base comparisons presented in the main paper, we include additional baselines for reference. CausVid [50] shares the same base model and 5-second training horizon as Self-Forcing, but suffers from a train-inference distribu-tion mismatch—it optimizes against Diffusion Forcing [3] outputs rather than the actual inference-time distribution— leading to over-exposure artifacts that worsen at longer du-rations. We adopt Self-Forcing as a base model because it resolves this mismatch by simulating the actual inference process during training, providing a stronger foundation for long video generation. Rolling Forcing [27] performs addi-tional distillation training and adopts a fundamentally dif-ferent inference paradigm based on rolling-window joint denoising, making it incompatible as a base model for our plug-in method. NOVA [10], MAGI-1 [36], and SkyReels-V2 [4] use entirely different architectures. These were omit-ted from the main tables to keep the comparison focused on training-free methods under controlled base-model settings, but are included here for completeness. MemRoPE achieves the highest average on both Self-Forcing and LongLive bases at both durations. Notably, even at 30 seconds where degradation has not yet accumu-lated significantly, MemRoPE already outperforms all com-peting methods within each base group, indicating that our memory mechanism improves generation quality from the outset rather than only compensating for long-horizon drift. 
+
+## B. Ablation on Position-Free Caching 
+
+As discussed in Sec. 4.2 of the main paper, RoPE does not distribute over addition (Eq. (5)): averaging keys that carry different rotary phases produces representations that no longer correspond to any valid temporal position. Anatural question is whether this theoretical concern has a measurable impact in practice. To answer this, we com-pare MemRoPE (position-free EMA) against an EMA vari-ant that retains RoPE embeddings during aggregation (Ag-gregation w/ RoPE). As shown in Tab. 7, both methods improve over their respective base models, confirming that temporal aggre-gation is broadly beneficial. However, MemRoPE consis-tently achieves a higher average improvement ( ∆) on both Self-Forcing ( +0.84 vs. +0.71) and LongLive ( +0.53 vs. 
+
++0.37). While Aggregation w/ RoPE scores higher on cer-tain individual metrics, its overall coherence is lower due to the conflicting rotary phases discussed in Eq. (5). This vali-dates our design choice: decoupling positional information from cached keys before temporal aggregation is essential for well-defined memory compression. 
+
+## C. VBench-Long Score Across Durations 
+
+We collect the VBench-Long averages of MemRoPE and 
+
+∞-RoPE [47] on Self-Forcing [19] across five durations: 30, 60, 120, 240, and 480 seconds. To ensure a con-sistent comparison, we report results using the 20-prompt subset used for the 480-second evaluation across all dura-tions. As shown in Fig. 8, both methods degrade as dura-tion increases, but MemRoPE exhibits a significantly flat-ter slope. The performance gap widens monotonically as duration increases, demonstrating that the benefits of our evolving memory tokens compound over time. This scal-ing behavior confirms that MemRoPE’s dual-stream EMA effectively preserves long-range context that ∞-RoPE fully discards. 30 60 120 240 480   
+
+> Video Duration (seconds)
+> 81
+> 82
+> 83
+> 84
+> 85
+> 86
+> VBench-Long Score
+> -RoPE
+> MemRoPE (Ours)
+> Figure 8. VBench-Long average score vs. video duration on Self-Forcing [19]. MemRoPE maintains higher scores across all durations, with the gap widening as videos grow longer.
+
+## D. Qualitative Comparisons 
+
+2-Minute Generation. Fig. 9 compares MemRoPE against Self-Forcing [19], Deep Forcing [48], and ∞-RoPE [47] 13 Table 6. Quantitative comparison on short video generation (30 and 60 seconds). We report VBench-Long [20] metrics. Within each base model group, best results are bold with darker background and second best are with lighter background. ∆ denotes the average improvement over the respective base model. ∗Results from [47]. 
+
+Method Aesthetic Quality ↑ Background Consistency ↑ Imaging Quality ↑ Motion Smoothness ↑ Subject Consistency ↑ Temporal Flickering ↑ Average ↑ ∆
+
+30 seconds 
+
+CausVid [50] 57.25 96.77 65.16 98.08 97.87 96.86 85.33 –Rolling Forcing [27] 58.45 95.77 69.35 98.23 96.78 97.13 85.95 –
+
+Results on Self-Forcing [19] Self-Forcing [19] 58.28 95.14 66.92 98.02 95.50 96.87 85.12 –Deep Forcing [48] 57.83 94.86 66.29 97.53 94.98 95.71 84.53 −0.59 
+
+∞-RoPE [47] 57.13 95.81 65.10 98.39 96.37 97.18 85.00 −0.12 
+
+MemRoPE (Ours) 58.48 95.59 68.73 98.01 96.31 96.41 85.59 +0.47 
+
+Results on LongLive [44] LongLive [44] 58.57 96.22 67.85 98.65 97.21 97.32 85.97 –Deep Forcing [48] 59.87 96.22 69.41 98.59 97.05 97.33 86.41 +0.44 
+
+∞-RoPE [47] 59.32 96.40 66.68 98.94 97.32 97.93 86.10 +0.13 
+
+MemRoPE (Ours) 59.31 96.34 69.27 98.68 97.48 97.40 86.42 +0.45 
+
+60 seconds 
+
+NOVA ∗ [10] 47.53 88.06 44.97 98.94 77.50 98.27 75.88 –MAGI-1 ∗ [36] 52.10 87.76 54.54 99.26 79.46 98.48 78.60 –SkyReels-V2 ∗ [4] 57.64 89.95 66.67 98.67 84.99 97.60 82.59 –CausVid [50] 57.06 96.94 64.84 98.16 98.03 97.05 85.35 –Rolling Forcing [27] 58.34 96.21 69.41 98.52 97.26 97.47 86.20 –
+
+Results on Self-Forcing [19] Self-Forcing [19] 56.96 95.08 66.36 97.35 95.15 96.56 84.57 –Deep Forcing [48] 57.30 94.59 65.67 97.22 94.36 95.38 84.09 −0.48 
+
+∞-RoPE [47] 54.97 95.69 62.81 98.39 96.26 97.37 84.25 −0.32 
+
+MemRoPE (Ours) 57.77 95.58 68.54 97.93 96.29 96.35 85.41 +0.84 
+
+Results on LongLive [44] LongLive [44] 57.93 96.10 67.41 98.57 97.10 97.15 85.71 –Deep Forcing [48] 59.63 96.16 68.73 98.52 96.88 97.33 86.21 +0.50 
+
+∞-RoPE [47] 58.52 96.33 65.63 98.95 97.27 97.95 85.78 +0.07 
+
+MemRoPE (Ours) 58.76 96.27 69.01 98.67 97.41 97.34 86.24 +0.53 
+
+Table 7. Ablation on position-free caching. Comparison between MemRoPE (position-free EMA) and EMA with RoPE-rotated keys at 60 seconds. ∆ denotes the average improvement over the respective base model. 
+
+Method Aesthetic Quality ↑ Subject Consistency ↑ Imaging Quality ↑ Motion Smoothness ↑ Background Consistency ↑ Temporal Flickering ↑ Average ↑ ∆
+
+Results on Self-Forcing [19] Self-Forcing [19] 56.96 95.08 66.36 97.35 95.15 96.66 84.57 –Aggregation w/ RoPE 56.55 96.44 68.25 98.19 95.60 96.66 85.28 +0.71 
+
+MemRoPE (Ours) 57.77 95.58 68.54 97.93 96.29 96.35 85.41 +0.84 
+
+Results on LongLive [44] LongLive [44] 57.93 96.10 67.41 98.57 97.10 97.15 85.71 –Aggregation w/ RoPE 58.50 97.35 68.45 98.67 96.18 97.33 86.08 +0.37 
+
+MemRoPE (Ours) 58.76 96.27 69.01 98.67 97.41 97.34 86.24 +0.53 
+
+on two prompts at 2-minute duration. On Self-Forcing, the base model degrades severely by the end of generation. Deep Forcing preserves the general structure but the main subject undergoes noticeable shape changes over time. ∞-RoPE loses subject consistency entirely, with colors col-lapsing across frames. On LongLive, the base model ex-hibits gradual subject appearance drift, Deep Forcing shifts the overall color tone, and ∞-RoPE suffers from both ap-14 Prompt: fluffy Monster kneeling beside a melting red candle. Monster with wide eyes and open mouth, gazing at flame with wond er. …
+
++MemRoPE 
+
+(Ours) 
+
+Self -Forcing 
+
+(Base Model) 
+
++Deep Forcing 
+
++∞-RoPE 
+
+2min 0
+
+2min 0  
+
+> Prompt: A Chinese boy wearing glasses savors a delicious cheeseburger with his eyes closed, sitting in a cozy fast food restaurant…
+
++MemRoPE 
+
+(Ours) 
+
+LongLive 
+
+(Base Model) 
+
++Deep Forcing 
+
++∞-RoPE Figure 9. Qualitative comparison at 2-minute generation on Self-Forcing [19] and LongLive [44]. MemRoPE preserves subject identity and visual fidelity more consistently than existing methods across both prompts. 
+
+pearance changes and color corruption. MemRoPE main-tains consistent subject identity and visual fidelity through-out on both base models. 
+
+1-Hour Generation. Fig. 10 compares frames sampled at 12-minute intervals from hour-long videos generated by ∞-RoPE [47] and MemRoPE on LongLive [44]. Both methods maintain the general scene structure, but ∞-RoPE shows gradual inconsistency in the subject’s facial features and hairstyle, along with increasingly saturated background col-ors in later segments. MemRoPE preserves more stable sub-ject appearance and background color tone throughout the full hour. 
+
+Memory Component Ablation. Fig. 11 visualizes the ef-fect of each memory component on LongLive [44] at 60 seconds. Without any memory, with long-term memory only, and with short-term memory only, background struc-tures such as buildings gradually disappear as generation progresses. Only when both streams are combined does the full method preserve the background architecture and sub-ject appearance throughout the sequence, suggesting that 15 0-12 min 
+
+12 -24 min 
+
+24 -36 min 
+
+36 -48 min 
+
+48 -60 min 
+
+> time
+
+0-12 min 
+
+12 -24 min 
+
+24 -36 min 
+
+36 -48 min 
+
+48 -60 min 
+
+> time
+
+∞-RoPE 
+
+MemRoPE (Ours )
+
+Prompt: A stylish woman walks down a bustling Tokyo street filled with warm glowing neon… Figure 10. 1-hour generation comparison on LongLive [44]. Top: ∞-RoPE [47]. Bottom: MemRoPE (Ours). Frames sampled at 12-minute intervals. MemRoPE maintains more consistent subject appearance and background color tone over the full hour. 
+
+16 Prompt: Aerial view of Santorini during the blue hour, showcasing the stunning architecture of white Cycladic buildings with blue dom es. … 
+
+> w/o
+> Memory
+> Long -term
+> Memory
+> Only
+> Short
+> Memory
+> Only
+> Both
+> (Ours)
+> 060s
+
+Figure 11. Qualitative memory component ablation on LongLive [44]. From top to bottom: no memory, long-term memory only, short-term memory only, and both (ours). Only the full dual-stream configuration preserves background structures and subject appearance throughout. 
+
+both memory scales are jointly necessary for maintaining scene integrity. 
+
+## E. Inference Latency 
+
+We measure inference speed on a single NVIDIA A6000 GPU after generating one initial chunk to warm up the model and GPU state. As shown in Tab. 8, MemRoPE adds negligible overhead at the same cache size (LongLive, both 
+
+C = 12 ). On Self-Forcing, MemRoPE is faster because its compact three-tier cache ( C = 12 ) replaces the original sliding window ( C = 21 ), reducing the number of tokens attended to during each denoising step. 
+
+Table 8. Inference speed. Video FPS measured on a single A6000 GPU. Method Video FPS Self-Forcing [19] ( C = 21 ) 3.631 + MemRoPE ( C = 12 ) 5.115 LongLive [44] ( C = 12 ) 4.409 + MemRoPE ( C = 12 ) 4.376 
+
+## F. VLM Evaluation and User Study Details 
+
+VLM-Based Evaluation. In addition to the user study, we employ Gemini 3.1 Pro [14] as a VLM judge to evaluate generated videos on a 5-point exposure stability scale, fol-lowing Self-Forcing++ [8]. The evaluation prompt is as fol-lows: 
+
+VLM Evaluation Prompt 
+
+You are tasked with rating the exposure stability of a video. Assign a score according to the following scale: 
+
+0: Catastrophic Exposure. Nearly the entire frame is ei-ther blown out (pure white) or crushed (pure black), ren-dering the scene unreadable. 
+
+1: Severe Exposure Failure. Large portions are domi-nated by over- or under-exposure, substantially impairing visibility. 
+
+2: Noticeable Exposure Problems. Persistent clipping in highlights or shadows; significant areas lose detail. 
+
+3: Moderate Exposure Issues. Over-exposed highlights or under-exposed shadows occur but are limited in extent or duration. 
+
+4: Minor Exposure Flaws. Small regions are occasionally too bright or too dark, but do not meaningfully disrupt visibility. 
+
+5: Well-Exposed. Balanced lighting across the frame with no distracting over-exposure or darkening. 
+
+Fig. 12 shows example evaluations. 
+
+User Study Interface. Fig. 13 shows our user study inter-face. Participants evaluate 20 pairs of side-by-side videos generated from the same prompt by two anonymized meth-17 Self Forcing 
+
+Rating: 2 – Noticeable Exposure 
+
+Problems. 
+
+Reason: The video begins with a 
+
+reasonably well -exposed view of a gallery, 
+
+with good balance between the …… 
+
+Rolling Forcing 
+
+Rating: 5 – Well -Exposed. 
+
+Reason: The video demonstrates excellent 
+
+and stable exposure throughout. The 
+
+lighting within the art gallery is balanced, 
+
+effectively illuminating the various …… 
+
+LongLive 
+
+Rating: 4 – Minor Exposure Flaws. 
+
+Reason: The video generally demonstrates 
+
+good exposure control within a challenging 
+
+lighting environment …… 
+
+Inf -RoPE 
+
+Rating: 5 – Well -Exposed. 
+
+Reason: The video demonstrates excellent 
+
+exposure stability throughout the gallery 
+
+tour. The lighting is balanced, effectively 
+
+highlighting the artworks without … 
+
+Deep Forcing 
+
+Rating: 5 – Well -Exposed. 
+
+Reason: The video consistently 
+
+demonstrates excellent exposure control 
+
+throughout its tour of the art gallery. The 
+
+lighting, which combines ambient …… 
+
+Ours 
+
+Rating: 5 – Well -Exposed. 
+
+Reason: The video demonstrates excellent 
+
+exposure management in a complex 
+
+lighting environment. The gallery space, 
+
+with its combination of artificial …… Figure 12. Example VLM evaluation. Gemini 3.1 Pro [14] rates each method on a 5-point scale with detailed reasoning. (a) (b) 
+
+Figure 13. User study interface. (a) Welcome page with instructions. (b) Evaluation page showing side-by-side video comparison with per-dimension preference questions. 
+
+ods. For each pair, they answer six questions covering Color Consistency, Subject Consistency, Background Con-sistency, Text Alignment, Motion Smoothness, and Overall Preference. 18

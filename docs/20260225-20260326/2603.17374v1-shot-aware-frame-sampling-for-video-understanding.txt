@@ -1,0 +1,809 @@
+Title: Shot-Aware Frame Sampling for Video Understanding
+
+URL Source: https://arxiv.org/pdf/2603.17374v1
+
+Published Time: Thu, 19 Mar 2026 00:48:08 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# Shot-Aware Frame Sampling for Video Understanding 
+
+## Mengyu Zhao 1,2∗† Di Fu 1∗ Yongyu Xie 3 Jiaxing Zhang 1
+
+## Zhigang Yuan 1 Shirin Jalali 2 Yong Cao 11 ByteDance 2Rutgers University 3Georgia Tech March 19, 2026 
+
+Abstract 
+
+Video frame sampling is essential for efficient long-video understanding with Vision-Language Models (VLMs), since dense inputs are costly and often exceed context limits. Yet when only a small number of frames can be retained, existing samplers often fail to balance broad video coverage with brief but critical events, which can lead to unreliable downstream predictions. To address this issue, we present InfoShot, a task-agnostic, shot-aware frame sampler for long-video understanding. InfoShot first partitions a video into semantically consistent shots, and then selects two complementary keyframes from each shot: one to represent the main content and one to capture unusual within-shot changes. This design is guided by an information-theoretic objective that encourages the sampled set to retain high information about both shot structure and sparse within-shot deviations. In this way, it improves the chance of preserving both overall video context and short decision-critical moments without requiring any retraining. To better evaluate such short-lived events, we further introduce SynFlash, a synthetic benchmark with controllable sub-second anomaly patterns and frame-level ground truth, and we also evaluate InfoShot on existing anomaly datasets and general video understanding tasks. Experiments show that InfoShot improves anomaly hit rate and downstream Video-QA accuracy under frame number constraints, while matching or outperforming strong baselines on standard video understanding benchmarks. 
+
+# 1 Introduction 
+
+Vision-Language Models (VLMs) have substantially improved video understanding and reasoning [1, 2, 3, 4, 5, 6, 7]. However, processing dense spatiotemporal inputs remains expensive and often exceeds the context limits of current architectures [8, 9, 10, 11, 12, 13]. To make long-video inference practical, existing systems mainly rely on in-model token compression [14, 15, 16, 17, 18] or front-end frame sampling [19, 20, 21, 22, 12, 23]. This paper focuses on frame sampling. Sampling fixes the visual evidence available to the downstream VLM; once a critical frame is missed, the model cannot recover it, which can lead to unsupported or wrong Video-QA and reasoning outputs [8, 10, 11, 12]. A key challenge is that information in real videos is not evenly distributed over time. Uniform temporal sampling [24] allocates frames by timestamps and can oversample long static shots with near-duplicate frames while undersampling fast motions and short events [19, 21, 12, 23]. Other approaches attempt to rank frames using task-specific scores (e.g., anomaly scores) or query-conditioned matching for Video-QA/retrieval [25, 26, 27, 12, 28, 29]. These methods often require supervision, rely on a known query at sampling time, or depend on scoring signals that may not generalize. Under tight frame budgets, they can still miss sub-second but decision-critical evidence [13, 30]. This motivates shot-aware, content-driven  
+
+> ∗indicates equal contributions. This work was done when Mengyu Zhao was an intern at ByteDance.
+> †indicates corresponding author. E-mail: mykzhao@gmail.com Code is available at https://github.com/mengyu02/InfoShot .
+
+1
+
+> arXiv:2603.17374v1 [cs.CV] 18 Mar 2026
+
+sampling: instead of sampling by time, we segment videos into semantically consistent shots and allocate the budget across shots, so that sampling density follows visual content [31, 32]. This issue is especially important for tasks that require evidence of brief events, such as anomaly detection [33, 34] and Video-QA about transient content. Many anomalies last only a fraction of a second. If the anomaly frame is not sampled, even strong VLMs cannot infer it reliably from surrounding frames. In practice, transient anomalies are also diverse: beyond black/white frames, they include high-saturation flashes, short wipe-like transitions, picture-in-picture artifacts with small spatial support, and camouflaged insertions with matched global color statistics. These patterns challenge global similarity measures and threshold-based heuristics [35, 36, 31], which can treat localized or low-contrast changes as minor variation. To address this bottleneck, we propose InfoShot , a task-agnostic, model-independent sampling framework guided by an information-theoretic view: under a fixed budget, the sampled set should retain high information about latent video structure, including both shot-level structure and sparse within-shot deviations. We model a video as a stochastic piecewise-constant process in feature space, where each segment represents a stable shot and transient events appear as sparse deviations. Based on this model, InfoShot performs greedy shot segmentation using a windowed Generalized Likelihood Ratio Test, and then selects two complementary keyframes per shot: a common frame that represents the dominant semantics and a unique frame that captures the largest within-shot feature deviation. This design preserves global context, increases the chance of capturing sub-second evidence, and reduces redundancy in long static shots. Evaluating short-lived events is difficult because existing benchmarks often lack frame-level ground truth for transient anomalies. We therefore introduce SynFlash , a synthetic Video-QA benchmark designed to reflect real-world moderation settings with controllable sub-second anomaly patterns and exact frame-level annotations. We further evaluate on real-world anomaly datasets (HIVAU-70k [26]) and a general video reasoning benchmark (Video-MME [11]). Experiments show that InfoShot improves anomaly hit rate and downstream Video-QA accuracy under low-frame-rate constraints, while matching or outperforming strong baselines on standard video understanding benchmarks. We deploy InfoShot in TikTok’s video moderation pipeline, which processes billions of short videos per week, and observe substantially higher recall for evasive transient harmful content under tight compute constraints. Our contributions are as following: 
+
+• We propose InfoShot (Fig. 1), a shot-aware sampler that segments videos in deep feature space and selects informative keyframes to improve semantic coverage under a limited frame budget. 
+
+• We introduce SynFlash, a synthetic Video-QA benchmark designed to reflect real-world moderation settings with four transient anomaly patterns and frame-level ground truth, and show consistent im-provements over task-agnostic sampling baselines. 
+
+• We evaluate on HIVAU-70k [26] and Video-MME [11], showing improved anomaly coverage while preserving general Video-QA performance under the same sampling rate. 
+
+# 2 Related Work 
+
+Shot Boundary Detection and Scene Segmentation. Shot boundary detection (SBD) partitions a video into temporal segments (shots) based on visual transitions. Heuristic methods based on low-level cues are still used in practice (e.g., PySceneDetect [35]), but often fail in real-world edits. Recent work uses deep models for more reliable transition detection (e.g., TransNet V2 [31]) or shot-aware representations (e.g., ShotCoL [37]); AutoShot [32] shows that gradual transitions remain challenging. Temporal action segmentation models [38, 39] capture long-range structure but target semantic labeling rather than boundary detection. In this work, we use shot boundaries as macroscopic structure to allocate sampling budget by content rather than by time. 
+
+Video Anomaly Detection and Understanding. Video anomaly detection (VAD) aims to identify abnormal events, often under weak supervision. Many methods use multiple-instance learning on untrimmed 2datasets [33, 34] or rely on reconstruction/prediction errors [40, 41]. Recent work improves localization by modeling temporal feature magnitude [42] or aligning visual features with language [25]. Beyond binary detection, newer benchmarks (e.g., HIVAU-70K [26]) emphasize temporal coverage and fine-grained reasoning over long videos. However, many VAD pipelines still depend on task-specific anomaly scores for ranking or sampling, which may not generalize to unseen patterns. Under low frame rates, missing a short anomaly can dominate the final error. 
+
+Video Frame Sampling. Efficient sampling is a common way to reduce compute in video recognition. Uniform sparse sampling [24] remains a strong baseline, but it allocates frames by time and can oversample long static shots while undersampling fast events. Adaptive methods learn policies to select informative frames or clips under a budget, for example via conditional computation [19, 21] or early exiting [22]. In multimodal systems, many samplers are trained or tuned for specific objectives such as retrieval [43], recognition [44], or Video-QA [20, 27]; recent work also uses pretrained VLM signals or query-conditioned scores to rank frames [25, 27, 28]. Our setting instead requires a task-agnostic sampler that preserves unpredictable, sub-second anomalies without task-specific supervision or a known query at sampling time. We therefore use a shot-aware strategy that selects both representative and high-deviation frames within each shot. 
+
+Video-QA and Vision-Language Models. VLMs have been extended to video by encoding a sequence of sampled frames and performing reasoning [6, 45, 46]. Recent models scale instruction tuning and improve performance on video benchmarks [5, 47, 3, 10, 11]. But these systems typically treat sampling as a pre-processing step with sufficient evidence. We instead treat frame extraction as a primary failure mode under strict budgets, and we study how to select frames that better cover both context and short-critical events. 
+
+# 3 Methodology Step 1: Frame feature extraction 
+
+> ⋯
+> ⋯
+
+⋯
+
+Step 4: VLM -based video understanding 
+
+> VLMs
+> Straw -
+> berry
+
+⋯   
+
+> Q: What unexpected object appears ?
+> Shot 1 Shot 2 Shot 3 Shot 4
+
+Step 2: Shot segmentation 
+
+> Unique frame
+> Common frame
+
+Step 3: Per -shot dual -keyframe selection 
+
+⋯    
+
+> Shot 1 Shot 2Abnormal frame with
+> small -scale strawberry
+
+Figure 1: The overall framework of our approach. We propose a task-agnostic and plug-and-play sampler, InfoShot, before the VLM to select keyframes under a fixed budget. InfoShot performs greedy shot seg-mentation in deep feature space (Sec. 3.4) and then selects two frames per shot: a common and a unique 
+
+high-deviation frames (Sec. 3.5). The downstream VLM uses the same prompt; only the sampled frame set differs. The overall pipeline is shown in Fig. 1. It is inspired by an information-theoretic view: under a fixed frame budget, the sampled set should retain high information about latent video structure. This suggests preserving both (i) shot-level structure and (ii) sparse within-shot deviations that may carry decision-critical evidence. InfoShot implements this with two stages: it segments the video into content-consistent shots in 3deep feature space (Step 2) and then selects two complementary keyframes per shot (Step 3), a common 
+
+frame and a unique high-deviation frame. The sampled frames are fed to the downstream VLM with the same prompt for Video-QA (Step 4); only the sampled frame set differs across methods, and the sampler can be used with other VLM-based video tasks. The following sections formalize this principle and derive the InfoShot procedure. 
+
+## 3.1 Problem Formulation 
+
+Let a video be a sequence of frames V = {xt}Tt=1 . We extract frame features using a pretrained visual encoder ϕ, ct = ϕ(xt) ∈ Rn (Step 1 in Fig. 1). Deep features reduce low-level noise, but changing sharply under localized transient events. Given features {ct}Tt=1 and a frame budget K, we select indices K ⊂ { 1, . . . , T } with |K| ≤ K. We introduce two latent binary sequences: a shot boundary indicator st ∈ { 0, 1} and a transient event indicator ft ∈ { 0, 1}.Here st = 1 indicates a shot change at time t, and ft = 1 indicates a localized within-shot deviation at time 
+
+t. Our goal is to choose K that preserves both shot-level structure and rare within-shot events under a strict budget. 
+
+## 3.2 Stochastic Sequence Model 
+
+We use a lightweight generative abstraction for deep features. Conditioned on the shot partition induced by 
+
+S1: T , the sequence is piecewise stationary: for each shot m with index set Sm,
+
+ct = μm + ϵt, t ∈ S m, (1) where μm is a shot-level mean. Within a shot, we approximate ϵt as Gaussian (or sub-Gaussian) noise with weak temporal dependence, 
+
+ϵt ∼ N (0 , Σm), Cov( ϵt, ϵ t+τ ) decays with τ.  (2) Transient events are modeled as sparse within-shot deviations. We use the following stochastic sequence model: 
+
+ct = (1 − ft)
+
+h
+
+(1 − st)( ct−1 + zt) + st ˜ct
+
+i
+
++ ftηt, (3) where st ∈ { 0, 1} indicates a shot boundary and ft ∈ { 0, 1} indicates a transient event. When st = 1, a new shot is initialized by ˜ ct ∼ N (μ, Σ); when st = 0, features evolve smoothly with zt ∼ N (0 , σ 2 
+
+> z
+
+I). When ft = 1, the observation is dominated by an outlier component ηt, which can be modeled as a heavy-tailed distribution (or a high-variance Gaussian) to capture large within-shot deviations. Conditioned on (S1: T , F 1: T ), we assume observations exhibit weak temporal dependence (e.g., first-order Markov), which supports windowed statistics used in our boundary scoring. 
+
+## 3.3 Information-Theoretic Principle 
+
+Directly optimizing sampling for a downstream task requires task-specific supervision and does not generalize across applications. Instead, we use an information-theoretic objective as a design principle: 
+
+max    
+
+> K⊂{ 1,...,T },|K|≤ K
+
+I(CK; S1: T , F 1: T ), (4) where CK = {ct}t∈K . By the chain rule (proof in the Suppl. Sec. A.1), 
+
+I(CK; S1: T , F 1: T ) = I(CK; S1: T ) + I(CK; F1: T | S1: T ). (5) Under the piecewise-stationary approximation, the first term is driven by distribution shifts across shots, while the second term is driven by sparse, high-impact within-shot deviations. This motivates a two-stage method: (i) recover a shot partition to capture S1: T , and (ii) select within-shot frames that improve coverage of F1: T while preserving representative context. We do not explicitly estimate mutual information; we use this decomposition to guide a practical algorithm. 43.4 Greedy Shot Segmentation via Windowed GLRT 
+
+We approximate the structural term I(CK; S1: T ) by recovering shot boundaries in feature space (Step 2 in Fig. 1). Let Aij = cos( ci, c j ) be pairwise affinity. For a candidate boundary t, define two windows 
+
+W− 
+
+> t
+
+= {t − k, . . . , t − 1} and W+ 
+
+> t
+
+= {t, . . . , t + k − 1}. We score boundary strength by comparing within-window cohesion and cross-window similarity: 
+
+Bt = 12
+
+
+
+EI1,I 2 [AI1I2 ] + EJ1,J 2 [AJ1J2 ]
+
+
+
+− EI1,J 1 [AI1J1 ], (6) where I1, I 2 are uniformly sampled from W+ 
+
+> t
+
+and J1, J 2 are uniformly sampled from W− 
+
+> t
+
+. The window expectations reduce sensitivity to single-frame spikes by aggregating multiple pairs. We greedily split segments based on Bt. Starting from one segment, we repeatedly choose the split point with the largest Bt inside current segment until reaching M = ⌊K/ 2⌋ segments, reserving two frames per segment for the next stage. Pseudocode of the full InfoShot pipeline is provided in Suppl. Sec. A.2. 
+
+## 3.5 Dual-Keyframe Selection Within Each Shot 
+
+We approximate the conditional term I(CK; F1: T | S1: T ) by selecting within-shot evidence that complements representative context. (Step 3 in Fig. 1) Let shot m contain indices Sm with length L = |S m| and affinity matrix A ∈ RL×L restricted to this shot. For each frame i ∈ S m, we compute two scores: typicality as the average similarity to the shot and local volatility as the dissimilarity to a temporal neighborhood Ni,
+
+gi = 1
+
+L − 1
+
+X 
+
+> j∈S m, j ̸=i
+
+Aij , vi = 1 − 1
+
+|N i|
+
+X
+
+> j∈N i
+
+Aij . (7) We normalize both scores within the shot to obtain ˆ gi, ˆvi ∈ [0 , 1]. 
+
+Common and unique keyframes. We select two complementary frames per shot: a common frame that is globally typical and locally stable, and a unique frame that favors atypicality and local change: 
+
+tcom = arg max 
+
+> i∈S m
+
+
+
+λˆgi − (1 − λ)ˆ vi
+
+
+
+, tuni = arg max 
+
+> i∈S m\{ tcom }
+
+
+
+α(1 − ˆgi) + (1 − α)ˆ vi
+
+
+
+. (8) The final keyframe set is the union of {tcom , t uni } over all shots, truncated if necessary to satisfy |K| ≤ K.
+
+Rationale for two keyframes. We motivate the common–unique pair as a practical approximation to maximizing I(CK; S1: T , F 1: T ) under a per-shot budget of two frames. Fix a shot m with indices Sm and let 
+
+G ∈ { 0, 1} denote the dominant (background) state and U ∈ { 0, 1} denote whether a transient deviation occurs within the shot. ∗ Under the piecewise-stationary Gaussian approximation, conditioned on G the features concentrate around μm; when U = 1, at least one frame is drawn from a shifted or higher-variance distribution. For any candidate pair {i, j } ⊂ S m, the chain rule gives 
+
+I(ci, c j ; G, U ) = I(ci, c j ; G) + I(ci, c j ; U | G). (9) We use simple, tractable surrogates for these two terms. 
+
+Shot evidence (the G term). When U = 0, ct ∼ N (μm, Σm). A standard surrogate for representing the shot is to select a medoid in feature space, i.e., the frame that maximizes its average affinity to others in the shot. This motivates the typicality score gi and the selection of the common frame tcom .
+
+Transient evidence (the U term). Conditioned on G, detecting U reduces to distinguishing the nominal distribution from a sparse deviation process. Under such models, frames with low local consistency are more        
+
+> ∗This is a per-shot form of ( S1: T, F 1: T): Gcaptures the shot identity through μm, and Ucaptures sparse within-shot anomalies.
+
+5likely to come from the deviation component. We use the local volatility score vi as a proxy for within-shot outlierness in a temporal neighborhood. Selecting tuni to maximize a combination of atypicality (1 − ˆgi)and volatility ˆ vi is therefore expected to increase coverage of within-shot deviations captured by the selected pair. Finally, selecting two frames with different roles helps retain complementary information: the common frame captures dominant shot semantics, while the unique frame targets sparse deviations. Our selection rules in Eq. 8 implement this decomposition and enforce tuni ̸ = tcom .
+
+# 4 Experiments 
+
+We evaluate the proposed frame sampling method on both synthetic and real-world benchmarks. We first introduce SynFlash, a synthetic Video-QA dataset tailored for sub-second anomalies with exact frame-level ground truth. We then evaluate event-level coverage on HIVAU-70k [26] annotations and test general video understanding on Video-MME [11]. We compare methods under a fixed sampling rate (fps) budget rather than a fixed number of frames with all tests. Panda -70M   
+
+> test split
+> Video clip 1
+> Video clip 2
+> Video clip 3
+> ImageNet -1k
+> Static image
+> SynFlash Dataset
+> Sub -second anomaly injection
+> Injection pattern examples
+> (c) Curtain
+> (d) Picture -in -Picture
+> (a) Camouflage
+> (b) High -Saturation
+
+Figure 2: Overview of the SynFlash generation pipeline. ImageNet-1k [48] images are injected at random times into videos formed by concatenating three Panda-70M [49] clips, creating four transient anomaly types with frame-level ground truth. 
+
+## 4.1 Dataset Construction: SynFlash 
+
+To evaluate whether a sampler preserves sub-second visual evidence in practical moderation settings, we construct SynFlash , a synthetic flash-frame dataset, via controlled anomaly injection. The name reflects our focus on transient events that appear for only a few frames and are easy to miss under low-frame-rate sampling. The injection patterns are based on flash-frames we observed in real TikTok moderation data, and are designed to harmful cases where short but important evidence is likely to be dropped. As illustrated in Fig. 2, each synthetic video is composed of three background clips sampled from the Panda-70M [49] test split and concatenated to keep the total duration under 30 seconds. We normalize all videos to a fixed 6resolution of 640 × 480 and a fixed frame rate of 24 fps. We then inject short anomalies using images from ImageNet-1k [48] following four injection patterns, and record the injection timestamps. 
+
+Injection protocol. For each video, we sample an insertion time uniformly within the valid temporal range and inject an anomaly segment lasting 0.1-0.2 seconds (about 2-5 frames at 24 fps). The flash-frame content is randomly drawn from ImageNet-1k [48], and we store its ImageNet label for evaluation. We generate four subsets to cover common patterns: (a) Camouflage : we apply a color statistics matching transform in CIELAB space to make the inserted image match the local background appearance before blending, reducing low-level contrast; (b) High-saturation : we simulate flash-like distractors by applying high fps color perturbations on the background (e.g., a flashing ring) for the whole video; (c) Curtain : we simulate rapid wipe-like edits by sliding in the anomaly around the injection time, optionally with brief blackout frames to break temporal continuity; (d) Picture-in-picture (PiP) : we downscale the inserted image and paste it into a random local region to test anomalies with small spatial support. In total, SynFlash contains 8,000 videos (2,000 per subset). 
+
+## 4.2 Benchmark Design and Video-QA Protocol 
+
+Evaluation setup. To better evaluate performance on capturing short-critical events, we use SynFlash and compare model-independent samplers under the same time-based budget of 0.5 fps. For a video of duration 
+
+L seconds, the target number of sampled frames is K = ⌈0.5L⌉, and each method outputs a set of frame indices K with |K| = K. We compare against three representative baselines. Uniform samples frames at fixed temporal intervals. VSUMM [50] is an unsupervised summarization baseline based on clustering; we set the target number of selected keyframes to K and map each selected representative to its nearest original frame. TransNet (TransNet V2 [31]) predicts frame-level transition scores; we rank frames by the score and select the top-K frames. Injected flash frame only sampled by InfoSho t (d) InfoShot                  
+
+> (a) TransNet
+> (c) Uniform
+> (b) VSUMM
+> Cartoon characters “Geekanoids ” logo Table in room
+> Task 2: Temporal Ordering (TO)
+> Q: Does the unexpected forklift appear before,
+> during, or after the scene showing the logo for
+> geekanoids on a gray background?
+> A. after
+> B. before only correctly selected by InfoShot
+> C. during
+> Task 1: Anomaly Retrieval (AR)
+> Q: What unexpected object appears briefly?
+> A. crane
+> B. forklift only correctly selected by InfoShot
+> C. dump truck
+> D. excavator
+
+Figure 3: Case study from SynFlash (PiP). Left: sampled frames from different methods. Right: example questions. 
+
+Implementation details. We compute frame features using a pretrained ResNet-50 with the classification head removed; we use the standard preprocessing and apply ℓ2-normalize, and all similarity matrices use cosine similarity between normalized features. For InfoShot, greedy shot segmentation uses a boundary window size in the range 3-15 (scaled by segment length) with shot-length constraints of 3-300 frames; within each shot we select two keyframes using temporal neighborhood size k = 1, λ = 0 .7 (common) and 
+
+α = 0 .5 (unique). For efficiency on long videos, we compute similarity in blocks of 600 frames in 10 fps, which only affects memory usage. All sampled frames are fed to Qwen2.5-VL [4] using the same prompt template and deterministic decoding (temperature 0); the only difference across methods is the sampled frame set. 
+
+Metrics. We measure whether a sampler captures the injected anomaly and whether the sampled evidence supports downstream reasoning. Let K denote sampled frame indices and let A denote the set of injected anomaly frame indices (2–5 frames). We report Frame Recall (R) as the fraction of videos where K∩A̸ = ∅.7We also generate two multiple-choice questions per video using SynFlash metadata, yielding 16,000 queries: (i) Anomaly Retrieval (AR) asks for the identity/category of the injected content; for AR, we construct hard distractors by sampling answer choices from the same superclass/type as the injected ImageNet label . (ii) Temporal Ordering (TO) asks the temporal order between the anomaly and a macroscopic event in the background. We report accuracy over all queries. 
+
+Results. Table 1 reports results by injection pattern subsets. InfoShot achieves the best average frame recall and improves AR/TO accuracy across all four subsets. The gains are largest on High-saturation and PiP, where global-similarity and boundary-only strategies often miss short or localized events. Fig. 3 shows a VQA case where InfoShot samples the flash evidence that other methods miss. When the anomaly is not sampled, the VLM answers without the required evidence. InfoShot selects a representative frame and a high-deviation frame within the shot, improving performance on our metrics. Additional case studies are provided in the Suppl. Sec. A.3. Table 1: Performance comparison on SynFlash. Metrics include frame-level Recall (R, %), Anomaly Retrieval Accuracy (AR, %), and Temporal Ordering Accuracy (TO, %). Best results are highlighted in bold , and second-best are underlined. 
+
+Metric Method Camou. High-Sat. Curtain PiP Avg. R
+
+Uniform 11.20 10.00 19.15 11.20 11.81 VSUMM 74.50 9.15 93.75 9.35 46.54 TransNet 95.55 16.55 81.15 10.30 46.28 
+
+InfoShot 98.35 87.05 88.45 64.95 84.70 AR 
+
+Uniform 29.60 29.05 34.70 29.75 30.78 VSUMM 56.75 28.40 74.95 29.45 47.39 TransNet 62.70 30.80 60.85 30.10 46.11 
+
+InfoShot 69.15 70.60 73.15 48.35 65.31 TO 
+
+Uniform 35.00 33.85 36.80 35.35 35.25 VSUMM 53.90 33.40 62.75 34.10 46.04 TransNet 61.95 35.30 66.50 35.80 49.89 
+
+InfoShot 60.70 56.85 61.10 52.75 57.85 InfoShot 
+
+> Uniform
+> VSumm
+> TransNet
+> 0.10
+> 0.15
+> 0.20
+> 0.078 0.083 0.080
+> 0.201
+> Camou.
+> InfoShot
+> Uniform
+> VSumm
+> TransNet
+> 0.080 0.090 0.081
+> 0.198
+> Curtain
+> InfoShot
+> Uniform
+> VSumm
+> TransNet
+> 0.10
+> 0.15
+> 0.20
+> 0.076 0.078 0.075
+> 0.177
+> PiP.
+> InfoShot
+> Uniform
+> VSumm
+> TransNet
+> 0.095 0.100
+> 0.160
+> 0.136
+> High-Sat.
+> Dist(  )
+
+Figure 4: Feature-space distortion Dist( K) (lower is better) on SynFlash. 
+
+Feature-space information. Beyond anomaly re-call, we also evaluate how much information a sam-pler retains in a fixed feature space under the same budget K. Following Sec. 3, given V = {xt}Tt=1 
+
+and features ct = ϕ(xt), a sampler outputs indices 
+
+K ⊂ { 1, . . . , T } with |K| ≤ K and the sampled set 
+
+CK = {ct}t∈K . We retain both representative con-text and rare deviations should make CK cover the full sequence C1: T = {ct}Tt=1 with less mismatch. We measure this via set distortion under cosine distance. We first normalize features, and define 
+
+Aij = cos( ci, c j ) as in Sec. 3.4. The distortion of a sampled set is 
+
+Dist( K) = 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+min 
+
+> k∈K
+
+ 1 − Atk 
+
+ = 1 − 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+max  
+
+> k∈K
+
+Atk .
+
+(10) Intuitively, for each full frame t we find the most similar sampled frame k ∈ K and average the residual 1 − Atk . Lower Dist( K) indicates better feature-space 8coverage under the same budget. Fig. 4 reports Dist( K) at 0.5 fps on SynFlash; InfoShot achieves the lowest distortion across all subsets, suggesting the highest information retention in feature space, consistent with our claim in Sec 3.5. Table 2: Event coverage on HIVAU-70k annotations under 0.1 fps. ER: event recall, CR: complete coverage rate. Weighted Avg. is weighted by the number of events/videos in each dataset. Best results are highlighted in bold , and second-best are underlined.                                 
+
+> Method UCF-Crime XD-Violence Weighted Avg. ER CR ER CR ER CR
+> TransNet 40.97 37.50 37.16 39.00 37.56 38.69 VSUMM 65.97 62.50 57.35 51.60 58.25 53.82 Uniform 69.44 65.62 59.53 54.20 60.56 56.53
+> InfoShot 69.44 66.41 63.09 58.40 63.75 60.03
+
+## 4.3 Real-World Anomaly Detection 
+
+SynFlash provides exact frame-level ground truth for transient anomalies. We next test whether InfoShot improves event coverage on real videos using HIVAU-70K [26] annotations over UCF-Crime [33] and XD-Violence [34]. We impose an extreme sampling rate of 0.1 fps for all methods. We evaluate event-level hit metrics computed directly from HIVAU-70K annotation timestamps. 
+
+Metrics. Each video contains annotated event intervals {[ai, b i]} in seconds. We map timestamps to frame indices using the decoded frame rate and report: (i) Event Recall (ER) : the fraction of events for which at least one sampled frame falls within [ ai, b i]; (ii) Complete Coverage Rate (CR) : the fraction of videos for which all annotated events are hit by at least one sampled frame. Table 3: Video-MME results under the same frame budget. Best results are in bold , and second-best are underlined                
+
+> Method Short Med. Avg.
+> TransNet 65.8 60.4 63.2 VSUMM 67.8 62.5 65.2 Uniform 71.8 62.2 67.0 InfoShot 71.5 62.4 67.0
+
+Results. Table 2 shows that InfoShot achieves the best overall coverage under an extremely tight frame budget. It improves both ER and CR on XD-Violence and improves CR on UCF-Crime while matching the best ER. Uniform remains competitive on UCF-Crime ER, which is consistent with longer event durations where periodic sampling can still land inside event intervals. 
+
+## 4.4 General Video Understanding 
+
+Finally, we test whether a sampler designed to pre-serve transient anomalies harms general video rea-soning. We evaluate on Video-MME [11] and the same fixed sampling rate for all methods (0.25 fps). We report accuracy on short and medium videos following the benchmark protocol. 
+
+Results. As shown in Table 3, InfoShot matches uniform sampling on average and is slightly better on medium videos. This suggests that the shot-aware allocation does not reduce the overall evidence needed by Video-MME, while providing better coverage for transient anomalies in SynFlash and HIVAU-70K. 95 Ablation Studies 
+
+## 5.1 Feature Extractor 
+
+Setup. InfoShot relies on feature-space similarity for shot boundary detection and within-shot keyframe selection. We ablate the feature extractor while keeping the segmentation and dual-keyframe selection fixed, under the SynFlash protocol with the same budget of 0.5 fps ( K = ⌈0.5L⌉ for duration L). We compare HSV color histograms (global color distributions), ResNet-50 features (2048-d, ImageNet-pretrained), and SigLIP embeddings (language-aligned). Camou . High -Sat.  Curtain  PiP 
+
+> Color
+> Histogram
+> Semantic
+
+Figure 5: Similarity matrices on SynFlash under different feature extractors. The first row uses HSV color-histogram features and the second row uses semantic features. Each column shows one example video from a SynFlash subset (Camouflage, High-Sat, Curtain, and PiP). Red arrows indicate the temporal injected flash event. Table 4: Ablation on the feature extractor used by InfoShot on SynFlash under a fixed budget (0.5 fps). Metrics include frame-level Recall (R, %), Anomaly Retrieval (AR, %), and Temporal Ordering (TO, %). Best results are highlighted in bold , and second-best are underlined.                                                    
+
+> Metric Method Camou. High-Sat. Curtain PiP Avg. R
+> Histogram 93.65 27.05 85.10 40.95 61.69 SigLIP 98.95 87.05 87.35 74.80 87.04
+> ResNet-50 98.35 86.10 89.25 64.95 84.66
+> AR
+> Histogram 64.95 35.85 71.15 39.55 52.88 SigLIP 69.60 70.60 74.10 52.40 66.68
+> ResNet-50 69.15 70.60 73.15 48.35 65.31
+> TO
+> Histogram 58.80 38.20 58.45 44.45 49.98 SigLIP 60.40 56.75 61.95 55.45 58.64
+> ResNet-50 60.70 56.85 61.10 52.75 57.85
+
+Semantic features and efficiency. In Fig. 5, we keep the segmentation and dual-keyframe selection unchanged and only replace the frame feature representation. It shows that histogram features are unreliable 10 on SynFlash: in High-Sat, rapid background flickering changes global color statistics and produces speckle-like similarity patterns; in PiP, the small insertion may not shift the global histogram enough to stand out. Histogram cues are also weak in Camouflage (color matching keeps histograms similar) and in Curtain (transition-induced color shifts make normal scene changes resemble injected events). As a result, histogram similarity is not a reliable proxy for the semantic evidence needed by AR and TO. Additional case studies are provided in Suppl. Sec. A.3. Semantic features are more robust to low-level photometric variation and better capture semantic content differences. Table 4 shows consistent gains under the same budget when using semantic features. SigLIP achieves the best overall performance, while ResNet-50 is close. We therefore use ResNet-50 by default to reduce feature extraction cost with minimal loss in accuracy. 
+
+## 5.2 Robustness to Frame Budget 
+
+We evaluate robustness under sampling rates from 0.1 to 0.5 fps. Fig. 6 reports anomaly hit recall, anomaly retrieval (AR), and temporal ordering (TO) across the four SynFlash subsets. InfoShot performs best across metrics, with the largest gains at 0.1 fps, where missing evidence dominates downstream VQA. From an information perspective, extremely sparse sampling makes the selected set a hard bottleneck: if the anomaly evidence is not sampled, VQA becomes under-determined regardless of the VLM. In Fig. 6, where uniform sampling exhibits very low recall at 0.1 fps and VSUMM is limited by redundancy under tight budgets. Boundary-only approaches, TransNet, improve recall for subsets with clear transitions but remain weak on localized patterns (e.g., High-Sat. and PiP). In contrast, InfoShot mitigates this bottleneck by allocating budget at the shot level (reducing wasted samples in long static content) and explicitly select-ing, within each shot, a representative frame and a high-deviation frame. This combination increases the probability that the sampled set retains both global context and short, localized evidence, which explains the stable gains in recall and the corresponding improvements in VQA at lower fps settings. 
+
+# 6 Conclusion 
+
+We studied task-agnostic frame sampling as a bottleneck for video understanding with VLMs under strict compute and context limits. We proposed InfoShot, an information-theoretic, shot-aware sampler that segments videos into content-consistent shots in deep feature space and selects two keyframes per shot: a 
+
+common frame for dominant semantics and a unique high-deviation frame for within-shot evidence. We introduced SynFlash, a synthetic Video-QA benchmark with controllable sub-second anomaly patterns and frame-level ground truth. Across SynFlash and existing benchmarks, InfoShot improves anomaly hit rate and Video-QA accuracy under low-frame-rate constraints while remaining competitive on general video understanding. We also deployed InfoShot in TikTok’s video moderation pipeline and observed higher recall for evasive transient harmful content under tight compute constraints. 
+
+Limitations. InfoShot uses a fixed budget and a fixed two-frame allocation per shot, which may be subop-timal when shot lengths and event rates vary widely. Future work will explore adaptive budget allocation and uncertainty-driven within-shot selection, and add lightweight motion cues for fast events. 
+
+Social impact. InfoShot can improve detection of brief harmful content in large-scale moderation pipelines, which may reduce user exposure to unsafe material. At the same time, higher recall can increase false positives and moderation burden if not paired with calibrated thresholds and human review. Like other moderation components, it can reflect dataset and deployment biases, so careful evaluation across regions, languages, and content types is necessary before broad deployment. 11 0                
+
+> 20
+> 40
+> 60
+> 80
+> 100
+> Recall (%)
+> Recall
+> Camou.
+> 0
+> 20
+> 40
+> 60
+> 80
+> High-Sat.
+> 0
+> 20
+> 40
+> 60
+> 80
+> Curtain
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> PiP.
+> 30
+> 40
+> 50
+> 60
+> 70
+> Accuracy (%)
+> Anomaly Retrieval
+> 30
+> 40
+> 50
+> 60
+> 70
+> 30
+> 40
+> 50
+> 60
+> 70
+> 25
+> 30
+> 35
+> 40
+> 45
+> 0.1 0.2 0.3 0.4 0.5
+> 35
+> 40
+> 45
+> 50
+> 55
+> 60
+> Accuracy (%)
+> Temporal Ordering
+> 0.1 0.2 0.3 0.4 0.5
+> 35
+> 40
+> 45
+> 50
+> 55
+> 0.1 0.2 0.3 0.4 0.5
+> 35
+> 40
+> 45
+> 50
+> 55
+> 60
+> 65
+> 0.1 0.2 0.3 0.4 0.5
+> 35
+> 40
+> 45
+> 50
+> InfoShot
+> Uniform
+> VSumm
+> TransNet
+
+Figure 6: SynFlash evaluation results with different methods (same metrics as above) as function of fps, x-axis. 
+
+# References 
+
+[1] OpenAI, “Gpt-4v(ision) system card,” arXiv preprint arXiv:2309.17421 , 2023. [2] Gemini Team, “Gemini: a family of highly capable multimodal models,” arXiv preprint arXiv:2312.11805 , 2023. [3] Jinze Bai, Shuai Bai, Shusheng Yang, Shijie Wang, Sinan Tan, Peng Wang, Junyang Lin, Chang Zhou, and Jing Jing, “Qwen-vl: A versatile vision-language model for understanding, localization, text reading, and beyond,” arXiv preprint arXiv:2308.12966 , 2023. [4] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, Humen Zhong, Yuanzhi Zhu, Mingkun Yang, Zhaohai Li, Jianqiang Wan, Pengfei Wang, Wei Ding, Zheren Fu, Yiheng Xu, Jiabo Ye, Xi Zhang, Tianbao Xie, Zesen Cheng, Hang Zhang, Zhibo Yang, Haiyang Xu, and Junyang Lin, “Qwen2.5-vl technical report,” arXiv preprint arXiv:2502.13923 , 2025. [5] Bin Lin, Yang Ye, Bin Zhu, Jiaxi Cui, Munan Ning, Peng Jin, and Li Yuan, “Video-llava: Learning united visual representation by alignment before projection,” in Proceedings of the 2024 conference on empirical methods in natural language processing , 2024, pp. 5971–5984. [6] Muhammad Maaz, Hanoona Rasheed, Salman Khan, and Fahad Shahbaz Khan, “Video-chatgpt: Towards detailed video understanding via large vision and language models,” arXiv preprint arXiv:2306.05424 , 2023. [7] Zhe Chen, Jiannan Wu, Wenhai Wang, Weijie Su, Guo Chen, Sen Xing, Muyan Zhong, Qinglong Zhang, Xizhou Zhu, Lewei Lu, et al., “Internvl: Scaling up vision foundation models and aligning for generic 12 visual-linguistic tasks,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024, pp. 24185–24198. [8] Haoning Wu, Dongxu Li, Bei Chen, and Junnan Li, “Longvideobench: A benchmark for long-context interleaved video-language understanding,” Advances in Neural Information Processing Systems , vol. 37, pp. 28828–28857, 2024. [9] Peng Jin, Ryuichi Takanobu, Wancai Zhang, Xiaochun Cao, and Li Yuan, “Chat-univi: Unified visual representation empowers large language models with image and video understanding,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024, pp. 13700–13710. [10] Kunchang Li, Yali Wang, Yinan He, Yizhuo Li, Yi Wang, Yi Liu, Zun Wang, Jilan Xu, Guo Chen, Ping Luo, et al., “Mvbench: A comprehensive multi-modal video understanding benchmark,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024, pp. 22195–22206. [11] Chaoyou Fu, Yuhan Dai, Yongdong Luo, Lei Li, Shuhuai Ren, Renrui Zhang, Zihan Wang, Chenyu Zhou, Yunhang Shen, Mengdan Zhang, et al., “Video-mme: The first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , 2025, pp. 24108–24118. [12] Sicheng Yu, Chengkai Jin, Huanyu Wang, Zhenghao Chen, Sheng Jin, Zhongrong Zuo, Xiaolei Xu, Zhenbang Sun, Bingni Zhang, Jiawei Wu, et al., “Frame-voyager: Learning to query frames for video large language models,” arXiv preprint arXiv:2410.03226 , 2024. [13] Yixuan Li, Changli Tang, Jimin Zhuang, Yudong Yang, Guangzhi Sun, Wei Li, Zejun Ma, and Chao Zhang, “Improving llm video understanding with 16 frames per second,” in Proc. ICML , Vancouver, 2025. [14] Daniel Bolya, Cheng-Yang Fu, Xiaoliang Dai, Peizhao Zhang, Christoph Feichtenhofer, and Judy Hoff-man, “Token merging: Your vit but faster,” arXiv preprint arXiv:2210.09461 , 2022. [15] Liang Chen, Haozhe Zhao, Tianyu Liu, Shuai Bai, Junyang Lin, Chang Zhou, and Baobao Chang, “An image is worth 1/2 tokens after layer 2: Plug-and-play inference acceleration for large vision-language models,” in European Conference on Computer Vision . Springer, 2024, pp. 19–35. [16] Michael Ryoo, AJ Piergiovanni, Anurag Arnab, Mostafa Dehghani, and Anelia Angelova, “Tokenlearner: Adaptive space-time tokenization for videos,” Advances in neural information processing systems , vol. 34, pp. 12786–12797, 2021. [17] Yongming Rao, Wenliang Zhao, Benlin Liu, Jiwen Lu, Jie Zhou, and Cho-Jui Hsieh, “Dynamicvit: Effi-cient vision transformers with dynamic token sparsification,” Advances in neural information processing systems , vol. 34, pp. 13937–13949, 2021. [18] Narges Norouzi, Svetlana Orlova, Daan de Geus, and Gijs Dubbelman, “Algm: Adaptive local-then-global token merging for efficient semantic segmentation with plain vision transformers,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , June 2024, pp. 15773–15782. [19] Zuxuan Wu, Caiming Xiong, Chih-Yao Ma, Richard Socher, and Larry S Davis, “Adaframe: Adaptive frame selection for fast video recognition,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2019, pp. 1278–1287. [20] Shoubin Yu, Jaemin Cho, Prateek Yadav, and Mohit Bansal, “Self-chained image-language model for video localization and question answering,” Advances in Neural Information Processing Systems , vol. 36, pp. 76749–76771, 2023. 13 [21] Bruno Korbar, Du Tran, and Lorenzo Torresani, “Scsampler: Sampling salient clips from video for efficient action recognition,” in Proceedings of the IEEE/CVF International Conference on Computer Vision , 2019, pp. 6232–6242. [22] Amir Ghodrati, Babak Ehteshami Bejnordi, and Amirhossein Habibian, “Frameexit: Conditional early exiting for efficient video recognition,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2021, pp. 15608–15618. [23] Linli Yao, Haoning Wu, Kun Ouyang, Yuanxing Zhang, Caiming Xiong, Bei Chen, Xu Sun, and Junnan Li, “Generative frame sampler for long video understanding,” in Findings of the Association for Computational Linguistics: ACL 2025 , 2025, pp. 17900–17917. [24] Limin Wang, Yuanjun Xiong, Zhe Wang, Yu Qiao, Dahua Lin, Xiaoou Tang, and Luc Van Gool, “Temporal segment networks for action recognition in videos,” IEEE transactions on pattern analysis and machine intelligence , vol. 41, no. 11, pp. 2740–2755, 2018. [25] Peng Wu, Xuerong Zhou, Guansong Pang, Lingru Zhou, Qingsen Yan, Peng Wang, and Yanning Zhang, “Vadclip: Adapting vision-language models for weakly supervised video anomaly detection,” in Pro-ceedings of the AAAI conference on artificial intelligence , 2024, vol. 38, pp. 6074–6082. [26] Huaxin Zhang, Xiaohao Xu, Xiang Wang, Jialong Zuo, Xiaonan Huang, Changxin Gao, Shanjun Zhang, Li Yu, and Nong Sang, “Holmes-vau: Towards long-term video anomaly understanding at any granular-ity,” in Proceedings of the computer vision and pattern recognition conference , 2025, pp. 13843–13853. [27] Xi Tang, Jihao Qiu, Lingxi Xie, Yunjie Tian, Jianbin Jiao, and Qixiang Ye, “Adaptive keyframe sampling for long video understanding,” in Proceedings of the Computer Vision and Pattern Recognition Conference , 2025, pp. 29118–29128. [28] Shaojie Zhang, Jiahui Yang, Jianqin Yin, Zhenbo Luo, and Jian Luan, “Q-frame: Query-aware frame selection and multi-resolution adaptation for video-llms,” in Proceedings of the IEEE/CVF International Conference on Computer Vision , 2025, pp. 22056–22065. [29] Mengxia Wu, Min Cao, Yang Bai, Ziyin Zeng, Chen Chen, Liqiang Nie, and Min Zhang, “An empirical study of frame selection for text-to-video retrieval,” in Findings of the Association for Computational Linguistics: EMNLP 2023 , 2023, pp. 6821–6832. [30] Zijia Zhao, Yuqi Huo, Tongtian Yue, Longteng Guo, Haoyu Lu, Bingning Wang, Weipeng Chen, and Jing Liu, “Efficient motion-aware video mllm,” in Proceedings of the Computer Vision and Pattern Recognition Conference , 2025, pp. 24159–24168. [31] Tom´ as Soucek and Jakub Lokoc, “Transnet v2: An effective deep network architecture for fast shot transition detection,” in Proceedings of the 32nd ACM International Conference on Multimedia , 2024, pp. 11218–11221. [32] Wentao Zhu, Yufang Huang, Xiufeng Xie, Wenxian Liu, Jincan Deng, Debing Zhang, Zhangyang Wang, and Ji Liu, “Autoshot: A short video dataset and state-of-the-art shot boundary detection,” in 
+
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2023, pp. 2238–2247. [33] Waqas Sultani, Chen Chen, and Mubarak Shah, “Real-world anomaly detection in surveillance videos,” in Proceedings of the IEEE conference on computer vision and pattern recognition , 2018, pp. 6479–6488. [34] Peng Wu, Jing Liu, Yujia Shi, Yujia Sun, Fangtao Shao, Zhaoyang Wu, and Zhiwei Yang, “Not only look, but also listen: Learning multimodal violence detection under weak supervision,” in European conference on computer vision . Springer, 2020, pp. 322–339. [35] Brandon Castellano, “Pyscenedetect: Video cut detection and analysis tool,” https://github.com/ Breakthrough/PySceneDetect , 2024. 14 [36] Ahmed Hassanien, Mohamed Elgharib, Ahmed Selim, Sung-Ho Bae, Mohamed Hefeeda, and Wojciech Matusik, “Large-scale, fast and accurate shot boundary detection through spatio-temporal convolutional neural networks,” arXiv preprint arXiv:1705.03281 , 2017. [37] Shixing Chen, Xiaohan Nie, David Fan, Dongqing Zhang, Vimal Bhat, and Raffay Hamid, “Shot contrastive self-supervised learning for scene boundary detection,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , 2021, pp. 9796–9805. [38] Yazan Abu Farha and Jurgen Gall, “Ms-tcn: Multi-stage temporal convolutional network for action segmentation,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition ,2019, pp. 3575–3584. [39] Fangqiu Yi, Hongyu Wen, and Tingting Jiang, “Asformer: Transformer for action segmentation,” arXiv preprint arXiv:2110.08568 , 2021. [40] Dong Gong, Lingqiao Liu, Vuong Le, Budhaditya Saha, Moussa Reda Mansour, Svetha Venkatesh, and Anton van den Hengel, “Memorizing normality to detect anomaly: Memory-augmented deep autoen-coder for unsupervised anomaly detection,” in Proceedings of the IEEE/CVF international conference on computer vision , 2019, pp. 1705–1714. [41] Wen Liu, Weixin Luo, Dongze Lian, and Shenghua Gao, “Future frame prediction for anomaly detection– a new baseline,” in Proceedings of the IEEE conference on computer vision and pattern recognition , 2018, pp. 6536–6545. [42] Yu Tian, Guansong Pang, Yuanhong Chen, Rajvinder Singh, Johan W Verjans, and Gustavo Carneiro, “Weakly-supervised video anomaly detection with robust temporal feature magnitude learning,” in 
+
+Proceedings of the IEEE/CVF international conference on computer vision , 2021, pp. 4975–4986. [43] Zhiming Hu, Ning Ye, and Iqbal Mohomed, “mmsampler: Efficient frame sampler for multimodal video retrieval,” Proceedings of Machine Learning and Systems , vol. 4, pp. 153–171, 2022. [44] Xiaohan Wang, Linchao Zhu, Fei Wu, and Yi Yang, “A differentiable parallel sampler for efficient video classification,” ACM Transactions on Multimedia Computing, Communications and Applications , vol. 19, no. 3, pp. 1–18, 2023. [45] KunChang Li, Yinan He, Yi Wang, Yizhuo Li, Wenhai Wang, Ping Luo, Yali Wang, Limin Wang, and Yu Qiao, “Videochat: Chat-centric video understanding,” arXiv preprint arXiv:2305.16355 , 2023. [46] Hang Zhang, Xin Li, and Lidong Bing, “Video-llama: An instruction-tuned audio-visual language model for video understanding,” in Proceedings of the 2023 conference on empirical methods in natural language processing: system demonstrations , 2023, pp. 543–553. [47] Yuanhan Zhang, Jinming Wu, Wei Li, Bo Li, Zejun Ma, Ziwei Liu, and Chunyuan Li, “Llava-video: Video instruction tuning with synthetic data,” arXiv preprint arXiv:2410.02713 , 2024. [48] Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, Sanjeev Satheesh, Sean Ma, Zhiheng Huang, Andrej Karpathy, Aditya Khosla, Michael Bernstein, Alexander C. Berg, and Li Fei-Fei, “ImageNet Large Scale Visual Recognition Challenge,” International Journal of Computer Vision (IJCV) , vol. 115, no. 3, pp. 211–252, 2015. [49] Tsai-Shien Chen, Aliaksandr Siarohin, Willi Menapace, Ekaterina Deyneka, Hsiang-wei Chao, Byung Eun Jeon, Yuwei Fang, Hsin-Ying Lee, Jian Ren, Ming-Hsuan Yang, and Sergey Tulyakov, “Panda-70m: Captioning 70m videos with multiple cross-modality teachers,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024. [50] Sandra Eliza Fontes De Avila, Ana Paula Brandao Lopes, Antonio da Luz Jr, and Arnaldo de Al-buquerque Ara´ ujo, “Vsumm: A mechanism designed to produce static video summaries and a novel evaluation method,” Pattern recognition letters , vol. 32, no. 1, pp. 56–68, 2011. 15 A Supplementary 
+
+This supplementary material provides additional theoretical, algorithmic, and experimental details for In-foShot. In particular, we (i) formalize the information-theoretic decomposition that motivates our design, (ii) present the InfoShot pseudocode together with implementation details, and (iii) provide additional case studies across all four SynFlash injection patterns, (iv) describe the construction and evaluation protocol of the SynFlash benchmark. 
+
+## A.1 Information-Theoretic Analysis 
+
+In the main paper, we use the decomposition 
+
+I(CK; S1: T , F 1: T ) = I(CK; S1: T ) + I(CK; F1: T | S1: T ) (11) as a design principle. This section provides a complete analysis under our stochastic model to explain why optimizing only the structural term I(CK; S1: T ) can ignore within-shot transient events. For an individual frame ct, the mutual information with the structural sequence S1: T conditioned on the event indicator ft is 
+
+I(ct; S1: T | ft) = H(ct | ft) − H(ct | S1: T , f t), (12) where H(·) denotes Shannon entropy. We focus on the transient-event case ft = 1. When ft = 1, our model reduces to ct = ηt. If the outlier component ηt is independent of the macroscopic structure S1: T , then conditioning on S1: T does not reduce uncertainty: 
+
+H(ct | S1: T , f t = 1) = H(ηt) = H(ct | ft = 1) , (13) which implies 
+
+I(ct; S1: T | ft = 1) = 0 . (14) Therefore, under the model, transient event frames do not provide information about shot boundaries. This observation clarifies the limitation of boundary-centric objectives. In the low-budget regime, when there exist frames with I(ct; S1: T ) > 0 (e.g., near true shot boundaries), including frames with zero structural information gain cannot increase max I(CK; S1: T ). As a result, optimizing only I(CK; S1: T ) encourages selecting frames informative about structural changes, while providing no incentive to retain within-shot transient events. This motivates explicitly accounting for within-shot deviations through the conditional term I(CK; F1: T | S1: T ) in our two-stage design. 
+
+## A.2 InfoShot Algorithm 
+
+Implementation notes. Alg. 1 summarizes the full InfoShot pipeline; here we set M = ⌊K/ 2⌋ to reserve two keyframes per shot and ensure |K| ≤ K. The boundary score Bt is computed within each current segment using a fixed window size (or a segment-length-scaled window) to avoid selecting boundaries near segment ends. For efficiency, similarity is computed in blocks for long videos; this only affects memory usage. We handle degenerate shots (length 1) by selecting the single frame, and enforce tuni ̸ = tcom .
+
+## A.3 SynFlash Case Study 
+
+In this section, we present additional SynFlash case studies covering all four injection patterns, and analyze how the sampled evidence influences downstream VLM performance on both anomaly retrieval (AR) and temporal ordering (TO). 
+
+Camouflage. Fig. 7 shows a camouflage example in which the injected image is color-matched to the local background. For AR, InfoShot captures the clearest flash frame (red), enabling the VLM to correctly identify 16 Algorithm 1 InfoShot 
+
+Input: Feature sequence C = {c1, . . . , c T }, frame budget K, weights λ, α .
+
+Output: Sampled keyframe indices K. 
+
+> 1:
+
+Compute affinity Aij = cos( ci, c j ).  
+
+> 2:
+
+M ← ⌊ K/ 2⌋ ▷ two frames per shot  
+
+> 3:
+
+Initialize: partition P ← { [1 , T ]}, K ← ∅ . 
+
+> 4:
+
+Phase 1: Greedy shot segmentation  
+
+> 5:
+
+while |P| < M do  
+
+> 6:
+
+For each segment [ a, b ] ∈ P , compute t∗ 
+
+> [a,b ]
+
+← arg max t∈(a,b ) Bt using Eq. (5).  
+
+> 7:
+
+Select ([ a⋆, b ⋆], t ⋆) ← arg max [a,b ]∈P Bt∗ 
+
+> [a,b ]
+
+. 
+
+> 8:
+
+Replace [ a⋆, b ⋆] in P by [ a⋆, t ⋆] and [ t⋆ + 1 , b ⋆].  
+
+> 9:
+
+end while  
+
+> 10:
+
+Phase 2: Dual-keyframe selection within each shot  
+
+> 11:
+
+for each shot segment Sm = [ a, b ] ∈ P do  
+
+> 12:
+
+if |S m| = 1 then  
+
+> 13:
+
+K ← K ∪ { a}; continue  
+
+> 14:
+
+end if  
+
+> 15:
+
+For all i ∈ S m, compute  
+
+> 16:
+
+gi ← Ej∈S m\{ i}[Aij ], vi ← 1 − Ej∈N i [Aij ].  
+
+> 17:
+
+Normalize gi, v i within Sm to obtain ˆ gi, ˆvi ∈ [0 , 1].  
+
+> 18:
+
+tcom ← arg max i∈S m
+
+ λˆgi − (1 − λ)ˆ vi
+
+. 
+
+> 19:
+
+tuni ← arg max i∈S m\{ tcom }
+
+ α(1 − ˆgi) + (1 − α)ˆ vi
+
+. 
+
+> 20:
+
+K ← K ∪ { tcom , t uni }. 
+
+> 21:
+
+end for  
+
+> 22:
+
+return K
+
+the injected content. TransNet and VSUMM also select frames with partial anomaly evidence (orange), but the visual cues are weaker and insufficient for reliable recognition; Uniform misses the flash frames entirely. For TO, TransNet answers correctly in this example when the anomaly is explicitly specified in the prompt. InfoShot also captures the anomaly, but the selected evidence, ‘stingray’, is concentrated earlier than the reference event, ‘Man in the police station’, used in the question, which can lead to an incorrect ordering prediction. This failure case suggests that capturing the anomaly alone is not always sufficient for temporal reasoning; the sampler must also preserve enough surrounding context to establish its relation to the reference event. A promising direction for future work is therefore adaptive budget allocation within a shot, so that more frames can be assigned to temporally ambiguous regions. 
+
+High-saturation. Fig. 8 shows a high-saturation example with strong background flicker. For AR, only InfoShot samples the flash evidence (red), while the other methods are distracted by frequent global color changes and miss the anomaly frames. For TO, InfoShot also answers correctly because it preserves both the anomaly frame and a sufficient surrounding context to relate it to the macroscopic event, whereas other methods fail due to missing anomaly evidence. 
+
+Curtain. Fig. 9 shows a curtain example in which the anomaly is introduced through a short transition. For both AR and TO , InfoShot is the only method that captures frames containing sufficient anomaly information to support correct reasoning, whereas the other samplers miss the key frames. This pattern also highlights another limitation of the current design. Because the anomaly is revealed progressively during the wipe transition, the most useful frame is not simply any frame near the transition, but the one with the highest information content, i.e., the frame where the injected content is most fully visible. As illustrated in Fig. 9, even when InfoShot succeeds on both tasks, the retained frame still does not fully capture the complete anomaly exposure. This suggests a promising direction for future work: 17 (a) TransNet 
+
+(d) InfoShot 
+
+(c) Uniform 
+
+(b) VSUMM 
+
+Cartoon man eating with 
+
+arrow pointing to “Fasting” 
+
+Man being interrogated 
+
+in police station 
+
+Man 
+
+in car (a) Sampled frames using different methods. Task 2: Temporal Ordering (TO)                  
+
+> Q: Does the unexpected stingra yappear before,
+> during, or after the scene showing a man is
+> being interrogated in a police station?
+> A. before [InfoShot ]
+> B. during [TransNet]
+> C. after [VSUMM, Uniform]
+> Task 1: Anomaly Retrieval (AR)
+> Q: What unexpected object appears briefly?
+> A. s tingray [InfoShot ]
+> B. octopus [TransNet, VSUMM]
+> C. shark [Uniform ]
+> D. dolphin
+> (b) Video understanding questions and answers selected by the VLM based on different evidence.
+
+Figure 7: Case study of camouflage injection pattern. introducing a transition-aware criterion on top of the similarity or affinity structure to prioritize frames with maximal anomaly information, rather than relying only on generic local variation. 
+
+Picture-in-picture (PiP). Fig. 10 shows a PiP example where the anomaly occupies a small spatial region. For AR, InfoShot is the only method that captures the injected patch clearly, while the other methods miss it due to weak global change. For TO, although InfoShot is the only sampler that includes the anomaly frame, the VLM can still answer correctly across methods in this example because the question admits a plausible shortcut (the background content is visually similar to the anomaly category), leading to similar predictions despite different evidence. 
+
+## A.4 SynFlash Construction and Evaluation Protocol 
+
+This section provides additional implementation details for SynFlash beyond the main paper, including the pattern-specific injection procedure, annotation and multiple-choice construction, and downstream VLM evaluation. 18 (a) TransNet   
+
+> (c) Uniform
+> (b) VSUMM
+> (d) InfoShot
+> Hand reaching
+> for a shelf
+> Group of men in suits
+> sitting and discussing People preparing food
+
+(a) Sampled frames using different methods. Task 2: Temporal Ordering (TO)                 
+
+> Q: Does the unexpected hamster appear before,
+> during, or after the scene showing a group of men
+> in suits are sitting around a table at a meeting
+> discussing the mining sector in Zimbabwe?
+> A. after [TransNet, VSUMM, Uniform]
+> B. during
+> C. before [InfoShot ]
+> Task 1: Anomaly Retrieval (AR)
+> Q: What unexpected object appears briefly?
+> A. guinea pig [TransNet, VSUMM, Uniform]
+> B. hamste r[InfoShot ]
+> C. gerbil
+> D. rabbit
+
+(b) Video understanding questions and answers selected by the VLM based on different evidence. 
+
+Figure 8: Case study of high-saturation injection pattern. 
+
+A.4.1 Injection Procedure 
+
+Each SynFlash sample is generated by selecting one of the three constituent clips as the target clip for anomaly insertion and then sampling a valid insertion position within that clip. The selected clip index also determines the coarse temporal label used in evaluation. The anomaly source image is sampled from a valid ImageNet-1k class folder, and its class name is recorded as the anomaly label. We implement four injection patterns with different spatial and temporal characteristics. In Camouflage , the anomaly is inserted as a short full-frame transient whose color statistics are matched to the local background in CIELAB space, followed by a mild temporal zoom and smooth blending. In Curtain , the anomaly is introduced through a column-wise wipe transition, where the valid image region is partitioned into vertical columns and the anomaly progressively appears and disappears through wipe-in and wipe-out stages. In 
+
+Picture-in-picture (PiP) , the anomaly is inserted only within a local patch at a random spatial location. The patch height is set to approximately 35% of the valid image height, while the patch width is determined by the original aspect ratio of the injected image. In High-saturation , the original frame is embedded into a smaller inner canvas, while the outer border is filled with rapidly changing saturated colors; the anomaly is then injected into the inner region for a short duration, creating strong distractive flicker unrelated to the true anomaly. All videos are normalized to 24 fps and 640 × 480 resolution. For the camouflage and PiP subsets, the anomaly typically lasts 5–7 frames. For the curtain subset, the duration is determined by the wipe-in, hold, 19 (a) TransNet 
+
+(d) InfoShot 
+
+(c) Uniform 
+
+(b) VSUMM 
+
+Man peeling 
+
+a leek 
+
+A white kangaroo 
+
+standing in a grass 
+
+Man standing in front 
+
+of orange background (a) Sampled frames using different methods. Task 2: Temporal Ordering (TO)                        
+
+> Q: Does the unexpected chainlink fence appear
+> before, during, or after the scene showing a
+> white kangaroo standing in a grassy field?
+> A. before [TransNet ,VSUMM, Uniform]
+> B. during [InfoShot ]
+> C. after
+> Task 1: Anomaly Retrieval (AR)
+> Q: What unexpected object appears briefly?
+> A. chainlink fence [InfoShot ]
+> B. brick wall
+> C. iron gate
+> D. wooden fence [TransNet, VSUMM ,Uniform]
+> (b) Video understanding questions and answers selected by the VLM based on different evidence.
+
+Figure 9: Case study of curtain injection pattern. and wipe-out stages. For the high-saturation subset, the anomaly lasts about 0.1 seconds, while the border colors change continuously throughout the video. 
+
+A.4.2 Annotation, Multiple-Choice Construction, and Evaluation 
+
+For each generated video, we store the anomaly label and the insertion timestamp metadata. These metadata are used to automatically generate the downstream question-answer pairs. For AR, the correct answer is the ImageNet label of the injected anomaly. For TO, the answer is derived from the recorded insertion metadata. To reduce ambiguity in answer matching, we convert each question into a multiple-choice format. For AR, we generate three distractors using a text-only large language model conditioned on the question and ground-truth answer, with prompts that require the distractors to remain semantically consistent with the correct answer. For TO, the options are drawn from a fixed label set. The correct answer and distractors are then shuffled and mapped to answer letters. Given a sampler output, we collect the selected frames, sort them by frame index, and provide them to the VLM as an ordered image sequence. For each question, we construct a prompt containing the question text and candidate options. During inference, the VLM generates both an answer label and a short textual 20 Group of people      
+
+> on rocky beac hCar driving in the countryside Inside of a car with door open
+> (a) TransNet
+> (b) VSUMM
+> (c) Uniform
+> (d) InfoShot
+
+(a) Sampled frames using different methods. Task 2: Temporal Ordering (TO) 
+
+Q: Does the unexpected pretzel appear before, 
+
+during, or after the scene showing a small car is 
+
+driving on a winding road in the countryside, 
+
+surrounded by green grass and trees? 
+
+A. before 
+
+B. during 
+
+C. after [TransNet, VSUMM, Uniform, InfoShot ]
+
+Task 1: Anomaly Retrieval (AR) 
+
+Q: What unexpected object appears briefly? 
+
+A. chips [TransNet, VSUMM, Uniform] 
+
+B. cookie 
+
+C. pretzel [InfoShot ]
+
+D. popcorn 
+
+(b) Video understanding questions and answers selected by the VLM based on different evidence. 
+
+Figure 10: Case study of PiP injection pattern. reason. We use deterministic decoding for stable evaluation. For quantitative scoring, we extract the predicted option label from the generated response and compare it against the stored ground-truth label. The generated reasons are retained for qualitative analysis. Evaluation is parallelized across multiple GPUs by partitioning the dataset into disjoint subsets and merging the prediction files after all worker processes finish. 21
