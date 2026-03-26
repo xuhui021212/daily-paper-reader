@@ -1,0 +1,544 @@
+Title: SoulX-LiveAct: Towards Hour-Scale Real-Time Human Animation with Neighbor Forcing and ConvKV Memory
+
+URL Source: https://arxiv.org/pdf/2603.11746v1
+
+Published Time: Fri, 13 Mar 2026 00:43:18 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# SoulX-LiveAct: Towards Hour-Scale Real-Time Human Animation with Neighbor Forcing and ConvKV Memory 
+
+Dingcheng Zhen ∗† 1, Xu Zheng ∗2, Ruixin Zhang ∗3, Zhiqi Jiang ∗1, Yichao Yan 1, Ming Tao 1, Shunshun Yin 11Soul AI Lab, China 2HKUST(GZ) 3Soochow University 
+
+∗: Equal Contribution, †: Corresponding Author 
+
+## Abstract 
+
+Autoregressive (AR) diffusion models offer a promising framework for sequential generation such as video synthesis by combining diffusion modeling with causal inference. Although they support streaming generation, existing AR diffusion methods struggle to scale efficiently. In this paper, we identify two key challenges in hour-scale real-time human animation. First, most forcing strategies propagate sample-level representations with mismatched diffusion states, causing inconsistent learning signals and unstable convergence. Second, historical representations grow unbounded and lack structure, preventing effective reuse of cached states and severely limiting inference efficiency. To address these challenges, we propose Neighbor Forcing , a diffusion-step-consistent AR formulation that propagates temporally adjacent frames as latent neighbors under the same noise condition. This design provides a distribution-aligned and stable learning signal while preserving drifting throughout the AR chain. Building upon this, we introduce a structured ConvKV memory mechanism that compresses the keys and values in causal attention into a fixed-length representation, enabling constant-memory inference and truly infinite video generation without relying on short-term motion-frame memory. Extensive experiments demonstrate that our approach significantly improves training convergence, hour-scale generation quality, and inference efficiency compared to existing AR diffusion methods. Numerically, SoulX-LiveAct enables hour-scale real-time human animation and supports 20 FPS real-time streaming inference on as few as 
+
+two NVIDIA H100 or H200 GPUs. Quantitative results demonstrate that our method attains state-of-the-art performance in lip-sync accuracy, human animation quality, and emotional expressiveness, with the lowest inference cost. 
+
+Project Page: https://demopagedemo.github.io/LiveAct/ 
+
+Code: https://github.com/Soul-AILab/SoulX-LiveAct 
+
+## 1 Introduction 
+
+Autoregressive (AR) diffusion models [ 8, 16 , 17 , 31 , 39 , 38 ] have emerged as a promising framework for sequential generation tasks such as video synthesis [ 26 , 29 , 23 ]. By combining diffusion modeling with causal AR generation, these methods support streaming inference and avoid the fixed-length constraints of full-sequence diffusion, making them suitable for scalable and online generation [ 11 , 18 ]. Despite their success, existing AR diffusion methods differ substantially in how temporal information is propagated across time. Beyond whether a model is AR, a central question lies in what representation is propagated along the AR chain and how it interacts with the diffusion process, as in Table 1. This design choice critically affects both training dynamics and inference efficiency. In our initial exploration, we observe an intriguing phenomenon shown in Figure 1. When a causal attention mask is directly imposed on a pretrained non-AR diffusion model , existing forcing strategies—such as Diffusion Forcing [ 1]or Self Forcing [ 11 ]—fail to produce temporally coherent videos without additional training. In contrast, when the reference latent is chosen as the latent of the previous chunk evaluated at the same diffusion step , the same non-AR model is able to generate subject-consistent and temporally stable videos in a zero-shot manner. Notably, this holds even though the original non-AR model exhibits noticeable chunk-level jitter. This observation suggests that AR diffusion is not inherently incompatible with non-AR backbones. Rather, the critical factor lies in the choice of conditioning representation. Unlike approaches that rely on clean reference frames or artificially noised inputs [ 11 , 1 , 7, 18 ], propagating the latent of a temporally adjacent frame at the same diffusion step introduces a more appropriate inductive bias for AR video generation. Intuitively, such neighbor latents are geometrically close to the current frame on the latent manifold and remain statistically aligned under the same diffusion 
+
+> arXiv:2603.11746v1 [cs.CV] 12 Mar 2026
+
+SoulX-LiveAct Technical Report 
+
+Table 1: Comparison of AR diffusion-based methods from an AR formulation perspective. ARPP denotes the representation propagated along the AR chain, and KV Reuse indicates whether cached key–value states can be reused during inference. Here, subscript t denotes the diffusion step and superscript f denotes the f -th frame latent. 
+
+Method ARPP Training AR Factorization KV Reuse 
+
+Teacher Forcing ground-truth samples p(ˆ xft | x1: f −1) ×
+
+Rolling [18] / Resampling [7] / Diffusion Forcing [1] noisy or resampled ground-truth samples p(ˆ xft | ˜x1: f −1 
+
+> t′
+
+) ×
+
+Self Forcing [11] self-generated last-step samples p(ˆ xft | ˆx1: f −1 
+
+> t′
+
+) ✓
+
+Neighbor Forcing(Ours) 
+
+same-step neighbor reference states p(ˆ xft | ˆx1: f −1 
+
+> t
+
+) ✓Wan2.1 Init                
+
+> w/o Causal
+> Wan2.1 Init
+> w/ Self Forcing
+> Causal
+> Wan2.1 Init
+> w/ Neighbor
+> Forcing Causal
+> Block -wise Causal
+> Attention
+> Current Frame
+> Self Forcing Context
+> Neighbor Forcing Context
+> Diffusion Forcing Context
+
+Figure 1: This phenomenon is observed when a causal attention mask is directly applied to a pretrained non-AR diffusion model, indicating that Neighbor Forcing effectively mitigates the mismatch between AR and non-AR diffusion. state. Consequently, they provide temporally informative yet distributionally consistent conditioning signals. In Appendix. A, we further provide theoretical justification showing that latents of temporally adjacent frames evaluated at the same diffusion step satisfy a local smoothness property, which makes AR modeling significantly easier and more stable. Motivated by this insight, we propose SoulX-LiveAct, a novel AR diffusion formulation built upon Neighbor Forcing . Instead of propagating sample-level predictions or heterogeneous noisy histories, SoulX-LiveAct propagates 
+
+neighbor latents —reference states from temporally adjacent frames evaluated under an identical diffusion step—along the AR chain . At each denoising step, both the target frame and all preceding reference frames are conditioned under the same noise regime, ensuring that temporal dependencies are modeled within a consistent diffusion state. This step-consistent design produces a cleaner training signal, improves optimization stability, accelerates convergence, and naturally enables efficient streaming inference via direct reuse of cached key–value representations. While this step-consistent AR formulation enables streaming generation, scaling to hour-level videos poses a funda-mental challenge: the KV cache cannot grow indefinitely. Memory and computation constraints require truncation, preventing access to distant past information and weakening long-term temporal consistency. Most existing AR methods rely on overlapping windows (e.g., motion-frame overlap), which discard information outside the overlap region and thus progressively forget earlier content. Recent works instead introduce additional memory compression modules [ 33 , 32 ] to summarize historical latents. However, these approaches add architectural complexity and extra encoding steps, limiting their practicality for real-time applications such as human animation. Meanwhile, prior studies show that pretrained Transformer backbones already exhibit strong capabilities for extracting and organizing temporal features without specialized memory modules [ 14 , 3 ]. This suggests that long-term context may be efficiently summarized through lightweight mechanisms built upon the multi-layer features of pretrained models. Inspired by this, and building on Neighbor Forcing, we propose ConvKV Memory , an efficient plug-in memory compression module for AR diffusion. Instead of introducing a complex memory encoder, ConvKV Memory leverages the pretrained DiT Transformer together with a lightweight 1D-convolution to address long-term memory challenges in hour-scale human animation, such as maintaining consistency of background, clothing and accessories. Crucially, the local smoothness and step-consistent conditioning induced by Neighbor Forcing make historical key– value representations highly compressible. As a result, ConvKV Memory summarizes past temporal context into a 2SoulX-LiveAct Technical Report Model Structure                               
+
+> Text &Image
+> Cross -attention
+> Self -attention
+> Audio
+> Cross -attention
+> Image
+> Encoder
+> Audio
+> Encoder
+> ×N
+> Training Pipeline
+> DiT Model
+> Stage 1
+> Neighbor Forcing
+> Training
+> Condition
+> Past KV
+> Compress
+> Past KV
+> Real Score
+> Fake Score
+> ConvKV
+> Memory
+> Audio Cross -attention
+> Self -attention Text &Image Cross -attention DMD
+> Loss
+> DiT Block
+> Lantent C
+> CChannel Concat
+> Diffusion
+> Loss
+> ……
+> ……
+> Stage 2
+> ConvKV Memory
+> &Step Distill
+> Emotion
+> &Action Text
+> 𝒙 𝒕
+> 𝟏 𝒙 𝒕
+> 𝟐 𝒙 𝒕
+> 𝟑 𝒙 𝒕
+> 𝒏
+> 𝒙 𝒕 −𝟏
+> 𝟏 𝒙 𝒕 −𝟏
+> 𝟐 𝒙 𝒕 −𝟏
+> 𝟑 𝒙 𝒕 −𝟏
+> 𝒏
+> DiT Model
+
+Figure 2: Overall training pipeline of SoulX-LiveAct. Left : The architecture of DiT block. Right : The training pipeline consists of two stages: (i) training with step-aligned noisy references and a diffusion loss computed at the same step, and (ii) joint training of ConvKV memory and step distill. fixed-length memory with minimal information loss. During inference, this compressed memory replaces the growing KV cache, enabling constant-memory AR generation. Importantly, ConvKV Memory introduces only negligible computational overhead, increasing inference time by merely 1.9%, making it well-suited for streaming and real-time long-video generation. Overall, this work makes the following contributions. (I) We identify diffusion-step-aligned neighbor latents as a key inductive bias for AR diffusion, providing a principled and theoretically grounded Neighbor Forcing for step-consistent AR video generation. (II) We introduce ConvKV Memory , a lightweight plug-in compression mechanism that enables constant-memory hour-scale video generation with negligible overhead. (III) We develop an optimized real-time system that achieves 20 FPS using only two H100/H200 GPUs with end-to-end adaptive FP8 precision, sequence parallelism, and operator fusion at 720 ×416 or 512 ×512 resolution. SoulX-LiveAct requiring 27.2 TFLOPs per frame—significantly at 512 ×512 resolution reducing computational cost compared to prior AR diffusion methods. 
+
+## 2 Methodology 
+
+2.1 Overall Model Architecture. SoulX-LiveAct employs DiT [ 21 ] with Flow Matching [ 19 , 15 ], and incorporates audio cross-attention to inject audio conditioning which is shown in Figure 2. Frames are encoded into latent chunks {z1, ...z F }
+
+using 3D VAE, and generation is performed in latent space using a denoising network Gθ .To achieve streaming generation, SoulX-LiveAct employs a block-wise AR diffusion strategy, in which the sequence 
+
+{z1, ...z F } is partitioned into blocks of m consecutive chunks, with each block represented by a latent variable xn.Accordingly, the generation process can be formulated as 
+
+ˆx1: N = {ΨT :0 (Gθ , c n, t ) |n = 1 , ..., N }, c n = {xref , x 1: n−1 
+
+> t
+
+, c audio , ctext } (1) where ˆxn denotes the predicted latents at index n; xref represents the latent of the reference image; caudio and ctext 
+
+denote the audio and text conditioning signals. Ψ denotes the integrator (e.g., UniPC Solver [ 37 ]) , that simulates the forward diffusion process from T -th step to 0-th step to obtain ˆx.
+
+Training and Inference. As shown in Figure 2, the training pipeline consists of two stages: Neighbor Forcing training and ConvKV Memory&Step Distill training. In addition, our framework incorporates an auxiliary Emotion and Action Editing Module to enable controllable manipulation of facial expressions and gestures. The first stage adopts the 
+
+Neighbor Forcing AR formulation to train the alignment between audio and text conditions (e.g., emotion and action prompts) with the generated video, ensuring consistency in lip movements, gestures, and emotional expression. The second stage introduces the ConvKV Memory compression mechanism into the rollout of DMD [ 28 ] distillation training so that, at inference time, the KV cache remains bounded to a fixed length, enabling stable infinite-length 3SoulX-LiveAct Technical Report q
+
+> L=5
+
+×
+
+…
+
+…    
+
+> 𝒙 𝒕 −𝟏
+> 𝟏 𝒙 𝒕 −𝟏
+> 𝟐 𝒙 𝒕 −𝟏
+> 𝟑 𝒙 𝒕 −𝟏
+> 𝒏
+> ℛ0
+
+…       
+
+> 𝒙 𝒕
+> 𝟏 𝒙 𝒕
+> 𝟐 𝒙 𝒕
+> 𝟑 𝒙 𝒕
+> 𝒏
+> ℛ1ℛ2ℛ𝑓 ℛ1ℛ2
+> ℛ1
+> ℛ2
+> ℛ𝑓
+
+…    
+
+> ℛ𝑓 ∶RoPE (𝑓𝑟𝑒𝑞 𝑛 ,·)1D Convolution
+
+×
+
+Training  of  ConvKV Memory    
+
+> Low SNR High SNR
+
+… … …
+
+Block 0
+
+Block 1
+
+Block 2
+
+Block n
+
+Inference Pipeline            
+
+> Ref Image Current Block Short -term Memory Long -term Memory
+> ConvKV &Reset RoPE
+> compression ratio
+> λ = 5
+> L=5 L=1 L=1
+
+k
+
+Figure 3: Memory mechanism. Left : The KV states corresponding to the long-term memory are compressed via a lightweight 1D convolution operator; Right : The final inference pipeline unifies the Neighbor Forcing formulation and the ConvKV Memory mechanism. video generation. By integrating the KV cache under the Neighbor Forcing–based autoregressive formulation with the efficient compression mechanism of ConvKV Memory, together with the controllable editing module, SoulX-LiveAct enables real-time hour-scale and even unbounded video generation. 
+
+2.2 Neighbor Forcing: Step-Aligned AR Propagation 
+
+A key question in AR diffusion is what to propagate along the chain. Prior forcing strategies often propagate sample-level states at heterogeneous diffusion steps, requiring the model to align temporal dependencies across mismatched noise semantics. In contrast, Neighbor Forcing propagates reference states at the same diffusion step as the target. 
+
+Step-aligned conditioning. Let xn 
+
+> 0
+
+be the clean latent for block of frame latent n. For a sampled diffusion step t, we construct noisy latents using the standard forward process of Flow Matching: 
+
+xnt = (1 − t)xn 
+
+> 0
+
++ tϵ n, ϵn ∼ N (0 , I ). (2) At block n, Neighbor Forcing trains the denoiser at step t conditioned on same-step references under the diffusion loss: 
+
+L(θ) = En∼U(0 ,N ),t ∼U(0 ,1) 
+
+∥(ϵn − xn) − Gθ (xnt , t | x 1: n−1 
+
+> t
+
+)∥2. (3) This design is directly supported by Proposition 2 in Appendix A, which shows that at a fixed step t, the neighborhood structure between temporal neighbors is preserved in expectation up to an additive step-dependent noise floor. Therefore, Neighbor Forcing learns temporal dependencies within a single noise space, avoiding cross-step alignment. 
+
+Training objective. The step-aligned conditioning mechanism enables all blocks to be optimized at a shared diffusion step, thereby avoiding the costly reference-state procedures required by prior forcing strategies (e.g., Self-Forcing). The resulting training objective can be expressed as: 
+
+L(θ) = Et∼U(0 ,1) 
+
+∥(ϵ − x) − Gθ (xt, t, M ask )∥2. (4) where, the attention mask M ask of block-wise causal attention with block size m is typically defined as: 
+
+M ask i,j =
+
+
+
+1, if 
+
+ jm
+
+
+
+≤
+
+ im
+
+
+
+,
+
+0, otherwise. (5) The ablation results on block size m (shown in Table 5) suggest that setting the first block size to 6 and the subsequent block sizes to 8 yields the best performance. 4SoulX-LiveAct Technical Report 
+
+2.3 ConvKV Memory: KV Reuse and Compression 
+
+Neighbor Forcing makes the conditioning context step-aligned . This has an important systems implication: once a previous frame latents are constructed at step t, its representation does not need to be recomputed when predicting subsequent frames at the same step. We exploit this KV cache mechanism across autoregressive steps. While KV reuse removes redundant recomputation, a naive KV cache still grows linearly with the number of generated frames, which is prohibitive for hour-scale synthesis. We therefore introduce ConvKV Memory, which (i) keeps a small short-term window of recent KV uncompressed for accuracy, and (ii) continuously compresses older KV into a compact long-term memory using a lightweight 1D convolution operator as shown in Figure 3. This yields bounded memory and stable latency while preserving long-range conditioning. 
+
+Training of ConvKV Memory We compress the KV states to be summarized using a 1D convolution with compres-sion ratio λ = 5 , which reduces every five chunks of KV states into a single chunk. The compressed long-term memory at step t is formulated as 
+
+M s:et = ( Conv θ (ks:et ), Conv θ (vs:et )) , kernel = stride = λ (6) where s and e denote the start and end positions of the KV states before compression, and kernel and stride correspond to the kernel size and stride of the 1D convolution, respectively. Since position encoding must remain consistent after compression, the compressed keys and values are further processed with a RoPE reset operation, aligning their positional encoding to the starting position s. The memory representation therefore becomes 
+
+M s:et = ( RoP E (Conv θ (ks:et ), f rep s), RoP E (Conv θ (vs:et ), f rep s)) (7) Notably, during training, as the original KV states cannot be altered directly, we append the compressed memory M s:et
+
+to the end of the key and value tensors. As shown in Figure 3 Left , a corresponding modification of the attention mask is applied to properly integrate the ConvKV Memory mechanism. 
+
+Inference Pipeline During inference, as shown in Figure 3 Right , KV compression is not performed for the first two generated latent blocks. Starting from the third iteration onward, the KV states are partitioned into three components: the reference image state, long-term memory, Short-term Memory and the current block. The long-term memory is defined in Eq. (7). The ablation results indicate that the KV memory context consists of 6 chunks of frame latents: two chunks represent the reference image, two chunks correspond to long-term memory, and the final two chunks constitute short-term memory by preserving the last two frame-latent chunks from the previous iteration. Owing to the ConvKV Memory mechanism, the KV states remain unchanged within a step-aligned prediction pass, enabling KV reuse to operate in an 
+
+append-only manner: for each newly generated frame, KV is computed only for the appended tokens, while previously cached KV states are reused. 
+
+## 3 Experiment 
+
+Implementation Details SoulX-LiveAct initializes the self-attention and text&image cross-attention layers of DiT from Wan2.1 [ 25 ], while the audio cross-attention layers is initialized from InfiniteTalk [ 27 ]. The model employs a block-wise AR diffusion framework incorporating Neighbor Forcing and ConvKV Memory. In Stage 1, we optimize the audio cross-attention module using 300 hours of multimodal paired data composed of video, audio, and emotion/action captions. In Stage 2, ConvKV Memory is integrated into DMD-style distillation and jointly optimized under a 3-step inference setting for 400 training steps. 
+
+Test datasets and evaluation metrics. We evaluate our method across diverse scenarios using two evaluation datasets: HDTF [ 36 ], which focuses on facial dynamics and EMTD [ 20 ], which incorporates full-body movements. We construct a test set of 100 videos by randomly sampling 50 videos per dataset. We evaluate at 512 ×512 resolution on HDTF and EMTD. For quantitative evaluation, we adopt Fréchet Inception Distance (FID) [ 9] and Fréchet Video Distance (FVD) [ 24 ] to assess the distributional similarity between generated and real videos , SyncNet-based Sync-C (confidence) and Sync-D (lip distance) [ 22 ] to evaluate lip synchronization . We also report the Temporal Quality and Image Quality scores from VBench [ 13 ]as well as the Human Fidelity score from VBench-2.0 [ 40 ] to provide a more comprehensive evaluation of overall video quality and human animation quality .5SoulX-LiveAct Technical Report 
+
+Table 2: Quantitative comparison on lip-sync accuracy and video quality metrics.                                                                    
+
+> Dataset Model Lip-sync Accuracy Distribution Similarity VBench VBench-2.0
+> Sync-C ↑Sync-D ↓FID ↓FVD ↓Temporal Quality ↑Image Quality ↑Human Fidelity ↑
+> HDTF OmniAvatar [5] 5.13 10.19 27.90 268.47 86.1 61.6 96.8 InfiniteTalk [27] 7.12 8.01 18.15 169.88 94.5 59.9 99.4 Live-Avatar [12] 7.68 8.38 15.85 206.20 91.8 59.2 99.8 Ours 9.40 6.76 10.05 69.43 97.6 63.0 99.9
+> EMTD OmniAvatar [5] 6.24 8.63 33.63 589.5 91.9 63.2 96.7 InfiniteTalk [27] 7.98 7.44 37.26 339.0 94.9 61.6 96.7 Live-Avatar [12] 6.93 8.23 42.52 365.0 93.6 63.0 96.6 Ours 8.61 7.29 80.90 771.6 97.3 65.7 98.9
+
+3.1 Quantitative Experiments HDTF [ 36 ]. As a portrait-level benchmark, HDTF mainly assesses lip-sync precision and visual realism. SoulX-LiveAct achieves substantial improvements in Sync-C, Sync-D, FID, and FVD, demonstrating superior synchronization accuracy and generation quality. Furthermore, the strong performance on both VBench and VBench-2.0 indicates that the model effectively preserves identity and structural consistency while maintaining stable motion dynamics. 
+
+EMTD [ 20 ]. SoulX-LiveAct achieves competitive results across all VBench metrics and attains 97.6 in Temporal Quality and 63.0 in Image Quality, outperforming previous methods. Under VBench-2.0, the model obtains 96.6 on Human_Anatomy and perfect scores (1.0) on both Human_Clothes and Human_Identity, highlighting strong identity preservation and fine-grained animation quality. In addition, it achieves the best lip-sync accuracy, further demonstrating its robustness and generalization capability across datasets. 
+
+Efficiency comparison. Beyond generation quality, we further compare computational efficiency among different methods. We report throughput (FPS), the number of GPUs required for real-time inference, and computational cost measured by TFLOPs per frame. In terms of computational complexity, our approach requires 27.2 TFLOPs per 512 ×512 frame, which is significantly lower than Bidirectional baselines (50.2 TFLOPs/frame) and AR counterpart Live-Avatar (39.1 TFLOPs/frame). Owing to the adoption of end-to-end FP8 precision, our method reaches 20 videos per second using only two H100/H200 GPUs, achieving real-time performance at 512 ×512 or 720 ×416 resolution with high hardware efficiency. These results demonstrate that our model not only achieves strong visual fidelity, but also maintains favorable efficiency-performance trade-offs suitable for real-time deployment. Table 3: Inference efficiency comparison between other real-time methods. Model Thoughput(FPS) Latency(s) ↓ GPUs ↓ TFLOPs per frame ↓            
+
+> InfiniteTalk †25 FPS 3.20 s 850.2 Live-Avatar 20 FPS 2.89 s 539.1 Neighbor-forcing 20 FPS 0.94 s 227.2
+
+3.2 Qualitative Results Lip-motion and emotion-action coordination comparison. We also provide fine-grained comparisons on lip motion and emotion-action synchronization. As shown in Figure 4, SoulX-LiveAct produces more precise mouth shapes that better match the articulated words, especially for bilabial and open-vowel phonemes. Furthermore, in challenging scenarios involving emotion-action interactions (e.g., partial occlusion by gestures), it maintains facial expressions and body movements that closely resemble those in real videos. In contrast, baseline methods often exhibit lip–phoneme misalignment or temporal jitter. 
+
+> †
+
+Applied the LoRA-weighted 4-step distillation provided by LightX2V. 
+
+6SoulX-LiveAct Technical Report GT       
+
+> Omni
+> Avatar
+> Infinite
+> Talk
+> Live -
+> Avatar
+> LiveAct
+> ‘t wo ’‘str ong ’‘i ss ue’ ‘e ff ective’ Ref. Sad Laughing Asking Ref.
+
+Figure 4: Qualitative comparison of lip-motion accuracy and emotion–action coordination . SoulX-LiveAct achieves more precise lip–phoneme alignment and maintains coherent facial expressions and body movements under emo-tion–action interactions, while baseline methods show misalignment or temporal jitter. 
+
+Long-video consistency analysis. To evaluate long-term temporal stability, we conduct a qualitative comparison on long-video generation, focusing on identity consistency and fine-grained detail preservation, as shown in Figure 5. As highlighted by the red dashed boxes, both OmniAvatar and Live-Avatar exhibit noticeable identity drift over time. In particular, OmniAvatar suffers from accumulated errors as the sequence progresses, resulting in gradual deviation in facial structure and appearance. This phenomenon indicates limited long-term temporal stability in identity preservation. As indicated by the yellow dashed boxes, InfiniteTalk and Live-Avatar show inconsistencies in person-related fine-grained details. For example, accessories such as rings intermittently disappear or reappear across frames. Such instability reflects insufficient constraints on identity-related attributes during long-form generation. In contrast, our method maintains stable identity representation and preserves fine-grained details consistently throughout the entire sequence, demonstrating superior long-term temporal coherence. Overall, the qualitative results complement the quantitative findings, demonstrating that our approach achieves strong long-term consistency and accurate lip–speech synchronization in realistic scenarios. 
+
+3.3 Ablation Studies Effect of ConvKV Memory Mechanism. We further analyze the role of the ConvKV memory mechanism in preserving long-range consistency as shown in Figure 6. Qualitative comparisons without the ConvKV Memory mechanism exhibit inconsistencies in clothing or hand details, demonstrating that the ConvKV Memory mechanism ensures stable identity and detail preservation throughout the sequence. 
+
+Effect of Emotion and Action Editing Module. To evaluate the motion editing capability, we provide visual comparisons in Figure 7. We display representative frames arranged horizontally to illustrate the editing process over time. Our motion editing module enables controllable modification of head pose and gesture dynamics while preserving identity and lip synchronization. Compared to the baseline without motion editing, our method produces smoother transitions and avoids unnatural deformation or motion artifacts. These results demonstrate that the motion editing module provides flexible yet stable motion control. 
+
+Training cost difference between Neighbor Forcing and Self Forcing. Due to the AR paradigm of Self Forcing, significant modifications are required for bidirectional models. As a result, it necessitates a large amount of training 7SoulX-LiveAct Technical Report Omni 
+
+## Avatar 
+
+## Infinite 
+
+## Talk 
+
+## Live -
+
+## Avatar 
+
+## Ours 
+
+ID Drift 
+
+ID Drift ID Drift 
+
+ID Drift 
+
+Lost of Ring 
+
+Lost of Ring 
+
+Lost of Ring  Lost of Ring 
+
+Figure 5: Long-video consistency comparison. Red boxes indicate identity drift (notably severe in OmniAvatar ), while yellow boxes highlight fine-grained detail inconsistencies (e.g., missing accessories in InfiniteTalk and Live-Avatar ). SoulX-LiveAct maintains stable identity and details throughout the sequence. w/o            
+
+> ConvKV
+> Memory
+> w/
+> ConvKV
+> Memory
+> Texture Drift Texture Drift Texture Drift Color Drift Color Drift Color Drift
+
+Figure 6: ConvKV Memory Mechanism consistency comparison. Red boxes highlight inconsistencies in clothing or hand details (e.g., inconsistencies in clothing patterns and nail color). The ConvKV Memory mechanism ensures stable identity and detail preservation throughout the sequence. 8SoulX-LiveAct Technical Report Ref  Sad  Heart Gasture  Cover Face  Laughing 
+
+Figure 7: Effect of the Emotion and Action Editing Module . Given a reference image (Ref), our motion editing module enables controllable modification of facial expressions and gestures, including sad expression, heart gesture, covering face, and laughing. data (e.g., 16K) for ’ODE initialization’ training and 1000 steps of distillation. In contrast, Neighbor Forcing propagates the latent of a temporally adjacent frame at the same diffusion step, eliminating the need for complex ODE initialization training and requiring only 300 steps of distillation, as in Table 4. Table 4: Difference between Neighbor Forcing and Self Forcing. Method ODE Init. Training DMD Distill Training 
+
+Self Forcing Yes 1000 Steps Neighbor Forcing No 300 Steps 
+
+Ablation study on the memory-block size and current-block size hyperparameters. To meet the real-time constraint of 20 FPS throughput, the model is required to maintain an average per-frame generation latency below 50 ms. Accordingly, we perform an ablation study on the memory-block and current-block size hyperparameters. Table 5: Ablation study on the memory-block size and current-block size hyperparameters. Memory-block Size Current-block Size Cost/frame Meat Real-time Requirement 
+
+6 6 52ms No 8 8 60ms No 6 8 49ms Yes Overall, the ablation experiments confirm that each component contributes to either training stability, temporal consistency, or controllable motion generation, and their combination leads to the best overall performance. 9SoulX-LiveAct Technical Report 
+
+## 4 Conclusion 
+
+In this work, we revisit AR diffusion from the perspective of representation propagation along the AR chain. We show that diffusion-step-aligned neighbor latents provide a principled and effective inductive bias for AR video generation, enabling stable optimization and temporally coherent streaming inference even when built upon pretrained non-AR backbones. Based on this insight, we propose SoulX-LiveAct, a step-consistent AR diffusion formulation, together with ConvKV Memory, a lightweight plug-in compression module that enables constant-memory long-video generation with negligible computational overhead. Extensive experiments demonstrate strong lip-sync accuracy, visual fidelity, long-term identity consistency, and real-time efficiency. 
+
+## References 
+
+[1] B. Chen, D. Martí Monsó, Y. Du, M. Simchowitz, R. Tedrake, and V. Sitzmann. Diffusion forcing: Next-token prediction meets full-sequence diffusion. Advances in Neural Information Processing Systems , 37:24081–24125, 2024. [2] G. Chen, D. Lin, J. Yang, C. Lin, J. Zhu, M. Fan, H. Zhang, S. Chen, Z. Chen, C. Ma, W. Xiong, W. Wang, N. Pang, K. Kang, Z. Xu, Y. Jin, Y. Liang, Y. Song, P. Zhao, B. Xu, D. Qiu, D. Li, Z. Fei, Y. Li, and Y. Zhou. Skyreels-v2: Infinite-length film generative model, 2025. [3] H. K. Cheng and A. G. Schwing. Xmem: Long-term video object segmentation with an atkinson-shiffrin memory model. In European conference on computer vision , pages 640–658. Springer, 2022. [4] J. Cui, J. Wu, M. Li, T. Yang, X. Li, R. Wang, A. Bai, Y. Ban, and C.-J. Hsieh. Self-forcing++: Towards minute-scale high-quality video generation. arXiv preprint arXiv:2510.02283 , 2025. [5] Q. Gan, R. Yang, J. Zhu, S. Xue, and S. Hoi. Omniavatar: Efficient audio-driven avatar video generation with adaptive body animation, 2025. [6] K. Gao, J. Shi, H. Zhang, C. Wang, J. Xiao, and L. Chen. Ca2-vdm: Efficient autoregressive video diffusion model with causal generation and cache sharing, 2024. [7] Y. Guo, C. Yang, H. He, Y. Zhao, M. Wei, Z. Yang, W. Huang, and D. Lin. End-to-end training for autoregressive video diffusion via self-resampling. arXiv preprint arXiv:2512.15702 , 2025. [8] R. Henschel, L. Khachatryan, D. Hayrapetyan, H. Poghosyan, V. Tadevosyan, Z. Wang, S. Navasardyan, and H. Shi. Streamingt2v: Consistent, dynamic, and extendable long video generation from text. arXiv preprint arXiv:2403.14773 , 2024. [9] M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter. Gans trained by a two time-scale update rule converge to a local nash equilibrium. Advances in neural information processing systems , 30, 2017. [10] J. Hu, S. Hu, Y. Song, Y. Huang, M. Wang, H. Zhou, Z. Liu, W.-Y. Ma, and M. Sun. Acdit: Interpolating autoregressive conditional modeling and diffusion transformer, 2024. [11] X. Huang, Z. Li, G. He, M. Zhou, and E. Shechtman. Self forcing: Bridging the train-test gap in autoregressive video diffusion. arXiv preprint arXiv:2506.08009 , 2025. [12] Y. Huang, H. Guo, F. Wu, S. Zhang, S. Huang, Q. Gan, L. Liu, S. Zhao, E. Chen, J. Liu, and S. Hoi. Live avatar: Streaming real-time audio-driven avatar generation with infinite length, 2025. [13] Z. Huang, Y. He, J. Yu, F. Zhang, C. Si, Y. Jiang, Y. Zhang, T. Wu, Q. Jin, N. Chanpaisit, et al. Vbench: Comprehensive benchmark suite for video generative models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 21807–21818, 2024. [14] Y. Li, H. Mao, R. Girshick, and K. He. Exploring plain vision transformer backbones for object detection. In 
+
+European conference on computer vision , pages 280–296. Springer, 2022. [15] Y. Lipman, R. T. Chen, H. Ben-Hamu, M. Nickel, and M. Le. Flow matching for generative modeling. arXiv preprint arXiv:2210.02747 , 2022. [16] H. Liu, S. Liu, Z. Zhou, M. Xu, Y. Xie, X. Han, J. C. Pérez, D. Liu, K. Kahatapitiya, M. Jia, J.-C. Wu, S. He, T. Xiang, J. Schmidhuber, and J.-M. Pérez-Rúa. Mardini: Masked autoregressive diffusion for video generation at scale. arXiv preprint arXiv:2410.20280 , 2024. [17] J. Liu, J. Han, B. Yan, H. Wu, F. Zhu, X. Wang, Y. Jiang, B. Peng, and Z. Yuan. Infinitystar: Unified spacetime autoregressive modeling for visual generation, 2025. [18] K. Liu, W. Hu, J. Xu, Y. Shan, and S. Lu. Rolling forcing: Autoregressive long video diffusion in real time. arXiv preprint arXiv:2509.25161 , 2025. 10 SoulX-LiveAct Technical Report 
+
+[19] X. Liu, C. Gong, and Q. Liu. Flow straight and fast: Learning to generate and transfer data with rectified flow. 
+
+arXiv preprint arXiv:2209.03003 , 2022. [20] R. Meng, X. Zhang, Y. Li, and C. Ma. Echomimicv2: Towards striking, simplified, and semi-body human animation. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 5489–5498, 2025. [21] W. Peebles and S. Xie. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF international conference on computer vision , pages 4195–4205, 2023. [22] K. Prajwal, R. Mukhopadhyay, V. P. Namboodiri, and C. Jawahar. A lip sync expert is all you need for speech to lip generation in the wild. In Proceedings of the 28th ACM international conference on multimedia , pages 484–492, 2020. [23] M. Sun, W. Wang, G. Li, J. Liu, J. Sun, W. Feng, S. Lao, S. Zhou, Q. He, and J. Liu. Ar-diffusion: Asynchronous video generation with auto-regressive diffusion. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 7364–7373, 2025. [24] T. Unterthiner, S. Van Steenkiste, K. Kurach, R. Marinier, M. Michalski, and S. Gelly. Towards accurate generative models of video: A new metric & challenges. arXiv preprint arXiv:1812.01717 , 2018. [25] T. Wan, A. Wang, B. Ai, B. Wen, C. Mao, C.-W. Xie, D. Chen, F. Yu, H. Zhao, J. Yang, et al. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 , 2025. [26] D. Xie, Z. Xu, Y. Hong, H. Tan, D. Liu, F. Liu, A. Kaufman, and Y. Zhou. Progressive autoregressive video diffusion models. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 6322–6332, 2025. [27] S. Yang, Z. Kong, F. Gao, M. Cheng, X. Liu, Y. Zhang, Z. Kang, W. Luo, X. Cai, R. He, et al. Infinitetalk: Audio-driven video generation for sparse-frame video dubbing. arXiv preprint arXiv:2508.14033 , 2025. [28] T. Yin, M. Gharbi, R. Zhang, E. Shechtman, F. Durand, W. T. Freeman, and T. Park. One-step diffusion with distribution matching distillation. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 6613–6623, 2024. [29] T. Yin, Q. Zhang, R. Zhang, W. T. Freeman, F. Durand, E. Shechtman, and X. Huang. From slow bidirectional to fast autoregressive video diffusion models. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 22963–22974, 2025. [30] T. Yin, Q. Zhang, R. Zhang, W. T. Freeman, F. Durand, E. Shechtman, and X. Huang. From slow bidirectional to fast autoregressive video diffusion models. In CVPR , 2025. [31] H. Yuan, W. Chen, J. Cen, H. Yu, J. Liang, S. Chang, Z. Lin, T. Feng, P. Liu, J. Xing, H. Luo, J. Tang, F. Wang, and Y. Yang. Lumos-1: On autoregressive video generation from a unified model perspective. arXiv preprint arXiv:2507.08801 , 2025. [32] L. Zhang, S. Cai, M. Li, G. Wetzstein, and M. Agrawala. Frame context packing and drift prevention in next-frame-prediction video diffusion models. arXiv preprint arXiv:2504.12626 , 2025. [33] L. Zhang, S. Cai, M. Li, C. Zeng, B. Lu, A. Rao, S. Han, G. Wetzstein, and M. Agrawala. Pretraining frame preservation in autoregressive video memory compression. arXiv preprint arXiv:2512.23851 , 2025. [34] P. Zhang, Y. Chen, H. Huang, W. Lin, Z. Liu, I. Stoica, E. Xing, and H. Zhang. Vsa: Faster video diffusion with trainable sparse attention, 2025. [35] T. Zhang, S. Bi, Y. Hong, K. Zhang, F. Luan, S. Yang, K. Sunkavalli, W. T. Freeman, and H. Tan. Test-time training done right, 2025. [36] Z. Zhang, L. Li, Y. Ding, and C. Fan. Flow-guided one-shot talking face generation with a high-resolution audio-visual dataset. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,pages 3661–3670, 2021. [37] W. Zhao, L. Bai, Y. Rao, J. Zhou, and J. Lu. Unipc: A unified predictor-corrector framework for fast sampling of diffusion models. Advances in Neural Information Processing Systems , 36:49842–49869, 2023. [38] D. Zhen, Q. Qiao, X. Zheng, T. Yu, K. Wu, Z. Zhang, S. Liu, S. Yin, and M. Tao. Marrying autoregressive transformer and diffusion with multi-reference autoregression. arXiv preprint arXiv:2506.09482 , 2025. [39] D. Zhen, S. Yin, S. Qin, H. Yi, Z. Zhang, S. Liu, G. Qi, and M. Tao. Teller: Real-time streaming audio-driven portrait animation with autoregressive motion generation. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 21075–21085, 2025. [40] D. Zheng, Z. Huang, H. Liu, K. Zou, Y. He, F. Zhang, L. Gu, Y. Zhang, J. He, W.-S. Zheng, et al. Vbench-2.0: Advancing video generation benchmark suite for intrinsic faithfulness. arXiv preprint arXiv:2503.21755 , 2025. 11 SoulX-LiveAct Technical Report 
+
+## Appendix A Local Smoothness and Step-Consistent Neighbors 
+
+Setup. Let {xf }Ff =1 be a video sequence in RD , and let z f 
+
+> 0
+
+= E(xf ) ∈ Rd denote its clean latent representation through an encoder E.We reserve subscript t for diffusion steps and superscript f for frame indices. For diffusion step t, define the forward noising process 
+
+z ft = αtz f 
+
+> 0
+
++ σtϵ f , ϵ f ∼ N (0 , I d), (8) where (αt, σ t) follow a standard noise schedule. 
+
+Assumptions (manifold and regularity). Assumption 1 (Low-dimensional state with bounded rendering error) . There exist latent states uf ∈ Rm with m ≪ D
+
+and a rendering map g : Rm → RD such that 
+
+xf = g(uf ) + rf , ∥rf ∥ ≤ εr . (9) 
+
+Moreover, the dynamics is locally smooth with bounded velocity: 
+
+∥uf +1 − uf ∥ ≤ ∆u for most f. (10) 
+
+Assumption 2 (Local Lipschitzness near the data manifold) . There exist constants LE , L g > 0 such that: 
+
+∥E(x) − E(x′)∥ ≤ LE ∥x − x′∥ for all x, x ′ ∈ N ρ(M), (11) 
+
+and 
+
+∥g(u) − g(u′)∥ ≤ Lg ∥u − u′∥ for all u, u ′ ∈ U , (12) 
+
+where M = {g(u) : u ∈ U} is the data manifold and Nρ(M) denotes its ρ-neighborhood containing {xf }.
+
+Proposition 1 (Temporal neighbors are latent neighbors). Under Assumptions 1–2, for any f such that Eq. (10) holds and xf , x f +1 ∈ N ρ(M), we have 
+
+∥z f +1 0 − z f 
+
+> 0
+
+∥ ≤ LE
+
+ Lg ∆u + 2 εr
+
+. (13) 
+
+Proof. By Lipschitzness of E on Nρ(M),
+
+∥z f +1 0 − z f 
+
+> 0
+
+∥ = ∥E(xf +1 ) − E(xf )∥ ≤ LE ∥xf +1 − xf ∥. (14) Using the decomposition xf = g(uf ) + rf ,
+
+∥xf +1 − xf ∥ = ∥g(uf +1 ) − g(uf ) + ( rf +1 − rf )∥ (15) 
+
+≤ ∥ g(uf +1 ) − g(uf )∥ + ∥rf +1 − rf ∥ (16) 
+
+≤ Lg ∥uf +1 − uf ∥ + ∥rf +1 ∥ + ∥rf ∥ (17) 
+
+≤ Lg ∆u + 2 εr , (18) where we used Eqs. (12)–(10). Combining the inequalities yields Eq. (13). □
+
+Proposition 2 (Same-step noising preserves step-consistent neighborhood in expectation). Assume ϵ f are i.i.d. 
+
+N (0 , I d) and independent of {z f 
+
+> 0
+
+}. Then for any fixed diffusion step t,
+
+E ∥z f +1  
+
+> t
+
+− z ft ∥2 = α2 
+
+> t
+
+∥z f +1 0 − z f 
+
+> 0
+
+∥2 + 2 σ2 
+
+> t
+
+d. (19) 
+
+Proof. From Eq. (8), 
+
+z f +1  
+
+> t
+
+− z ft = αt∆z f 
+
+> 0
+
++ σt∆ϵ f , (20) where ∆z f 
+
+> 0
+
+:= z f +1 0 − z f 
+
+> 0
+
+and ∆ϵ f := ϵ f +1 − ϵ f .
+
+Expanding the squared norm, 
+
+∥αt∆z f 
+
+> 0
+
++ σt∆ϵ f ∥2 = α2 
+
+> t
+
+∥∆z f 
+
+> 0
+
+∥2 + σ2 
+
+> t
+
+∥∆ϵ f ∥2 + 2 αtσt⟨∆z f 
+
+> 0
+
+, ∆ϵ f ⟩. (21) 12 SoulX-LiveAct Technical Report 
+
+Taking expectation and using independence together with E[∆ ϵ f ] = 0 , we get 
+
+E⟨∆z f 
+
+> 0
+
+, ∆ϵ f ⟩ = 0 .
+
+Since ϵ f +1 , ϵ f are i.i.d. N (0 , I d),
+
+E∥∆ϵ f ∥2 = E∥ϵ f +1 − ϵ f ∥2 (22) 
+
+= E∥ϵ f +1 ∥2 + E∥ϵ f ∥2 − 2E⟨ϵ f +1 , ϵ f ⟩ (23) 
+
+= d + d − 0 = 2 d. (24) Substituting back yields Eq. (19). □
+
+Implications. Proposition 1 shows that under locally smooth dynamics and regular encoders, temporally adjacent frames remain close in latent space, up to bounded modeling error. Proposition 2 shows that at a fixed diffusion step 
+
+t, the expected squared distance between noisy temporal neighbors decomposes into a signal term scaled by α2 
+
+> t
+
+and an additive isotropic noise floor 2σ2 
+
+> t
+
+d independent of frame index f . This step-consistent decomposition motivates conditioning on same-step temporal neighbors for autoregressive propagation and suggests that short temporal windows admit redundancy-aware compression in KV memory without significantly distorting the conditioning signal. 
+
+## B Related Work 
+
+Autoregressive Video Generation. Early methods predominantly employ the Teacher Forcing [ 6, 10 , 35 ] strategy to generate video sequences autoregressively. However, this approach suffers from significant train-test mismatch, leading to accumulated errors during video generation. Some studies [ 32 , 34 ] adopt planning generation strategy, pre-determining distant future frames and then interpolating intermediate ones to mitigate error accumulation inherent in autoregressive processes. Subsequent research introduced Diffusion Forcing [ 1 , 30 , 2 ], which mitigates this mismatch by assigning independent noise levels to sequential frames. More recently, Self Forcing [ 11 ] has addressed error accumulation by directly conditioning the model on its own generated historical frames during training. Building upon this, Self-Forcing++ [ 4] incorporates Distribution Matching Distillation (DMD) to surpass the temporal constraints of base models. Self-Resampling [ 7 ] utilizes online-updated weights to autoregressively resample past frames, simulating and counteracting potential model biases during inference to significantly enhance the stability of long-sequence generation. Despite these advancements in mitigating error accumulation, the aforementioned methods often incur substantial computational overhead due to complex sampling strategies or iterative feedback loops, resulting in high training costs. In contrast, we propose Neighbor Forcing, which reuses latents from the same step to significantly improve training efficiency and achieve faster convergence while maintaining superior generation quality. 
+
+Memory Compression. Ensuring interframe consistency is paramount in long horizon video generation. Several approaches have introduced history compression mechanisms to balance generation quality and resource consumption. FramePack [ 32 ] encodes preceding frames into fixed size latent space features to serve as context. Lvmin Zhang et al. [ 33 ] employed a UNet-based architecture to highly condense redundant historical frame information, enhancing the coherence of extended video sequences. However, such complex network architectures are not suitable for real-time human animation models. To address this, we propose the ConvKV Memory mechanism, which employs a lightweight 1D convolution on the keys and values in causal attention to manage long-term memory. 13

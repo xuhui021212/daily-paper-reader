@@ -1,0 +1,859 @@
+Title: PinPoint: Monocular Needle Pose Estimation for Robotic Suturing via Stein Variational Newton and Geometric Residuals
+
+URL Source: https://arxiv.org/pdf/2603.23365v1
+
+Published Time: Wed, 25 Mar 2026 01:39:26 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# PinPoint: Monocular Needle Pose Estimation for Robotic Suturing via Stein Variational Newton and Geometric Residuals 
+
+Jesse F. d’Almeida 1, Tanner Watts 2, Susheela Sharma Stern 1, James Ferguson 3,Alan Kuntz 2, and Robert J. Webster III 1
+
+Abstract —Reliable estimation of surgical needle 3D position and orientation is essential for autonomous robotic suturing, yet existing methods operate almost exclusively under stereo-scopic vision. In monocular endoscopic settings, common in transendoscopic and intraluminal procedures, depth ambigu-ity and rotational symmetry render needle pose estimation inherently ill-posed, producing a multimodal distribution over feasible configurations, rather than a single, well-grounded esti-mate. We present PinPoint, a probabilistic variational inference framework that treats this ambiguity directly, maintaining a distribution of pose hypotheses rather than suppressing it. Pin-Point combines monocular image observations with robot-grasp constraints through analytical geometric residuals with closed-form Jacobians. This framework enables efficient Gauss-Newton preconditioning in a Stein Variational Newton inference, where second-order particle transport deterministically moves particles toward high-probability regions while kernel-based repulsion preserves diversity in the multimodal structure. On real needle-tracking sequences, PinPoint reduces mean translational error by 80% (down to 1.00 mm) and rotational error by 78% (down to 13.80 °) relative to a particle-filter baseline, with substantially better-calibrated uncertainty. On induced-rotation sequences, where monocular ambiguity is most severe, PinPoint maintains a bimodal posterior 84% of the time, almost three times the rate of the particle filter baseline, correctly preserving the alternative hypothesis rather than committing prematurely to one mode. Suturing experiments in ex vivo tissue demonstrate stable tracking through intermittent occlusion, with average errors during occlusion of 1.34 mm in translation and 19.18 ° in rotation, even when the needle is fully embedded. 
+
+I. I NTRODUCTION 
+
+Suturing is one of the most fundamental and cognitively demanding tasks in Robot-assisted Minimally Invasive Surgery (RMIS) [1]. The task demands repeated, precise manipulation of a curved needle under constrained instrument motion [2]; 
+
+Research reported in this publication was supported by the Advanced Research Projects Agency for Health (ARPA-H) under the ALISS project, Award Number D24AC00415-00. The ARPA-H award of up to $11,935,038 provided 50% of the financial support for this work and National Science Foundation Graduate Research Fellowship Program provided 50% under Grant No. 1937963 & 2444112. The opinions and findings in this paper are those of the authors and do not necessarily represent the official views ARPA-H nor the National Science Foundation. (corresponding author email: jesse.f.dalmeida@vanderbilt.edu). 
+
+> 1
+
+Department of Mechanical Engineering, Vanderbilt University, TN, USA. 
+
+> 2
+
+Department of Electrical and Computer Engineering and Department of Computer Science, Vanderbilt University, TN, USA. 
+
+> 3
+
+The Robotics Center and the Kahlert School of Computing, University of Utah, Salt Lake City, UT, USA. 
+
+Fig. 1. Conceptual illustration of the proposed monocular needle tracking framework. (Top) Image and robot-based observations define an error over the needle pose estimate, which is iteratively solved for with PinPoint. The isometric robot view highlights the inherent depth ambiguity of monocular needle pose estimation, where multiple 3D configurations can produce similar image projections. (Bottom) PinPoint uses Stein Variational Inference, which represents the posterior over needle poses using a set of interacting particles. Particles are deterministically transported toward high-probability regions of the posterior while repulsive interactions prevent collapse and preserve mul-timodal hypotheses. The maximum a posteriori (MAP) particle corresponds to the most likely needle pose estimate. 
+
+even expert surgeons face significant cognitive and physical burden, contributing to procedural variability and operative fatigue [3], [4]. Automating components of this process could reduce that burden and improve procedural consistency, moti-vating substantial research into suturing automation [5]. Most autonomous suturing research has targeted laparo-scopic environments with stereoscopic visualization and rigid instrumentation [6]. Stereoscopic depth information makes the pose estimation problem tractable: they constrain the 3D solution well enough that probabilistic filters can recover a single reliable pose estimate [7], [8]. Many clinically important procedures, however, require compact instrumentation through narrow anatomical pathways where only monocular visual-ization is available, and no such depth cues exist [9], [10]. Concentric tube robots (CTRs) are one platform well-suited 
+
+> arXiv:2603.23365v1 [cs.RO] 24 Mar 2026
+
+to these settings [11], [12], and have been demonstrated in transendoscopic and intraluminal procedures precisely where monocular perception constraints apply [9], [13]. The central challenge of monocular needle pose estimation is not merely that depth is unobserved, but the presence of multiple geometrically consistent solutions (multimodal) and often weak observability along certain directions (ill-conditioning). Projection ambiguity, partial occlusions, and the rotational symmetry of curved needles can produce multiple 3D configurations consistent with the same image, inducing a multimodal distribution over feasible poses that no single deterministic estimate can represent [14], [15]. In stereoscopic systems, depth cues resolve this ambiguity and enable prob-abilistic filters to recover a single reliable estimate [7], [8], [16]; in the monocular setting, the ambiguity remains. Existing monocular approaches address this by reprojection or with learning-based detection [17], [18]. Neither incorporate robot kinematics or grasp constraints, leaving the estimate grounded solely in the image observations and unable to represent the multimodal structure of the posterior. This paper presents PinPoint , a probabilistic variational inference framework for real-time monocular needle pose estimation. PinPoint formulates needle tracking as inference over SE (3) , maintaining a distribution of pose hypotheses that preserves the genuine multimodal structure of the posterior rather than committing to a single estimate. Geometric con-straints from monocular image observations and the physical robot-grasp are expressed as analytical residuals with closed-form Jacobians, maintaining the pose estimation grounded in 3D even when depth is unobserved. These residuals drive a Stein Variational Newton (SVN) inference [19], which uses Gauss-Newton curvature to precondition a deterministic particle transport, enabling efficient convergence while kernel-based repulsion preserves hypothesis diversity across modes as well as an estimate for its uncertainty. PinPoint is evaluated on real needle-tracking sequences with ground-truth poses obtained from a rigidly mounted checker-board. Across sequences of controlled motion, induced out-of-plane rotations, and ex vivo suturing with severe occlusions, PinPoint substantially outperforms a particle filter baseline in accuracy, uncertainty calibration, and multimodal posterior representation. II. R ELATED WORKS 
+
+A. Stereo-Based Needle Pose Estimation 
+
+Stereo-based needle pose estimation exploits the elliptical reprojection of a circular needle to recover 3D pose from image correspondences, forming the backbone of influential autonomous systems [3], [4]. Subsequent work introduced probabilistic filtering frameworks that fuse multiple geometric observation models with robot motion priors improve robust-ness under noise and partial occlusions [7], [8], [20], as well as grasp-awareness that reject infeasible poses by encoding phys-ical needle-gripper constraints [16]. Despite these advances, all such methods rely on stereoscopic depth cues, limiting their applicability in monocular endoscopic settings. PinPoint builds on the geometric observation models developed in this line of work to the monocular case, substituting stereo depth with robot-grasp constraints that provide 3D grounding from a single view. 
+
+B. Monocular Needle Pose Estimation 
+
+Monocular pose estimation presents a more constrained version of the pose estimation problem: without depth cues, purely geometric approaches that reproject a circular needle model onto the image plane are underconstrained and sensitive to noise [17]. Recent learning-based methods have made progress on this front, though important gaps remain. Li et al. [18] avoid the circular shape assumption entirely, using a multi-task network to extract segmentation masks and tip/tail keypoints from which 6-DoF pose is recovered via point-to-mask dis-tance minimization. The method is designed for generality by excluding robot kinematics and grasp constraints, it targets scenes where the needle may not be grasped. Wang et al. [21] take a more direct approach, training a CNN on a hybrid real/synthetic dataset to predict three needle keypoints from which 3D orientation is recovered using the needle’s known geometry, though 3D position remains unaddressed. Neither approach incorporates robot kinematics or grasp constraints, leaving the pose estimate grounded solely in im-age observations. More fundamentally, neither represents the multimodal posterior structure that monocular depth ambiguity induces, rather, both produce a single deterministic estimate with no mechanism for understanding uncertainty or maintain-ing alternative hypotheses. PinPoint addressed both gaps: its uses a learned detector only to extract image observations, with all pose estimation performed through geometric residuals grounded in physical measurement models; and it explicitly maintains a distribution over pose hypotheses, preserving the multimodal structure rather than collapsing it. 
+
+C. Probabilistic and Multimodal Pose Inference 
+
+The circular arc geometry of a suture needle admits multi-ple geometrically consistent 3D configurations from a single monocular view as a consequence of the well-known two-solution ambiguity of a circular pose estimation when pro-jected onto the image plane [22]. Thus, the pose posterior becomes multimodal. Prior work in monocular surgical tool pose estimation has obsevred the practical consequences of this structure wherein ambiguous configurations produce high errors [23]. Methods that commit to a single estimate mode cannot represent this structure by construction, and analogous failure modes have been documents in camera relocalization [24] and monocular human pose estimation [15], whereby maintaining full posterior distributions substantially outper-formed point estimation approaches. PinPoint addresses this directly by treating needle tracking as multimodal inference over SE (3) , rather than patching a point estimator with heuristic priors. Particle filters have been the dominant tool for probabilistic needle tracking [7], [8], but suffer from importance weight col-Fig. 2. Sources of information used for monocular needle pose estimation and the geometric reach of their corresponding residuals: (i) image keypoints at the needle tip and tail, (ii) needle backbone segmentation, (iii) the C-Lock rigidly fixes the needle at a known grasp point, and (iv) the C-Lock enforces a perpendicular relationship between the gripper axis and the needle tangent at the grasp location. 
+
+lapse under tight geometric constraints. When the likelihood is sharply peaked, most particles receive negligible weight, lead-ing to degeneracy and loss of hypothesis diversity [25]. Stein Variational Gradient Descent (SVGD) [25] addresses this by deterministically transporting particles toward high-probability regions while kernel-based repulsion maintains diversity. Stein Variational Newton (SVN) [19] further incorporates Hessian preconditioning to adapt transport to local posterior curvature, enabling rapid convergence even in ill-conditioned settings. PinPoint adopts SVN as its inference method, deriving closed-form Gauss-Newton Hessian approximations from analytical residual Jacobians to ground particle transport directly in the geometry of the needle pose problem. III. F ORMULATION AND CONDITIONAL LIKELIHOODS 
+
+We consider the problem of estimating the full 6 degree-of-freedom (DoF) needle pose T ∈ SE(3) , which maps needle frame coordinates to the optical camera frame. PinPoint draws on two complementary sources of information: monocular image observations (top row of Fig. 2) and robot grasper kinematic constraints (bottom row of Fig. 2). From the current image, we extract two types of obser-vations. First, learned sparse keypoints (2D detections of the needle tip and tail) provide known correspondences to points on the canonical needle model, yielding strong localized constraints on image-plane position and orientation. These are complemented by a dense needle backbone segmentation, which provides global shape constraints and remains informa-tive even under partial occlusion. Finally, PinPoint incorpo-rates uncertain robot grasper kinematics from the needle grasp, which provide complementary geometric constraints and help anchor the depth of the needle pose, which is typically ill-conditioned under monocular observations alone. Together, these measurements define the following overall Negative Log-Likelihood (NLL) objective for needle pose inference: 
+
+L(T ) = Lsparse (T ) + Ldense (T ) + Lgrasp (T ), (1) where Lsparse (T ) corresponds to sparse keypoint reprojection error, Ldense (T ) captures alignment with the segmented needle backbone, and Lgrasp (T ) enforces consistency with the (un-certain) robot kinematics. Each likelihood cost is constructed from a residual rk(T ) = hk(T ) − zk as Lk(T ) = r⊤ 
+
+> k
+
+Σ−1 
+
+> k
+
+rk,where hk is the measurement model and zk is the obser-vation. The next sections describe how each likelihood is specifically constructed, how the system is linearized, and how we efficiently approximate a potentially multimodal posterior distribution over needle poses. 
+
+A. Sparse Keypoint Likelihoods 
+
+When detectable, sparse visual features provide strong localized constraints on the needle pose. Building on the 
+
+Points Matching to Ellipse model of Chiu et al. [7], we use detected needle endpoints as direct reprojection constraints. Specifically, we may detect pixel keypoints corresponding to the needle tip and tail, denoted ztip , z tail ∈ R2, which have known correspondences to the 3D points ptip , p tail ∈ R3 in the needle frame. Given the needle pose T , the pixel location of a homo-geneous 3D point X = p, 1T is π(T X ), where π(p) = [fxx/z + cx, f y y/z + cy ]T , (fx, f y ) are the focal lengths, 
+
+(cx, c y ) is the camera center, and p = [ x, y, z ]T is the point in optical frame coordinates. We assume that the keypoint measurement is corrupted by Gaussian noise so that the NLL over all detected keypoints is: 
+
+Lsparse (T ) = X
+
+> i
+
+∥rkey ,i ∥Σkey ,rkey ,i = π(T X ) − zkey ,i .
+
+(2) where ∥ · ∥ Σ denotes the Mahalanobis distance with respect to the covariance. Note that all noise covariances, including that of the keypoints Σkey , are calibrated empirically by evaluating each residual at the ground-truth needle pose, as shown in Fig. 3, across a calibration dataset, as described in Section V-C. Additionally, we show how to linearize this likelihood and all other measurement models in Appendix A. 
+
+B. Dense Segmented Backbone Likelihood 
+
+When keypoints are occluded or undetectable, our dense backbone segmentation supplies information without requiring point-to-point correspondence. We model the needle as a 3D circular arc of known radius r; its projection is dependent on the needle pose T , which induces the image conic C(T ).Overall, the projected conic C(T ) overlapping with the seg-mentation corresponds with high likelihood. The image conic C(T ) follows from classical quadric projection theory [26], where the the planar quadric Qplane =diag(1 , 1, −r2) is transformed by the projective homography: 
+
+H(T ) = K [I | 0] T M ∈ R3×3, M =
+
+
+
+1 0 00 1 00 0 00 0 1
+
+ (3) where K is the camera intrinsic matrix and M embeds the planar circle into homogeneous 3D coordinates, yielding: 
+
+C(T ) = H(T )−T Qplane H(T )−1. (4) Given homogeneous image points xj = [ uj , v j , 1] T from the segmented backbone, a natural way to quantify consistency between the conic C(T ) and xj is: 
+
+fi(T ) = xTj C(T )xj , (5) which is zero for points lying exactly on the conic. However, this algebraic distance depends on the arbitrary scale of the conic parameters and does not correspond directly to geometric image distance. To address this, we instead use the Sampson distance, a first-order approximation of the geometric reprojection error [27]: 
+
+rdense ,j (T ) = x⊤ 
+
+> j
+
+C(T )xj
+
+∇x
+
+ x⊤ 
+
+> j
+
+C(T )xj
+
+
+
+> 2
+
+,
+
+where ∇x
+
+ x⊤Cx  = ( C + C⊤)x. 
+
+(6) Here, the normalization converts the algebraic conic constraint into an approximate Euclidean image distance, preserving differentiability for Gauss-Newton updates. We model each image-point segmentation measurement with Gaussian noise ed,i ∼ N (0 , σ 2
+
+> d
+
+), yielding the following for the dense segmentation NLL cost: 
+
+Ldense (T ) = X
+
+> j
+
+∥rdense ,j ∥Σdense . (7) Again, the covariance Σdense is calibrated in Section V-C, and linearization is carried out in Appendix A. 
+
+C. Robot Kinematics Likelihood 
+
+In contrast to image-based observations, the robot kine-matics provides direct 3D information that remains available even under visual occlusion. Specifically, the C-Lock [28] is a grasper for CTRs that rigidly fixes the needle at a known point relative to the robot. This combined with the robot kinematics provides the 3D position of the grasp point in the camera frame, directly anchoring the depth of the needle pose. The grasper geometry additionally provides an orientation con-straint, as the C-Lock enforces approximate perpendicularity between the gripper axis and the needle tangent at the grasp location. The C-Lock grasper rigidly holds the needle at a known point on the needle, denoted Xgrasp . Unlike traditional forceps graspers, where the needle may contact the jaws anywhere along the surface manifold, requiring an additional solve for the grasp point [16], the C-Lock fixes the needle 
+
+> Fig. 3. The needle is rigidly fixed to the checkerboard such that the transform between the centers can be measured, enabling ground truth needle pose measurements, for calibration and accuracy tests.
+
+at a known pose relative to the grasper with no additional unknowns introduced. Although the specific point Xgrasp on the canonical needle may vary between grasps, the transform between the grasper frame and the grasp point remains rigid while the needle is held during use. Forward kinematics provides an estimate 
+
+pgrasp of the grasp position relative to the camera, which we can compare with the needle pose T to get the position residual: 
+
+rp(T ) = T X grasp − pgrasp . (8) The grasper geometry further constrains needle orientation, eliminating one rotational DoF within the grasp. Specifically, the C-Lock enforces approximate perpendicularity between the grasper axis ˆzgrasper and the unit tangent direction ˆtgrasp (T ) of the needle at Xgrasp . This orthogonality constraint is encoded via the following residual: 
+
+r⊥(T ) = ˆ z⊤
+
+> grasper
+
+ˆtgrasp (T ). (9) This constraint reduces rotational ambiguity and, critically, remains valid during partial and complete visual occlusion, providing orientation information precisely when image ob-servations are unavailable. These residuals are combined to form the overall robot kinematics grasp NLL: 
+
+Lgrasp (T ) = ∥rp∥Σp + ∥r⊥∥Σ⊥ . (10) Thus, given all of the individual likelihoods in (1), we can pro-ceed with estimating the conditional distribution over needle poses T .
+
+D. Second-Order Conditioning 
+
+The Gauss-Newton Hessian approximation H = P 
+
+> k
+
+JTk Jk
+
+aggregates curvature information across all four residual types. In practice, the conditioning of H varies substantially based on needle pose and observation availability. To motivate second-order preconditioning in the inference step (i.e., using the SVN method as opposed to SVGD), we examine H on representa-tive evaluation frames. The pose ambiguity from monocular observations results in an ill-conditioned Hessian, meaning that gradient-only transport, which implicitly treats all 6 pose dimensions equally, takes steps that are too large along well-constrained directions and too small along poorly constrained ones. The Gauss-Newton preconditioning directly addresses this by adapting the step to the shape of the local curvature. We demonstrate this directly by removing the second-order information (effectively an SVGD method) as part of the ablation studies V-D. IV. P IN POINT VARIATIONAL INFERENCE 
+
+Algorithm 1 PinPoint 
+
+Require: Observations Z, particles {T (i)0 }Ni=1 ⊂ SE (3) 
+
+Ensure: ˆT , Σ 
+
+> 1:
+
+for k = 1 to K do  
+
+> 2:
+
+for i = 1 to N do  
+
+> 3:
+
+g(i) ← −∇ ξ L(T (i)
+
+> k−1
+
+) 
+
+> 4:
+
+H(i) ← (J(i))⊤J(i) 
+
+> 5:
+
+˜H(i) 
+
+> ϵ
+
+← eigenvalue-floored H(i) 
+
+> 6:
+
+end for  
+
+> 7:
+
+h ← max 
+
+ med i<j ∥ξ(i)−ξ(j)∥2  
+
+> log N
+
+, σ 2
+
+> Q
+
+ 
+
+> 8:
+
+for i = 1 to N do  
+
+> 9:
+
+∆ξ(i) ← 1
+
+> N
+
+P
+
+> j
+
+k(ξ(j), ξ (i)) ˜H(j)−1 
+
+> ϵ
+
+g(j) + ∇ξ(j) k 
+
+> 10:
+
+T (i) 
+
+> k
+
+← exp( ’∆ξ(i))T (i) 
+
+> k−1
+> 11:
+
+end for  
+
+> 12:
+
+end for  
+
+> 13:
+
+ˆT ← arg max i log p(T (i) 
+
+> K
+
+| Z ) 
+
+> 14:
+
+Σ ← Cov  {log( ˆT −1T (i) 
+
+> K
+
+)} 
+
+> 15:
+
+return ˆT , Σ
+
+While a single maximum-likelihood estimate can be ob-tained by minimizing the overall NLL L(T ), monocular needle pose estimation is inherently ambiguous under limited depth cues and partial occlusion, and the resulting posterior may be multimodal. Therefore, to represent general distributions, PinPoint uses a Stein Variational Newton (SVN) framework, which approximates the posterior using a set of interacting particles that are deterministically transported toward high-probability regions [19]. Unlike particle filters, SVN lever-ages analytic gradients together with curvature information (e.g., Gauss–Newton approximations to the Hessian) to move particles coherently, while kernel-based repulsion preserves diversity and enables the representation of multiple modes. In PinPoint, the Gauss–Newton curvature is used to pre-condition the Stein updates, yielding efficient second-order inference grounded in the underlying problem geometry. This formulation enables SVN to capture multimodal posteriors with relatively few particles compared to sampling-based approaches, while maintaining consistency with the underlying measurement models. 
+
+A. Stein Variational Update 
+
+We approximate the posterior p(T | Z) using a set of 
+
+N particles {Ti}Ni=1 ⊂ SE (3) ; Stein variational inference deterministically transports this particle set to approximate the posterior by minimizing the Kullback–Leibler (KL) divergence between the empirical particle distribution and p(T | Z ). Each particle is locally updated via a left-multiplicative perturbation in the tangent space of SE (3) . Specifically, at each iteration a twist update ∆ξi ∈ R6 is applied as: 
+
+Ti ← exp( d∆ξi) Ti, (11) All Stein updates are performed in this tangent space and then mapped back to SE (3) through the exponential map following standard Lie group optimization conventions [29]. At each iteration, the particles are updated to minimize KL divergence by balancing attraction toward regions of high posterior probability with repulsive interactions that preserve particle diversity. We first compute the standard Stein varia-tional velocity in the tangent space: 
+
+ϕ(ξi) = 1
+
+N
+
+> N
+
+X
+
+> j=1
+
+h
+
+k(ξj , ξ i) ∇ξj log p(ξj | Z )
+
+| {z }
+
+> attraction
+
++ ∇ξj k(ξj , ξ i)
+
+| {z }
+
+> repulsion
+
+i (12) where k(·, ·) is a positive-definite kernel that governs inter-particle repulsion. Evaluation of the log-posterior and its gradient is defined in Section III. 
+
+B. Whitened Kernel 
+
+Inter-particle distances are computed in a whitened tangent space to account for the scale disparity between translational and rotational degrees of freedom. Let S = diag( σt13, σ r 13)
+
+be a diagonal scaling matrix with translational scale σt (me-ters) and rotational scale σr (radians). The kernel is: 
+
+k(ξj , ξ i) = exp 
+
+Å
+
+− ∥S−1(ξi − ξj )∥2
+
+2h
+
+ã
+
+(13) The bandwidth h > 0 is set via the median heuristic: h =
+
+m/ log N , where m is the median pairwise squared distance in the whitened tangent space. To prevent bandwidth collapse when particles cluster tightly, which would suppress repulsion precisely when diversity is most needed, h is floored at the mean process noise variance: 
+
+h = max 
+
+Å m
+
+log N , σ 2
+
+> Q
+
+ã
+
+, σ2 
+
+> Q
+
+= 16 tr( Q), (14) where Q is the process noise covariance. When S = I
+
+with isotropic median-heuristic bandwidth, this reduces to the standard SVGD kernel [25], which serves as an ablation baseline in Section VI-C. C. Gauss-Newton Preconditioning 
+
+To improve convergence and account for local curvature of the problem, we precondition the Stein update using second-order information derived from a Gauss–Newton approxima-tion of the Hessian following [19]. For each particle i, we form: 
+
+Hi ≈ J⊤ 
+
+> i
+
+Ji, ∆ξi = H−1 
+
+> i
+
+ϕ(ξi), (15) where Ji is the stacked Jacobian of all residuals evaluated at particle i. This yields a Newton-like transport toward high-probability regions of the posterior on a per-particle basis, incorporating second-order geometric information at negligible additional cost since the Jacobians are already required for gradient computation. The Gauss-Newton Hessian Hi = J⊤ 
+
+> i
+
+Ji is positive semi-definite by construction, and in monocular needle pose esti-mation. Additionally, it is structurally rank-deficient due to the unobservable directions, specifically the depth along the optical axis and the out-of-plane rotations, which produce near-zero eigenvalues regardless of observation quality. Scalar damping Hi + λI , as is common when inverting, inflates all eigenvalues uniformly and does not respect this geometric structure. Instead, we solve via truncated eigen decomposition of the symmetrized Hessian ˜Hi = 12 (Hi + H⊤ 
+
+> i
+
+) [30]. Let 
+
+˜Hi = Vi diag( wi) V ⊤ 
+
+> i
+
+be its decomposition. We regularize by flooring each each eigenvalue relative to the largest: 
+
+∆ξi = Vi diag( ˜ wi)−1 V ⊤ 
+
+> i
+
+ϕ(ξi), (16) 
+
+˜wi,k = max( wi,k , ϵ · wi, max ) , (17) where ϵ = 10 −2. This bounds the effective condition number at ϵ−1 = 100 , suppressing steps along unobservable directions without eliminating them. 
+
+D. Pose Extraction 
+
+After convergence of the Stein updates, the particle set provides a nonparametric approximation of the posterior dis-tribution over SE (3) . The complete estimation procedure is summarized in Algorithm 1. When a single pose estimate ˆT
+
+is required rather than a distribution, we use the maximum a posteriori (MAP) particle with the highest likelihood after iteration. 
+
+E. Uncertainty Estimation 
+
+Given the converged particle set {T (i)}Ni=1 , we quantify pose uncertainty directly from the posterior approximation. Using the MAP estimate ˆT as a reference pose, we compute tangent-space errors: 
+
+ξ(i) = log ÄT −1ref T (i)ä ∈ R6, (18) which are expressed as translational and rotational compo-nents, where ξ1:3 denotes translation and ξ4:6 denotes the axis-angle rotation vector. Translational and rotational magnitudes are summarized by: 
+
+r(i) 
+
+> t
+
+= ∥ξ(i)1:3 ∥2, r(i) 
+
+> r
+
+= ∥ξ(i)4:6 ∥2, (19) We report the weighted 95th percentile of the particle distribution as scalar uncertainty measures for translation (m) and rotation (rad), respectively: 
+
+qt 
+
+> 95
+
+= qQuantile( {r(i) 
+
+> t
+
+}Ni=1 , 0.95) , (20) 
+
+qr 
+
+> 95
+
+= qQuantile( {r(i) 
+
+> r
+
+}Ni=1 , 0.95) , (21) We additionally compute a local tangent-space covariance as a second-order summary of the particle distribution: 
+
+Σ = 
+
+> N
+
+X
+
+> i=1
+
+wi (ξ(i) − ¯ξ)( ξ(i) − ¯ξ)T , ¯ξ =
+
+> N
+
+X
+
+> i=1
+
+wiξ(i). (22) V. E XPERIMENTS 
+
+We evaluate PinPoint on monocular needle tracking tasks representative of robotic suturing scenarios. Experiments are performed on the Virtuoso Endoscopy System (VES) (Virtuoso Surgical, Nashville, TN, USA) [31], a dual-arm concentric tube robot. The right arm is equipped with the C-Lock [28] and is used for all needle manipulation. The needle geometry is known a priori and fixed across all experiments. We used a 4-0 Reverse Cutting suture (P-3 Polyamide 13 mm 3/8c, Ethicon Inc, Raritan, NJ, USA), which has cross-sectional diameter of 0.4 mm and a radius of curvature of 4.5 mm. All experiments are conducted using a calibrated monocular endoscopic camera observing a rigidly grasped needle. The camera provides monocular RGB images at a fixed resolution (1080 × 1080 px) and frame rate ( 30 Hz). Image observations consist of sparse keypoint detections corresponding to the needle tip and tail, as well as dense segmentations of the visible needle backbone. The keypoints are determined using a small U-Net model while the segmentation model used was developed in [32], and runs at a frequency of 10 Hz. Prior works primarily evaluate monocular needle pose es-timation in simulation through synthetic noise injection [7], [20]. In contrast, we obtain real-world ground truth pose mea-surements using a physical calibration target. Specifically, we designed a mount that rigidly attaches a suture needle to a 3×4
+
+checkerboard with 1 mm squares, while leaving the majority of the needle length free for grasping and manipulation. This setup is shown in Fig. 3. By detecting the checkerboard using OpenCV [33] and measuring the fixed transform between the checkerboard center and the needle coordinate frame, we obtain ground truth needle poses at each image frame. Note that the checkerboard is used only for accuracy evaluation and is not a part of the PinPoint framework; we segment the checkerboard out of the mask entirely. 
+
+A. Experimental Datasets 
+
+Using the VES platform and the ground-truth needle frame, four experimental conditions were evaluated, each targeting a distinct aspect of tracking performance. 
+
+Slow-speed tracking: The slow-speed dataset was collected at approximately 1 mm/s (half of normal-speed), with motion restricted to one axis of motion at a time (left/right, up/down, in/out, and tool rotation) to isolate individual DoFs. This con-dition provides a controlled baseline for evaluating accuracy and uncertainty calibration under favorable visual conditions. 
+
+Normal-speed tracking: The normal-speed dataset reflects the pace as which an experienced used operates during suturing, approximately 2 mm/s. This condition provides a controlled baseline for evaluating accuracy and uncertainty calibration under realistic movement dynamics, where the motion was not constrained. 
+
+Induced-rotation sequences: A separate set of sequences was collected in which the needle undergoes induced, large out-of-plane rotations by external forces. These induced rotations break one of the geometric constraints of the C-Lock, which keeps the needle rotationally aligned unless in the presence of outside forces. A circular needle viewed monocularly can admit multiple geometrically consistent 3D poses that pro-duce nearly identical image projections, and this ambiguity intensifies as the needle rotates away from the image plane. These sequences specifically target the ability of each method to represent multimodal posteriors rather than committing prematurely to a single hypothesis. 
+
+Suturing in ex vivo tissue: Finally, PinPoint is evaluated during a suturing task in which a curved needle is driven through ex vivo chicken breast tissue. This condition intro-duces realistic challenges including partial occlusions, rapid needle motion, and changes in visible needle geometry during tissue interaction. 
+
+B. Comparison Methods 
+
+We compare PinPoint against a particle filter (PF) baseline. To ensure a fair comparison, both methods use identical likelihood formulations, measurement inputs, and calibrated noise models. The PF baseline propagates a set of particles to approximate the posterior over needle poses using stochastic sampling and resampling. Unlike SVN, which deterministically transports particles using gradient information, the PF relies on random propagation and resampling to maintain particle diversity. This baseline is conceptually similar to prior stereo needle tracking approaches based on particle filtering [7], [20]. Hyperparameters for each method were selected based on preliminary validation and held fixed across all experiments. For PinPoint, we used 50 SVN particles with up to 30 transport iterations initially to converge, reduced to 15 after the first 10 frames. Transport is terminated early when particle updates be-come sufficiently small and the maximum log-posterior value stalls across successive iterations. Specifically, transport is stopped once the 95th percentile of particle update magnitudes falls below fixed translational ( 0.1 mm) and rotational ( 0.5◦)thresholds, and the best log-posterior value changes by less than 0.02 for two consecutive iterations. For the PF baseline, we use 3000 particles with a process model defined by the measured robot twist augmented with an isotropic random-walk component with standard deviations of 1 mm and 5◦ in translation and rotation, respectively. Systematic resampling is applied when the effective sample size falls below 30% of the total number of particles. 
+
+C. Calibration 
+
+Observation noise parameters were estimated empirically by evaluating each likelihood at the ground-truth needle pose across a calibration dataset. For each observation model, the sample mean and covariance were computed and used to whiten both the likelihoods and their Jacobians, producing approximately unit-variance error terms in the optimization. 
+
+D. Ablation Design 
+
+Two types of internal ablation are performed to isolate the contribution of individual PinPoint components. First, we isolate the individual likelihoods to assess their contribution to accuracy and uncertainty. Using the full model with all likelihoods as a baseline, we first assessed the role of image-derived measurements by removing each component individually: the dense image likelihood Ldense , the sparse image keypoint likelihood Ls, and both image likelihood together, such that only robot-derived information remains. Robot-based terms are similarly removed individually (the position and orientation components) and as a unit via Lgrasp ;when both are removed, the motion model is also disabled, leaving the estimator to rely solely on monocular image geometry. This case is representative of free-needle movement where the needle is not grasped by the robot at all. Together, these ablations characterize how individual sens-ing and modeling components affect estimation accuracy, uncertainty quality, and posterior consistency in the proposed monocular framework. To isolate the contribution of Gauss-Newton preconditioning specifically, we compare PinPoint against a gradient-only SVGD baseline [25]. As noted in Sec. III-D, standard SVGD is recovered as a special case of the proposed SVN update when the per-particle Hessians are replaced by the identity and the kernel metric is set to isotropic with median-heuristic band-width. This baseline therefore shares the same likelihoods, particle count, and transport iterations as PinPoint, differing only in the use of first- versus second-order information. 
+
+E. Evaluation Metrics 
+
+Estimation accuracy is evaluated using translational and rotational pose errors measured with respect to ground truth needle poses. Let T = ( R, t ) denote the estimated pose and 
+
+Tgt = ( Rgt , t gt ) the corresponding ground truth pose. Translational error is defined as the Euclidean distance between estimated and true needle origins: 
+
+et = ∥t − tgt ∥2 (23) Rotational error is computed as the geodesic distance be-tween orientations on SO (3) :
+
+er = cos −1
+
+Ç trace( RT
+
+> gt
+
+R) − 12
+
+å
+
+(24) Because the proposed method explicitly represents a poste-rior distribution over needle poses, we additionally evaluate the quality and calibration of its uncertainty estimates. Uncertainty is quantified by the dispersion of particles in the tangent space, while consistency is assessed by comparing predicted uncertainty to observed estimation error over time. Uncertainty metrics are computed separately for translation and rotation. For each component, we evaluate a negative log-likelihood score (NLL-S) as calibration metric that is distinct from the optimization objective L(T ) of Section III. This metric measures how probable the observed estimation error is under a Gaussian approximation of the predicted uncertainty, i.e., err ∼ N (0 , σ 2) [34]. This Gaussian approximation is used solely for evaluation and does not imply a parametric posterior assumption. The NLL-S penalizes both large estimation errors and overconfident uncertainty predictions: 
+
+NLL − S = 12 log(2 πσ 2) + err 2 
+
+> 2σ2
+
+(25) We additionally report the interval score, a scoring rule that jointly penalizes interval width and miscoverage, widely used for evaluating predictive uncertainty and calibration [35]. Lower values indicate more accurate and better-calibrated uncertainty estimates: 
+
+IS = (upp − low) + 2 
+
+> α
+
+max(0 , low − err) (26) 
+
++ 2 
+
+> α
+
+max(0 , err − upp) 
+
+F. Multimodal Evaluation Criterion 
+
+To evaluate whether a solver (i.e., PinPoint and the PF) preserves multiple plausible pose hypotheses under ambiguous observations, we fit a Gaussian Mixture Model (GMM) to the particle distribution expressed in the tangent space of SE (3) .Using the MAP particle as a reference pose Tref = ˆT , each particle T (i) is mapped to the tangent space via: 
+
+ξ(i) = log ÄT −1ref T (i)ä . (27) and resulting vectors {ξ(i)}Ni=1 are normalized to a commen-surable unit (1 mm translation, 5 °) before fitting. A one- and two-component GMM are fit via expectation-maximization (EM) and the Bayesian Information Criterion (BIC) selects between them. BIC selection alone, however, is not sufficient to conclude that a distribution is genuinely bimodal. EM is susceptible to degenerate solutions in which one component collapses onto a small subset of particles or captures noise rather than a true secondary mode [36]. Such solutions can still achieve a lower BIC than the one-component fit if the likelihood im-provement from fitting a narrow spike outweighs the parameter penalty. We therefore require that a two-component solution be physically meaningful according to Ashman’s D statistic [37], which measures the separation between component means relative to their combined spread: 
+
+D = √2 |μ1 − μ2|
+
+pσ21 + σ22
+
+(28) where μk and σk are the mean and standard deviation of the component k along the axis connecting the two means.               
+
+> TABLE I EMPIRICAL STANDARD DEVIATIONS OF OBSERVATION LIKELIHOODS COMPUTED FROM CALIBRATION DATA .Likelihood Type Std. Dev. Anchor (x, y, z) (0 .41 ,0.44 ,1.00) mm Perpendicular 0.138
+> Conic 1.235 px Keypoints (tip u, v ; tail u, v )(1 .006 ,1.012; 0 .921 ,0.680) px
+
+Ashman et al. showed that D > 2 is necessary for the modes to be cleanly resolved as distinct peaks in the GMM. Below this threshold, the two Gaussians overlap such that the distribution remains effectively unimodal in appearance regardless of the BIC indicating a two-component fit. We additionally require that the minor component carry at least 10% of the total mixture weight. Below this threshold the mixture is dominated at a 9:1 ratio by a single compo-nent, meaning the minor mode contributes negligibly to the posterior which shifts the mean by less than 10% of the inter-mode separation and carrying insufficient weight to influence any downstream pose estimate or decision. This threshold is deliberately permissive: the rotational ambiguity that PinPoint is designed to represent produces asymmetric posteriors across most of the ambiguous configuration space, with one hypoth-esis naturally dominating as the needle rotates away from the maximally symmetric configuration. A conservative threshold captures genuine secondary modes across this full range while excluding only the degenerate near-zero weight solutions that reflect EM noise rather than distinct pose hypotheses. A two-component fit is therefore accepted as genuinely bimodal only when the BIC favors two components, D > 2,and the minor component weight exceeds 10% of the total. For analysis purposes, frames that satisfy all three of these criteria are labeled as Bimodal, all other frames are labeled as Unimodal regardless of BIC outcome. When a bimodal posterior is detected, we project the ground-truth pose Tgt into the same normalized tangent-space coordinates and assign it to the nearest component mean. This enables us to assess not only whether a solver retains multiple hypotheses, but whether the ‘true mode’ (i.e., the hypothesis with the greater weight) is consistent with the ground truth. VI. R ESULTS AND DISCUSSION 
+
+A. Noise Calibration 
+
+Table I summarizes the resulting standard deviations. The robot position measurement exhibits anisotropic uncertainty, with sub-millimeter variance in x and y, and slightly larger variance along the depth axis. The robot orientation likelihood is tightly distributed. Image-based measurements exhibit approximately pixel-level noise after calibration. The image keypoints remain close to unit-variance after whitening, indicating that the assumed observation model provides a reasonable approximation of the measurement statistics. The dense likelihood shows larger vari-ance due to its sensitivity due to the segmentation boundary uncertainty. Slow Needle Motion Normal Needle Motion Fig. 4. Distribution of translational and rotational pose estimation errors for PF and PinPoint across motion speeds. Each panel shows a half-violin with overlaid scatter for PF (pink, right) and PinPoint (blue, left), with white circles indicating the median. Stacked bars below each panel show the fractional contribution of each component axis (X: green, Y: orange, Z: purple) to total error. In both (Left) slow-speed trials and (Right) normal-speed trials, we show the rotational and translational errors. 
+
+Overall, the calibrated noise model produces balanced like-lihood contributions across observation types, which improves numerical conditioning of the Gauss-Newton updates and reduces sensitivity to likelihood scaling. 
+
+B. Tracking Comparison 
+
+Quantitative results comparing PinPoint to the particle filter (PF) baseline are summarized in Table II and Fig. 4, reported separately for each motion condition. Under slow motion compared to the PF, PinPoint re-duces mean translational error by 87% (PF=4.45 mm to Pin-Point=0.60 mm) and mean rotational error by 74% (PF=65.99 ° to PinPoint=16.92 °). The advantage is maintained under normal-speed motion, where PinPoint achieves 1.00 mm and 13.80 ° compared to the PF’s 5.04 mm and 63.27 °, an 80% re-duction in translational error and a 78% reduction in rotational error. Notably, PinPoint’s rotational error remains nearly con-stant across motion speeds (16.92 ° slow vs. 13.80 ° normal), while the PF’s translational error grows and its rotational error stays large and variable. This robustness is consistent with SVN’s deterministic transport avoiding the weight collapse that degrades importance-weighted filters under fast motion, and with the robot-grasp constraints providing continuous 3D grounding independent of visual tracking quality. A characteristic pattern emerges in the component-wise breakdown of PinPoint’s errors that reflects the geometry of the monocular estimation problem. Translation error is dom-inated by the z component (0.55 mm slow, 0.92 mm normal), which corresponds to depth along the camera optical axis—the direction most ambiguous under monocular projection. Sim-ilarly, rotation error is largest about x and y (tip-tilt axes), which corresponds to out-of-plane orientation that monocular appearance provides only weak cues for, while the z rotation component (needle roll about its own axis) is substantially smaller (3.32 ° slow, 2.15 ° normal). This demonstrates how PinPoint concentrates likelihood uncertainty precisely where the image provides the least information, while remaining highly accurate along the well-constrained axes. Uncertainty calibration follows a similar pattern. Under slow motion, PinPoint achieves a 3.6 × reduction in translational NLL-S (1.86 vs. 6.76) and a 16.4 × reduction in rotational 
+
+> Fig. 5. A bar graph breakdown of the error degradation about the translational and rotational under the given ablation.
+
+NLL-S (4.82 vs. 79.10) relative to PF, with tighter and better-calibrated uncertainty bounds across both axes. Under normal-speed motion, PinPoint again achieves substantially better rotational uncertainty calibration, with a 4.4 × reduction in rotational NLL-S (4.98 vs. 22.00), reflecting the PF’s difficulty maintaining a calibrated rotational posterior as speed increases. Translational NLL-S at normal speed favors PinPoint as well (1.79 vs. 6.87), in contrast to the prior dataset where PF’s wider intervals artificially reduced its NLL-S penalty. The IS results are mixed: PinPoint’s sharper posteriors are penalized on IS when the target occasionally falls outside tight bounds, particularly under slow motion where the PF’s wider intervals incidentally achieve better coverage. 
+
+C. Ablation Study 
+
+The results of the ablation study, shown in Table III, high-light both complementary sensing roles and partial redundancy across likelihoods, and using the slow-motion dataset from the previous section. Removing image-based measurements produces the largest degradation in performance. In particu-lar, eliminating sparse keypoints substantially increases both TABLE II COMPARISON OF PF AND SVN TRACKING PERFORMANCE UNDER SLOW AND NORMAL NEEDLE MOTION . C OMPONENT -WISE MEAN ± STANDARD DEVIATION AND TOTAL ERROR ARE REPORTED FOR TRANSLATION AND ROTATION , ALONG WITH 95 TH -PERCENTILE UNCERTAINTY (U NC ), NEGATIVE LOG -LIKELIHOOD SCORE (NLL-S), AND INTERVAL SCORE (IS). L OWER IS BETTER FOR ALL METRICS .
+
+Method Speed Metric X Y Z Total Unc (p95) NLL-S IS PF Slow Trans (mm) 2.81 ± 2.63 2.05 ± 1.86 2.31 ± 1.76 4.45 ± 3.33 8.42 6.76 6.62 
+
+Rot (deg) 12 .88 ± 9.77 19 .51 ± 12 .00 57 .35 ± 52 .44 65 .99 ± 44 .74 119 .91 79 .10 33 .98 
+
+Normal Trans (mm) 2.02 ± 1.88 2.89 ± 1.92 2.71 ± 2.99 5.04 ± 3.26 9.70 6.87 8.40 
+
+Rot (deg) 12 .93 ± 9.75 18 .87 ± 14 .15 57 .78 ± 42 .27 63 .27 ± 38 .54 112 .56 22 .00 30 .94 
+
+PinPoint Slow Trans (mm) 0.14 ± 0.13 0.10 ± 0.09 0.55 ± 0.40 0.60 ± 0.39 1.20 1.86 2.426 
+
+Rot (deg) 8.62 ± 6.92 12 .09 ± 8.19 3.32 ± 1.97 16 .92 ± 7.74 30 .80 4.82 24.15 
+
+Normal Trans (mm) 0.20 ± 0.13 0.25 ± 0.18 0.92 ± 0.44 1.00 ± 0.43 1.75 1.79 11 .18 
+
+Rot (deg) 7.46 ± 5.30 10 .18 ± 8.24 2.15 ± 1.40 13 .80 ± 8.23 28 .02 4.98 32 .14 
+
+TABLE III ABLATION STUDY EVALUATING THE CONTRIBUTION OF INDIVIDUAL LIKELIHOOD TERMS TO NEEDLE POSE ESTIMATION ACCURACY USING THE SVN 
+
+> METHOD
+
+. M EAN ± STD ERROR IS REPORTED ALONG WITH 95% UNCERTAINTY COVERAGE (U NC ), NEGATIVE LOG -LIKELIHOOD SCORE (NLL-S), AND INTERVAL SCORE (IS). L OWER IS BETTER FOR ALL METRICS .Ablation Translation (mm) Rotation (deg) Mean ± Std Unc NLL-S IS Mean ± Std Unc NLL-S IS 
+
+All (Full Model) 0.75 ±0.37 1.37 1.40 3.03 9.87 ±4.60 18.29 4.82 24.15 No Dense Image 0.81 ±0.48 1.80 1.49 4.36 12.83 ±8.95 31.55 5.43 40.06 1 Sparse Keypoint 1.66 ±1.80 3.94 3.13 4.98 16.10 ±13.40 47.49 22.13 45.99 No Sparse Keypoints 1.96 ±1.72 4.30 4.57 5.87 28.73 ±21.80 60.52 52.02 58.49 No Image 4.53 ±2.41 10.14 9.51 5.98 31.55 ±43.06 143.99 11.49 59.53 No Robot Position 1.66 ±2.03 4.37 2.46 6.35 9.26 ±8.51 21.37 4.15 29.62 No Robot Orientation 1.14 ±0.78 2.55 1.99 5.46 23.52 ±10.18 41.96 4.96 104.34 No Robot & No Motion Model 3.45 ±3.86 9.18 6.37 12.58 23.26 ±23.30 52.29 7.20 108.33 SVGD (No Hessian) 1.52 ±0.64 6.00 6.89 6.76 29.20 ±6.40 48.10 4.90 118.87 
+
+translational and rotational error, while removing all image information results in the highest overall error and uncertainty. This behavior is expected, as monocular image observations provide the primary geometric constraints on the needle shape and orientation. Figure 5 illustrates a bar graph with the relative degredation of each ablation. Dense segmentation contributes more modestly when sparse keypoints are available, but improves robustness and uncer-tainty calibration, particularly in rotational estimates. This sug-gests that the dense likelihood acts primarily as a stabilizing global shape constraint rather than a dominant pose constraint. Grasp likelihoods play a complementary role by anchor-ing the solution in 3D space. Removing the robot position likelihood increases translational error, particularly along the z-direction, while removing the robot orientation constraint significantly increases rotational error, reflecting the loss of the grasp-imposed rotational constraint. When both robot con-straints and the motion model are removed, the estimator relies solely on monocular image geometry, resulting in degraded accuracy and substantially inflated uncertainty. Compared to SVGD, PinPoint reduces mean translational error by 75.4% and mean rotational error by 66.9%. The con-dition number κ(H) ranges from 8.99 ×10 6 to 1.65 ×10 11 with a median of 1.05 ×10 7, reflecting the anisotropic observability of monocular pose: depth and out-of-plane rotation are poorly constrained while in-plane translation and rotation are well-constrained. Overall, the ablation results confirm that accurate monocular needle tracking requires combining image-based geometric in-formation with robot-grasp constraints. No single likelihood is sufficient on its own, but together they provide complementary constraints that improve both accuracy and uncertainty. 
+
+D. Multimodal Evaluation 
+
+We apply the bimodality criterion of Sec. V-F independently to the SVN and PF distributions. PinPoint’s posterior was classified as Bimodal in 83.6% of frames, compared to 28.9% for the PF baseline. The substantially lower bimodality rate of the PF baseline is consistent with the known tendency of importance-weighted filters to undergo weight collapse under sharply peaked likelihoods [38], as particles cluster near a single high-likelihood region; the effective sample size drops PF Estimate PinPoint Estimate Physical Needle Induced Rotation    
+
+> PinPoint - 1D Projection
+> PF - 1D Projection PinPoint - Particle Distribution (PCA) PF - Particle Distribution (PCA) Fig. 6. PinPoint correctly resolves pose ambiguity that confounds the particle filter. (Left) A suturing needle undergoing rotation presents a visually symmetric appearance, inducing a bimodal posterior over needle pose. PinPoint and PF estimates are shown overlaid on the endoscopic image. (Right, Top Row) PinPoint represents the posterior as a two-component GMM with well-separated modes in PCA space; the estimate Test is located within the same mode as the ground truth Tgt , while correctly maintaining the alternative hypothesis. (Right, Bottom Row) The PF fits a two-component mixture but fails to separate the hypotheses, as both components heavily overlap in PCA space, producing a diffuse, ambiguous distribution.
+
+and the distribution loses its capacity to maintain separated modes. In 62% of all frames, PinPoint correctly maintained abimodal posterior while the PF had already collapsed. On these frames, the PF pvodies a confident point estimate with no representation of the alternative hypothesis. The most consequential failure mode for downstream planning is where an undetected alternative pose hypothesis could lead to an incorrect action. Beyond detecting bimodality, PinPoint correctly weights the two hypotheses: in 100% of bimodal frames where ground-truth pose could be assigned to a component, the ground-truth fell within the dominant mode (the hypothesis carrying greater mixture weight). The PF achieved this alignment in only 60% of frames, indicating that even when the PF maintains two components, it frequently assigns greater weight to the incorrect hypothesis. The distributional difference is also reflected in uncertainty calibration. Evaluated under the fitted posterior density, Pin-Point achieves a mean rotational NLL-S of 4.94 compared to 8.66 for the PF baseline, a 43.0% reduction, indicating that PinPoint’s probability mass is better distributed relative to the ground-truth pose. The improvement in translational NLL-S is modest (2.60 vs. 2.73), consistent with translation being less affected by the out-of-plane rotation ambiguity. Figure 6 shows a representative ambiguous frame. The Pin-Point particle cloud (top) exhibits two well-separated clusters in the principal tangent-space directions (D=4.9), with fitted GMM ellipses and Tgt . The PF cloud (bottom) has collapsed to a single cluster inconsistent with Tgt , receiving a Unimodal verdict. 
+
+E. Suturing Demonstration 
+
+A representative example of translational and rotational error over time is shown in Fig. 7. Across suturing trials, mean translational error before the pierce was 0.52 mm and mean rotational error 13.82°, demonstrating stable tracking perfor-mance during tissue interaction. For each trial, about 50% of the time the needle was at least partially occluded during piercing, in which the image observations were intermittently unavailable. Under occlusion, on average, the translation error was 1.34 mm and rotation error to 19.18°. As the needle enters the tissue, the visible backbone seg-mentation gradually disappears and the needle tip keypoint is unobservable, corresponding to a partial occlusion. During this interval, estimation relies primarily on robot-based grasp constraints, the motion model, and prior particle distribution. This partial occlusion leads to increased uncertainty, as shown in Fig. 7. When the needle is fully embedded, only the tail keypoint remains visible, corresponding to a heavy occlusion, leading to the largest estimation errors observed during the task. This error increase is most pronounced in the transla-tional component. The rigid couping assumption between the robot motion and needle motion begins to breakdown; when the needle is embedded in the tissue, the robot may deflect or slip, resulting in the needle remaining stationary while the robot is believed to have moved. Fig. 7. Graph of translation (blue) and rotation (orange) errors during suturing, with representative images shown at key frames. A graph of the occlusion level is graphed below, with icons illustrating the levels of none, partial, and heavy occlusion. The graph illustrates how occlusion increases during piercing until the tip emerges on the other side of the tissue. Occlusion then decreases as the needle is retracted until it fully exits the tissue. 
+
+Importantly, the estimator remains stable throughout these occlusion events. When the needle tip re-emerges, additional image constraints become available and the particle distri-bution rapidly contracts toward the correct pose. Once the needle is fully visible again, the estimate returns to its nominal accuracy. These results highlight the complementary roles of image-based and robot-based measurements in PinPoint. Image ob-servations provide strong geometric constraints when visible, while robot kinematics and grasp constraints maintain estima-tor stability during periods of reduced visual information. This behavior is particularly important for robotic suturing, where temporary occlusions during needle insertion are unavoidable. VII. C ONCLUSION 
+
+We presented PinPoint, a probabilistic variational inference framework for real-time monocular needle pose estimation during robotic suturing. PinPoint formulates needle tracking as a multimodal inference problem over SE(3), combining geometric image likelihoods and robot-based grasp constraints within a Stein Variational Newton framework that converges to correct posterior modes while preserving hypothesis diversity through kernel-based repulsion. Experiments across controlled motion, induced out-of-plane rotations, and suturing in ex vivo tissue validate the ap-proach. PinPoint achieves 1.00 mm mean translational error and 13.80 ° mean rotational error under normal-speed mo-tion and remains stable under heavy occlusions with mean errors of 1.34 mm and 19.18 °. Ablation studies confirm the complementary roles of image- and robot-derived likelihoods. On induced-rotation sequences, PinPoint maintains a bimodal posterior in 93% of frames compared to 41% for the particle filter baseline, demonstrating that the framework correctly represents geometric ambiguity rather than suppressing it. Together, these results establish that probabilistic geometric inference with robot-grasp constraints enable reliable monocu-lar needle tracking across the full range of conditions encoun-tered in robotic suturing. Future work will integrate PinPoint with uncertainty-aware autonomous suturing planners, using the posterior distribution to gate decisions such as insertion timing, re-grasp requests, and tissue engagement. The second-order Hessian structure offers an active sensing capability: the least-constrained eigenvector identifies directions for needle repositioning to reduce uncertainty before critical actions. Together, these extensions point toward a suturing autonomy pipeline that is aware of and can actively reduce risk at each step while advancing the suturing task. REFERENCES [1] G. Hubens, H. Coveliers, L. Balliu, M. Ruppert, and W. Vaneerdeweg, “A performance study comparing manual and robotically assisted la-paroscopic surgery using the da Vinci system,” Surgical Endoscopy And Other Interventional Techniques , vol. 17, no. 10, pp. 1595–1599, 2003. [2] A. Faraz and S. Payandeh, Engineering approaches to mechanical and robotic design for minimally invasive surgery (MIS) , vol. 545. Springer Science & Business Media, 2000. [3] S. Sen, A. Garg, D. V. Gealy, S. McKinley, Y. Jen, and K. Gold-berg, “Automating multi-throw multilateral surgical suturing with a mechanical needle guide and sequential convex optimization,” in 2016 IEEE International Conference on Robotics and Automation (ICRA) ,pp. 4178–4185, IEEE, 2016. [4] S. A. Pedram, C. Shin, P. W. Ferguson, J. Ma, E. P. Dutson, and J. Rosen, “Autonomous suturing framework and quantification using a cable-driven surgical robot,” IEEE Transactions on Robotics , vol. 37, no. 2, pp. 404–417, 2021. [5] A. Wilcox, J. Kerr, B. Thananjeyan, J. Ichnowski, M. Hwang, S. Paradis, D. Fer, and K. Goldberg, “Learning to Localize, Grasp, and Hand Over Unmodified Surgical Needles,” in 2022 International Conference on Robotics and Automation (ICRA) , pp. 9637–9643, May 2022. [6] T. E. Shkurti and M. Cenk C¸ avus ¸o˘ glu, “A Systematic Review of Task Automation in Surgical Robotics,” IEEE Transactions on Medical Robotics and Bionics , vol. 7, pp. 863–880, Aug. 2025. [7] Z.-Y. Chiu, A. Z. Liao, F. Richter, B. Johnson, and M. C. Yip, “Markerless Suture Needle 6D Pose Tracking with Robust Uncertainty Estimation for Autonomous Minimally Invasive Robotic Surgery,” in 
+
+2022 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) , pp. 5286–5292, Oct. 2022. ISSN: 2153-0866. [8] O. ¨Ozg¨ uner, T. Shkurti, S. Lu, W. Newman, and M. C. C ¸ avus ¸o˘ glu, “Visually guided needle driving and pull for autonomous suturing,” in 
+
+2021 IEEE 17th International Conference on Automation Science and Engineering (CASE) , pp. 242–248, 2021. ISSN: 2161-8089. [9] R. J. Hendrick, C. R. Mitchell, S. D. Herrell III, and R. J. Webster III, “Hand-Held Transendoscopic Robotic Manipulators: A Transurethral Laser Prostate Surgery Case Study,” The International Journal of Robotics Research , vol. 34, pp. 1559–1572, Nov. 2015. [10] L. Harvey, R. Hendrick, N. Dillon, E. Blum, L. Branscombe, S. Webster, R. J. Webster III, and T. Anderson, “A Novel Robotic Endoscopic Device Used for Operative Hysteroscopy,” Journal of Minimally Invasive Gynecology , vol. 27, pp. 1631–1635, Dec. 2020. [11] R. J. Webster III and B. A. Jones, “Design and kinematic modeling of constant curvature continuum robots: a review,” The International Journal of Robotics Research , vol. 29, no. 13, pp. 1661–1683, 2010. [12] P. E. Dupont, J. Lock, B. Itkowitz, and E. Butler, “Design and Control of Concentric-Tube Robots,” IEEE Transactions on Robotics , vol. 26, pp. 209–225, Apr. 2010. [13] J. F. d’Almeida, K. A. Maciolek, E. Wilke, J. A. Shrand, L. Shepard, T. E. Ertop, A. E. Ghazi, R. J. Webster III, S. D. Herrell III, and N. L. Kavoussi, “Robotic transurethral vesicourethral anastomosis after radical prostatectomy in validated models,” Journal of Endourology ,2025. Accepted for publication. [14] F. Manhardt, D. M. Arroyo, C. Rupprecht, B. Busam, T. Birdal, N. Navab, and F. Tombari, “Explaining the ambiguity of object detection and 6d pose from visual data,” in Proceedings of the IEEE/CVF International Conference on Computer Vision , pp. 6841–6850, 2019. [15] T. Wehrbein, M. Rudolph, B. Rosenhahn, and B. Wandt, “Probabilistic monocular 3d human pose estimation with normalizing flows,” in 
+
+Proceedings of the IEEE/CVF international conference on computer vision , pp. 11199–11208, 2021. [16] Z.-Y. Chiu, F. Richter, and M. C. Yip, “Real-Time Constrained 6D Object-Pose Tracking of An In-Hand Suture Needle for Minimally Invasive Robotic Surgery,” Oct. 2022. arXiv:2210.11973 [cs]. [17] S. Iyer, T. Looi, and J. Drake, “A single arm, single camera system for automated suturing,” in 2013 IEEE International Conference on Robotics and Automation , pp. 239–244, May 2013. ISSN: 1050-4729. [18] B. Li, B. Lu, H. Lin, Y. Wang, F. Zhong, Q. Dou, and Y.-H. Liu, “On the Monocular 3-D Pose Estimation for Arbitrary Shaped Needle in Dynamic Scenes: An Efficient Visual Learning and Geometry Modeling Approach,” IEEE Transactions on Medical Robotics and Bionics , vol. 6, pp. 460–474, May 2024. [19] G. Detommaso, T. Cui, Y. Marzouk, A. Spantini, and R. Scheichl, “A Stein variational Newton method,” in Advances in Neural Information Processing Systems , vol. 31, Curran Associates, Inc., 2018. [20] O. ¨Ozg¨ uner, R. Hao, R. C. Jackson, T. Shkurti, W. Newman, and M. C. Cavusoglu, “Three-Dimensional Surgical Needle Localization and Tracking Using Stereo Endoscopic Image Streams,” in 2018 IEEE In-ternational Conference on Robotics and Automation (ICRA) , pp. 6617– 6624, May 2018. ISSN: 2577-087X. [21] Y. Wang, S. A. H. Perez, and K. Harada, “Monocular suture needle pose detection using synthetic data augmented convolutional neural network,” 
+
+International Journal of Computer Assisted Radiology and Surgery ,vol. 20, pp. 2019–2030, Oct. 2025. [22] Y. Zheng, W. Ma, and Y. Liu, “Another way of looking at monocular circle pose estimation,” in 2008 15th IEEE International Conference on Image Processing , pp. 861–864, IEEE, 2008. [23] J. A. Barragan, J. Zhang, H. Zhou, A. Munawar, and P. Kazanzides, “Re-alistic data generation for 6d pose estimation of surgical instruments,” in 
+
+2024 IEEE international conference on robotics and automation (ICRA) ,pp. 13347–13353, IEEE, 2024. [24] M. Bui, T. Birdal, H. Deng, S. Albarqouni, L. Guibas, S. Ilic, and N. Navab, “6d camera relocalization in ambiguous scenes via continuous multimodal inference,” in European Conference on Computer Vision ,pp. 139–157, Springer, 2020. [25] Q. Liu and D. Wang, “Stein Variational Gradient Descent: A General Purpose Bayesian Inference Algorithm,” in Advances in Neural Infor-mation Processing Systems , vol. 29, Curran Associates, Inc., 2016. [26] G. Cross and A. Zisserman, “Quadric reconstruction from dual-space ge-ometry,” in Sixth International Conference on Computer Vision , pp. 25– 31, Jan. 1998. [27] R. Hartley and A. Zisserman, Multiple view geometry in computer vision .Cambridge university press, 2003. [28] J. F. d’Almeida, L. Branscombe, A. O. Chara, S. S. Stern, and R. J. Webster III, “Needle-and-thread suturing with concentric tube robots for tracheal stent fixation,” in 2026 International Symposium on Medical Robotics (ISMR) , (Nashville, TN, USA), IEEE, 2026. Accepted for publication. [29] T. D. Barfoot and P. T. Furgale, “Associating Uncertainty With Three-Dimensional Poses for Use in Estimation Problems,” IEEE Transactions on Robotics , vol. 30, pp. 679–693, June 2014. [30] J. Nocedal and S. J. Wright, Numerical optimization . Springer, 2006. [31] Virtuoso Surgical, Nashville, TN, Virtuoso Endoscopy System . https: //virtuososurgical.net/technology/. Accessed 2025-09-15. [32] D. Isik, K. Oguine, N. DiSanto, J. d’Almeida, I. Webster, Robert J., I. Oguz, and H. Li, “A benchmark study of methods for surgical instru-ment segmentation in central airway endoscopy,” in Medical Imaging 2026: Clinical and Biomedical Imaging , vol. 13925, (San Francisco, California, USA), pp. 13925–89, SPIE, February 2026. [33] G. Bradski, “The OpenCV Library,” Dr. Dobb’s Journal of Software Tools , 2000. [34] K. Wursthorn, M. Hillemann, and M. Ulrich, “Uncertainty quantification with deep ensembles for 6d object pose estimation,” arXiv preprint arXiv:2403.07741 , 2024. [35] T. Gneiting and A. E. Raftery, “Strictly proper scoring rules, predic-tion, and estimation,” Journal of the American statistical Association ,vol. 102, no. 477, pp. 359–378, 2007. [36] G. J. McLachlan and D. Peel, Finite Mixture Models . Wiley, 2000. [37] K. M. Ashman, C. M. Bird, and S. E. Zepf, “Detecting bimodality in astronomical datasets,” The Astronomical Journal , vol. 108, pp. 2348– 2361, 1994. [38] A. Johansen, “A tutorial on particle filtering and smoothing: Fifteen years later,” 2009. [39] J. L. Blanco-Claraco, “A tutorial on SE(3) transformation parameteriza-tions and on-manifold optimization,” Apr. 2022. [40] E. Eade, “Lie Groups for 2D and 3D Transformations,” 
+
+APPENDIX ALINEARIZED RESIDUAL MODELS 
+
+We derive closed-form analytic Jacobians for all four resid-uals, enabling efficient Gauss-Newton linearization and direct reuse of curvature information within the SVN inference. All Jacobians are defined with respect to a left-multiplicative perturbation on SE (3) . As described previously, a perturbed pose is expressed as 
+
+T (∆ ξ) = exp Ä”∆ξä T, (29) where ∆ξ ∈ R6 is a twist in the tangent space and (·)∧ denotes the mapping from R6 to the Lie algebra se (3) . For a generic residual r(T ), the Jacobian is defined as: 
+
+J = ∂r (T (∆ ξ)) 
+
+∂∆ξ ∆ξ=0 
+
+(30) which maps an infinitesimal perturbation in the tangent space to a first-order change in the residual. The Jacobians were verified numerically using finite differences. 
+
+A. Sparse Image Jacobian 
+
+For a canonical 3D keypoint X ∈ R3 in the needle frame, the predicted point in the camera frame is p(T ) = 
+
+T X = RX + t ∈ R3 and its corresponding 2D prediction is 
+
+u(T ) = π(p(T )) . Under a left-multiplicative perturbation and first-order approximation exp( ”∆ξ) ≈ I + ”∆ξ, the variation in 
+
+p is: 
+
+δp ≈ v − [p]×ω ⇒ ∂p ∂∆ξ = I −[p]×
+
+ (31) For a pinhole camera with intrinsics (fx, f y , c x, c y ), the pro-jection Jacobian is: 
+
+Jπ (p) = 
+
+" fx 
+
+> Z
+
+0 − fxXZ2
+
+0 fy 
+
+> Z
+
+− fy YZ2
+
+#
+
+(32) By the chain rule, the full sparse image Jacobian is: 
+
+Js = Jπ (p) I −[p]×
+
+ ∈ R2×6 (33) where [·]× denotes the skew-symmetric matrix. This expres-sion applies independently to the tip and tail keypoints and is stacked to yield Js ∈ R4×6 for the full residual rs(T ) ∈ R4.
+
+B. Dense Image Jacobian 
+
+We wish to compute the Jacobian of the dense residual with respect to ∆ξ. For simplicity we consider a single point x = xi
+
+and write C = C(T ), H = H(T ), and Q = Qplane .Applying the product rule, we get: 
+
+∂r d
+
+∂∆ξ = xT ∂C ∂∆ξ x + 2 xT C
+
+   
+
+0
+
+∂x ∂∆ξ . (34) The second term vanishes since the observed image points 
+
+xi are fixed. Expanding C = H−T QH −1 and applying the product rule: 
+
+∂C ∂∆ξ = ∂H −T Q∂∆ξ H−1 + H−T Q ∂H −1
+
+∂∆ξ (35) Using the identities ∂Y −1/∂X = −Y −1(∂Y /∂X )Y −1 and 
+
+∂Y T /∂X = ( ∂Y /∂X )T , the first term expands to: 
+
+∂H −T Q∂∆ξ = ∂H −T
+
+∂∆ξ Q + H−T
+
+   
+
+0
+
+∂Q ∂∆ξ
+
+= H−T
+
+Å ∂H ∂∆ξ
+
+ãT
+
+H−T Q (36) Substituting back, the definition of C appears in both terms: 
+
+∂C ∂∆ξ = H−T ( ∂H ∂∆ξ )T H−T QH −1
+
+| {z }
+
+> C
+
+− H−T QH −1
+
+| {z }
+
+> C
+
+∂H ∂∆ξ H−1
+
+(37) 
+
+= H−T ( ∂H ∂∆ξ )T C − C ∂H ∂∆ξ H−1 (38) From 3, we get H(T ′) = P T ′ M . Under the left-multiplicative update and first-order approximation of 
+
+exp( ”∆ξ) = I + ”∆ξ, we obtain: 
+
+H = P (I + ”∆ξ) Test M = P T est M
+
+| {z }
+
+> H0
+
++P ”∆ξ X, (39) 
+
+∂H = H − H0 = P ”∆ξ X (40) where H0 = H(Test ).At this point, we wish to express the perturbation ∂H in terms of the twist ∆ξ. To do so requires factoring the twist out of the middle of the matrix product, so that each degree of freedom contributes linearly to H. We can express this differential by using the Lie algebra basis of se (3) :
+
+”∆ξ =
+
+> 6
+
+X
+
+> j=1
+
+∆ξj ˆEj (41) where each ˆEj is a generator matrix corresponding to one of the six motion directions (three rotational and three transla-tional) [39], [40]. Thus, each element of ∆ξ becomes a scalar that can be extracted from the matrix products, at the cost of having to now sum across the 6 different generator matrices. Substituting this into ∂H and then evaluating the partial derivative with respect to each twist component is: 
+
+∂H =
+
+> 6
+
+X
+
+> j=1
+
+(P ˆEj X)∆ ξj (42) 
+
+∂H ∂∆ξj
+
+= P ˆEj X, j = 1 , . . . , 6 (43) One option to evaluate the final Jacobian is to substitute  
+
+> ∂H ∂∆ξj
+
+into 37 to get a closed-form solution: 
+
+∂C ∂∆ξj
+
+|0 = −H−T ( ∂H ∂ξ j
+
+)T C0 − C0
+
+∂H ∂ξ j
+
+H−1 (44) where C0 = C(Test ) represents the conic of the initial transformation estimate. While sufficient, such a solution would still require explicit evaluation over the six generator matrices of se (3) , resulting in a Jacobian that is six times larger than necessary. To make the formulation more compact and computationally efficient, we apply the Kronecker identities: 
+
+vec( AT ) = K vec( A), vec( ABC ) = ( CT ⊗ A)vec( B)
+
+where A, B, C are matrices, vec( ·) is the column-wise vector-ization operator, K is a commutation matrix that transforms 
+
+vec( A) into vec( Avec T ), and ⊗ denotes the Kronecker prod-uct. Returning to 37, before substituting ∂H ∂∆ξj , we can apply the Kronecker identity to express the derivative of C as: 
+
+vec( ∂C ∂∆ξ ) = . . . 
+
+= −(CT ⊗ H−T )vec( ∂H ∂∆ξ
+
+> T
+
+) − (H−T ⊗ C)vec( ∂H ∂∆ξ )= −(CT ⊗ H−T ) Kvec( ∂H ∂∆ξ ) − (H−T ⊗ C)vec( ∂H ∂∆ξ )= −[( CT ⊗ H−T ) K + ( H−T ⊗ C)]vec( ∂H ∂∆ξ )
+
+Defining 
+
+DH := −(CT ⊗ H−T ) K + ( H−T ⊗ C) ∈ R9×9 (45) as the matrix Dh represents the sensitivity of the conic C with respect to infinitesimal perturbations in H. Next, we consider the term vec( ∂H ∂∆ξ ), which can vectorize the form with the basis matrices from 42: 
+
+A := vec( P ˆE1X) · · · vec( P ˆE6X) ∈ R9×6 (46) where the matrix A serves as the basis mapping from the twist perturbation to the differential in H, yielding: 
+
+vec( ∂C ∂∆ξ ) = DH A
+
+The Jacobian for a single backbone point follows from 
+
+rd,i = vec( C)T vec( xixTi ):
+
+Ji = vec( xixTi )T DH A ∈ R1×6 (47) Stacking over all m backbone points yields the full dense Jacobian: 
+
+Jd = ∂r d
+
+∂∆ξ ∆ξ=0 
+
+=
+
+
+
+vec( x1xT 
+
+> 1
+
+)T
+
+...
+
+vec( xmxTm)T
+
+ DH A (48) 
+
+C. Robot Position Jacobian 
+
+The robot position residual is rp(T ) = T X grasp −
+
+ˆpgrasp , where ˆpgrasp does not depend on T , so Jp =
+
+∂(T X grasp )/∂ ∆ξ.Let pg = Test Xgrasp denote the grasp point in the camera frame at the linearization point. Under the left-multiplicative update and first-order expansion, and using a × b = −[b]×a:
+
+pg (T ′) = exp( ”∆ξ) pg
+
+≈ pg + [∆ ω]×pg + ∆ v = pg − [pg ]× ∆ω + ∆ v (49) Taking the partial derivative: 
+
+Jp = ∂r p
+
+∂∆ξ ∆ξ=0 
+
+= −[pg ]× I3
+
+ ∈ R3×6 (50) where pg = Test Xgrasp .
+
+D. Robot Orientation Jacobian 
+
+The robot orientation residual is r⊥(T ) =ˆzTgrasper ˆtgrasp (T ), where ˆzgrasper ∈ R3 is the known grasper axis in the camera frame and ˆtgrasp (T ) is the unit needle tangent at Xgrasp .Let t0 ∈ R3 denote the tangent direction at the grasp point in the needle frame. Under the pose T = [ R, t ], the tangent direction in the camera frame is t(T ) = Rt 0, and ˆtgrasp (T ) = 
+
+t(T )/∥t(T )∥. Since t(T ) depends only on R, the residual is independent of translation to first order. Under the left-multiplicative perturbation, R′ ≈ (I +[ω]×)R, so: 
+
+t′ = R′t0 ≈ t + ω × t (51) giving, 
+
+δt := t′ − t ≈ − [t]×ω, ∂t ∂∆ξ = 03×3 −[t]×
+
+ (52) The differential of the normalization map ˆt = t/ ∥t∥ is dˆt =(1 /∥t∥)( I − ˆtˆtT ) dt , so: 
+
+∂ˆtgrasp 
+
+∂∆ξ = 1
+
+∥t∥
+
+ I − ˆtgrasp ˆtTgrasp 
+
+  03×3 −[t]×
+
+ (53) Applying the chain rule yields: 
+
+J⊥ = ˆ zTgrasper 
+
+1
+
+∥t∥
+
+ I − ˆtgrasp ˆtTgrasp 
+
+ (54) 
+
+03×3 −[t]×
+
+ ∈ R1×6. (55) When t0 is unit length, ∥t∥ = 1 and the expression simplifies accordingly.

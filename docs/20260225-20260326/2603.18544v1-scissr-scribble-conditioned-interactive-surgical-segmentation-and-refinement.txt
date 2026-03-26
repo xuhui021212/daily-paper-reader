@@ -1,0 +1,671 @@
+Title: SCISSR: Scribble-Conditioned Interactive Surgical Segmentation and Refinement
+
+URL Source: https://arxiv.org/pdf/2603.18544v1
+
+Published Time: Fri, 20 Mar 2026 00:51:46 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# SCISSR: Scribble-Conditioned Interactive Surgical Segmentation and Refinement 
+
+Haonan Ping 1, Jian Jiang 1, Cheng Yuan 1, Qizhen Sun 1, Lv Wu 1, and Yutong Ban 1
+
+Global College, Shanghai Jiao Tong University, Shanghai, China 
+
+yban@sjtu.edu.cn 
+
+Abstract. Accurate segmentation of tissues and instruments in surgi-cal scenes is annotation-intensive due to irregular shapes, thin struc-tures, specularities, and frequent occlusions. While SAM models support point, box, and mask prompts, points are often too sparse and boxes too coarse to localize such challenging targets. We present SCISSR, a scribble-promptable framework for interactive surgical scene segmenta-tion. It introduces a lightweight Scribble Encoder that converts freehand scribbles into dense prompt embeddings compatible with the mask de-coder, enabling iterative refinement for a target object by drawing cor-rective strokes on error regions. Because all added modules (the Scribble Encoder, Spatial Gated Fusion, and LoRA adapters) interact with the backbone only through its standard embedding interfaces, the frame-work is not tied to a single model: we build on SAM 2 in this work, yet the same components transfer to other prompt-driven segmentation ar-chitectures such as SAM 3 without structural modification. To preserve pre-trained capabilities, we train only these lightweight additions while keeping the remaining backbone frozen. Experiments on EndoVis 2018 demonstrate strong in-domain performance, while evaluation on the out-of-distribution CholecSeg8k further confirms robustness across surgical domains. SCISSR achieves 95.41% Dice on EndoVis 2018 with five inter-action rounds and 96.30% Dice on CholecSeg8k with three interaction rounds, outperforming iterative point prompting on both benchmarks. 
+
+Keywords: Interactive segmentation · Scribble annotation · Surgical scene segmentation 
+
+1 Introduction 
+
+Pixel-level segmentation of surgical scenes is essential for intraoperative guidance and postoperative analysis, yet large-scale annotation is expensive due to clut-tered, deformable, and overlapping anatomy and tools. Interactive segmentation reduces this cost: the annotator provides a coarse prompt, receives a predicted mask, and refines it through further interaction. Foundation models such as SAM [9], SAM 2 [16], and SAM 3 [2] have made prompt-based segmentation practical, and medical adaptations [14,3] extend their reach. However, the supported prompt types (points, boxes, masks, and   
+
+> arXiv:2603.18544v1 [eess.IV] 19 Mar 2026 2H. Ping et al.
+> Fig. 1. Motivation for scribble prompts. Points provide sparse cues and boxes enclose large background regions, while scribbles outline the target with dense spatial coverage.
+
+text) each have limitations in surgical scenes: bounding boxes cover large back-ground areas around curved vessels or thin instruments, point clicks require many rounds for complex morphologies, and SAM 3’s text prompts address concept-level recognition rather than instance-level delineation. As shown in Fig. 1, scribbles offer a natural middle ground: they trace the target with dense spatial coverage while requiring only slightly more effort than a click. Prior interactive methods are predominantly click-based [26,18,19,12] (in-cluding medical variants [21,13]), and most surgical adaptations of SAM/SAM 2 retain point/box prompting [14,3,29,8,28,27]. In contrast, ScribblePrompt [23] is primarily developed for intensity-normalized (often single-channel) biomedi-cal images and does not leverage SAM 2’s memory bank, while other works use scribbles only as weak supervision [10,20,30]. We present SCISSR, which equips SAM 2 with scribble-conditioned multi-round refinement for surgical scene segmentation. Our contributions are three-fold: (1) a lightweight Scribble Encoder that maps freehand scribbles to dense prompt embeddings, enabling iterative correction via successive strokes; (2) an architecture-agnostic design where the Scribble Encoder, Spatial Gated Fusion, and LoRA [6] adapters attach through standard embedding interfaces, making the approach transferable to architectures such as SAM 3; and (3) evaluation on both EndoVis 2018 and the out-of-distribution CholecSeg8k, confirming that scribble prompting generalizes across surgical domains (95.41% Dice on EndoVis 2018, 96.30% on CholecSeg8k). 
+
+2 Method 
+
+2.1 Overview 
+
+Fig. 2 illustrates SCISSR, a scribble-promptable framework for interactive re-finement. Although we instantiate SCISSR on SAM 2 in this work, every added component communicates with the backbone exclusively through its standard embedding interfaces (dense prompt embeddings, memory-attention queries, and SCISSR: Scribble-Conditioned Interactive Surgical Segmentation 3       
+
+> Fig. 2. Overview of SCISSR. Track 1 encodes all accumulated scribbles as dense prompt embeddings for the mask decoder; Track 2 encodes only the latest correction and injects it into the Memory Attention query via Spatial Gated Fusion. The mask is iteratively refined across rounds ( R0→R1→R2→ · · · ). Blue: frozen SAM 2 components; green/yellow: trainable components.
+
+LoRA-injected projections). Given an image I ∈ R3×H×W and a two-channel scribble map S ∈ { 0, 1}2×H×W (positive/foreground and negative/background), we freeze SAM 2’s image encoder and introduce three lightweight components: (i) a Scribble Encoder that converts S into dense prompt embeddings, (ii) a Spatial Gated Fusion (SGF) module that injects the latest correction into the memory query, and (iii) a memory-driven iterative refinement loop that repur-poses SAM 2’s temporal memory for multi-round correction on a single image. A key design is a dual-track scribble pathway. Track 1 (Accumulated →
+
+Dense Prompt): the union of scribbles across rounds is encoded and added to the mask decoder’s dense prompt embedding, preserving the user’s full intent. 
+
+Track 2 (Latest → Memory Query): only the current round’s scribble is encoded and fused into the query features of Memory Attention through SGF, encouraging attention to focus on newly corrected regions. 
+
+2.2 Scribble Encoder 
+
+The Scribble Encoder follows SAM 2’s mask-prompt downscaling design. We resize S to 256 × 256 , apply two stride-2 convolution blocks ( 2×2 Conv → Lay-erNorm2d → GELU), and a final 1×1 projection to D=256 , producing a dense embedding ES ∈ R256 ×64 ×64 aligned with SAM 2’s image-embedding resolution. We zero the embedding when the channel input is empty. 
+
+2.3 Spatial Gated Fusion 
+
+The Spatial Gated Fusion (SGF) module injects the latest scribble into the query features of Memory Attention. A binary hard gate gh ∈ { 0, 1} disables the fusion branch when no scribble is provided. When active, image features 4 H. Ping et al. 
+
+F ∈ RD×H′×W ′
+
+and scribble embedding ES are concatenated and processed by a spatial mixing operator: 
+
+SpatialMix (Concat (F, E S )) = ϕdw 
+
+
+
+ϕ1×1(Concat (F, E S )) 
+
+
+
+,
+
+where ϕ1×1 reduces 2D channels back to D (with GroupNorm and GELU), and ϕdw is a 7×7 depthwise-separable convolution block that propagates the scribble signal spatially. A learnable scalar α (initialized to zero) controls the fusion strength: 
+
+F ′ = F + α · gh · SpatialMix (Concat (F, g h · ES )) . (1) Because α is initialized to zero, SGF acts as an identity mapping at the start of training and leaves the pretrained features unchanged. 
+
+2.4 Memory-Driven Iterative Refinement 
+
+SCISSR repurposes SAM 2’s temporal memory for multi-round correction on a single image. Image features are computed once and cached. Track 1 accumu-lates all scribbles (channel-wise maximum) as a dense prompt, while Track 2 injects only the latest correction via SGF. The Memory Bank retains only the previous round’s encoded features as a single memory entry for cross-attention. This suffices because Track 1 already preserves the full interaction history. The complete pseudocode is given in Algorithm 1 (Appendix A). 
+
+2.5 Toggleable LoRA for Scribble Adaptation 
+
+We keep SAM 2’s image encoder entirely frozen. LoRA adapters [6] are inserted into the query and value projections of all multi-head attention layers in the 
+
+mask decoder and memory attention module, with B zero-initialized so that ∆W =0 at the start of training. Importantly, these adapters are toggleable: we enable them for scribble-conditioned refinement and can disable them for standard video propagation by setting the LoRA scaling to zero. 
+
+2.6 Training Pipeline 
+
+Training proceeds in two stages. Stage 1 trains the Scribble Encoder and mask decoder LoRA without memory or SGF, using multi-round ( T =3 ) scribble-to-mask prediction with oracle corrections. Stage 2 jointly trains all four compo-nents (Scribble Encoder, SGF, mask decoder LoRA, Memory Attention LoRA) with the full iterative pipeline. For each training sample, we unroll T =3 rounds: initial scribbles at t=0 and error-driven corrective scribbles for t> 0 (Sec. 2.7). The loss at each round combines Focal Loss and Dice Loss with linearly increasing round weights wt = t + 1 :
+
+Ltotal = 
+
+> T−1
+
+X
+
+> t=0
+
+wt
+
+P 
+
+> j
+
+wj
+
+h
+
+20 · L focal ( ˆMt, M ∗) + Ldice ( ˆMt, M ∗)
+
+i
+
+. (2) SCISSR: Scribble-Conditioned Interactive Surgical Segmentation 5
+
+2.7 Scribble Generation 
+
+Since large-scale scribble annotations are unavailable, we synthesize scribbles from ground-truth masks. An Adaptive Scribble Generator selects one of four types per connected component based on geometric cues: centerline (skeleton strokes), wave skeleton (oscillating centerline), contour (boundary-following with inward offset), and line (negative strokes for false positives), with mild spatial perturbations to mimic freehand variability. For correction rounds, false nega-tives receive positive geometry-aware scribbles and false positives receive nega-tive cross-out strokes [23]. 
+
+3 Experiments 
+
+3.1 Datasets and Metrics 
+
+We evaluate on two laparoscopic surgical datasets. EndoVis18 [1] provides 15 training and 4 test sequences of robotic nephrectomy (2,235 / 999 frames, 10 foreground classes, 4,616 test samples). As the model is trained on this dataset, it serves as the in-distribution (ID) benchmark. CholecSeg8k [5] pro-vides 8,080 cholecystectomy frames with 12 foreground classes; we hold out 1,679 frames (8,800 test samples). No CholecSeg8k data is seen during training, mak-ing it an out-of-distribution (OOD) benchmark. We report IoU and Dice (%) per round as sample-average (mIoU/mDice ) and class-average (cIoU/cDice ); Rk 
+
+denotes the prediction after k refinement rounds. 
+
+3.2 Implementation Details 
+
+We build on SAM 2 Tiny as the backbone. LoRA adapters with rank r = 8 
+
+and scaling factor α/r = 2 are inserted into the query and value projections of all multi-head attention layers in the mask decoder and Memory Attention module; the image encoder remains entirely frozen. We train for 10 epochs using the AdamW optimizer with a weight decay of 0.01, a batch size of 2, and auto-matic mixed-precision training (AMP) on a single NVIDIA RTX 4090 (24GB), with learning rates of 1×10 −4 for Stage-2 newly added modules and 1×10 −5 for Stage 1 modules. 
+
+3.3 Comparison with Baselines 
+
+We compare against point-based iterative methods (SAM 2 Tiny and SAM 3, each with 1 pt/CC and 10 pt/ch protocols), single bounding box baselines (SAM 2 Tiny, SAM 3, and MedSAM2 [15]), all evaluated under the same fixed-round au-tomated protocol (Sec. 3.4). 1 pt/CC uses one click per error-region connected component (at its centroid), whereas 10 pt/ch provides up to 10 positive and 10 negative clicks per round (prioritizing connected-component centroids when selecting points). 6 H. Ping et al. 
+
+Table 1. Comparison on EndoVis 2018 (ID, N =4 ,616 ) and CholecSeg8k (OOD, 
+
+N =8 ,800 ). mIoU / mDice (%). Rk : after k refinement rounds. N/A: not applicable.                                                                                                                                                                     
+
+> Method EndoVis 2018 (ID) CholecSeg8k (OOD)
+> R0 R2 R4 R0 R2
+> mIoU mDice mIoU mDice mIoU mDice mIoU mDice mIoU mDice
+> Point Prompt Baselines
+> SAM2 Tiny (1pt/CC) 56.47 68.31 62.73 73.77 55.83 66.73 62.18 72.30 62.18 73.44 SAM2 Tiny (10pt/ch) 62.09 73.93 71.17 80.39 63.15 72.08 67.65 77.84 75.02 83.18 SAM3 (1pt/CC) 57.29 69.18 59.70 70.36 51.32 60.24 56.74 67.24 52.62 61.69 SAM3 (10pt/ch) 58.69 71.09 62.52 72.59 40.38 47.95 57.36 69.23 68.86 78.69
+> Bounding Box Baselines
+> SAM 2 Tiny (BBox) 64.11 73.23 N/A N/A 76.22 84.62 N/A SAM 3 (BBox) 69.13 77.97 N/A N/A 77.85 85.78 N/A MedSAM2 (BBox) 45.87 54.54 N/A N/A 76.74 82.69 N/A
+> Supervised Baselines (trained on EndoVis 2018)
+> U-Net [17] 50.70 61.50 N/A N/A N/A N/A UPerNet [24] 58.40 66.80 N/A N/A N/A N/A HRNet [22] 63.30 71.80 N/A N/A N/A N/A SegFormer [25] 63.00 71.90 N/A N/A N/A N/A SegNeXt [4] 64.30 72.50 N/A N/A N/A N/A STSwin-CL [7] 63.60 72.00 N/A N/A N/A N/A LSKA-Net [11] 66.20 75.30 N/A N/A N/A N/A TAFPNet [27] 82.60 89.90 N/A N/A N/A N/A
+> Ours (Scribble Prompt)
+> SCISSR (Adaptive) 75.72 85.18 88.32 93.49 90.18 94.61 83.42 90.24 92.30 95.82 SCISSR (Contour) 79.42 87.63 90.03 94.51 91.60 95.41 84.25 90.75 93.22 96.30
+> SCISSR (Wave) 73.55 83.66 88.69 93.72 90.36 94.39 82.49 89.57 92.04 95.67 SCISSR (Centerline) 74.16 84.13 85.31 91.58 86.55 92.30 83.00 90.00 90.80 94.88
+
+Table 1 reports results on both datasets. On EndoVis 2018, the contour model reaches 91.60% mIoU at R4, while point-based methods often degrade with more rounds, with R4 metrics generally lower than R2. Bounding box and supervised baselines do not support iterative refinement and are therefore marked N/A for later rounds. On CholecSeg8k (OOD), our adaptive model reaches 92.30% mIoU at R2 without any CholecSeg8k training data, exceeding box baselines (76–78% mIoU) by over 14 pp. Although our model is also trained exclusively on EndoVis 2018, it generalizes well to the unseen CholecSeg8k domain, whereas supervised baselines trained on the same data are not directly applicable to CholecSeg8k due to differences in the label set. Class-average breakdowns and additional OOD tables are provided in Appendix B. 
+
+Convergence efficiency. For interactive annotation, the practical value of a method depends on how quickly it reaches acceptable quality. Table 2 sum-marizes success rates and mean rounds on EndoVis 2018, showing that SCISSR consistently converges faster and succeeds more often than point-based baselines across Dice thresholds. 
+
+Per-class analysis. Fig. 3 shows per-class results. On EndoVis 2018, classes with irregular geometry benefit most: suturing needle (+24.92 pp), covered kid-ney (+22.15 pp), and wrist (+14.16 pp). On CholecSeg8k (OOD), the model generalizes across all 12 classes without any CholecSeg8k training data. Full per-class tables for all strategies and baselines are in Appendix C. SCISSR: Scribble-Conditioned Interactive Surgical Segmentation 7
+
+Table 2. Convergence efficiency on EndoVis 2018 ( N =4 ,616 ). Success: % of masks reaching the Dice threshold within 4 rounds. 
+
+Method Dice ≥ Success Mean Rnd Cumulative % by round (%) R0 R1 R2 R3 R4 
+
+SAM2 Tiny (1pt/CC) 0.75 75.5 1.51 50.3 66.4 72.2 74.5 75.5 0.85 56.4 1.76 31.2 45.3 51.6 54.7 56.4 0.90 40.9 1.89 19.5 31.2 36.9 39.4 40.9 SAM3 (1pt/CC) 0.75 71.6 1.44 51.9 64.2 68.4 70.4 71.6 0.85 52.9 1.75 30.1 42.2 48.4 51.2 52.9 0.90 39.7 2.04 17.6 27.8 34.2 37.8 39.7 SCISSR (Adaptive) 0.75 99.0 1.37 70.2 92.9 97.3 98.5 99.0 0.85 94.7 1.68 48.4 81.5 90.7 93.4 94.7 0.90 87.7 1.98 33.3 66.9 79.2 85.2 87.7 Suturing needle   
+
+> Covered kidney
+> Wrist
+> US probe
+> Kidney par.
+> Clamps
+> Clasper
+> Thread
+> Small intestine
+> Shaft 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+> 110
+> IoU (%)
+> 69.5
+> (+24.9)
+> 95.8
+> (+22.1)
+> 90.9
+> (+14.2) 93.5
+> (+13.1) 95.4
+> (+13.0)
+> 88.5
+> (+12.8)
+> 86.1
+> (+11.4)
+> 68.3
+> (+11.2)
+> 95.8
+> (+5.1)
+> 95.4
+> (+4.7)
+
+(a) EndoVis18 (ID)    
+
+> Hepatic vein
+> Blood
+> GI tract
+> Gallbladder
+> Conn. tissue
+> Abd. wall
+> Liver
+> Fat
+> Grasper
+> L-hook
+> Cystic duct
+> Liver lig.
+> 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+> 110
+> 58.6
+> (+17.6)
+> 80.6
+> (+14.5)
+> 89.5
+> (+12.4) 90.3
+> (+11.5)
+> 90.5
+> (+11.4) 95.7
+> (+9.1)
+> 95.1
+> (+8.3)
+> 94.9
+> (+8.0)
+> 87.3
+> (+5.1)
+> 93.3
+> (+3.8) 98.1
+> (+1.9)
+> 97.7
+> (+1.1)
+
+(b) CholecSeg8k (OOD)         
+
+> R0 R0 R1 R1 R2 R2 R3 R3 R4
+
+Fig. 3. Per-class IoU with incremental refinement gains. (a) EndoVis 2018 (contour, R0 →R4). (b) CholecSeg8k (OOD, R0 →R2). Numbers at bar tops: final IoU and total gain. 
+
+3.4 Automated Evaluation Protocol 
+
+We use an automated protocol to simulate iterative interaction. An initial scrib-ble is generated from the ground-truth mask (Sec. 2.7); the model predicts a mask and, if IoU < τ , corrective scribbles are generated on error regions for the next round, repeating for at most T rounds. Point-click baselines follow the same protocol with clicks at the center of each error-region connected component. 
+
+Limitations of point prompts. One might attribute our gains to scribbles containing more labeled pixels. However, for point prompting, both 1pt/CC and the denser 10pt/ch protocol in Table 1 can degrade as rounds increase, despite receiving more clicks. This indicates that point quantity alone is insufficient; the structured spatial layout of scribbles provides richer shape and boundary cues than isolated clicks (see Appendix D for a detailed density analysis). 8 H. Ping et al. 
+
+Fig. 4. Qualitative visualization of feature changes from R0 →R1: SGF-induced query modification ( |Fq −Fimg |) and Memory-induced update ( |Fmem −Fimg |), alongside in-put scribbles and the refined R1 prediction. 
+
+Table 3. Component ablation on EndoVis 2018. All metrics (%) are sample-average (m) and class-average (c). Each row adds one module to the previous configuration.                                                   
+
+> Configuration R0 R1 R2
+> mIoU mDice cIoU cDice mIoU mDice cIoU cDice mIoU mDice cIoU cDice Baseline 69.88 80.73 69.68 80.51 76.56 85.65 75.56 84.86 80.21 88.16 78.56 86.94 + SGF 74.63 84.29 70.51 80.98 80.28 88.35 78.48 87.08 83.59 90.53 80.98 88.68 + SGF + Memory 75.77 85.06 71.97 82.09 85.96 92.03 82.43 89.47 88.30 93.49 84.90 91.18
+
+3.5 Ablation Studies Scribble Generation strategy. We evaluate four strategies (Sec. 2.7) on En-doVis 2018 and CholecSeg8k. Table 1 shows that contour-only performs best along all rounds, while centerline-only strokes lag, indicating boundary cues more effective for refinement. 
+
+Component contribution. Table 3 indicates that SGF yields consistent im-provements over the baseline by injecting the latest correction into the memory-attention query, while Memory further boosts performance and its benefit be-comes more evident in later rounds as correction history accumulates. Fig. 4 provides a qualitative view of these effects: SGF spatially diffuses the R1 cor-rection scribble into the query features, while Memory Attention attends to the previous-round prediction stored in the memory bank and enhances features over relevant regions, leading to a refined mask. 
+
+4 Conclusion 
+
+We presented SCISSR, a scribble-promptable framework for interactive surgical segmentation. All added modules attach through standard embedding interfaces, enabling transfer to architectures such as SAM 3. Experiments on EndoVis 2018 and the out-of-distribution CholecSeg8k show that scribble prompts converge faster and more accurately than point or box. Future work will extend SCISSR to video-level annotation and validate usability with human annotators. SCISSR: Scribble-Conditioned Interactive Surgical Segmentation 9
+
+A Iterative Refinement Algorithm 
+
+Algorithm 1 provides the complete pseudocode for the iterative refinement pro-cedure described in Sec. 2.4. At each round the dual-track scribble encoder pro-cesses both the accumulated and the latest correction scribble, while the memory bank retains the previous round’s prediction to guide subsequent refinement. 
+
+Algorithm 1 Iterative refinement with dual-track scribbles 
+
+1: Input: image I, initial scribble S0, rounds T
+
+2: Fimg ← ImageEncoder (I) (cached; frozen) 3: M ← ∅ (memory bank size 1) 4: Sacc ← S0
+
+5: for t = 0 to T − 1 do 
+
+6: Eacc ← ScribbleEnc (Sacc ) (Track 1) 7: Et ← ScribbleEnc (St) (Track 2; latest) 8: Emask ←
+
+(
+
+MaskEncoder ( ˆMt−1), t > 0
+
+∅, t = 0 (prev. mask prior) 9: Fq ← SGF (Fimg , E t)
+
+10: Fmem ← MemAttn (Fq , M) (no-mem embedding if M = ∅)11: ˆMt ← MaskDecoder (Fmem , E acc + Emask )
+
+12: M ← MemEncode (Fimg , ˆMt)
+
+13: Obtain next correction scribble St+1 from user; update Sacc ← max( Sacc , S t+1 )
+
+14: end for 
+
+15: Output: refined mask ˆMT −1
+
+B Additional Comparison Tables 
+
+We provide extended comparison tables that complement the main results in Table 1. Table 4 reports class-average metrics on EndoVis 2018, while Tables 5 and 6 give sample-average and class-average breakdowns on CholecSeg8k (OOD), respectively. 10 H. Ping et al. 
+
+Table 4. Class-average comparison on EndoVis 2018 (EndoVis 2018 test). All metrics (%) are averaged over C=10 classes. Rk denotes the prediction after k refinement rounds. ∆ reports the cIoU gain from R0 to R4.                                                   
+
+> Method R0 R2 R4 ∆cIoU cIoU cDice cIoU cDice cIoU cDice SCISSR (Adaptive) 72.08 82.18 84.84 91.09 86.89 92.47 +14.81 SCISSR (Contour only) 74.66 83.93 86.31 92.06 87.92 93.05 +13.26 SCISSR (Wave only) 69.74 80.36 84.99 91.19 86.67 92.26 +16.93 SCISSR (Centerline only) 71.37 81.82 82.20 89.41 83.29 90.08 +11.92 SAM2 Tiny (1pt/CC) 54.68 65.83 60.30 69.86 54.69 64.17 +0.01 SAM3 (1pt/CC) 53.28 64.36 57.82 67.05 51.89 59.83 −1.39
+
+Table 5. Comparison on CholecSeg8k (CholecSeg8k test, OOD). Sample-average met-rics (%) over N =8 ,800 test masks. Rk denotes the prediction after k refinement rounds. 
+
+∆ reports the mIoU gain from R0 to R2.
+
+Method R0 R1 R2 ∆mIoU mIoU mDice mIoU mDice mIoU mDice SCISSR (Adaptive) 83.42 90.24 90.87 94.98 92.30 95.82 +8.88 SAM2 Tiny (1pt/CC) 62.18 72.30 63.09 74.33 62.18 73.44 +0.00 SAM3 (1pt/CC) 56.74 67.24 58.10 68.25 52.62 61.69 −4.12 SAM 2 Tiny (BBox) 76.22 84.62 – – –SAM 3 (BBox) 77.85 85.78 – – –MedSAM2 (BBox) 76.74 82.69 – – –
+
+Table 6. Comparison on CholecSeg8k (CholecSeg8k test, OOD). Class-average metrics (%) over C=12 classes. ∆ reports the cIoU gain from R0 to R2.
+
+Method R0 R1 R2 ∆cIoU cIoU cDice cIoU cDice cIoU cDice SCISSR (Adaptive) 80.58 87.96 87.63 92.77 89.32 93.79 +8.74 SAM2 Tiny (1pt/CC) 59.23 69.47 64.38 74.55 65.79 75.61 +6.56 SAM3 (1pt/CC) 58.71 67.96 61.75 70.92 56.27 65.91 −2.44 SAM 2 Tiny (BBox) 76.01 84.08 – – –SAM 3 (BBox) 75.68 83.76 – – –MedSAM2 (BBox) 75.36 81.35 – – –SCISSR: Scribble-Conditioned Interactive Surgical Segmentation 11 
+
+C Per-Class Detailed Results 
+
+Tables 7–10 report per-class IoU and Dice for each scribble strategy on EndoVis 2018 across all five rounds. Table 11 lists the corresponding per-class baseline numbers. Table 12 breaks down the component ablation by class. Tables 13–15 present per-class results on CholecSeg8k (OOD), and Table 16 reports conver-gence efficiency on CholecSeg8k. 
+
+Table 7. Per-class results of SCISSR on EndoVis 2018 (contour strategy). IoU and Dice (%) from Round 0 to Round 4. ∆ denotes the IoU gain from R0 to R4. 
+
+Class N R0 R1 R2 R3 R4 ∆IoU IoU Dice IoU Dice IoU Dice IoU Dice IoU Dice 
+
+Instruments 
+
+Shaft 843 90.71 94.94 93.91 96.83 94.28 96.99 95.16 97.50 95.42 97.63 +4.71 Clasper 875 74.62 85.06 82.30 90.17 83.89 91.14 85.27 91.95 86.06 92.42 +11.44 Wrist 822 76.76 86.07 88.15 93.47 88.88 93.93 90.31 94.76 90.92 95.10 +14.16 
+
+Tissues 
+
+Kidney parenchyma 949 82.40 89.42 93.25 96.44 94.27 97.00 94.95 97.37 95.39 97.61 +12.99 Covered kidney 484 73.65 84.31 92.86 96.27 94.48 97.15 95.13 97.50 95.80 97.85 +22.15 Small intestine 225 90.73 94.94 94.02 96.84 94.57 97.14 95.26 97.52 95.85 97.85 +5.12 
+
+Other 
+
+Thread 102 57.05 72.22 67.78 80.59 68.01 80.74 68.25 80.89 68.29 80.89 +11.24 Clamps 69 75.72 85.47 83.75 90.81 86.93 92.86 88.74 93.97 88.48 93.84 +12.76 Suturing needle 95 44.54 58.41 65.45 77.29 65.99 77.98 67.95 79.44 69.46 80.72 +24.92 Ultrasound probe 152 80.41 88.50 89.97 94.61 91.79 95.65 93.24 96.45 93.54 96.58 +13.13 
+
+Table 8. Per-class results of SCISSR on EndoVis 2018 (adaptive strategy). IoU and Dice (%) from Round 0 to Round 4. ∆ denotes the IoU gain from R0 to R4. 
+
+Class N R0 R1 R2 R3 R4 ∆IoU IoU Dice IoU Dice IoU Dice IoU Dice IoU Dice 
+
+Instruments 
+
+Shaft 843 86.38 92.39 92.13 95.83 93.58 96.64 94.20 96.98 94.50 97.14 +8.12 Clasper 875 71.43 82.88 81.37 89.58 83.43 90.84 84.41 91.41 85.26 91.95 +13.83 Wrist 822 70.12 81.35 84.43 91.14 87.46 93.03 88.68 93.75 89.57 94.31 +19.45 
+
+Tissues 
+
+Kidney parenchyma 949 79.86 87.83 90.01 94.56 91.88 95.62 92.76 96.12 93.32 96.43 +13.46 Covered kidney 484 70.28 81.91 83.18 90.38 88.37 93.57 90.59 94.86 92.25 95.81 +21.97 Small intestine 225 85.73 91.99 92.08 95.76 93.31 96.45 94.28 97.00 94.92 97.33 +9.19 
+
+Other 
+
+Thread 102 58.52 73.45 67.79 80.62 68.62 81.20 68.83 81.35 68.80 81.32 +10.28 Clamps 69 73.22 82.66 82.85 89.34 84.16 90.12 85.27 91.10 87.40 92.92 +14.18 Suturing needle 95 45.31 59.14 62.76 74.82 66.59 78.26 69.04 80.51 70.15 81.35 +24.84 Ultrasound probe 152 79.95 88.21 89.00 93.98 91.04 95.19 92.18 95.85 92.76 96.18 +12.81 12 H. Ping et al. 
+
+Table 9. Per-class results of SCISSR on EndoVis 2018 (wave-only strategy). IoU and Dice (%) from Round 0 to Round 4. ∆ denotes the IoU gain from R0 to R4. 
+
+Class N R0 R1 R2 R3 R4 ∆IoU IoU Dice IoU Dice IoU Dice IoU Dice IoU Dice 
+
+Instruments 
+
+Shaft 843 84.54 91.30 91.91 95.72 93.45 96.57 94.04 96.88 94.46 97.10 +9.92 Clasper 875 68.72 80.98 80.09 88.74 82.89 90.53 84.19 91.33 84.77 91.66 +16.05 Wrist 822 67.49 79.49 83.63 90.60 87.26 92.91 88.36 93.58 89.01 93.98 +21.52 
+
+Tissues 
+
+Kidney parenchyma 949 78.54 86.99 90.23 94.74 92.82 96.21 93.74 96.72 94.26 97.00 +15.72 Covered kidney 484 67.40 79.78 88.14 93.64 91.49 95.52 93.58 96.66 94.58 97.19 +27.18 Small intestine 225 84.89 91.55 92.78 96.17 94.18 96.94 94.74 97.25 95.15 97.48 +10.26 
+
+Other 
+
+Thread 102 50.83 66.80 63.14 77.07 66.98 80.04 68.26 80.97 68.81 81.35 +17.98 Clamps 69 70.62 79.96 81.22 88.24 83.24 90.05 83.87 90.47 84.12 90.62 +13.50 Suturing needle 95 45.51 59.48 63.46 75.66 65.86 77.57 66.91 78.52 68.36 79.75 +22.85 Ultrasound probe 152 78.82 87.24 89.84 94.51 91.77 95.60 92.73 96.19 93.21 96.44 +14.39 
+
+Table 10. Per-class results of SCISSR on EndoVis 2018 (centerline-only strategy). IoU and Dice (%) from Round 0 to Round 4. ∆ denotes the IoU gain from R0 to R4. 
+
+Class N R0 R1 R2 R3 R4 ∆IoU IoU Dice IoU Dice IoU Dice IoU Dice IoU Dice 
+
+Instruments 
+
+Shaft 843 85.33 91.69 91.07 95.22 92.54 96.05 93.08 96.34 93.46 96.55 +8.13 Clasper 875 71.03 82.58 79.54 88.30 80.85 89.08 81.30 89.33 81.45 89.41 +10.42 Wrist 822 67.02 79.38 79.93 88.25 82.70 89.96 83.56 90.47 83.95 90.70 +16.93 
+
+Tissues 
+
+Kidney parenchyma 949 77.85 86.46 88.23 93.52 89.75 94.35 90.36 94.67 90.65 94.81 +12.80 Covered kidney 484 66.93 79.28 75.88 85.58 80.37 88.52 82.95 90.16 84.67 91.22 +17.74 Small intestine 225 85.16 91.67 91.11 95.24 92.65 96.11 93.39 96.51 93.79 96.73 +8.63 
+
+Other 
+
+Thread 102 59.01 73.83 67.74 80.54 68.59 81.19 68.95 81.44 68.79 81.33 +9.78 Clamps 69 75.84 85.55 82.71 90.17 83.19 90.32 83.38 90.45 83.33 90.43 +7.49 Suturing needle 95 45.86 59.74 60.05 72.52 62.94 74.99 63.68 75.62 64.06 76.02 +18.20 Ultrasound probe 152 79.68 88.05 87.53 92.97 88.45 93.47 88.65 93.58 88.76 93.64 +9.08 
+
+Table 11. Per-class results of baselines on EndoVis 2018. IoU (%) from Round 0 to Round 4 for iterative methods; single-round IoU and Dice for box methods.                                                                                                                                                                                                
+
+> Class NSAM2 Tiny (1pt/CC) IoU SAM3 (1pt/CC) IoU SAM 2 Tiny (BBox) SAM 3 (BBox) MedSAM2 (BBox)
+> R0 R1 R2 R3 R4 R0 R1 R2 R3 R4 IoU Dice IoU Dice IoU Dice
+> Instruments
+> Shaft 843 70.52 77.03 77.06 73.32 67.08 69.99 74.09 70.40 62.25 53.81 64.98 73.19 67.11 74.53 72.78 82.25 Clasper 875 44.65 54.05 52.87 46.95 39.08 55.54 57.10 54.82 49.19 42.66 45.04 55.58 58.17 68.72 52.58 67.12 Wrist 822 54.56 65.58 70.06 71.21 70.36 55.57 63.38 69.02 71.80 72.10 67.54 76.50 71.29 80.07 65.30 76.22
+> Tissues
+> Kidney parenchyma 949 63.64 63.38 60.87 58.56 56.21 61.22 58.96 53.66 48.45 43.72 76.59 85.00 80.58 88.18 15.02 19.40 Covered kidney 484 43.86 47.46 45.83 41.97 38.53 39.95 44.23 42.69 39.07 35.37 59.78 71.95 59.86 72.35 10.11 13.57 Small intestine 225 65.73 81.15 82.96 80.47 76.34 64.35 79.16 80.16 73.53 66.99 87.40 92.45 88.67 93.60 50.04 57.10
+> Other
+> Thread 102 22.48 9.77 5.82 3.44 2.29 8.87 6.15 2.54 1.59 1.47 17.72 26.18 32.46 44.27 1.43 2.56 Clamps 69 83.38 87.07 87.49 87.58 87.18 77.51 82.54 85.44 86.26 86.65 86.86 92.60 87.21 92.82 75.74 85.56 Suturing needle 95 35.79 42.88 47.78 51.68 51.96 38.10 41.75 41.80 44.56 43.76 50.63 63.35 57.79 69.95 27.67 38.60 Ultrasound probe 152 62.19 71.77 72.22 67.52 57.88 61.68 74.85 77.64 77.31 72.34 81.23 88.53 84.33 90.69 80.80 88.03
+
+SCISSR: Scribble-Conditioned Interactive Surgical Segmentation 13 
+
+Table 12. Component ablation per-class on EndoVis 2018. IoU (%) at R0 and R2 for each configuration. ∆ denotes the IoU gain from Baseline to SGF+Memory at R2. 
+
+Class N Baseline + SGF + SGF + Memory ∆IoU 
+
+R0 R2 R0 R2 R0 R2 
+
+Instruments 
+
+Shaft 843 81.75 89.02 87.20 91.53 86.22 93.40 +4.38 Clasper 875 60.01 73.76 70.19 78.16 71.11 83.39 +9.63 Wrist 822 59.64 73.35 66.26 78.55 69.96 87.55 +14.20 
+
+Tissues 
+
+Kidney parenchyma 949 77.26 84.75 79.92 88.12 79.83 91.20 +6.45 Covered kidney 484 65.36 78.98 69.63 81.90 69.78 87.92 +8.94 Small intestine 225 83.45 90.78 85.44 92.24 87.04 93.72 +2.94 
+
+Other 
+
+Thread 102 63.11 66.52 55.63 65.69 57.56 68.45 +1.93 Clamps 69 76.53 82.02 73.35 83.76 74.22 85.29 +3.27 Suturing needle 95 53.19 60.12 40.08 62.13 44.65 66.19 +6.07 Ultrasound probe 152 76.48 86.32 77.45 87.75 79.30 91.07 +4.75 
+
+Table 13. Per-class results of SAM2 Tiny (10pt/ch) on CholecSeg8k (OOD). IoU and Dice (%) from Round 0 to Round 2. ∆ denotes the IoU gain from R0 to R2. 
+
+Class N R0 R1 R2 ∆IoU IoU Dice IoU Dice IoU Dice 
+
+Tissues / Organs 
+
+Abdominal Wall 1464 71.44 81.60 80.96 88.12 81.92 88.52 +10.48 Liver 1679 67.43 78.46 72.06 82.18 74.49 83.83 +7.06 Gastrointestinal Tract 941 61.84 71.81 68.16 77.26 70.54 78.92 +8.70 Fat 1519 56.59 68.70 70.36 80.07 73.18 81.45 +16.59 Connective Tissue 240 53.89 67.37 57.54 71.23 62.34 75.21 +8.45 Gallbladder 1279 70.91 80.03 72.94 81.64 75.71 83.71 +4.80 Hepatic Vein 77 45.24 60.46 39.12 52.83 28.52 40.06 −16.72 Liver Ligament 80 94.63 97.21 95.46 97.67 95.36 97.62 +0.73 Cystic Duct 1 96.75 98.35 95.02 97.45 95.90 97.91 −0.85 
+
+Instruments 
+
+Grasper 1080 78.52 87.35 76.46 85.52 75.80 84.19 −2.72 L-hook Electrocautery 360 89.22 93.87 88.57 93.29 89.37 93.65 +0.15 
+
+Other 
+
+Blood 80 20.79 33.28 23.49 37.48 23.10 36.63 +2.31 14 H. Ping et al. 
+
+Table 14. Per-class results on CholecSeg8k (Adaptive strategy, OOD). IoU and Dice (%) from Round 0 to Round 2. ∆ denotes the IoU gain from R0 to R2. 
+
+Class N R0 R1 R2 ∆IoU IoU Dice IoU Dice IoU Dice 
+
+Tissues / Organs 
+
+Abdominal Wall 1464 86.61 92.25 94.35 96.97 95.71 97.75 +9.10 Liver 1679 86.79 92.72 93.66 96.70 95.14 97.50 +8.35 Gastrointestinal Tract 941 77.03 86.07 88.31 93.60 89.47 94.29 +12.44 Fat 1519 86.89 92.80 93.27 96.47 94.91 97.36 +8.02 Connective Tissue 240 79.13 88.03 87.36 93.15 90.52 94.97 +11.39 Gallbladder 1279 78.79 86.50 89.01 93.75 90.32 94.63 +11.53 Hepatic Vein 77 41.00 57.49 54.34 69.50 58.58 72.33 +17.58 Liver Ligament 80 96.61 98.28 97.38 98.67 97.74 98.85 +1.13 Cystic Duct 1 96.26 98.10 97.82 98.90 98.12 99.05 +1.86 
+
+Instruments 
+
+Grasper 1080 82.26 89.97 86.07 92.35 87.33 93.11 +5.07 L-hook Electrocautery 360 89.55 93.81 92.98 96.17 93.35 96.38 +3.80 
+
+Other 
+
+Blood 80 66.07 79.54 77.07 86.98 80.60 89.19 +14.53 
+
+Table 15. Per-class results of baselines on CholecSeg8k (OOD). IoU (%) from Round 0 to Round 2 for iterative methods; single-round IoU for box methods. ∆ denotes the IoU change from R0 to R2. 
+
+Class N SAM2 Tiny (1pt/CC) SAM3 (1pt/CC) SAM 2 Tiny (BBox) SAM 3 (BBox) MedSAM2 (BBox) 
+
+R0 R1 R2 R0 R1 R2 IoU Dice IoU Dice IoU Dice 
+
+Tissues / Organs 
+
+Abdominal Wall 1464 66.15 63.21 61.81 51.20 46.91 35.26 81.38 88.35 85.08 90.85 80.39 85.81 Liver 1679 62.88 54.35 47.93 51.05 46.67 32.51 72.76 82.44 75.80 84.83 73.61 80.41 Gastrointestinal Tract 941 56.67 63.12 69.92 61.20 69.80 72.35 82.04 89.53 82.58 90.09 85.82 91.81 Fat 1519 49.51 54.14 52.09 42.76 43.92 38.56 64.36 75.15 65.65 76.27 60.48 65.83 Connective Tissue 240 47.45 53.42 51.39 45.16 54.38 54.43 72.24 83.07 56.68 71.28 88.21 93.59 Gallbladder 1279 67.78 70.00 69.24 66.06 71.45 70.98 82.34 88.81 82.38 88.24 87.80 93.05 Hepatic Vein 77 31.81 50.26 66.70 27.93 42.74 51.81 63.90 77.60 62.63 76.51 57.65 72.60 Liver Ligament 80 95.36 92.57 90.68 86.44 84.92 72.79 97.16 98.56 97.09 98.52 95.88 97.89 Cystic Duct 1 59.22 86.67 92.97 94.74 96.38 65.16 97.53 98.75 97.57 98.77 96.99 98.47 
+
+Instruments 
+
+Grasper 1080 70.08 76.20 77.68 73.31 77.79 77.44 77.46 86.14 82.11 89.74 75.82 83.15 L-hook Electrocautery 360 85.79 89.43 90.30 85.90 88.21 87.60 91.77 95.61 92.24 95.88 91.68 95.58 
+
+Other 
+
+Blood 80 18.01 19.22 18.80 18.72 17.88 16.37 29.15 45.00 28.36 44.09 9.97 18.01 SCISSR: Scribble-Conditioned Interactive Surgical Segmentation 15 
+
+Table 16. Convergence efficiency on CholecSeg8k (CholecSeg8k, OOD). Success rate (%) is the fraction of N =8 ,800 test masks reaching the Dice threshold within 4 rounds. Mean rounds is averaged over successful masks only.                                                                          
+
+> Method Dice ≥Success Mean Rnd Cumulative % by round (%) R0 R1 R2 R3 R4
+> SCISSR (Adaptive) 0.75 99.4 1.28 78.2 94.8 98.0 99.1 99.4 0.85 98.0 1.50 62.4 88.6 94.8 97.1 98.0 0.90 94.0 1.73 47.4 79.3 88.6 92.2 94.0 SAM2 Tiny (1pt/CC) 0.75 79.9 1.37 61.8 72.5 77.0 79.1 79.9 0.85 64.8 1.51 44.8 56.2 61.1 63.7 64.8 0.90 49.8 1.61 32.9 41.3 46.2 48.6 49.8 SAM3 (1pt/CC) 0.75 65.8 1.31 52.1 61.4 64.0 65.2 65.8 0.85 53.8 1.47 38.1 47.6 51.4 53.0 53.8 0.90 42.8 1.53 29.4 36.9 40.3 41.9 42.8
+
+D Point Prompt Density Analysis 
+
+To investigate whether simply increasing the number of point prompts can close the gap with scribble prompts, we vary the point density from 1 to 50 per channel on a subset of CholecSeg8k (4 videos). As shown in Table 17, both SAM 2 Tiny and SAM 3 peak at 10 points and degrade sharply beyond that, confirming that the point interface cannot exploit denser spatial signals. 
+
+Table 17. Effect of point prompt density on SAM 2 Tiny and SAM 3 (CholecSeg8k, 4 videos, Round 2). Performance degrades sharply beyond 10 points per channel. Method 1 pt 10 pts 30 pts 50 pts IoU Dice IoU Dice IoU Dice IoU Dice SAM 2 Tiny 60.25 71.79 73.76 82.49 34.36 44.24 22.43 30.84 SAM 3 50.29 60.14 61.46 72.79 1.12 1.55 0.00 0.00 
+
+E Scribble Strategy Ablation 
+
+Fig. 5 visualizes the four scribble generation strategies evaluated in Sec. 3.5. Contour-based scribbles consistently achieve the highest mIoU and mDice at both R0 and R4, while centerline-only lags due to the absence of boundary cues. 16 H. Ping et al. Contour Wave   
+
+> skeleton
+> Adaptive Centerline
+> 70
+> 75
+> 80
+> 85
+> 90
+> 95
+> Score (%)
+> 79.4
+> 73.5
+> 75.7
+> 74.2
+> 91.6
+> 90.4 90.2
+> 86.5
+
+(a) mIoU    
+
+> Contour Wave
+> skeleton
+> Adaptive Centerline
+> 80.0
+> 82.5
+> 85.0
+> 87.5
+> 90.0
+> 92.5
+> 95.0
+> 97.5
+> 87.6
+> 83.7
+> 85.2
+> 84.1
+> 95.4
+> 94.4 94.6
+> 92.3
+
+(b) mDice R0 (mIoU) R4 (mIoU) R0 (mDice) R4 (mDice) 
+
+Fig. 5. Scribble strategy ablation on EndoVis 2018. Contour achieves the best R0 and R4 across both mIoU and mDice. 
+
+F Additional Figures 
+
+We include supplementary visualizations that complement the main-text analy-sis. Fig. 6 plots the iterative refinement curves corresponding to Table 1. Fig. 7 shows cumulative success rates at three Dice thresholds. Fig. 8 illustrates the point prompt degradation discussed in Sec. 3.4. Fig. 9 visualizes the component ablation from Table 3. SCISSR: Scribble-Conditioned Interactive Surgical Segmentation 17 R0 R1 R2 R3 R4 
+
+Refinement Round 
+
+40 
+
+50 
+
+60 
+
+70 
+
+80 
+
+90 
+
+> mIoU (%) Ours (Contour)
+> Ours (Adaptive)
+> Ours (Wave)
+> Ours (Centerline)
+> SAM2 Tiny (1pt/CC)
+> SAM3 (1pt/CC)
+> SAM2 Tiny (box)
+> SAM3 (box)
+> MedSAM2 (box)
+
+Fig. 6. Iterative refinement curves on EndoVis 2018. This figure visualizes the same mIoU data reported in Table 1. All four scribble strategies improve steadily across rounds, while point-based methods (SAM2 Tiny, SAM3) degrade after R1. Box base-lines (markers at R0) cannot iterate. R0 R1 R2 R3 R4 
+
+> Refinement Round
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Success Rate (%)
+> 99.0%
+> 75.5%
+> 71.6%
+
+Dice 0.75     
+
+> R0 R1 R2 R3 R4
+> Refinement Round
+> 94.7%
+> 56.4%
+> 52.9%
+
+Dice 0.85     
+
+> R0 R1 R2 R3 R4
+> Refinement Round
+> 87.7%
+> 40.9% 39.7%
+
+Dice 0.90 Ours (Adaptive) SAM2 Tiny (1pt/CC) SAM3 (1pt/CC) 
+
+Fig. 7. Cumulative success rate on EndoVis 2018 at three Dice thresholds. Our method converges to high-quality masks within 1–2 rounds for most samples, while point-based methods plateau early. 18 H. Ping et al. 1 10 30 50  
+
+> Points per channel
+> 0
+> 20
+> 40
+> 60
+> 80
+> mIoU (%)
+> 60.2
+> 73.8
+> 34.4
+> 22.4
+> 50.3
+> 61.5
+> 1.1 0.0
+
+(a) mIoU     
+
+> SAM 2 Tiny
+> SAM 3
+> 110 30 50
+> Points per channel
+> 71.8
+> 82.5
+> 44.2
+> 30.8
+> 60.1
+> 72.8
+> 1.6 0.0
+
+(b) mDice 
+
+> SAM 2 Tiny
+> SAM 3
+
+SAM 2 Tiny SAM 3 
+
+Fig. 8. Point prompt degradation on CholecSeg8k. Both SAM 2 Tiny and SAM 3 peak at 10 points and collapse beyond 30, confirming that the point interface cannot exploit denser spatial signals. mIoU mDice cIoU cDice 
+
+> 60
+> 65
+> 70
+> 75
+> 80
+> 85
+> 90
+> Score (%)
+> 69.9
+> 80.7
+> 69.7
+> 80.5
+> 74.6
+> 84.3
+> 70.5
+> 81.0
+> 75.8
+> 85.1
+> 72.0
+> 82.1
+
+(a) Round 0    
+
+> mIoU mDice cIoU cDice
+> 75
+> 80
+> 85
+> 90
+> 95
+> 80.2
+> 88.2
+> 78.6
+> 86.9
+> 83.6
+> 90.5
+> 81.0
+> 88.7 88.3
+> 93.5
+> 84.9
+> 91.2
+
+(b) Round 2 Baseline SGF-only SGF+Memory 
+
+Fig. 9. Component ablation on EndoVis 2018. Each module (SGF, Memory) con-tributes additive gains at both R0 and R2 across all four metrics. Numeric values are in Table 3. 
+
+References 
+
+1. Allan, M., Kondo, S., Bodenstedt, S., Leger, S., Kadkhodamohammadi, R., Luengo, I., Fuentes, F., Flouty, E., Mohammed, A., Pedersen, M., et al.: 2018 robotic scene segmentation challenge. arXiv preprint arXiv:2001.11190 (2020) 2. Carion, N., Gustafson, L., Hu, Y.T., Debnath, S., Hu, R., Suris, D., Ryali, C., Alwala, K.V., Khedr, H., Huang, A., et al.: Sam 3: Segment anything with concepts. arXiv preprint (2025) 3. Cheng, J., Ye, J., Deng, Z., Chen, J., Li, T., Wang, H., Su, Y., Huang, Z., Chen, J., Jiang, L., et al.: Sam-med2d. arXiv preprint arXiv:2308.16184 (2023) SCISSR: Scribble-Conditioned Interactive Surgical Segmentation 19 4. Guo, M.H., Lu, C.Z., Hou, Q., Liu, Z.N., Cheng, M.M., Hu, S.M.: SegNeXt: Re-thinking convolutional attention design for semantic segmentation. In: Advances in Neural Information Processing Systems (NeurIPS). vol. 35, pp. 1140–1156 (2022) 5. Hong, W.Y., Kao, C.L., Kuo, Y.H., Wang, J.R., Chang, W.L., Shih, C.S.: Cholec-Seg8k: A semantic segmentation dataset for laparoscopic cholecystectomy based on Cholec80. arXiv preprint arXiv:2012.12453 (2020) 6. Hu, E.J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., Chen, W.: Lora: Low-rank adaptation of large language models. In: International Conference on Learning Representations (ICLR) (2022) 7. Jin, Y., Yu, Y., Chen, C., Zhao, Z., Heng, P.A., Stoyanov, D.: Exploring intra- and inter-video relation for surgical semantic scene segmentation. IEEE Transactions on Medical Imaging 41 (11), 2991–3002 (2022) 8. Kamtam, D.N., Shrager, J.B., Malla, S.D., Wang, X., Lin, N., Cardona, J.J., Yeung-Levy, S., Hu, C.: A fine-tuned foundational model SurgiSAM2 for surgical video anatomy segmentation and detection. Scientific Reports 15 , 35961 (2025) 9. Kirillov, A., Mintun, E., Ravi, N., Mao, H., Rolber, C., Gustafson, L., Xiao, T., Whitehead, S., Berg, A.C., Lo, W.Y., Dollár, P., Girshick, R.: Segment anything. In: Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV). pp. 4015–4026 (2023) 10. Lin, D., Dai, J., Jia, J., He, K., Sun, J.: Scribblesup: Scribble-supervised convo-lutional networks for semantic segmentation. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR). pp. 3159–3167 (2016) 11. Liu, M., Han, Y., Wang, J., Wang, C., Wang, Y., Meijering, E.: LSKANet: Long strip kernel attention network for robotic surgical scene segmentation. IEEE Trans-actions on Medical Imaging 43 (4), 1308–1320 (2024) 12. Liu, Q., Xu, Z., Bertasius, G., Niethammer, M.: Simpleclick: Interactive image segmentation with simple vision transformers. In: Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV). pp. 22290–22300 (2023) 13. Luo, X., Wang, G., Song, T., Zhang, J., Aertsen, M., Deprest, J., Ourselin, S., Vercauteren, T., Zhang, S.: MIDeepSeg: Minimally interactive segmentation of unseen objects from medical images using deep learning. Medical Image Analysis 
+
+72 , 102102 (2021) 14. Ma, J., He, Y., Li, F., Han, L., You, C., Wang, B.: Segment anything in medical images. Nature Communications 15 , 654 (2024) 15. Ma, J., Yang, Z., Kim, S., Chen, B., Baharoon, M., Fallahpour, A., Asakereh, R., Lyu, H., Wang, B.: Medsam2: Segment anything in 3d medical images and videos. ArXiv abs/2504.03600 (2025), https://api.semanticscholar.org/CorpusID: 277596374 
+
+16. Ravi, N., Gabber, V., Hu, Y.T., Hu, R., Ryali, C., Ma, T., Khedr, H., Rädle, R., Rolber, C., Gustafson, L., et al.: Sam 2: Segment anything in images and videos. arXiv preprint arXiv:2408.00714 (2024) 17. Ronneberger, O., Fischer, P., Brox, T.: U-Net: Convolutional networks for biomed-ical image segmentation. In: Medical Image Computing and Computer Assisted Intervention (MICCAI). LNCS, vol. 9351, pp. 234–241. Springer (2015) 18. Sofiiuk, K., Petrov, I., Barinova, O., Konushin, A.: f-brs: Rethinking backpropa-gating refinement for interactive segmentation. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR). pp. 8623–8632 (2020) 20 H. Ping et al. 19. Sofiiuk, K., Petrov, I.A., Konushin, A.: Reviving iterative training with mask guid-ance for interactive segmentation. In: IEEE International Conference on Image Processing (ICIP). pp. 3141–3145 (2022) 20. Tang, M., Perazzi, F., Djelouah, A., Ben Ayed, I., Schroers, C., Boykov, Y.: On regularized losses for weakly-supervised CNN segmentation. In: Proceedings of the European Conference on Computer Vision (ECCV). pp. 507–522 (2018) 21. Wang, G., Zuluaga, M.A., Li, W., Pratt, R., Patel, P.A., Aertsen, M., Doel, T., David, A.L., Deprest, J., Ourselin, S., Vercauteren, T.: DeepIGeoS: A deep inter-active geodesic framework for medical image segmentation. IEEE Transactions on Pattern Analysis and Machine Intelligence 41 (7), 1559–1572 (2019) 22. Wang, J., Sun, K., Cheng, T., Jiang, B., Deng, C., Zhao, Y., Liu, D., Mu, Y., Tan, M., Wang, X., Liu, W., Xiao, B.: Deep high-resolution representation learn-ing for visual recognition. IEEE Transactions on Pattern Analysis and Machine Intelligence 43 (10), 3349–3364 (2021) 23. Wong, H.E., Rakic, M., Guttag, J., Dalca, A.V.: ScribblePrompt: Fast and flexible interactive segmentation for any biomedical image. In: Proceedings of the European Conference on Computer Vision (ECCV). pp. 207–225 (2024) 24. Xiao, T., Liu, Y., Zhou, B., Jiang, Y., Sun, J.: Unified perceptual parsing for scene understanding. In: Proceedings of the European Conference on Computer Vision (ECCV). pp. 418–434 (2018) 25. Xie, E., Wang, W., Yu, Z., Anandkumar, A., Alvarez, J.M., Luo, P.: SegFormer: Simple and efficient design for semantic segmentation with transformers. In: Ad-vances in Neural Information Processing Systems (NeurIPS). pp. 12077–12090 (2021) 26. Xu, N., Price, B., Cohen, S., Yang, J., Huang, T.: Deep interactive object selection. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR). pp. 373–381 (2016) 27. Yuan, C., Ban, Y.: Surgical scene segmentation by transformer with asymmetric feature enhancement. In: 2025 IEEE 22nd International Symposium on Biomedical Imaging (ISBI). pp. 1–5. IEEE (2025) 28. Yuan, C., Jiang, J., Yang, K., et al.: Systematic evaluation and guidelines for segment anything model in surgical video analysis. arXiv preprint arXiv:2501.00525 (2024) 29. Yue, W., Zhang, J., Hu, K., Xia, Y., Luo, J., Wang, Z.: SurgicalSAM: Efficient class promptable surgical instrument segmentation. In: AAAI Conference on Artificial Intelligence. pp. 6890–6898 (2024) 30. Zhang, K., Zhuang, X.: CycleMix: A holistic strategy for medical image segmen-tation from scribble supervision. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR). pp. 11656–11665 (2022)
