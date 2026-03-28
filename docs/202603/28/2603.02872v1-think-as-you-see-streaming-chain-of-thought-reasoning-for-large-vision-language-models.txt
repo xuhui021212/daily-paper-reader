@@ -1,0 +1,949 @@
+Title: Think-as-You-See: Streaming Chain-of-Thought Reasoning for Large Vision-Language Models
+
+URL Source: https://arxiv.org/pdf/2603.02872v1
+
+Published Time: Wed, 04 Mar 2026 01:56:40 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# Think-as-You-See: Streaming Chain-of-Thought Reasoning for Large Vision-Language Models 
+
+Jialiang Zhang 1,2* Junlong Tong 1,3* Junyan Lin 1,4* Hao Wu 1
+
+Yirong Sun 1,5 Yunpu Ma 6 Xiaoyu Shen 1,7†
+
+1Institute of Digital Twin, Eastern Institute of Technology, Ningbo 2Ocean University of China 
+
+3Shanghai Jiao Tong University 4The Hong Kong Polytechnic University 
+
+5The University of Nottingham Ningbo China 6Munich Center for Machine Learning, LMU Munich 
+
+7Ningbo Key Laboratory of Spatial Intelligence and Digital Derivative 
+
+zhangjia liang@foxmail.com xyshen@eitech.edu.cn 
+
+Abstract 
+
+Large Vision Language Models (LVLMs) exhibit strong Chain-of-Thought (CoT) capabilities, yet most existing paradigms assume full-video availability before inference, a batch-style process misaligned with real-world video streams where information arrives sequentially. Motivated by the streaming nature of video data, we investigate two streaming reasoning paradigms for LVLMs. The first, an interleaved paradigm, alternates between receiving frames and producing partial reasoning but remains constrained by strictly ordered cache updates. To better match stream-ing inputs, we propose Think-as-You-See (TaYS) , a unified framework enabling true concurrent reasoning. TaYS in-tegrates parallelized CoT generation, stream-constrained training, and stream-parallel inference. It further em-ploys temporally aligned reasoning units, streaming atten-tion masks and positional encodings, and a dual KV-cache that decouples visual encoding from textual reasoning. We evaluate all paradigms on the Qwen2.5-VL family across representative video CoT tasks, including event dynamics analysis, causal reasoning, and thematic understanding. Experiments show that TaYS consistently outperforms both batch and interleaved baselines, improving reasoning per-formance while substantially reducing time-to-first-token (TTFT) and overall reasoning delay. These results demon-strate the effectiveness of data-aligned streaming reasoning in enabling efficient and responsive video understanding for LVLMs. We release our code at this repository. 
+
+> *
+
+Equal contribution. 
+
+> †
+
+Corresponding author. Batch CoT (See Then Think)  
+
+> <think> Let’s analyze the video. The whole video shows the
+> preparation steps for making Naan bread: shaping dough, and
+> wrapping it in plastic to keep it moist. </think>
+> <answer> The images depict Naan preparation: dough shaping, and
+> wrapping for moisture — all essential for achieving soft, well-
+> prepared Naan bread. </answer>
+> Wait to Think Delay
+
+Na ive Streaming (Interleaved See–Then–Think)  
+
+> <answer> Making naan
+> bread: cooking spinach,
+> kneading dough, and
+> moisturizing. </answer>
+> Wait to Think Delay
+> <think> A person
+> is stirring green
+> leafy vegetables in
+> a pot. Vegetables
+> look very
+> smooth. </think>
+> <think> A
+> person's hand
+> kneaded the
+> dough sprinkled
+> with flour.
+> </think>
+
+Parallel Streaming (Think While Seeing) 
+
+> <answer> Making naan
+> bread: cooking spinach,
+> kneading dough, and
+> moisturizing. </answer>
+> Wait to Think
+> Delay
+> <think> A person is stirring
+> green leafy vegetables in a
+> pot. </think>
+> <think> A person's hand
+> kneaded the dough sprinkled
+> with flour. </think>
+> ···
+
+Figure 1. Conventional LVLM reasoning adheres to the batch thinking paradigm, deferring inference until the entire input is re-ceived. This approach often leads to high latency and uneven at-tention allocation across inputs. In contrast, our proposed stream-ing thinking paradigm enables LVLMs to reason concurrently with input reception, thereby reducing latency and ensuring consistency between attention and input order. 
+
+1. Introduction 
+
+Large Vision-Language Models (LVLMs) have recently made significant strides in multimodal reasoning, as exem-plified by GPT-4o [20] and Gemini 2.5 [10]. Despite these advancements, most LVLM-based video reasoning systems continue to rely on a batch inference paradigm, wherein reasoning commences only after the entire visual sequence has been processed. This offline assumption presents a fundamental discrepancy with real-world scenarios that ne-1
+
+> arXiv:2603.02872v1 [cs.CV] 3 Mar 2026
+
+cessitate low-latency, online understanding of continuously evolving video streams. Inherently, video data is streaming in nature: surveil-lance feeds, egocentric videos, robotics teleoperation, au-tonomous driving, and live instructional content all arrive frame by frame. Such temporally unfolding inputs re-quire models to incrementally update their understanding as new evidence emerges. Under batch inference, how-ever, an expanding temporal span introduces increasing de-lays between visual events and their corresponding rea-soning steps. This results in latency accumulation, the loss of early cues, temporal drift, and even hallucina-tion [8, 19, 24, 33, 34, 36, 43]. Existing approaches only partially mitigate this mis-match. Text-based Chain-of-Thought (CoT) prompting with explicit frame references [12, 14, 16, 44, 46] and auxil-iary modules such as key-frame selection [1, 13, 15, 45] can enhance interpretability or reduce redundancy. Neverthe-less, these methods typically presuppose full-video avail-ability and incur substantial computational overhead for long sequences. More critically, these pipelines remain in-herently offline and lack mechanisms to synchronize visual updates with stepwise, temporally grounded reasoning. Motivated by the streaming characteristics of video, we advocate a streaming reasoning paradigm in which mod-els are required to “think while seeing” rather than rea-soning only after viewing is complete. In this paradigm, reasoning evolves incrementally as frames arrive, progres-sively refining the inference trajectory in alignment with the visual stream. This formulation more accurately reflects hu-man cognitive processing of dynamic scenes: understand-ing develops continuously and is updated as new evidence unfolds. To operationalize this concept, we propose Think-as-You-See (TaYS) , a unified framework that equips LVLMs with streaming video CoT capabilities. TaYS integrates stream-aligned training with parallel inference to en-sure both causal consistency and real-time responsiveness. Specifically, we introduce (1) a streaming attention mask 
+
+to enforce temporal causality, (2) a decoupled positional encoding strategy that independently indexes visual and reasoning tokens to avoid cross-modal index conflicts, and 
+
+(3) a parallel dual KV-cache mechanism that decouples visual encoding from reasoning generation, enabling con-current frame ingestion and token decoding. We instantiate TaYS on the Qwen2.5-VL family [2] and evaluate its performance on event dynamics analysis, causal reasoning, and interaction understanding tasks. Extensive experiments demonstrate that TaYS consistently improves reasoning quality over batch inference while substantially reducing latency, lowering token-level waiting time, and stabilizing end-to-end delay across streaming frame rates. These results indicate that aligning LVLM reasoning with the streaming nature of video is both practically feasible and advantageous for real-time multimodal applications. 
+
+Contributions. Our contributions are fourfold: • We introduce a principled streaming reasoning paradigm for LVLMs, enabling incremental, temporally grounded inference aligned with unfolding visual evidence. • We formulate a temporal CoT framework for video streams, decomposing reasoning into frame-aware seg-ments synchronized with sequential visual inputs. • We design a cohesive training and inference architec-ture that operationalizes streaming reasoning, combin-ing causal masking, decoupled positional encoding, and a parallel dual-cache mechanism. • We conduct comprehensive empirical evaluations on streaming video reasoning tasks, demonstrating improved reasoning quality and significantly enhanced responsive-ness compared to batch and interleaved baselines. 
+
+2. Related Work 
+
+Multimodal Chain-of-Thought Reasoning. Multimodal reasoning enables LVLMs to integrate visual and textual information for complex decision making. Existing ap-proaches generally fall into two paradigms. The first, text-centric reasoning , converts visual inputs into captions or symbolic descriptions, enabling subsequent linguistic infer-ence [14, 17, 18, 35, 45, 46]. While effective for inter-pretability, this pipeline assumes full input availability be-fore reasoning, leading to high latency and weak temporal grounding [24]. The second paradigm, interleaved multimodal reason-ing , alternates visual and textual tokens to promote more structured cross-modal interaction [1, 9, 12, 13, 15, 16, 31, 44]. Although this improves transparency and causal inter-pretability, it typically relies on sequential processing and explicit intermediate generation, which increases inference latency and computational overhead. Recent works also explore efficiency-oriented designs, such as adaptive reasoning depth, compact latent tokens, and shortened CoT sequences [23, 26, 29, 38]. However, these studies primarily optimize computation under offline settings, and do not explicitly address temporally grounded, low-latency reasoning over streaming inputs. 
+
+Streaming and Memory-Based Video Understanding. 
+
+The demand for real-time multimodal systems has stim-ulated research on streaming video understanding , where models process frames incrementally instead of in batch mode [5, 21, 27, 32]. Representative efforts focus on streaming captioning, multi-round QA, and conversational agents [3, 4, 7, 11, 22, 27, 28, 37, 39–42]. While these ap-proaches improve temporal consistency and enable online 2interaction, they often emphasize description or response continuity rather than explicit, stepwise reasoning aligned with evolving visual evidence. Another line of work leverages memory mechanisms or temporal compression to maintain long-context representa-tions efficiently. By aggregating or consolidating historical features, these methods reduce computational cost but may sacrifice fine-grained temporal alignment and incremental interpretability. In contrast, our formulation does not com-press or abstract away temporal structure; instead, it explic-itly synchronizes reasoning generation with frame-level up-dates through causal masking, decoupled positional encod-ing, and parallel cache management. Overall, existing works either assume offline reasoning or prioritize temporal summarization over progressive infer-ence. Our TaYS framework complements these directions by focusing on true streaming reasoning , where percep-tion and reasoning evolve concurrently under strict tempo-ral causality, enabling low-latency and temporally grounded video understanding. 
+
+3. Methodology 
+
+This section presents TaYS, a supervised fine-tuning frame-work that integrates streaming video CoT generation with streaming training and inference mechanisms. Its objective is to adapt batch-oriented Large Vision-Language Models to the streaming thinking paradigm. 
+
+3.1. Task Definition and Preliminaries 
+
+Streaming Video CoT demands that a model continuously process a video stream, performing temporal reasoning on queries regarding previously observed visual content at ar-bitrary time steps. In this section, we formalize this task and highlight its fundamental distinctions from the conventional offline paradigm. 
+
+Streaming Video CoT vs. Offline Video CoT. Formally, let a video stream be represented as a sequence of visual frames V = {Ft | 1 ≤ t ≤ T }, and let C<t denote the accumulated multimodal context prior to time t (e.g., his-torical textual or visual reasoning states). 
+
+Offline Video CoT. In the offline setting, the model as-sumes global access to all frames in V before generating any reasoning tokens. At the final time step t = T , the reasoning process is formulated as: 
+
+hi = Decoder  y<i ; Enc( V),
+
+ˆyi ∼ Pθ (yi | V , y <i ), (1) where Enc( V) encodes the complete frame sequence 
+
+{F1, . . . , F T }, and yi denotes the i-th reasoning token. Consequently, Offline Video CoT optimizes the joint prob-ability over the entire sequence: 
+
+max  
+
+> θ
+
+Pθ (Y | V ) = 
+
+> N
+
+Y
+
+> i=1
+
+Pθ (yi | V , y <i ), (2) which necessitates full video observation prior to the onset of generation. 
+
+Streaming Video CoT. Conversely, Streaming Video CoT performs incremental reasoning as frames arrive. At any time step t, only the partial frame sequence V≤t =
+
+{F1, . . . , F t} is observable. The model generates reason-ing tokens conditioned on this partial visual context and the prior reasoning states: 
+
+hti = Decoder  yt<i ; Enc( V≤t), C <t 
+
+,
+
+ˆyti ∼ Pθ (yti | V ≤t, y t<i , C <t ). (3) In contrast to Eq. 1, the model is prohibited from access-ing unseen future frames {Ft+1 , . . . , F T }, enforcing a strict causal constraint on both visual and linguistic modalities. This paradigm optimizes the cumulative probability up to time t:
+
+max  
+
+> θ
+
+Pθ (Y≤t | V ≤t) = 
+
+> Nt
+
+Y
+
+> i=1
+
+Pθ (yti | V ≤t, y t<i , C <t ), (4) where Nt denotes the number of reasoning tokens generated up to time t.Architecturally, Streaming Video CoT updates its rea-soning states concurrently with incoming frames, whereas Offline Video CoT encodes the entire video before reason-ing commences. Notably, Offline Video CoT can be viewed as a degenerate case of Streaming Video CoT, wherein all reasoning is deferred until the video stream terminates. 
+
+Design Principles. To facilitate real-time reasoning, Streaming Video CoT leverages the causal structure of LLM decoders to balance efficiency and accuracy while min-imizing redundant computation. During streaming, KV-Caches are incrementally stored and reused as contextual memory, enabling state updates without re-encoding histor-ical frames. A causal attention mask restricts token access to future information, ensuring that each video token at-tends exclusively to past visual inputs and prior reasoning states. This architecture effectively disentangles temporal visual processing from linguistic reasoning, achieving ef-ficient and temporally consistent inference across dynamic video streams. 
+
+3.2. Streaming Video CoT Generation 
+
+To enable temporally grounded incremental reasoning, we construct a streaming-style Video CoT dataset that departs 3Step1 : Frame ID Alignment  
+
+> Timestamps
+> Alignment
+> locate keyframes
+> timestamps
+> Video key frames
+> Resample frames
+> initial FPS to 2
+> Calibrate keyframe IDs
+> to match resample d FPS
+
+Step2 : Quality Assurance & Evaluation  
+
+> Quality Assurance
+> Consistency Score
+> Temporal Verification
+> Temporal & Semantic Filtering
+> Final Packaging
+> Insert <EOT> and
+> construct CoT trajectory
+> LLM-based Rewirite
+> QRA triplets generation
+
+1
+
+23
+
+1 2
+
+34Figure 2. Overview of the two-step process for generating Stream-ing Video CoT. Step 1 Adjust the frame ID while maintaining frame caption alignment. Step 2 Generate a progressive frame aware trajectory using the original annotations. 
+
+from conventional batch reasoning trajectories, which as-sume full-video access and overlook progressive reasoning behavior. Our construction is based on the training split of V IDEO ESPRESSO [15], which contains temporally co-herent videos annotated with keyframe-level descriptions capturing causal and logical transitions. These keyframes serve as semantic anchors for extracting frame-aligned rea-soning trajectories under streaming constraints. The over-all pipeline is illustrated in Figure 2, with additional details provided in Appendix A. 
+
+Frame ID Alignment. To ensure strict temporal align-ment between visual inputs and reasoning units, we adopt timestamp-based resampling instead of uniform frame sam-pling. All videos are resampled to 2 FPS. For each target sampling timestamp τ ′ 
+
+> t′
+
+= 0 .5( t′ − 1) seconds, the selected frame Ft′ is defined as: 
+
+Ft′ =
+
+(
+
+Fk, if τ ′ 
+
+> t′
+
+∈ [τ start  
+
+> k
+
+, τ end  
+
+> k
+
+]& Fk is a keyframe ,
+
+arg min Ft |τt − 0.5( t′ − 1) |, otherwise. (5) where {τt}Tt=1 denote original frame timestamps. This strategy preserves annotated moments while maintaining temporal regularity. After resampling, frame indices are re-normalized and clips are truncated to the model’s maximum input length, ensuring consistency among visual frames, timestamps, and textual annotations. 
+
+Structured Trajectory Construction. Each aligned keyframe Ft is associated with a reasoning sentence Rt
+
+and visual evidence Et. To construct structured reasoning trajectories, we prompt GPT-4o [20] to generate triplets 
+
+(Qt, R t, A t) representing the temporally grounded ques-tion, reasoning step, and answer derived from the annotated content. This enforces frame-level incremental reasoning and yields temporally segmented reasoning units across the video. 
+
+Quality Control. To ensure semantic coherence and tem-poral consistency, we compute an alignment score between each question and its corresponding reasoning sentence: 
+
+consistency( Qt, R t) = vQ · vR
+
+∥vQ∥ ∥ vR∥ , (6) where vQ and vR are embedding vectors obtained from the BGE-M3 model [6]. Samples with low semantic align-ment or temporal inconsistency are discarded. The remain-ing instances form high-quality streaming reasoning trajec-tories. Finally, sentence-level boundary tokens <EOT> are in-serted to delimit minimal reasoning units, encouraging the model to generate causally ordered and frame-consistent outputs conditioned only on preceding visual observations. 
+
+3.3. Naive Streaming Paradigm 
+
+A straightforward way to emulate streaming behavior is to interleave video and reasoning tokens during training. Con-cretely, each frame Ft is immediately followed by its associ-ated reasoning segment Rt, forming an alternating sequence 
+
+{F1, R 1, F 2, R 2, . . . , F T , R T }. All visual and textual em-beddings are concatenated into a single causal token stream and processed autoregressively. This strict interleaving imposes a serialized dependency between perception and reasoning. Since all tokens share a single causal attention space, new visual tokens cannot be encoded until the preceding reasoning tokens are gener-ated, and reasoning cannot proceed until visual tokens are appended. Such coupling creates a computational bottle-neck and prevents concurrent updates across modalities. Although this design superficially resembles a “thinking-while-watching” process, it tightly entangles perception and reasoning in a way that deviates from the pretraining distri-bution of LVLMs, where visual encoding and textual decod-ing are typically factorized. As illustrated in Figure 3(c), this paradigm therefore suffers from reduced efficiency and limited scalability in long streaming scenarios. 
+
+3.4. Parallel Streaming Paradigm 
+
+To overcome the intrinsic serialization bottleneck of naive interleaving strategies, we introduce a parallel streaming paradigm termed Think-as-You-See (TaYS) . Unlike conven-tional approaches that treat reasoning as a post-hoc process dependent on complete visual encoding, TaYS decouples 4s+3 t+1 t+2 t+3 ts+2 s+1 s
+
+[F1]
+
+> Streaming
+> Mask
+
+[R2]
+
+[R3]
+
+[R4]
+
+[R1]   
+
+> Input Frame
+> Reasoning Sentence
+> Mask
+> Attend to Input
+> Attend to Context
+> Flow Blocking
+> Video
+> stream
+> Text
+> stream
+> Text
+> stream
+> Text stream Interleaved Paradigm
+> Text stream Parallel Paradigm
+
+[R1] [R2] [R3]
+
+[R1] [R2] [R3]
+
+(b) Attention Mask During Training (c) Information Flow During Inference 
+
+(a) Parallel KV Caches for Streaming Information Flow Q: How to make vegetable bread? 
+
+KV Cache   
+
+> 00:14 00:15 00:16
+
+Video Cache  
+
+> Text Tokens
+> Visual Tokens
+
+# ···   
+
+> 00:13
+> Visual Tokens Visual Tokens Visual Tokens
+
+Reasoning Cache Text Tokens 
+
+Merge & Split Merge & Split ··· 
+
+# ··· ··· 
+
+[F2]
+
+[F3]
+
+[F4]
+
+[R1]
+
+[R2]
+
+[R3]
+
+[R4]Figure 3. Overview of the streaming reasoning framework. (a) Parallel video reasoning KV caches enable concurrent visual encoding and reasoning generation via dynamic merge and split operations. (b) The streaming attention mask enforces causal alignment between frames and reasoning steps. (c) During inference, parallel information flow reduces attention path length and alleviates sequential blocking compared with interleaved paradigms. 
+
+perception from reasoning while strictly preserving tempo-ral causality. This architecture enables concurrent execution of visual ingestion and cognitive inference, bridging the gap between streaming perception and real-time reasoning. 
+
+Streaming Attention Mask. In streaming scenarios, maintaining strict temporal causality is paramount: a rea-soning step at time t must strictly attend to visual evidence accumulated up to t, remaining agnostic to future frames. Standard batch attention mechanisms, which globally ex-pose all visual tokens, violate this causal constraint and are unsuitable for streaming inference. To address this, we design a streaming-aware attention mask that enforces fine-grained visibility constraints. Con-sider a visual sequence of length Nv and a reasoning se-quence of length Nr . For a query token at position i and a key token at position j, the masked attention matrix fM (i, j )
+
+is formulated as: 
+
+fM (i, j ) = 
+
+(
+
+−∞ , i > N v , j < N v , j > i − Nv ,Mcausal (i, j ), otherwise ,
+
+(7) where Mcausal represents the standard autoregressive mask. The condition j > i −Nv effectively creates a sliding window over the visual tokens relative to the current rea-soning step. This construction ensures that each reasoning token only integrates information from the current temporal window, preventing information leakage from future frames and ensuring the generated reasoning remains grounded in observed reality. 
+
+Streaming Positional Encoding. While masking en-forces logical visibility, positional encoding must resolve index conflicts arising from the concurrent growth of visual and reasoning streams. Modern Large Vision-Language Models (LVLMs) typically employ Rotary Position Embed-dings (RoPE) [30], where relative positional information is encoded via rotation matrices. Under standard monolithic indexing, the attention interaction between reasoning token 
+
+rt and visual token vs is computed as: 
+
+(RNv +tqrt )⊤(Rskvs ) = q⊤ 
+
+> rt
+
+R⊤ 
+
+> (Nv+t)−s
+
+kvs . (8) In this setup, the reasoning position is offset by the to-tal visual length Nv . However, in a streaming context 5where Nv expands continuously, this indexing introduces dynamic shifts in relative positions, potentially destabiliz-ing the model’s temporal perception. To eliminate this in-terference, we propose a modality-decoupled positional in-dexing scheme: 
+
+pos( vs) = s, pos( rt) = t. 
+
+This assigns independent positional axes for vision and reasoning. The resulting attention mechanism becomes: 
+
+(Rtqrt )⊤(Rskvs ) = q⊤ 
+
+> rt
+
+R⊤
+
+> t−s
+
+kvs . (9) By isolating the positional spaces, this decoupling pre-vents index collision and ensures that the relative temporal distance ( t − s) remains semantically consistent, preserv-ing stable alignment between reasoning updates and visual observations regardless of the growing sequence length. 
+
+Attention Pathways. The architectural choices in differ-ent paradigms fundamentally reshape the information flow. Batch reasoning necessitates encoding the entire video prior to decoding, resulting in a long sequential attention path and high initial latency. Interleaved reasoning alternates between frame input and text generation but relies on a monolithic cache, creating a sequential dependency that forces the reasoning process to stall during visual encod-ing. In contrast, TaYS restructures the dataflow by sepa-rating modality-specific memory pathways while enabling dynamic fusion during decoding. This design substantially shortens the effective attention path, allowing the model to initiate reasoning immediately upon receiving the first frame without waiting for subsequent visual inputs (Fig-ure 3(c)). 
+
+Parallel KV Cache. The core enabler of TaYS’s concur-rency is a dual-cache system that manages visual and textual states independently. We maintain two modality-specific caches: a read-heavy video cache Cv and a dynamic text cache Cr .At time step t, the incoming frame Ft is processed by the visual encoder and incrementally appended to the video cache: 
+
+C(t) 
+
+> v
+
+= C(t−1)  
+
+> v
+
+∪ Enc( Ft).
+
+Crucially, this update is non-blocking and occurs asyn-chronously with respect to the reasoning process. During the decoding phase, attention is computed over a logical concatenation of the current video cache C(t) 
+
+> v
+
+and the historical text cache C(t−1)  
+
+> r
+
+. We implement this merge 
+
+operation via pointer-level composition rather than physi-cal tensor concatenation, achieving a zero-copy overhead. Once the reasoning segment Rt is generated, only the text cache is updated: 
+
+C(t) 
+
+> r
+
+= C(t−1)  
+
+> r
+
+∪ Dec( Rt),
+
+while the video cache remains immutable during this step. The subsequent split operation restores the modality-specific cache views, preparing the system for the next cy-cle. This architecture establishes a recursive 
+
+merge–generate–split loop. While Cr is engaged in autoregressive token generation, newly arrived frames are independently absorbed into Cv . Consequently, the reasoning process is never stalled by visual encoding. Com-pared to the monolithic cache design in batch or interleaved paradigms, TaYS’s decoupled cache architecture minimizes critical path latency and enables true parallel streaming, realizing a system where perception and reasoning evolve simultaneously. 
+
+4. Experiments 
+
+4.1. Experimental Settings 
+
+Video Benchmark. We evaluate TaYS on an extended benchmark protocol derived from V IDEO ESPRESSO , cov-ering temporal, logical, scene, behavioral, and state under-standing. The benchmark includes tasks such as Event Dy-namics , Causal Analysis , Theme Analysis , and realistic ap-plications like Cooking Process and Traffic Analysis , form-ing a comprehensive testbed for streaming video reasoning across diverse semantic contexts. 
+
+Models and Baselines. We implement TaYS on Qwen2.5-VL-3B/7B-Instruct. Comparative baselines include: (1) Batch w/o Thinking : a supervised model fine-tuned on direct QA pairs; (2) Batch w/ Thinking :incorporates frame-referenced intermediate reasoning prompts; 1 (3) Batch SFT : distilled from CoT-annotated data; and (4) Interleaved SFT : a streaming variant al-ternating frame input and reasoning generation without parallel caching. This setup isolates the benefits of par-allel streaming against conventional batch and sequential interleaving paradigms. 
+
+Metrics. Evaluation considers both reasoning quality and latency. Objective performance requires the semantic sim-ilarity of predictions to exceed a threshold and outperform distractors. Subjective performance is ranked by GPT-5 [25] based on logical consistency, factual accuracy, and contextual appropriateness. Latency is measured by TTFT 
+
+(time to first token) and overall delay (total time for reason-ing and response). 
+
+> 1Detailed CoT inference prompt is provided in Appendix B.
+
+6Table 1. Comparison of reasoning accuracy on the extended V IDEO ESPRESSO benchmark. TaYS consistently achieves competitive or superior performance while maintaining low latency, demonstrating the effectiveness of the streaming reasoning paradigm. In the table, 
+
+bold numbers denote the best results, and underlined numbers indicate the second-best results for each task category. 
+
+Model Narr. Event Ingr. Caus. Theme Cont. Infl. Role Inter. Behav. Emot. Cook. Traff. Situa. Acc. ↑
+
+Qwen2.5-VL-3B-Instruct 
+
+Batch w/o thinking 39.39 31.51 25.00 18.92 37.50 24.32 43.90 20.69 29.73 16.67 42.11 38.89 30.77 10.00 27.99 Batch with thinking 39.39 26.03 28.57 15.68 37.50 40.54 17.07 48.28 29.73 8.33 47.37 61.11 38.46 20.00 28.16 Batch SFT 48.48 34.25 17.86 17.84 43.75 32.43 39.02 27.59 24.32 8.33 39.47 50.00 46.15 20.00 29.18 Interleaved SFT 48.48 38.36 25.00 28.65 37.50 29.73 36.59 31.03 35.14 16.67 36.84 55.56 46.15 30.00 33.96 TaYS 51.52 36.99 39.29 24.86 46.88 21.62 31.71 20.69 37.84 33.33 44.74 50.00 53.85 20.00 33.45 
+
+Qwen2.5-VL-7B-Instruct 
+
+Batch w/o thinking 54.55 32.88 28.57 14.59 37.50 27.03 41.46 34.48 29.73 16.67 36.84 52.94 46.15 10.00 28.89 Batch with thinking 42.42 31.51 42.86 23.24 37.50 29.73 29.27 37.93 29.73 25.00 39.47 55.56 38.46 30.00 31.57 Batch SFT 48.48 26.03 32.14 21.62 43.75 32.43 43.90 31.03 27.03 8.33 39.47 38.89 46.15 20.00 30.38 Interleaved SFT 57.58 38.36 35.71 24.86 50.00 35.14 48.78 24.14 37.84 16.67 36.84 44.44 46.15 20.00 34.98 
+
+TaYS 63.64 35.62 28.57 25.95 46.88 35.14 41.46 34.48 51.35 16.67 47.37 66.67 46.15 10.00 36.86 
+
+4.2. Results on Benchmark 
+
+Objective Evaluation Results. Table 1 summarizes ob-jective results. Explicit CoT prompting enhances base LVLM reasoning, while fine-tuning on temporally aligned trajectories yields further gains by aligning reasoning with visual evidence. Streaming-based models outperform all batch baselines significantly. Notably, the Interleaved 
+
+model achieves slightly higher accuracy than TaYS , suggest-ing both streaming paradigms effectively capture temporal dependencies. However, objective metrics alone may not fully reflect reasoning coherence, necessitating further sub-jective evaluation. 
+
+Subjective Evaluation Results. GPT-5 ranked model outputs based on overall quality. 2 TaYS achieved the highest normalized win rate of 43.7% , surpassing Batch (31.4% ) and Interleaved ( 21.7% ). TaYS excels in tasks re-quiring multi-step temporal reasoning, winning 61.1% of 
+
+Cooking Process samples (vs. 11.1% for Interleaved) and 
+
+75.0% of Preparation Steps . As illustrated in Figure 4, TaYS aligns reasoning tightly with visual evidence, avoid-ing the fragmented descriptions produced by the Interleaved model, thereby demonstrating superior temporal grounding in dynamic scenarios. 
+
+4.3. Real-Time Streaming Reasoning Efficiency 
+
+We evaluate TaYS in real-time streaming scenarios where frames arrive progressively. As shown in Table 2 and Figure 5(a), the Batch paradigm suffers from a persistent bottleneck ( ∼10.6s TTFT). The Interleaved paradigm re-sponds faster but suffers from cumulative delay growth at 
+
+> 2
+
+Detailed subjective evaluation prompt is provided in Appendix B. Q: Using the given video, describe the process and the specific step shown in  
+
+> the text overlay "STEP TWO ASSEMBLE SUSHI ROLL ".
+> <think> The process of making sushi rolls begins with the preparation of
+> ingredients and a bamboo mat is used to assemble them. </think>
+> <answer> The process of making sushi rolls begins with the preparation of
+> ingredients, which are laid out on the chef. The specific step shown in "STEP
+> TWO ASSEMBLE SUSHI R" is using a bamboo mat to assemble the sushi roll
+> by spreading rice onto it and rolling it up. </answer>
+
+Interleaved Streaming  
+
+> <think> The person is preparing ingredients for sushi. </think><think> The
+> bamboo mat is being used to assemble the sushi roll. </think><think> The
+> rice is placed on top of the seaweed. </think>
+> <answer> The process involves preparing various ingredients such as
+> avocado slices, crab meat salad, cucumber sticks, and other fillings. The
+> specific step described by the text 'STEP TWO: ASSEMBLY SUSHIR ROLL'
+> shows that after spreading rice onto the seaweed using the bamboo mat, the next
+> action would be assembling the sushi rolls with these prepared
+> ingredients. </answer>
+
+Parallel Streaming 
+
+Figure 4. Case study comparing TaYS with the Interleaved paradigm. TaYS produces temporally aligned reasoning, whereas the Interleaved model generates less accurate, fragmented descrip-tions. 
+
+higher frame rates due to sequential encode–generate de-pendencies. In contrast, TaYS achieves near-zero decoder-level TTFT ( ≈ 10 −6s) under the incremental warm-start setting, reflecting minimal decoding latency. Crucially, TaYS main-tains a stable end-to-end delay of ∼12s across all frame rates by parallelizing cache management and reasoning. Accuracy scales robustly with frame rate (peaking at 36.0% 7Table 2. Latency and accuracy comparison across different FPS. TaYS achieves the lowest TTFT and delay, demonstrating superior real-time efficiency. 
+
+Method Metric FPS=1 FPS=2 FPS=3 FPS=4 FPS=5 
+
+Batch TTFT ↓ 10.36 10.48 10.62 10.77 10.93 Delay ↓ 12.05 13.90 12.93 13.08 13.12 Acc ↑ 28.33 29.18 31.23 30.03 31.91 Interleaved TTFT ↓ 0.0303 0.0295 0.0296 0.0301 0.0298 Delay ↓ 12.94 14.19 16.15 18.03 20.13 Acc ↑ 33.95 33.96 33.11 31.91 30.55 TaYS TTFT ↓ 1e-6 9.2e-7 9.3e-7 1.06 e-6 9.6e-7
+
+Delay ↓ 12.06 12.19 12.32 12.30 12.31 Acc ↑ 31.74 33.45 36.01 35.49 34.06 1 2 3 4 5  
+
+> FPS
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> TTFT (s)
+> (a) Latency Trend
+> Batch TTFT
+> Interleaved TTFT
+> TaYS TTFT
+> Batch Interleaved TaYS
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> Time (s)
+> (b) Latency Breakdown
+> TTFT
+> Think
+> Answer
+> 12
+> 14
+> 16
+> 18
+> 20
+> Delay (s)
+> Batch Delay
+> Interleaved Delay
+> TaYS Delay
+
+Figure 5. (a) Latency comparison across paradigms. (b) Latency breakdown of TaYS. Parallel KV Cache design enables the lowest TTFT and stable delay. 
+
+for FPS=3), whereas baselines fluctuate. Figure 5(b) con-firms TaYS’s compact latency profile, demonstrating its ef-ficiency and reliability for streaming understanding. 
+
+4.4. Temporal Behavior of Streaming Reasoning 
+
+Fine-Grained Temporal Alignment. We assess whether reasoning is triggered at correct moments by measuring the temporal distance ∆t between reasoning steps and anno-tated keyframes. Figure 6 shows TaYS achieves a mean deviation of 0.69s (vs. 1.52s for Interleaved). Addition-ally, 86.0% of TaYS’s reasoning falls within one second of keyframes (vs. 62.4% for Interleaved). The distribution indicates TaYS effectively concentrates reasoning around event boundaries rather than scattering outputs across irrel-evant temporal segments, thereby confirming precise tem-poral grounding and acute event sensitivity. 
+
+Temporal Coherence of Reasoning. We examine seman-tic continuity between consecutive reasoning outputs (Fig-ure 7). TaYS exhibits a smooth similarity profile, indicating reasoning evolves seamlessly with visual changes. The sup-pression of high-similarity spikes suggests effective avoid-ance of stagnant or looping descriptions, ensuring sustained distinctiveness. Conversely, the Interleaved model displays prominent peaks, reflecting redundant and less adaptive rea-0 1 2 3 4 5 
+
+> Temporal Distance (s)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Cumulative Probability
+> +23.5%
+> +17.0%
+> +11.0%
+> (a) Temporal Alignment Accuracy
+> TaYS
+> Interleaved
+> TaYS Interleaved
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> Temporal Distance (s)
+> (b) Reduced Temporal Variance
+
+Figure 6. Temporal distance ∆t distribution. TaYS aligns reason-ing more closely with keyframes, achieving higher precision than the interleaved baseline. 0.0 0.2 0.4 0.6 0.8 1.0        
+
+> Semantic Similarity
+> 0
+> 1
+> 2
+> 3
+> 4
+> Density
+> (a) Temporal Coherence 3B
+> TaYS
+> Interleaved
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Semantic Similarity
+> (b) Temporal Coherence 7B
+> TaYS
+> Interleaved
+
+Figure 7. Semantic similarity between consecutive reasoning steps. TaYS maintains a smoother distribution, whereas the inter-leaved model exhibits repetitive peaks (high similarity), indicating redundancy. 
+
+soning that struggles to assimilate new events. These results demonstrate TaYS maintains a coherent, progressive rea-soning trajectory aligned with the video’s temporal struc-ture. 
+
+5. Conclusion 
+
+Video data naturally arrives as a continuous stream, yet most LVLMs rely on offline batch reasoning, fundamentally misaligned with the sequential nature of real-world visual inputs. We introduce the streaming thinking paradigm ,enabling models to reason progressively as frames arrive and refine outputs dynamically. We instantiate this via 
+
+Think-as-You-See (TaYS) , integrating streaming Chain-of-Thought, stream-aligned training, and parallel KV-cache architecture. Experiments show TaYS reduces latency while enhancing reasoning quality by grounding infer-ences in immediate visual evidence. By decoupling per-ception from reasoning, our approach resolves the trade-off between responsiveness and depth, allowing models to ”think on their feet” without awaiting complete en-coding. Analyses highlight controllable and temporally grounded reasoning, paving the way for responsive, reli-able real-time video understanding. This work shifts fo-cus from static analysis to dynamic interaction, establish-ing a foundation for embodied intelligence and open-world agents. 8References 
+
+[1] Anurag Arnab, Ahmet Iscen, Mathilde Caron, Alireza Fathi, and Cordelia Schmid. Temporal chain of thought: Long-video understanding by thinking in frames. arXiv preprint arXiv:2507.02001 , 2025. 2 [2] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, Humen Zhong, Yuanzhi Zhu, Mingkun Yang, Zhao-hai Li, Jianqiang Wan, Pengfei Wang, Wei Ding, Zheren Fu, Yiheng Xu, Jiabo Ye, Xi Zhang, Tianbao Xie, Zesen Cheng, Hang Zhang, Zhibo Yang, Haiyang Xu, and Jun-yang Lin. Qwen2.5-vl technical report. arXiv preprint arXiv:2502.13923 , 2025. 2 [3] Dibyadip Chatterjee, Edoardo Remelli, Yale Song, Bugra Tekin, Abhay Mittal, Bharat Bhatnagar, Necati Cihan Cam-goz, Shreyas Hampali, Eric Sauser, Shugao Ma, Angela Yao, and Fadime Sener. Streaming videollms for real-time proce-dural video understanding. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , pages 22586–22598, 2025. 2 [4] Dibyadip Chatterjee, Edoardo Remelli, Yale Song, Bugra Tekin, Abhay Mittal, Bharat Bhatnagar, Necati Cihan Cam-goz, Shreyas Hampali, Eric Sauser, Shugao Ma, et al. Streaming videollms for real-time procedural video under-standing. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 22586–22598, 2025. 2[5] Joya Chen, Zhaoyang Lv, Shiwei Wu, Kevin Qinghong Lin, Chenan Song, Difei Gao, Jia-Wei Liu, Ziteng Gao, Dongxing Mao, and Mike Zheng Shou. Videollm-online: Online video large language model for streaming video. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 18407–18418, 2024. 2 [6] Jianlyu Chen, Shitao Xiao, Peitian Zhang, Kun Luo, Defu Lian, and Zheng Liu. M3-embedding: Multi-linguality, multi-functionality, multi-granularity text embed-dings through self-knowledge distillation. In Findings of the Association for Computational Linguistics: ACL 2024 ,pages 2318–2335, Bangkok, Thailand, 2024. Association for Computational Linguistics. 4 [7] Joya Chen, Ziyun Zeng, Yiqi Lin, Wei Li, Zejun Ma, and Mike Zheng Shou. Livecc: Learning video llm with stream-ing speech transcription at scale. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 29083–29095, 2025. 2 [8] Qiguang Chen, Libo Qin, Jinhao Liu, Dengyun Peng, Jian-nan Guan, Peng Wang, Mengkang Hu, Yuhang Zhou, Te Gao, and Wanxiang Che. Towards reasoning era: A survey of long chain-of-thought for reasoning large language models. 
+
+arXiv preprint arXiv:2503.09567 , 2025. 2 [9] Zihui Cheng, Qiguang Chen, Jin Zhang, Hao Fei, Xiaocheng Feng, Wanxiang Che, Min Li, and Libo Qin. Comt: A novel benchmark for chain of multi-modal thought on large vision-language models. In Proceedings of the AAAI Conference on Artificial Intelligence , pages 23678–23686, 2025. 2 [10] Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Marcel Blis-tein, Ori Ram, Dan Zhang, Evan Rosen, et al. Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. arXiv preprint arXiv:2507.06261 , 2025. 1 [11] Shangzhe Di, Zhelun Yu, Guanghao Zhang, Haoyuan Li, Hao Cheng, Bolin Li, Wanggui He, Fangxun Shu, Hao Jiang, et al. Streaming video question-answering with in-context video kv-cache retrieval. In ICLR , 2025. 2 [12] Hao Fei, Shengqiong Wu, Wei Ji, Hanwang Zhang, Meishan Zhang, Mong-Li Lee, and Wynne Hsu. Video-of-thought: Step-by-step video reasoning from perception to cognition. In Proceedings of the 41st International Conference on Ma-chine Learning , pages 13109–13125. PMLR, 2024. 2 [13] Haonan Ge, Yiwei Wang, Kai-Wei Chang, Hang Wu, and Yujun Cai. Famemind: Frame-interleaved video reasoning via reinforcement learning. arXiv e-prints , pages arXiv– 2509, 2025. 2 [14] Sara Ghazanfari, Francesco Croce, Nicolas Flammarion, Prashanth Krishnamurthy, Farshad Khorrami, and Siddharth Garg. Chain-of-frames: Advancing video understanding in multimodal llms via frame-aware reasoning. arXiv preprint arXiv:2506.00318 , 2025. 2 [15] Songhao Han, Wei Huang, Hairong Shi, Le Zhuo, Xiu Su, Shifeng Zhang, Xu Zhou, Xiaojuan Qi, Yue Liao, and Si Liu. Videoespresso: A large-scale chain-of-thought dataset for fine-grained video reasoning via core frame selection. In 
+
+Proceedings of the Computer Vision and Pattern Recognition Conference (CVPR) , pages 26181–26191, 2025. 2, 4 [16] Vaishnavi Himakunthala, Andy Ouyang, Daniel Rose, Ryan He, Alex Mei, Yujie Lu, Chinmay Sonar, Michael Saxon, and William Wang. Let’s think frame by frame with VIP: A video infilling and prediction dataset for evaluating video chain-of-thought. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , pages 204–219, Singapore, 2023. Association for Computational Linguistics. 2 [17] Yushi Hu, Hang Hua, Zhengyuan Yang, Weijia Shi, Noah A Smith, and Jiebo Luo. Promptcap: Prompt-guided task-aware image captioning. arXiv preprint arXiv:2211.09699 ,2022. 2 [18] Yuhang Hu, Zhenyu Yang, Shihan Wang, Shengsheng Qian, Bin Wen, Fan Yang, Tingting Gao, and Changsheng Xu. Streamingcot: A dataset for temporal dynamics and multi-modal chain-of-thought reasoning in streaming videoqa. In 
+
+Proceedings of the 33rd ACM International Conference on Multimedia , pages 13464–13470, 2025. 2 [19] Jie Huang, Xuejing Liu, Sibo Song, Ruibing Hou, Hong Chang, Junyang Lin, and Shuai Bai. Revisiting multimodal positional encoding in vision-language models, 2025. 2 [20] Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perel-man, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Weli-hinda, Alan Hayes, Alec Radford, et al. Gpt-4o system card. 
+
+arXiv preprint arXiv:2410.21276 , 2024. 1, 4 [21] Junyan Lin, Junlong Tong, Hao Wu, Jialiang Zhang, Jin-ming Liu, Xin Jin, and Xiaoyu Shen. Speak while watch-ing: Unleashing true real-time video understanding capa-bility of multimodal large language models. arXiv preprint arXiv:2601.06843 , 2026. 2 
+
+9[22] Jihao Liu, Zhiding Yu, Shiyi Lan, Shihao Wang, Rongyao Fang, Jan Kautz, Hongsheng Li, and Jose M Alvare. Streamchat: Chatting with streaming video. arXiv preprint arXiv:2412.08646 , 2024. 2 [23] Jinghui Lu, Haiyang Yu, Siliang Xu, Shiwei Ran, Guozhi Tang, Siqi Wang, Bin Shan, Teng Fu, Hao Feng, Jingqun Tang, et al. Prolonged reasoning is not all you need: Certainty-based adaptive routing for efficient llm/mllm rea-soning. arXiv preprint arXiv:2505.15154 , 2025. 2 [24] Mi Luo, Zihui Xue, Alex Dimakis, and Kristen Grauman. When thinking drifts: Evidential grounding for robust video reasoning. arXiv preprint arXiv:2510.06077 , 2025. 2 [25] OpenAI. Introducing gpt-5. https://openai.com/ index/introducing-gpt-5/ , 2025. Accessed: 2025-11-10. 6 [26] Yi Peng, Peiyu Wang, Xiaokun Wang, Yichen Wei, Jiangbo Pei, Weijie Qiu, Ai Jian, Yunzhuo Hao, Jiachun Pan, Tianyi-dan Xie, et al. Skywork r1v: Pioneering multimodal reason-ing with chain-of-thought. arXiv preprint arXiv:2504.05599 ,2025. 2 [27] Rui Qian, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Shuan-grui Ding, Dahua Lin, and Jiaqi Wang. Streaming long video understanding with large language models. Advances in Neu-ral Information Processing Systems , 37:119336–119360, 2024. 2 [28] Rui Qian, Shuangrui Ding, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Yuhang Cao, Dahua Lin, and Jiaqi Wang. Dispider: Enabling video llms with active real-time interaction via dis-entangled perception, decision, and reaction. In Proceedings of the Computer Vision and Pattern Recognition Conference ,pages 24045–24055, 2025. 2 [29] Xuan Shen, Yizhou Wang, Xiangxi Shi, Yanzhi Wang, Pu Zhao, and Jiuxiang Gu. Efficient reasoning with hidden thinking. arXiv preprint arXiv:2501.19201 , 2025. 2 [30] Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. Roformer: Enhanced transformer with rotary position embedding. Neurocomputing , 568:127063, 2024. 5 [31] Zhaochen Su, Peng Xia, Hangyu Guo, Zhenhua Liu, Yan Ma, Xiaoye Qu, Jiaqi Liu, Yanshu Li, Kaide Zeng, Zhengyuan Yang, et al. Thinking with images for multimodal reasoning: Foundations, methods, and future frontiers. arXiv preprint arXiv:2506.23918 , 2025. 2 [32] Junlong Tong, Yingqi Fan, Anhao Zhao, Yunpu Ma, and Xi-aoyu Shen. Streamingthinker: Large language models can think while reading. arXiv preprint arXiv:2510.17238 , 2025. 2[33] Junlong Tong, Jinlan Fu, Zixuan Lin, Yingqi Fan, Anhao Zhao, Hui Su, and Xiaoyu Shen. Llm as effective streaming processor: Bridging streaming-batch mismatches with group position encoding. In Findings of the Association for Compu-tational Linguistics: ACL 2025 , pages 23497–23517, 2025. 2[34] Yuxuan Wang, Yueqian Wang, Dongyan Zhao, Cihang Xie, and Zilong Zheng. Videohallucer: Evaluating intrinsic and extrinsic hallucinations in large video-language models. 
+
+arXiv preprint arXiv:2406.16338 , 2024. 2 [35] Yan Wang, Yawen Zeng, Jingsheng Zheng, Xiaofen Xing, Jin Xu, and Xiangmin Xu. VideoCoT: A video chain-of-thought dataset with active annotation tool. In Proceedings of the 3rd Workshop on Advances in Language and Vision Research (ALVR) , pages 92–101, Bangkok, Thailand, 2024. Association for Computational Linguistics. 2 [36] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, et al. Chain-of-thought prompting elicits reasoning in large lan-guage models. Advances in neural information processing systems , 35:24824–24837, 2022. 2 [37] Cheng-Kuang Wu, Zhi R Tam, Chieh-Yen Lin, Yun-Nung Chen, and Hung-yi Lee. Streambench: Towards benchmark-ing continuous improvement of language agents. Advances in Neural Information Processing Systems , 37:107039– 107063, 2024. 2 [38] Kun Xiang, Zhili Liu, Zihao Jiang, Yunshuang Nie, Kaixin Cai, Yiyang Yin, Runhui Huang, Haoxiang Fan, Hanhui Li, Weiran Huang, et al. Can atomic step decomposition en-hance the self-structured reasoning of multimodal large mod-els? arXiv preprint arXiv:2503.06252 , 2025. 2 [39] Haomiao Xiong, Zongxin Yang, Jiazuo Yu, Yunzhi Zhuge, Lu Zhang, Jiawen Zhu, and Huchuan Lu. Streaming video understanding and multi-round interaction with memory-enhanced knowledge, 2025. 2 [40] Ruyi Xu, Guangxuan Xiao, Yukang Chen, Liuning He, Kelly Peng, Yao Lu, and Song Han. Streamingvlm: Real-time understanding for infinite video streams. arXiv preprint arXiv:2510.09608 , 2025. [41] Haolin Yang, Feilong Tang, Lingxiao Zhao, Xiang An, Ming Hu, Huifa Li, Xinlin Zhuang, Yifan Lu, Xiaofeng Zhang, Abdalla Swikir, et al. Streamagent: Towards anticipatory agents for streaming video understanding. arXiv preprint arXiv:2508.01875 , 2025. [42] Haoji Zhang, Yiqin Wang, Yansong Tang, Yong Liu, Jiashi Feng, and Xiaojie Jin. Flash-vstream: Efficient real-time understanding for long video streams. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , pages 21059–21069, 2025. 2 [43] Jiacheng Zhang, Yang Jiao, Shaoxiang Chen, Na Zhao, Zhiyu Tan, Hao Li, and Jingjing Chen. Eventhallusion: Di-agnosing event hallucinations in video llms. arXiv preprint arXiv:2409.16597 , 2024. 2 [44] Yongheng Zhang, Xu Liu, Ruihan Tao, Qiguang Chen, Hao Fei, Wanxiang Che, and Libo Qin. Vitcot: Video-text in-terleaved chain-of-thought for boosting video understanding in large language models. In Proceedings of the 33rd ACM International Conference on Multimedia , page 5267–5276, New York, NY, USA, 2025. Association for Computing Ma-chinery. 2 [45] Zhuosheng Zhang, Aston Zhang, Mu Li, Hai Zhao, George Karypis, and Alex Smola. Multimodal chain-of-thought reasoning in language models. arXiv preprint arXiv:2302.00923 , 2023. 2 [46] Ge Zheng, Bin Yang, Jiajin Tang, Hong-Yu Zhou, and Sibei Yang. Ddcot: Duty-distinct chain-of-thought prompting for multimodal reasoning in language models. Advances in Neu-ral Information Processing Systems , 36:5168–5191, 2023. 2 
+
+10 Think-as-You-See: Streaming Chain-of-Thought Reasoning for Large Vision-Language Models 
+
+# Supplementary Material 
+
+A. Details of Streaming CoT Pipeline 
+
+A.1. CLIP-Guided Frame ID Alignment 
+
+Step 1: Semantic anchoring before resampling. Given a video V = {Ft}Tt=1 with timestamps {τt}Tt=1 and anno-tated keyframe captions C = {ck}Kk=1 , we first compute CLIP embeddings for all frames and captions: 
+
+f t = Enc img CLIP (Ft), gk = Enc text CLIP (ck).
+
+We utilize cosine similarity throughout the alignment pro-cess: 
+
+sim( a, b) = a⊤b
+
+∥a∥ ∥ b∥ .
+
+For each keyframe caption ck, we identify its most similar frame index: 
+
+t⋆k = arg max   
+
+> t∈{ 1,...,T }
+
+sim( f t, gk),
+
+recording the anchor timestamp bτk = τt⋆k . These anchors serve as semantic locks preserved during subsequent resam-pling. 
+
+Step 2: Timestamp-based resampling at 2 FPS with an-chor preservation. Let the target sampling interval be 
+
+∆ = 0 .5 s (2 FPS) and the target grid be {τ ′ 
+
+> t′
+
+}T ′ 
+
+> t′=1
+
+with 
+
+τ ′ 
+
+> t′
+
+= ( t′ − 1)∆ . For each target timestamp τ ′ 
+
+> t′
+
+, we select the frame Ft′ as: 
+
+Ft′ =
+
+
+
+Ft⋆k , if τ ′ 
+
+> t′
+
+∈ [bτk − ϵ, bτk + ϵ] for some k, 
+
+arg min 
+
+> Ft
+
+|τt − τ ′ 
+
+> t′
+
+|, otherwise ,
+
+where ϵ = 0 .1 s is a tolerance window ensuring every se-mantic anchor bτk snaps to the nearest sampling point. Post-selection, frame indices are renormalized, and clips are truncated to the maximum input duration (30 s). 
+
+A.2. Quality Assurance and Temporal Filtering 
+
+To ensure generated frame-level trajectories are temporally grounded and semantically reliable, we apply a three-stage filtering process (Algorithm 1). First, we identify question-relevant keyframes via embedding similarity. Second, we prune temporally adjacent captions with redundant seman-tics to preserve distinct perceptual events. Finally, we for-mat the supervision sequence by assigning </EOT> to se-lected keyframes and <SKIP> to others. This yields a tem-porally sparse but well-aligned target stream, guiding the model to reason only at meaningful moments. 
+
+Algorithm 1 Quality Assurance and Temporal Filtering 
+
+Require: Question Qt, keyframe captions {ck}
+
+Require: Thresholds τq = 0 .7, τadj = 0 .9
+
+Step 1: Question–caption relevance screening  
+
+> 1:
+
+for each caption ck do  
+
+> 2:
+
+sk ← sim( e(Qt), e (ck))  
+
+> 3:
+
+end for  
+
+> 4:
+
+Kt ← { k | sk ≥ τq }
+
+Step 2: Anti-redundancy temporal de-duplication  
+
+> 5:
+
+Sort Kt by time  
+
+> 6:
+
+K⋆t ← [ ]  
+
+> 7:
+
+for each k in Kt do  
+
+> 8:
+
+if K⋆t is empty then  
+
+> 9:
+
+Append k to K⋆t 
+
+> 10:
+
+else  
+
+> 11:
+
+Let j be last element in K⋆t 
+
+> 12:
+
+sj,k ← sim( e(cj ), e (ck))  
+
+> 13:
+
+if sj,k < τ adj then  
+
+> 14:
+
+Append k to K⋆t 
+
+> 15:
+
+end if  
+
+> 16:
+
+end if  
+
+> 17:
+
+end for Step 3: Formatting supervision targets  
+
+> 18:
+
+for each sampled frame index t′ do  
+
+> 19:
+
+if t′ ∈ K ⋆t then  
+
+> 20:
+
+Emit [Rt′ ] < /EOT >  
+
+> 21:
+
+else  
+
+> 22:
+
+Emit <SKIP>  
+
+> 23:
+
+end if  
+
+> 24:
+
+end for 
+
+A.3. Practical Notes 
+
+• Embedding normalization. All embeddings are ℓ2-normalized prior to similarity computation to stabilize thresholds. • Batching. Frame and caption embeddings are computed in batches to mitigate I/O latency for long videos. • Hyperparameters. Default values are ∆ = 0 .5 s, ϵ =0.1 s, τq = 0 .7, and τadj = 0 .9, balancing temporal pre-cision with retention of key semantic content. 
+
+A.4. Details of Dataset 
+
+The dataset spans 12 video reasoning tasks covering fine-grained event interpretation and high-level semantic under-standing. As shown in Figure 8 and Table 3, the task distri-bution is long-tailed: Causal Analysis and Event Dynamic 
+
+1Analysis dominate, while Ingredient Analysis and Behav-ior Analysis are less frequent. This reflects the natural prevalence of reasoning behaviors in real-world video con-tent while ensuring broad coverage for multi-step reasoning evaluation. Temporal structure also varies significantly. Figure 9 il-lustrates the distribution of keyframe counts, revealing a wide spectrum of temporal sparsity. Some videos con-tain sparse salient moments, while others feature dense, ex-tended event sequences. This variability is critical for eval-uating streaming reasoning, requiring models to adapt to varying event frequencies and accurately identify meaning-ful visual changes. Tasks 
+
+> Behavior Analysis
+> Causal Analysis
+> Contextual Analysis
+> Emotion Analysis
+> Event Dynamic Analysis
+> Influence Analysis
+> Interaction Analysis
+> Narrative Analysis
+> Preparation Steps / Ingredient Analysis
+> Role Analysis
+> Theme Analysis
+> Traffic Analysis
+
+Figure 8. Task distribution in the dataset. Table 3. Distribution of task categories in training and test sets. 
+
+Task Train Set Test Set 
+
+Causal Analysis 52,566 208 Event Dynamic Analysis 18,675 82 Preparation Steps / Ingredient Analysis 2,252 74 Theme Analysis 6,206 33 Interaction Analysis 4,208 38 Influence Analysis 4,406 45 Role Analysis 4,843 31 Emotion Analysis 1,999 39 Narrative Analysis 1,755 35 Contextual Analysis 6,827 38 Behavior Analysis 227 12 Traffic Analysis 218 14 
+
+B. Prompt Details 
+
+We present the complete prompts used in our pipeline, in-cluding QA construction (Figure 10), CoT inference (Fig-ure 11), and subjective evaluation (Figure 12). 
+
+C. Training Details 
+
+We train TaYS using a streaming-aware decoder-only ob-jective, where visual and reasoning tokens are interleaved 1 2 3 4 5
+
+> Keyframe Count Groups
+> 0
+> 20000
+> 40000
+> 60000
+> 80000
+> Number of Videos
+> 5628
+> (5.4%)
+> 74703
+> (71.7%)
+> 21105
+> (20.3%)
+> 2746
+> (2.6%)
+
+Keyframe Count Distribution 
+
+Figure 9. Distribution of keyframe counts per sample. Prompt: QA Construction 
+
+> You are a video description normalizer. Rewrite the evidence based on the given question
+> and answer.
+> Question: {question}
+> Answer: {answer}
+> Rules:
+> 1. Each frame must have exactly one sentence.
+> 2. Each sentence starts with "In frame X," and ends with a period.
+> 3. Keep all original frame numbers, in the same order, without adding or removing any.
+> 4. Do not merge multiple frames into one sentence or split a frame into several.
+> 5. Write each frame on a new line.
+> 6. Adjust expressions so the narrative aligns naturally with the QA semantics while
+> keeping the visual meaning unchanged.
+> Original Evidence:
+> {evidence}
+> Rewritten Evidence:
+
+Figure 10. Prompt template for QA construction. Prompt: CoT Inference 
+
+Please imagine this question as a person pondering deeply. 
+
+The content of frames related to references and issues is 
+
+used to form a thinking process in chronological order of 
+
+the events. 
+
+Encourage self reflection or verification during the 
+
+reasoning process. 
+
+Please provide a detailed reasoning between the <think> 
+
+and </think> tags, and then provide your final answer 
+
+between the <answer> and </answer> tags. 
+
+Figure 11. Prompt template for CoT inference. 
+
+with causal masking. Optimization employs AdamW with cosine decay, mixed-precision (bfloat16), gradient accumu-lation, activation checkpointing, and DeepSpeed ZeRO-3 for memory efficiency. The vision encoder remains frozen, while the multimodal projector and LLM backbone are fine-tuned. We regulate video token length via pixel-based con-straints and train for two epochs with an effective sequence length of 8192 tokens. 2Prompt: Subjective Evaluation 
+
+> You are an expert evaluation assistant. Your task is to compare three model outputs based on the given
+> Question and the Ground-Truth Answer.
+> First, carefully read the Question and the Ground-Truth Answer.
+> Then evaluate each model output (A, B, and C) across the following four aspects:
+> Evaluation Criteria (1–10 per dimension)
+> Logic: Evaluate whether the reasoning is coherent, structured, and follows logically from the question.
+> (1–2: illogical; 3–4: inconsistent; 5–6: partially logical; 7–8: mostly logical; 9–10: fully logical)
+> Factuality: Check correctness and absence of factual errors relative to the ground-truth answer.
+> (1–2: mostly incorrect; 3–4: major errors; 5–6: minor errors; 7–8: highly factual; 9–10: fully factual)
+> Accuracy: Assess how precisely the model answers the question and matches the ground-truth answer.
+> (1–2: irrelevant; 3–4: weak alignment; 5–6: partial correctness; 7–8: mostly accurate; 9–10: perfectly
+> accurate)
+> Conciseness: Evaluate clarity and brevity without unnecessary verbosity.
+> (1–2: very verbose or incomplete; 3–4: unfocused; 5–6: somewhat concise; 7–8: concise; 9–10:
+> extremely concise and clear)
+> You should internally consider all four scores for each model to judge overall quality, but DO NOT
+> output the scores.
+> Instead, provide a final decision on which model output is best overall.
+> Final Output Instruction
+> Choose only ONE of the following responses: Best: A; Best: B; Best: C; Best: Tie;
+
+Figure 12. Prompt template for subjective evaluation. Table 4. Training hyperparameters for TaYS. 
+
+Config Value 
+
+input resolution variable (pixel-constrained) max token length 8192 vision encoder frozen trainable modules LLM + MLP projector precision bfloat16 optimizer AdamW learning rate 2 × 10 −5
+
+lr schedule cosine decay warmup ratio 0.03 batch size 1 (grad accum = 16) epochs 2gradient clipping 1.0 gradient checkpointing enabled distributed training torchrun + ZeRO-3 max video frames 60 video token budget 24K tokens (pixel-based) 
+
+D. Evaluation Details 
+
+Construction of Test Set. Following the VideoEspresso protocol, we construct the test set with three distractor options per question. Distractors are designed to match the correct answer in contextual relevance and linguistic form while containing explicit factual inaccuracies, ensur-ing a discriminative evaluation. We apply the same answer-rewriting procedure as in training to maintain consistency. 
+
+Objective Evaluation Protocol. For each sample, we evaluate a free-form prediction ˜y against a reference answer 
+
+y⋆ and multiple-choice options O = {o1, o 2, o 3, o 4}, where 
+
+o⋆ is the correct option. We use a semantic similarity func-tion sim( ·, ·) with a threshold τ = 0 .8.
+
+Stage 1: Reference similarity. We first compute sref =sim(˜ y, y ⋆). If sref < τ , the prediction is deemed incorrect. 
+
+Stage 2: Option discrimination. We compute similari-
+
+Algorithm 2 Two-Stage Objective Evaluation 
+
+Require: Prediction ˜y, reference answer y⋆, options O =
+
+{o1, o 2, o 3, o 4}, correct option o⋆ ∈ O , similarity func-tion sim , threshold τ
+
+1: sref ← sim(˜ y, y ⋆)
+
+2: if sref < τ then 
+
+3: return INCORRECT 4: end if 
+
+5: for each oj ∈ O do 
+
+6: sj ← sim(˜ y, o j )
+
+7: end for 
+
+8: sopt ← sim(˜ y, o ⋆)
+
+9: sneg max ← max {sj : oj ∈ O , o j̸ = o⋆}
+
+10: if sopt ≥ τ and sopt > s neg max then 
+
+11: return CORRECT 12: else 
+
+13: return INCORRECT 14: end if 
+
+ties sj = sim(˜ y, o j ) for all options. Let sopt = sim(˜ y, o ⋆)
+
+and sneg max = max oj̸ =o⋆ sj . A prediction is correct only if: 
+
+sref ≥ τ, sopt ≥ τ, and sopt > s neg max .
+
+Latency Evaluation Protocol. We quantify real-time performance using two metrics: (1) Time to First Token (TTFT) , measuring the interval between the arrival of the first frame and the emission of the first token; (2) Overall Delay , measuring the total time to complete reasoning and produce the final answer. All inferences run on identical hardware with token-level timing resolution to ensure fair comparison. 3

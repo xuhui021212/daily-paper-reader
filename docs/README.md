@@ -6,91 +6,77 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-03-27
-- 运行时间：2026-03-27 20:13:26 UTC
+- 最新运行日期：2026-03-28
+- 运行时间：2026-03-28 19:40:19 UTC
 - 运行状态：成功
-- 本次总论文数：23
-- 精读区：11
+- 本次总论文数：19
+- 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日聚焦 23 篇 AI 前沿进展，重点突破垂体瘤手术实时识别与长视频高效推理技术。
-医疗 AI 在手术导航与康复评估中展现高精度，VideoTIR 则通过工具集成推理刷新了长视频理解上限。
-推荐深入了解 GuiDINO 等医疗视觉大模型，把握 AI 赋能精准医疗与复杂场景分析的新趋势。
-- 详情：[/202603/27/README](/202603/27/README)
+今日聚焦医疗 AI 与 3D 重建，重点解析了 Gastric-X 胃癌多模态基准与 PAS3R 长
+- 详情：[/202603/28/README](/202603/28/README)
 
 ### 精读区论文标签
-1. [SurgPhase: Time efficient pituitary tumor surgery phase recognition via an interactive web platform](/202603/27/2603.24897v1-surgphase-time-efficient-pituitary-tumor-surgery-phase-recognition-via-an-interactive-web-platform)  
-   标签：评分：10.0/10、query:medvid
-   evidence：垂体瘤手术视频中的手术阶段识别
-2. [VideoTIR: Accurate Understanding for Long Videos with Efficient Tool-Integrated Reasoning](/202603/27/2603.25021v1-videotir-accurate-understanding-for-long-videos-with-efficient-tool-integrated-reasoning)  
-   标签：评分：10.0/10、query:lvu
-   evidence：用于长视频理解的高效工具集成推理
-3. [Training-free Detection and 6D Pose Estimation of Unseen Surgical Instruments](/202603/27/2603.25228v1-training-free-detection-and-6d-pose-estimation-of-unseen-surgical-instruments)  
-   标签：评分：10.0/10、query:medvid
-   evidence：手术器械的免训练检测与6D姿态估计
-4. [Towards Comprehensive Real-Time Scene Understanding in Ophthalmic Surgery through Multimodal Image Fusion](/202603/27/2603.25555v1-towards-comprehensive-real-time-scene-understanding-in-ophthalmic-surgery-through-multimodal-image-fusion)  
-   标签：评分：10.0/10、query:medvid
-   evidence：眼科手术中的实时场景理解和器械跟踪
-5. [Colon-Bench: An Agentic Workflow for Scalable Dense Lesion Annotation in Full-Procedure Colonoscopy Videos](/202603/27/2603.25645v1-colon-bench-an-agentic-workflow-for-scalable-dense-lesion-annotation-in-full-procedure-colonoscopy-videos)  
-   标签：评分：10.0/10、query:medvid
-   evidence：全过程结肠镜视频标注与基准
-6. [SkinCLIP-VL: Consistency-Aware Vision-Language Learning for Multimodal Skin Cancer Diagnosis](/202603/27/2603.21010v1-skinclip-vl-consistency-aware-vision-language-learning-for-multimodal-skin-cancer-diagnosis)  
+1. [Gastric-X: A Multimodal Multi-Phase Benchmark Dataset for Advancing Vision-Language Models in Gastric Cancer Analysis](/202603/28/2603.19516v2-gastric-x-a-multimodal-multi-phase-benchmark-dataset-for-advancing-vision-language-models-in-gastric-cancer-analysis)  
    标签：评分：9.0/10、query:medvid
-   evidence：多模态皮肤癌诊断的视觉语言学习
-7. [StreamingClaw Technical Report](/202603/27/2603.22120v2-streamingclaw-technical-report)  
+   evidence：包含内窥镜图像的胃癌分析多模态基准
+2. [PAS3R: Pose-Adaptive Streaming 3D Reconstruction for Long Video Sequences](/202603/28/2603.21436v1-pas3r-pose-adaptive-streaming-3d-reconstruction-for-long-video-sequences)  
    标签：评分：9.0/10、query:lvu
-   evidence：流式视频理解的长时多模态记忆机制
-8. [RS-SSM: Refining Forgotten Specifics in State Space Model for Video Semantic Segmentation](/202603/27/2603.24295v1-rs-ssm-refining-forgotten-specifics-in-state-space-model-for-video-semantic-segmentation)  
-   标签：评分：9.0/10、query:lvu
-   evidence：用于时空视频语义分割的高效状态空间模型
-9. [GIFT: Global Irreplaceability Frame Targeting for Efficient Video Understanding](/202603/27/2603.25072v1-gift-global-irreplaceability-frame-targeting-for-efficient-video-understanding)  
-   标签：评分：9.0/10、query:lvu
-   evidence：通过选择关键帧减少计算成本，实现高效视频理解
-10. [Photon: Speedup Volume Understanding with Efficient Multimodal Large Language Models](/202603/27/2603.25155v1-photon-speedup-volume-understanding-with-efficient-multimodal-large-language-models)  
+   evidence：长视频序列的位姿自适应流式3D重建
+3. [MedOpenClaw: Auditable Medical Imaging Agents Reasoning over Uncurated Full Studies](/202603/28/2603.24649v1-medopenclaw-auditable-medical-imaging-agents-reasoning-over-uncurated-full-studies)  
    标签：评分：9.0/10、query:medvid
-   evidence：用于临床视觉问答和3D医学体数据理解的高效多模态大语言模型
-11. [PackForcing: Short Video Training Suffices for Long Video Sampling and Long Context Inference](/202603/27/2603.25730v1-packforcing-short-video-training-suffices-for-long-video-sampling-and-long-context-inference)  
-   标签：评分：9.0/10、query:lvu
-   evidence：用于长上下文推理和长视频采样的效率 KV 缓存策略
+   evidence：VLM对完整医学研究和多序列卷的推理
+4. [Think-as-You-See: Streaming Chain-of-Thought Reasoning for Large Vision-Language Models](/202603/28/2603.02872v1-think-as-you-see-streaming-chain-of-thought-reasoning-for-large-vision-language-models)  
+   标签：评分：8.0/10、query:lvu
+   evidence：大视觉语言模型的流式思维链推理
+5. [A Skill-augmented Agentic Framework and Benchmark for Multi-Video Understanding](/202603/28/2603.14733v1-a-skill-augmented-agentic-framework-and-benchmark-for-multi-video-understanding)  
+   标签：评分：8.0/10、query:lvu
+   evidence：多视频理解的智能体框架和基准测试
+6. [Relax Forcing: Relaxed KV-Memory for Consistent Long Video Generation](/202603/28/2603.21366v1-relax-forcing-relaxed-kv-memory-for-consistent-long-video-generation)  
+   标签：评分：8.0/10、query:lvu
+   evidence：用于一致性长视频生成的松弛KV内存
+7. [AgentRVOS: Reasoning over Object Tracks for Zero-Shot Referring Video Object Segmentation](/202603/28/2603.23489v1-agentrvos-reasoning-over-object-tracks-for-zero-shot-referring-video-object-segmentation)  
+   标签：评分：8.0/10、query:lvu
+   evidence：对物体轨迹进行推理以实现零样本视频分割
 
 ### 速读区论文标签
-1. [MMTA: Multi Membership Temporal Attention for Fine-Grained Stroke Rehabilitation Assessment](/202603/27/2603.00878v1-mmta-multi-membership-temporal-attention-for-fine-grained-stroke-rehabilitation-assessment)  
+1. [Gated Differential Linear Attention: A Linear-Time Decoder for High-Fidelity Medical Segmentation](/202603/28/2603.02727v2-gated-differential-linear-attention-a-linear-time-decoder-for-high-fidelity-medical-segmentation)  
    标签：评分：8.0/10、query:medvid
-   evidence：使用时序动作分割对康复治疗视频进行自动评估
-2. [GuiDINO: Rethinking Vision Foundation Model in Medical Image Segmentation](/202603/27/2603.01115v1-guidino-rethinking-vision-foundation-model-in-medical-image-segmentation)  
+   evidence：用于保持解剖边界的高保真医学分割的线性时间解码器
+2. [LLandMark: A Multi-Agent Framework for Landmark-Aware Multimodal Interactive Video Retrieval](/202603/28/2603.02888v1-llandmark-a-multi-agent-framework-for-landmark-aware-multimodal-interactive-video-retrieval)  
+   标签：评分：8.0/10、query:lvu
+   evidence：具有自适应推理的多模态交互式视频检索
+3. [ProSMA-UNet: Decoder Conditioning for Proximal-Sparse Skip Feature Selection](/202603/28/2603.03187v1-prosma-unet-decoder-conditioning-for-proximal-sparse-skip-feature-selection)  
    标签：评分：8.0/10、query:medvid
-   evidence：用于医学图像分割的基础视觉模型
-3. [Preoperative-to-intraoperative Liver Registration for Laparoscopic Surgery via Latent-Grounded Correspondence Constraints](/202603/27/2603.01720v1-preoperative-to-intraoperative-liver-registration-for-laparoscopic-surgery-via-latent-grounded-correspondence-constraints)  
-   标签：评分：8.0/10、query:medvid
-   evidence：腹腔镜手术肝脏配准
-4. [Gated Differential Linear Attention: A Linear-Time Decoder for High-Fidelity Medical Segmentation](/202603/27/2603.02727v1-gated-differential-linear-attention-a-linear-time-decoder-for-high-fidelity-medical-segmentation)  
-   标签：评分：8.0/10、query:medvid
-   evidence：用于医学分割的线性时间解码器
-5. [LRConv-NeRV: Low Rank Convolution for Efficient Neural Video Compression](/202603/27/2603.18261v1-lrconv-nerv-low-rank-convolution-for-efficient-neural-video-compression)  
+   evidence：低对比度临床成像中医学图像分割的稀疏跳跃特征选择
+4. [FC-VFI: Faithful and Consistent Video Frame Interpolation for High-FPS Slow Motion Video Generation](/202603/28/2603.04899v1-fc-vfi-faithful-and-consistent-video-frame-interpolation-for-high-fps-slow-motion-video-generation)  
+   标签：评分：8.0/10、query:lvu
+   evidence：高帧率视频生成的时序建模
+5. [ReXInTheWild: A Unified Benchmark for Medical Photograph Understanding](/202603/28/2603.19517v1-rexinthewild-a-unified-benchmark-for-medical-photograph-understanding)  
+   标签：评分：7.0/10、query:medvid
+   evidence：医学照片理解和领域特定推理的基准
+6. [CS-MUNet: A Channel-Spatial Dual-Stream Mamba Network for Multi-Organ Segmentation](/202603/28/2603.19659v1-cs-munet-a-channel-spatial-dual-stream-mamba-network-for-multi-organ-segmentation)  
+   标签：评分：7.0/10、query:medvid
+   evidence：基于 Mamba 的网络用于医学影像中的多器官分割
+7. [PCSTracker: Long-Term Scene Flow Estimation for Point Cloud Sequences](/202603/28/2603.19762v1-pcstracker-long-term-scene-flow-estimation-for-point-cloud-sequences)  
    标签：评分：7.0/10、query:lvu
-   evidence：针对完整视频序列的高效神经视频压缩
-6. [Interpretable Prostate Cancer Detection using a Small Cohort of MRI Images](/202603/27/2603.18460v1-interpretable-prostate-cancer-detection-using-a-small-cohort-of-mri-images)  
+   evidence：点云序列的长期场景流估计
+8. [Hyper-Connections for Adaptive Multi-Modal MRI Brain Tumor Segmentation](/202603/28/2603.19844v1-hyper-connections-for-adaptive-multi-modal-mri-brain-tumor-segmentation)  
    标签：评分：7.0/10、query:medvid
-   evidence：使用MRI图像序列进行自动前列腺癌检测
-7. [CoDA: Exploring Chain-of-Distribution Attacks and Post-Hoc Token-Space Repair for Medical Vision-Language Models](/202603/27/2603.18545v1-coda-exploring-chain-of-distribution-attacks-and-post-hoc-token-space-repair-for-medical-vision-language-models)  
-   标签：评分：7.0/10、query:medvid
-   evidence：临床工作流中医学视觉语言模型的鲁棒性
-8. [Benchmarking CNN-based Models against Transformer-based Models for Abdominal Multi-Organ Segmentation on the RATIC Dataset](/202603/27/2603.18616v1-benchmarking-cnn-based-models-against-transformer-based-models-for-abdominal-multi-organ-segmentation-on-the-ratic-dataset)  
-   标签：评分：7.0/10、query:medvid
-   evidence：腹部多器官分割的 Transformer 模型基准测试
-9. [FILT3R: Latent State Adaptive Kalman Filter for Streaming 3D Reconstruction](/202603/27/2603.18493v1-filt3r-latent-state-adaptive-kalman-filter-for-streaming-3d-reconstruction)  
+   evidence：用于医学图像/视频分割的深度学习
+9. [Efficiency Follows Global-Local Decoupling](/202603/28/2603.19567v1-efficiency-follows-global-local-decoupling)  
    标签：评分：6.0/10、query:lvu
-   evidence：用于流式视频帧重建的潜状态自适应滤波
-10. [Efficient Video Diffusion with Sparse Information Transmission for Video Compression](/202603/27/2603.18501v1-efficient-video-diffusion-with-sparse-information-transmission-for-video-compression)  
-   标签：评分：6.0/10、query:lvu
-   evidence：高效视频扩散与稀疏时间编码
-11. [CAFlow: Adaptive-Depth Single-Step Flow Matching for Efficient Histopathology Super-Resolution](/202603/27/2603.18513v1-caflow-adaptive-depth-single-step-flow-matching-for-efficient-histopathology-super-resolution)  
+   evidence：用于全局上下文聚合的神经记忆分支
+10. [Hyper-Connections for Adaptive Multi-Modal MRI Brain Tumor Segmentation](/202603/28/2603.19844v2-hyper-connections-for-adaptive-multi-modal-mri-brain-tumor-segmentation)  
    标签：评分：6.0/10、query:medvid
-   evidence：针对十亿像素全切片图像的高效组织病理学超分辨率
-12. [Training-Free Sparse Attention for Fast Video Generation via Offline Layer-Wise Sparsity Profiling and Online Bidirectional Co-Clustering](/202603/27/2603.18636v1-training-free-sparse-attention-for-fast-video-generation-via-offline-layer-wise-sparsity-profiling-and-online-bidirectional-co-clustering)  
+   evidence：体积多模态 MRI 脑肿瘤分割
+11. [MedQ-Engine: A Closed-Loop Data Engine for Evolving MLLMs in Medical Image Quality Assessment](/202603/28/2603.19863v1-medq-engine-a-closed-loop-data-engine-for-evolving-mllms-in-medical-image-quality-assessment)  
+   标签：评分：6.0/10、query:medvid
+   evidence：用于医学图像质量评估的多模态大语言模型
+12. [GHOST: Ground-projected Hypotheses from Observed Structure-from-Motion Trajectories](/202603/28/2603.20583v2-ghost-ground-projected-hypotheses-from-observed-structure-from-motion-trajectories)  
    标签：评分：6.0/10、query:lvu
-   evidence：用于快速视频生成和3D注意力的效率算法
+   evidence：从大规模行车记录仪视频中自监督分割轨迹
 
 
 <div class="dpr-home-promo-card">
