@@ -1,0 +1,916 @@
+Title: Temporal Gains, Spatial Costs: Revisiting Video Fine-Tuning in Multimodal Large Language Models
+
+URL Source: https://arxiv.org/pdf/2603.17541v1
+
+Published Time: Thu, 19 Mar 2026 01:03:35 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Temporal Gains, Spatial Costs: Revisiting Video Fine-Tuning in Multimodal Large Language Models 
+
+Linghao Zhang 1,4 * Jungang Li 2,3 * Yonghua Hei 2,3 Sicheng Tao 2 Song Dai 2,3 
+
+Yibo Yan 2,3 Zihao Dongfang 2,3 Weiting Liu 5 Chenxi Qin 7 Hanqian Li 2
+
+Xin Zou 2,3 Jiahao Zhang 2 Shuhang Xun 6
+
+Haiyun Jiang 1 † Xuming Hu 2,3 † 1SJTU, 2HKUST(GZ), 3HKUST, 4CityU, 5FDU, 6HIT, 7TJU 
+
+Abstract 
+
+Multimodal large language models (MLLMs) are typically trained in multiple stages, with video-based supervised fine-tuning (Video-SFT) serving as a key step for improving visual understanding. Yet its effect on the fine-grained evolution of visual capabilities, particularly the balance between spatial and temporal under-standing, remains poorly understood. In this paper, we systematically study how Video-SFT reshapes visual capabilities in MLLMs. Across architectures, parameter scales, and frame sam-pling settings, we observe a consistent pattern: 
+
+Video-SFT reliably improves video perfor-mance, but often yields limited gains or even degradation on static image benchmarks. 
+
+We further show that this trade-off is closely tied to temporal budget: increasing the number of sampled frames generally improves video performance, but does not reliably improve static image performance. Motivated by this finding, we study an instruction-aware Hybrid-Frame strategy that adaptively allocates frame counts and partially mitigates the image-video trade-off. Our results indicate that Video-SFT is not a free lunch for MLLMs, and preserv-ing spatial understanding remains a central challenge in joint image-video training. 
+
+1 Introduction 
+
+The rapid progress of Multimodal Large Language Models (MLLMs) has substantially advanced vi-sual understanding, extending model capabilities from static images to more general visual model-ing over both images and videos (Yin et al., 2024; Xu et al., 2025; Liu et al., 2025; Xun et al., 2025). Recent models such as Qwen2.5-VL (Bai et al., 2025b) and LLaVA-OneVision (Li et al., 2024a) show that unified language–vision frameworks can achieve strong performance across diverse tasks, in-cluding image captioning, visual question answer-
+
+> *Equal contribution.
+> †Corresponding author.
+
+Figure 1: Overview of the temporal trap and our study. (A) Illustration of the temporal trap : Video-SFT improves video performance but can weaken spa-tial capability on static images. (B) Image and video benchmarks used in our experiments. (C) Main study dimensions: architecture, scale, frame budget, and task. 
+
+(D) Hybrid-Frame Strategy , which adaptively assigns a suitable frame budget to each training sample and par-tially mitigates the image–video trade-off. 
+
+ing, and video reasoning (Liu et al., 2023; Dai et al., 2023). Gemini 2.5 (Comanici et al., 2025) utilizes a natively multimodal architecture to sup-port long-context understanding, enabling the pro-cessing of up to 3 hours of video content. Kimi K2.5 (Team et al., 2026) leverages joint text-vision pre-training and the MoonViT-3D architecture to enhance the understanding capabilities for both im-ages and videos. As videos can be naturally viewed as sequences of images, a growing line of work seeks to model image and video inputs within a shared visual space using common visual encoders and unified align-ment mechanisms (Jin et al., 2024; Wang et al., 2023; Panagopoulou et al., 2024; Tang et al., 2025; 1
+
+> arXiv:2603.17541v1 [cs.CV] 18 Mar 2026
+
+Zhang et al., 2024a). Under this trend, video-based supervised fine-tuning (Video-SFT) has become a widely adopted post-training strategy for improv-ing video understanding. A common underlying assumption is that Video-SFT not only strengthens temporal modeling, but also benefits unified visual learning more broadly. If this assumption holds, then improving video un-derstanding should at least preserve, if not enhance, the model’s capability on static image tasks. How-ever, despite the growing adoption of joint or staged image–video training, this assumption has not been systematically examined (Gao et al., 2025; Zeng et al., 2024; Li et al., 2024b). It remains unclear whether progress in video understanding reliably transfers to image understanding in MLLMs. To study this question, we conduct a systematic analysis of how Video-SFT reshapes visual capa-bilities in MLLMs. Under a unified Video-SFT pipeline, we evaluate representative model families across architectural designs, parameter scales, and frame sampling settings on a broad set of image and video benchmarks. As shown in Figure 1, a consistent pattern emerges: Video-SFT reliably im-proves video performance, but often yields limited gains or even degradation on image benchmarks. We term this recurring image–video trade-off the temporal trap. We further show that this trade-off is closely tied to temporal budget: increasing the number of sam-pled frames generally improves video performance, but does not reliably improve image performance. To better understand this behavior, we provide a conservative theoretical analysis that identifies suf-ficient conditions under which video-oriented up-dates can interfere with image objectives under shared-parameter optimization, and explains why larger frame budgets can intensify this conflict. Mo-tivated by these findings, we study an instruction-aware Hybrid-Frame Strategy that adaptively al-locates frame counts according to the spatiotempo-ral demands of each instruction. Experiments show that it can partially mitigate the trade-off while reducing redundant temporal exposure. Our contributions are three-fold: 
+
+❶ We systematically study how Video-SFT reshapes image and video capabilities in MLLMs. 
+
+❷ We identify a consistent image–video trade-off under Video-SFT, termed the temporal trap , and relate it to temporal budget. 
+
+❸ We provide a conservative theoretical account of this trade-off and show that adaptive frame allocation can partially mitigate it. 
+
+2 Related Work 
+
+2.1 Evolution of MLLMs 
+
+Recent advancements in MLLMs have increasingly emphasized unified visual modeling, where images and videos are processed under a shared architec-tural and training framework (Huang et al., 2024; Shu et al., 2025). Qwen2.5-VL (Bai et al., 2025b) introduces Multimodal Rotary Position Embedding (MRoPE) to jointly encode spatial and temporal positions for tokens. Qwen3-VL (Bai et al., 2025a) further adopts an Interleaved-MRoPE, achieving full-frequency coverage of spatial–temporal infor-mation. Cambrian-1 investigates the role of visual tokens in image-centric MLLMs during both train-ing and inference, while Cambrian-S extends this line to long-video spatial reasoning (Tong et al., 2024; Yang et al., 2025). However, a systematic analysis of how Video-SFT influences unified cross-modal visual representation remains lacking. 
+
+2.2 Challenges in Post-training of MLLMs 
+
+Recent studies show that continual tuning (Shi et al., 2025) can lead to gradient conflicts (Wei et al., 2025) when models adapt to new tasks or modalities, introducing negative transfer and catas-trophic forgetting (Zhai et al., 2024; Lin et al., 2025; Hua et al., 2025). Recent benchmarks and frameworks have also focused on these chal-lenges (Yu et al., 2025; Zhao et al., 2025). Prior studies focus on modality conflicts between text and vision in MLLMs under instruction tuning, while conflicts between image and video modali-ties remain underexplored. In contrast, our work systematically investigates the balance between im-age and video capabilities in MLLMs under Video-SFT, and shows that adaptive frame allocation can partially mitigate the trade-off between image and video performance. 
+
+3 Experimental Setup and Overview 
+
+3.1 Problem Setting 
+
+Our study focuses on MLLMs under Video-SFT and systematically analyzes how Video-SFT affects two core visual capabilities: image understanding and video understanding. As videos can be nat-urally viewed as sequences of images, improve-ments in image understanding during the Video-2SFT stage are expected. However, our results re-veal a different phenomenon: MLLMs exhibit a conflict between image and video modalities. After Video-SFT, video understanding improves while image understanding degrades. We refer to this phenomenon as the temporal trap. 
+
+3.2 Study Dimensions 
+
+We conduct systematic experiments along three key dimensions. 
+
+♣ Model architecture : Representative MLLMs including Qwen2.5-VL, LLaVA-Next-Video, and LLaVA-1.5. 
+
+♦ Model scale : Four scales of Qwen2.5-VL with 3B, 7B, 32B, and 72B parameters. 
+
+♠ Frame sampling setting : Videos are uni-formly sampled with 8, 16, 32, and 64 frames during Video-SFT. 
+
+3.3 Datasets and Evaluation 
+
+Based on the LLaVA-Next-Video-178k (Zhang et al., 2024b) dataset, we curate a training dataset of 20,000 videos collected from 10 different sources, covering diverse instruction formats such as textual descriptions, open-ended questions, and multiple-choice questions to ensure substantial data diversity. Training data statistics are reported in the supple-mentary material. Evaluation datasets are selected from commonly used benchmarks for MLLMs. The image bench-marks include MME (Fu et al., 2023), MM-Star (Chen et al., 2024), MMBench (Liu et al., 2024a), and POPE (Li et al., 2023), while the video benchmarks consist of Video-MME (Fu et al., 2025), MVBench (Li et al., 2024b), TempCom-pass (Liu et al., 2024b), and Video-MMMU (Hu et al., 2025). These benchmarks cover the core visual abilities, including coarse- and fine-grained perception, cognition, and hallucination. 
+
+4 The Temporal Trap behind Visual Modality Conflict 
+
+Although videos are composed of sequences of im-ages and share the same visual encoder, improve-ments in video understanding do not transfer to static image understanding. We observe a system-atic trade-off: Video-SFT enhances video perfor-mance while often degrading image performance. We refer to this phenomenon as the temporal trap, Video-MME   
+
+> Video-MMMU
+> MVBench
+> TempCompass 3.67
+> 16.62
+> 29.56
+> 42.51
+> 55.46
+> 68.40
+> Accuracy (%)
+> Video-MME
+> Video-MMMU
+> MVBench
+> TempCompass 13.11
+> 25.05
+> 36.99
+> 48.93
+> 60.87
+> 72.81
+> Video-MME
+> Video-MMMU
+> MVBench
+> TempCompass 39.22
+> 48.10
+> 56.99
+> 65.87
+> 74.76
+> 83.64
+> Video-MME
+> Video-MMMU
+> MVBench
+> TempCompass 49.55
+> 57.27
+> 64.98
+> 72.70
+> 80.42
+> 88.14
+> 937
+> 1156
+> 1375
+> 1594
+> 1813
+> 2032
+> Score
+> 1419
+> 1543
+> 1668
+> 1792
+> 1917
+> 2041
+> 2095
+> 2219
+> 2343
+> 2466
+> 2590
+> 2714
+> 2158
+> 2272
+> 2385
+> 2498
+> 2612
+> 2726
+> MMStar
+> MMBench
+> POPE
+> MME 20.00
+> 36.00
+> 52.00
+> 68.00
+> 84.00
+> 100.00
+> Accuracy (%)
+> LLaVA-1.5-7B
+> Base
+> SFT
+> MMStar
+> MMBench
+> POPE
+> MME 20.00
+> 36.00
+> 52.00
+> 68.00
+> 84.00
+> 100.00
+> LLaVA-NeXT-Video-7B
+> MMStar
+> MMBench
+> POPE
+> MME 20.00
+> 36.00
+> 52.00
+> 68.00
+> 84.00
+> 100.00 Qwen2.5-VL-7B
+> MMStar
+> MMBench
+> POPE
+> MME 20.00
+> 36.00
+> 52.00
+> 68.00
+> 84.00
+> 100.00 Qwen2.5-VL-32B
+> Image Benchmark Video Benchmark
+
+Figure 2: Comparison of image and video benchmark performance before and after Video-SFT across differ-ent MLLMs. ▼ denotes performance degradation after SFT, whereas ▲ indicates performance improvement. 
+
+which reflects an intrinsic conflict between tem-poral adaptation and spatial visual reasoning. To better understand this phenomenon, we analyze it along three key dimensions: model architecture (Sec. 4.1), model scale (Sec. 4.2), and fine-tuning frame count (Sec. 4.3). 
+
+4.1 Impact of Model Architecture 
+
+Figure 2 shows a consistent trend in all architec-tures evaluated. After Video-SFT, the performance on the video benchmarks improves for nearly ev-ery model, while most image benchmarks exhibit clear degradation. This pattern reveals a clear con-flict between image and video modalities: although Video-SFT improves video understanding, it simul-taneously weakens static image reasoning. The magnitude of the conflict varies across architectures. LLaVA-1.5 exhibits the largest performance drop in the image benchmarks, while LLaVA-NeXT-Video shows a smaller gap. Qwen2.5-VL remains comparatively stable, indi-cating that stronger spatial–temporal alignment and Is there a bird   
+
+> in the image?
+> Base
+> SFT
+> Qwen2.5-VL-7B Qwen2.5-VL-32B Qwen2.5-VL-72B
+
+Figure 3: Cross-scale attention visualizations before and after Video-SFT on Qwen2.5-VL models (7B, 32B, 72B). For the query “Is there a bird in the image?”, attention becomes more dispersed in smaller models after Video-SFT, while larger models retain more lo-calized focus on the target object, suggesting improved robustness to the temporal trap. 
+
+33 7 32 72                           
+
+> Size of Model (B)
+> 2149
+> 2220
+> 2291
+> 2362
+> 2433
+> 2504
+> Score
+> MME
+> Base
+> SFT
+> 3732 72
+> 52.33
+> 56.13
+> 59.93
+> 63.73
+> 67.53
+> 71.33
+> Accuracy (%)
+> MMStar
+> 3732 72
+> 81.92
+> 84.23
+> 86.53
+> 88.84
+> 91.14
+> 93.45 MMBench
+> 3732 72
+> 83.82
+> 85.24
+> 86.67
+> 88.09
+> 89.52
+> 90.94 POPE
+> 3732 72
+> 48.11
+> 51.15
+> 54.20
+> 57.24
+> 60.29
+> 63.33
+> Accuracy (%)
+> Video-MME
+> 3732 72
+> 41.44
+> 45.04
+> 48.64
+> 52.24
+> 55.84
+> 59.44 Video-MMMU
+> 3732 72
+> 54.96
+> 57.29
+> 59.63
+> 61.96
+> 64.30
+> 66.63 MVBench
+> 3732 72
+> 62.94
+> 65.97
+> 69.00
+> 72.04
+> 75.07
+> 78.10 TempCompass
+> Image Benchmark Video Benchmark
+
+Figure 4: Comparison of image and video benchmark performance before and after Video-SFT across different scale Qwen2.5-VL models, including 3B, 7B, 32B and 72B parameters. 
+
+mixed image–video pre-training can partially mit-igate the conflict. Nevertheless, the temporal trap persists across all architectures. 
+
+4.2 Impact of Model Size 
+
+Figure 4 shows that increasing model scale can partially mitigate the negative effect of Video-SFT on image understanding. However, this mitigation is not strictly monotonic. From 3B to 32B, the image benchmark performance after Video-SFT still exhibits noticeable fluctuations across datasets rather than a consistent improvement trend. For the 72B model, the post-SFT performance becomes comparable to, or even slightly better than, the base model on most image benchmarks. Figure 3 provides further evidence for this obser-vation. As the model size increases, the attention of the target object shifts from being scattered to being concentrated after Video-SFT. This suggests that larger models are better able to preserve stable spatial representations under the temporal trap. Although the 72B model shows the most stable behavior, performance of models from 3B to 32B still shows fluctuations. Moreover, in many scenar-ios, the additional cost associated with using larger models is often prohibitive. 
+
+4.3 Impact of Fine-tuning Frame Count 
+
+As shown in Figure 5, increasing the number of training frames consistently improves the perfor-mance of the video benchmarks, confirming the importance of temporal information for video un-derstanding. However, the gain gradually saturates as the frame count increases, indicating diminish-ing returns from additional temporal input. For image benchmarks, performance on MME consistently underperforms the base model across all frame settings after Video-SFT. MMStar ex-hibits a gradual improvement as the number of training frames increases, but the gain clearly slows down at higher frame counts. The perfor-mance on MMBench and POPE exhibits an in-crease–then–decrease trend as the number of train-ing frames increases. These results suggest that redundant temporal information during Video-SFT can disrupt the model’s static visual representations and weaken its generalization on image tasks, leading to the temporal trap phenomenon. 
+
+5 Theoretical Analysis 
+
+In this section, we provide a conservative theoreti-cal account of why Video-SFT may improve video performance while degrading spatial capability in unified MLLMs, and why adaptive frame alloca-tion can mitigate this effect. Rather than claiming a complete internal mechanism, we derive local suf-ficient conditions under which the observed image– video trade-off can arise under shared-parameter optimization. 
+
+5.1 Preliminaries and Notation 
+
+Let θ ∈ Rd denote the trainable parameters of a uni-fied MLLM. Let x denote an image input, v a video input, q a textual instruction or question, and y the supervision target (e.g., an answer token sequence 48 16 32 64 
+
+> Number of Training Frames
+> 2280
+> 2316
+> 2352
+> 2388
+> 2424
+> 2460
+> Score
+
+MME    
+
+> Base
+> SFT
+> 816 32 64
+> 59.67
+> 60.59
+> 61.51
+> 62.43
+> 63.35
+> 64.27
+> Accuracy (%)
+
+MMStar     
+
+> 816 32 64
+> 85.41
+> 86.30
+> 87.19
+> 88.09
+> 88.98
+> 89.87
+
+MMBench     
+
+> 816 32 64
+> 85.82
+> 86.70
+> 87.57
+> 88.45
+> 89.32
+> 90.20
+
+POPE    
+
+> 816 32 64
+> 49.19
+> 52.14
+> 55.09
+> 58.03
+> 60.98
+> 63.93
+> Accuracy (%)
+
+Video-MME     
+
+> 816 32 64
+> 42.22
+> 44.46
+> 46.71
+> 48.95
+> 51.20
+> 53.44
+
+Video-MMMU     
+
+> 816 32 64
+> 60.68
+> 62.53
+> 64.38
+> 66.22
+> 68.07
+> 69.92
+
+MVBench     
+
+> 816 32 64
+> 68.69
+> 70.50
+> 72.31
+> 74.11
+> 75.92
+> 77.73
+
+TempCompass 
+
+> Image Benchmark Video Benchmark
+
+Figure 5: Comparison of performance on image and video benchmarks before and after Video-SFT across 8/16/32/64 training frames on Qwen2.5-VL-7B model. 
+
+or class label). Let ℓ(·, ·) denote the training loss, and let Φm(v) be a frame sampling operator that extracts m frames from video v, where m is the temporal budget. We consider the population objectives 
+
+Limg (θ) = E(x,q,y )∼D img 
+
+ℓ(fθ(x, q ), y ), (1) and 
+
+L(m)vid (θ) = E(v,q,y )∼D vid 
+
+ℓ(fθ(Φ m(v), q ), y ), (2) where the superscript m emphasizes that the video objective depends on the temporal budget. We write 
+
+gimg := ∇θLimg (θ), g (m)vid := ∇θL(m)vid (θ), (3) and denote the corresponding Hessians by 
+
+Himg (θ) := ∇2
+
+> θ
+
+Limg (θ), H (m)vid (θ) := ∇2
+
+> θ
+
+L(m)vid (θ). (4) A single Video-SFT gradient step updates pa-rameters as 
+
+θ+ = θ − ηg (m)vid , (5) where η > 0 is the learning rate. 
+
+Definition 1 (Gradient alignment). For two ob-jectives La and Lb, define their local alignment at 
+
+θ as 
+
+Align( La, Lb; θ) := ⟨∇ θLa(θ), ∇θLb(θ)⟩ . (6) Positive alignment indicates locally cooperative optimization directions, while negative alignment indicates local conflict. 
+
+Assumption 1 (Local smoothness). There ex-ist constants βimg > 0 and β(m)vid > 0 such that 
+
+∇θLimg and ∇θL(m)vid are Lipschitz continuous in a neighborhood of θ. Equivalently, whenever the Hessians exist in that neighborhood, 
+
+∥Himg (θ′)∥2 ≤ βimg , ∥H(m)vid (θ′)∥2 ≤ β(m)vid (7) for all θ′ in that neighborhood. 
+
+Assumption 2 (Shared-parameter coupling). 
+
+Image and video objectives are optimized through the same parameter vector θ, so updates for one objective can affect the other through gradient in-teraction. 
+
+5.2 A First-Order Condition for Image Degradation Under Video-SFT 
+
+Video-SFT directly optimizes L(m)vid , not Limg .Whether spatial capability is preserved therefore depends on how the video gradient aligns with the image gradient in the shared parameter space. By the second-order Taylor theorem, there exists a point ˜θimg on the line segment between θ and θ+
+
+such that 
+
+Limg (θ+) = Limg (θ) − η⟨gimg , g (m)vid ⟩
+
++ η2
+
+2
+
+ g(m)vid 
+
+⊤Himg (˜θimg )g(m)vid .
+
+(8) 
+
+Proposition 1 (Local sufficient condition for im-age loss increase). Assume Assumption 1 holds and g(m)vid ̸ = 0 . If 
+
+⟨gimg , g (m)vid ⟩ < 0, (9) 5then there exists η0 > 0 such that, for all 0 < η < η0, one Video-SFT step increases the image loss: 
+
+Limg (θ+) > Limg (θ). (10) In particular, it suffices to take 
+
+0 < η < −2⟨gimg , g (m)vid ⟩
+
+βimg ∥g(m)vid ∥22
+
+. (11) 
+
+Proof. From Eq. (8) and Assumption 1, 
+
+ g(m)vid 
+
+⊤Himg (˜θimg )g(m)vid ≤ βimg ∥g(m)vid ∥22. (12) Therefore, 
+
+Limg (θ+) − L img (θ) ≥ − η⟨gimg , g (m)vid ⟩− βimg 
+
+2 η2∥g(m)vid ∥22.
+
+(13) If Eq. (9) holds, then the first term on the right-hand side is strictly positive. Moreover, if Eq. (11) holds, the right-hand side of Eq. (13) remains strictly pos-itive. Hence Limg (θ+) > Limg (θ). □
+
+Proposition 1 formalizes a local sufficient condi-tion under which Video-SFT can be harmful to im-age performance: a video-driven update may still increase the image loss when the two objectives are negatively aligned in the shared parameter space. This is a standard negative-transfer phenomenon in shared-parameter learning (Yu et al., 2020; Zhang et al., 2022). By the descent lemma under Assumption 1, the same update satisfies           
+
+> L(m)vid (θ+)≤ L (m)vid (θ)−η
+> 
+> 1−β(m)vid
+> 2η
+> 
+> ∥g(m)vid ∥22.
+
+(14) Hence, for any 0 < η < 2/β (m)vid , the video ob-jective decreases. Thus, video improvement and image degradation are not contradictory; they can coexist when the video update is locally beneficial for L(m)vid but negatively aligned with Limg .
+
+Remark 1 (Population objective and minibatch training). Proposition 1 is a local population-level statement. In practical Video-SFT, the full gradient g(m)vid is replaced by a minibatch estima-tor. Under standard unbiasedness assumptions, the same result motivates the expected tendency of im-age loss increase when the expected alignment is negative. 
+
+Remark 2 (Implication for multi-stage post-training). In current MLLM pipelines, Video-SFT is typically applied as a late-stage post-training phase starting from a checkpoint that already has strong spatial capability. A smaller learning rate reduces the magnitude of each individual update, but repeated small updates with persistently biased alignment can still accumulate into measurable spa-tial degradation over training, especially because the image objective is no longer explicitly opti-mized in this phase. 
+
+5.3 Temporal Budget as a Source of Gradient Bias 
+
+The previous result explains when image degrada-tion can happen. We now analyze why the temporal budget m can affect its severity. For analytical convenience, we consider the fol-lowing stylized local decomposition: 
+
+g(m)vid = gsh + α(m) gtmp + ε(m), (15) where gsh denotes a shared visual component use-ful to both image and video understanding, gtmp de-notes a temporally specialized component induced by video-specific adaptation, and ε(m) is a residual term capturing sampling noise, redundancy, and sample-specific nuisance variation. The coefficient 
+
+α(m) ≥ 0 measures how strongly temporal spe-cialization enters the update as more frames are used. Taking inner products with gimg gives        
+
+> ⟨gimg , g (m)vid ⟩=⟨gimg , g sh ⟩+α(m)⟨gimg , g tmp ⟩
+> +⟨gimg , ε (m)⟩.
+
+(16) We consider the following average-case assump-tions. 
+
+Assumption 3 (Positive shared alignment). 
+
+E⟨gimg , g sh ⟩ > 0. (17) This reflects the fact that image and video tasks share nontrivial spatial semantics. 
+
+Assumption 4 (Non-positive temporal align-ment). 
+
+E⟨gimg , g tmp ⟩ ≤ 0. (18) This captures the possibility that temporally spe-cialized adaptation competes with spatial capability preservation in shared parameters. 6Assumption 5 (Unbiased residual interaction). 
+
+E⟨gimg , ε (m)⟩ = 0 , (19) while Var( ε(m)) is non-decreasing in m once ad-ditional frames become redundant for a subset of samples. 
+
+E
+
+hD 
+
+gimg , g (m)vid 
+
+Ei 
+
+= ρsh − α(m)ρtmp . (20) where 
+
+ρsh := E[⟨gimg , g sh ⟩] > 0,ρtmp := − E[⟨gimg , g tmp ⟩] ≥ 0. (21) Let M ⊂ N denote the set of admissible frame budgets. 
+
+Proposition 2 (A discrete temporal-budget threshold). Suppose α(m) is non-decreasing on 
+
+M, and define 
+
+m⋆ := min m ∈ M : α(m)ρtmp ≥ ρsh , (22) provided the set is nonempty. Then 
+
+E⟨gimg , g (m)vid ⟩ (
+
+> 0, m < m ⋆,
+
+≤ 0, m ≥ m⋆. (23) Moreover, if for some admissible m one has 
+
+α(m)ρtmp = ρsh , then the expected alignment is exactly zero at that budget. 
+
+Interpretation. Proposition 2 formalizes one suf-ficient mechanism by which increasing temporal budget can flip the expected transfer from coopera-tive to conflicting. As m grows, the update places increasing weight on temporally specialized adap-tation. Once this component dominates the shared spatial benefit, the average alignment with the im-age objective becomes non-positive. 
+
+5.4 Why Adaptive Frame Allocation is Theoretically Justified 
+
+The previous results imply that temporal budget should not be treated as a globally fixed constant. We now formalize why sample-adaptive frame al-location is a sensible intervention. Let (V, Q, Y ) denote the random video– instruction–target triple. Assume there exists a sample-wise minimal sufficient temporal budget 
+
+mmin (V, Q ) such that 
+
+Y ⊥⊥ V | Φmmin (V,Q )(V ), Q. (24) For a realized sample (v, q ), we write mmin (v, q )
+
+for its minimal sufficient budget. This assump-tion captures the fact that some instructions require only sparse temporal evidence, while others require denser temporal coverage. Let m⋆ := mmin (v, q ). For any fixed (v, q ) and any budget m ≥ m⋆, if the additional frames be-yond m⋆ are predominantly redundant, they need not improve alignment with the image objective, but can increase the second moment of the video gradient. We summarize this regime by 
+
+E
+
+hD 
+
+gimg , g (m)vid 
+
+Ei 
+
+≤ E
+
+hD 
+
+gimg , g (m⋆)vid 
+
+Ei 
+
+, (25) where both expectations are conditioned on the fixed pair (v, q ).and          
+
+> E∥g(m)vid ∥22|v, q ≥E∥g(mmin (v,q )) vid ∥22|v, q .
+
+(26) By Assumption 1, the image objective satisfies the smoothness bound        
+
+> Limg (θ+)− L img (θ)≤ − η⟨gimg , g (m)vid ⟩
+> +βimg
+> 2η2∥g(m)vid ∥22.
+
+(27) 
+
+Proposition 3 (Adaptive budgeting under redun-dancy). Assume Eq. (24), Eq. (25), and Eq. (26) hold. Then for any realized sample (v, q ), choosing 
+
+m(v, q ) = mmin (v, q ) minimizes the smoothness-based upper bound 
+
+− η E
+
+hD 
+
+gimg , g (m)vid 
+
+E
+
+v, q 
+
+i
+
++ βimg 
+
+2 η2E
+
+
+
+g(m)vid  
+
+> 22
+
+v, q 
+
+ (28) among all choices m ≥ mmin (v, q ).
+
+Interpretation. Proposition 3 justifies adaptive frame allocation: use fewer frames for temporally simple samples and more for temporally demand-ing ones. When temporal sufficiency is sample-dependent, a sample-wise budget is better than a uniform one. Hybrid-Frame follows this principle by preserving necessary temporal evidence while avoiding redundancy. 
+
+5.5 Summary and Connection to Empirical Findings 
+
+The analysis suggests two main points. First, Video-SFT can improve video performance while degrading spatial capability when video-oriented updates are negatively aligned with the image ob-jective. Second, this trade-off can intensify with 7temporal budget if larger frame counts strengthen temporally specialized updates more than shared spatial benefit. Thus, the observed image–video trade-off can arise naturally from shared-parameter optimization. 
+
+Connection to Empirical Findings. Proposi-tion 1 accounts for the coexistence of video gains and spatial degradation. Proposition 2 shows how increasing frame budget can turn expected transfer from cooperative to conflicting. Proposition 3 mo-tivates adaptive frame allocation as a conservative way to reduce redundant temporal exposure. To-gether, these results provide a principled lens on the observed temporal trap. 
+
+6 Hybrid-Frame Strategy 
+
+Motivated by the adaptive budgeting principle in Eq. (24) and Proposition 3, we implement a 
+
+Hybrid-Frame Strategy and evaluate it empiri-cally. The goal is simple: allocate enough frames to preserve task-relevant temporal evidence, while avoiding redundant temporal exposure. We com-pare three frame allocation schemes: (i) a DINOv2-based strategy using inter-frame similarity, (ii) a VLM-based predictor built on Qwen2.5-VL-3B, and (iii) a VLM-based predictor built on Qwen3-VL-8B. As shown in Table 1, the DINOv2-based method is not sufficiently reliable, whereas both VLM-based predictors yield consistent improve-ments. Although Qwen3-VL-8B achieves the best overall performance, Qwen2.5-VL-3B also per-forms competitively, suggesting that instruction-aware frame allocation is effective even with rela-tively small predictors. 
+
+Table 1: Comparison of frame allocation strategies for Video-SFT on the Qwen2.5-VL-7B, training and inference using 8 frames.                      
+
+> Setting Image Video MMStar POPE Video-MME Video-MMMU
+> Base 62.07 88.03 51.19 44.22 DINOv2-based 61.40 ↓87.91 ↓53.96 ↑47.13 ↑
+> Qwen2.5-VL-3B-based 62.19 ↑88.19 ↑53.47 ↑47.91 ↑
+> Qwen3-VL-8B-based 62.33 ↑88.20 ↑54.96 ↑47.22 ↑
+
+We then apply the Qwen3-VL-8B-based Hybrid-Frame Strategy to Video-SFT for Qwen2.5-VL-7B. As shown in Table 2, Hybrid-Frame achieves the best accuracy on MMStar and POPE, outperform-ing models trained with larger fixed frame bud-gets such as 32 or 64 frames. At the same time, it maintains strong gains on video performance. This is consistent with the theoretical motivation in Eq. (28): once temporal sufficiency is reached, reducing redundant frames can improve the image– video trade-off without weakening useful supervi-sion. 
+
+Table 2: Unified comparison of Video-SFT strategies across model architectures and frame budgets. For Qwen2.5-VL-7B, training and inference frame counts follow the settings in parentheses, while LLaVA-1.5-7B are evaluated with a fixed 8-frame inference.                                                      
+
+> Setting Image Video MMStar POPE Video-MME Video-MMMU Qwen2.5-VL-7B
+> Video-SFT (8F) 61.67 87.82 54.41 47.56
+> Hybrid (8F) 62.33 88.20 54.96 47.22 Video-SFT (16F) 62.00 87.93 58.74 50.44 Hybrid (16F) 62.33 88.20 58.15 51.78
+> Video-SFT (32F) 62.20 88.20 61.30 51.44 Hybrid (32F) 62.33 88.20 61.52 55.12
+> Video-SFT (64F) 62.27 87.89 61.93 51.44 Hybrid (64F) 62.33 88.20 60.93 55.91 LLaVA-1.5-7B
+> Video-SFT-8F 28.87 71.69 38.59 18.56 Video-SFT-16F 28.47 72.78 51.39 16.44 Video-SFT-32F 29.40 73.40 59.90 12.92
+> Hybrid 32.47 75.66 52.41 18.71
+
+These results show that Hybrid-Frame is an ef-fective and practical intervention for mitigating the temporal trap. It improves the balance between spatial and temporal capability while also reducing unnecessary training cost. To test whether this effect extends beyond the Qwen family, we further evaluate the same strategy on LLaVA-1.5-7B. As shown in Table 2, Hybrid-Frame remains effective across different Video-SFT budgets, indicating that its benefit is not tied to a specific architecture. This supports the view that adaptive frame allocation is a broadly useful mechanism for reducing the image–video trade-off in unified MLLMs. 
+
+7 Conclusion 
+
+We systematically study how Video-SFT reshapes visual capabilities in MLLMs. Across architec-tures, scales, and frame budgets, a consistent pat-tern emerges: Video-SFT improves temporal un-derstanding, but often weakens spatial capability. This suggests that current unified training pipelines have not yet achieved true image–video synergy. We further show that this trade-off is closely tied to temporal budget, and that adaptive frame allocation can partially mitigate it. Preserving spatial capabil-ity under Video-SFT remains a central challenge for joint image–video training. 8Limitations 
+
+Our study covers representative MLLMs, but not the full space of architectures, training schemes, or evaluation settings. In particular, many re-cent MLLMs adopt streaming or online training, which may require different modeling and analy-sis. Our experiments also focus on standard image and video benchmarks, excluding settings such as streaming inputs and interactive multimodal reason-ing. Finally, the proposed Hybrid-Frame strategy is heuristic rather than fully principled. 
+
+References 
+
+Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, Wenbin Ge, Zhi-fang Guo, Qidong Huang, Jie Huang, Fei Huang, Binyuan Hui, Shutong Jiang, Zhaohai Li, Mingsheng Li, and 45 others. 2025a. Qwen3-vl- technical report. 
+
+Preprint , arXiv:2511.21631. Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wen-bin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, and 1 others. 2025b. Qwen2.5-vl technical report. arXiv preprint arXiv:2502.13923 .Lin Chen, Jinsong Li, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Zehui Chen, Haodong Duan, Jiaqi Wang, Yu Qiao, Dahua Lin, and 1 others. 2024. Are we on the right way for evaluating large vision-language models? Advances in Neural Information Processing Systems , 37:27056–27087. Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Mar-cel Blistein, Ori Ram, Dan Zhang, Evan Rosen, Luke Marris, Sam Petulla, Colin Gaffney, Asaf Aharoni, Nathan Lintz, Tiago Cardal Pais, Henrik Jacobs-son, Idan Szpektor, Nan-Jiang Jiang, and 3416 oth-ers. 2025. Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. Preprint ,arXiv:2507.06261. Wenliang Dai, Junnan Li, Dongxu Li, Anthony M. H. Tiong, Junqi Zhao, Weisheng Wang, Boyang Li, Pas-cale Fung, and Steven Hoi. 2023. InstructBLIP: To-wards general-purpose vision-language models with instruction tuning. In NeurIPS .Chaoyou Fu, Peixian Chen, Yunhang Shen, Yulei Qin, Mengdan Zhang, Xu Lin, Jinrui Yang, Xi-awu Zheng, Ke Li, Xing Sun, and 1 others. 2023. Mme: A comprehensive evaluation benchmark for multimodal large language models. arXiv preprint arXiv:2306.13394 .Chaoyou Fu, Yuhan Dai, Yongdong Luo, Lei Li, Shuhuai Ren, Renrui Zhang, Zihan Wang, Chenyu Zhou, Yunhang Shen, Mengdan Zhang, and 1 oth-ers. 2025. Video-mme: The first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 24108– 24118. Mingze Gao, Jingyu Liu, Mingda Li, Jiangtao Xie, Qing-bin Liu, Bo Zhao, Xi Chen, and Hui Xiong. 2025. TC-LLaVA: Rethinking the transfer of LLaVA from image to video understanding with temporal consid-erations. In AAAI .Kairui Hu, Penghao Wu, Fanyi Pu, Wang Xiao, Yuan-han Zhang, Xiang Yue, Bo Li, and Ziwei Liu. 2025. Video-mmmu: Evaluating knowledge acquisition from multi-discipline professional videos. arXiv preprint arXiv:2501.13826 .Tianze Hua, Tian Yun, and Ellie Pavlick. 2025. How do vision-language models process conflicting in-formation across modalities? arXiv preprint arXiv:2507.01790 .Suyuan Huang, Haoxin Zhang, Linqing Zhong, Honggu Chen, Yan Gao, Yao Hu, and Zengchang Qin. 2024. From image to video, what do we need in multimodal llms? arXiv preprint arXiv:2404.11865 .Peng Jin, Ryuichi Takanobu, Wancai Zhang, Xiaochun Cao, and Li Yuan. 2024. Chat-univi: Unified visual representation empowers large language models with image and video understanding. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 13700–13710. Bo Li, Yuanhan Zhang, Dong Guo, Renrui Zhang, Feng Li, Hao Zhang, Kaichen Zhang, Peiyuan Zhang, Yanwei Li, Ziwei Liu, and 1 others. 2024a. Llava-onevision: Easy visual task transfer. arXiv preprint arXiv:2408.03326 .Kunchang Li, Yali Wang, Yinan He, Yizhuo Li, Yi Wang, Yi Liu, Zun Wang, Jilan Xu, Guo Chen, Ping Luo, Limin Wang, and Yu Qiao. 2024b. MVBench: A comprehensive multi-modal video un-derstanding benchmark. In CVPR .Yifan Li, Yifan Du, Zhou Kun, Jinpeng Wang, Wayne Xin, Xin Zhao, and Wen Ji-Rong. 2023. Evaluating object hallucination in large vision-language models. In The 2023 Conference on Empirical Methods in Natural Language Processing .Jessy Lin, Luke Zettlemoyer, Gargi Ghosh, Wen-Tau Yih, Aram Markosyan, Vincent-Pierre Berges, and Barlas O˘ guz. 2025. Continual learning via sparse memory finetuning. arXiv preprint arXiv:2510.15103 .Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. 2023. Visual Instruction Tuning. In Advances in Neural Information Processing Systems (NeurIPS) .
+
+9Kai Liu, Jungang Li, Yuchong Sun, Shengqiong Wu, jianzhang gao, Daoan Zhang, Wei Zhang, Sheng Jin, Sicheng Yu, Geng Zhan, Jiayi Ji, Fan Zhou, Liang Zheng, Shuicheng YAN, Hao Fei, and Tat-Seng Chua. 2025. JavisGPT: A unified multi-modal LLM for sounding-video comprehension and generation. In 
+
+The Thirty-ninth Annual Conference on Neural Infor-mation Processing Systems .Yuan Liu, Haodong Duan, Yuanhan Zhang, Bo Li, Songyang Zhang, Wangbo Zhao, Yike Yuan, Jiaqi Wang, Conghui He, Ziwei Liu, and 1 others. 2024a. Mmbench: Is your multi-modal model an all-around player? In European conference on computer vision ,pages 216–233. Springer. Yuanxin Liu, Shicheng Li, Yi Liu, Yuxiang Wang, Shuhuai Ren, Lei Li, Sishuo Chen, Xu Sun, and Lu Hou. 2024b. Tempcompass: Do video llms really understand videos? arXiv preprint arXiv:2403.00476 .Artemis Panagopoulou, Le Xue, Ning Yu, Junnan Li, Dongxu Li, Shafiq Joty, Ran Xu, Silvio Savarese, Caiming Xiong, and Juan Carlos Niebles. 2024. X-instructBLIP: A framework for aligning image, 3d, audio, video to LLMs and its emergent cross-modal reasoning. In ECCV .Haizhou Shi, Zihao Xu, Hengyi Wang, Weiyi Qin, Wenyuan Wang, Yibin Wang, Zifeng Wang, Sayna Ebrahimi, and Hao Wang. 2025. Continual learning of large language models: A comprehensive survey. 
+
+ACM Computing Surveys , 58(5):1–42. Fangxun Shu, Lei Zhang, Hao Jiang, and Cihang Xie. 2025. Audio-visual llm for video understanding. In 
+
+Proceedings of the IEEE/CVF International Confer-ence on Computer Vision , pages 4246–4255. Feilong Tang, Xiang An, Haolin Yang, Yin Xie, Kaicheng Yang, Ming Hu, Zheng Cheng, Xingyu Zhou, Zimin Ran, Imran Razzak, and 1 others. 2025. Univit: Unifying image and video understanding in one vision encoder. In The Thirty-ninth Annual Con-ference on Neural Information Processing Systems .Kimi Team, Tongtong Bai, Yifan Bai, Yiping Bao, S. H. Cai, Yuan Cao, Y. Charles, H. S. Che, Cheng Chen, Guanduo Chen, Huarong Chen, Jia Chen, Ji-ahao Chen, Jianlong Chen, Jun Chen, Kefan Chen, Liang Chen, Ruijue Chen, Xinhao Chen, and 307 others. 2026. Kimi k2.5: Visual agentic intelligence. 
+
+Preprint , arXiv:2602.02276. Peter Tong, Ellis Brown, Penghao Wu, Sanghyun Woo, Adithya Jairam Vedagiri IYER, Sai Charitha Akula, Shusheng Yang, Jihan Yang, Manoj Middepogu, Ziteng Wang, and 1 others. 2024. Cambrian-1: A fully open, vision-centric exploration of multimodal llms. Advances in Neural Information Processing Systems , 37:87310–87356. Jinpeng Wang, Yixiao Ge, Rui Yan, Yuying Ge, Kevin Qinghong Lin, Satoshi Tsutsui, Xudong Lin, Guanyu Cai, Jianping Wu, Ying Shan, Xiaohu Qie, and Mike Zheng Shou. 2023. All in one: Exploring unified video-language pre-training. In CVPR , pages 6598–6608. Shicai Wei, Chunbo Luo, and Yang Luo. 2025. Boost-ing multimodal learning via disentangled gradient learning. In Proceedings of the IEEE/CVF Interna-tional Conference on Computer Vision , pages 22879– 22888. Peng Xu, Wenqi Shao, Kaipeng Zhang, Peng Gao, Shuo Liu, Meng Lei, Fanqing Meng, Siyuan Huang, Yu Qiao, and Ping Luo. 2025. LVLM-eHub: A com-prehensive evaluation benchmark for large vision-language models. IEEE TPAMI , 47(3):1877–1893. ShuHang Xun, Sicheng Tao, Jungang Li, Yibo Shi, Zhixin Lin, Zhanhui Zhu, Yibo Yan, Hanqian Li, LingHao Zhang, Shikang Wang, Yixin Liu, Hanbo Zhang, Ying Ma, and Xuming Hu. 2025. RTV-bench: Benchmarking MLLM continuous perception, under-standing and reasoning through real-time video. In 
+
+The Thirty-ninth Annual Conference on Neural In-formation Processing Systems Datasets and Bench-marks Track .Shusheng Yang, Jihan Yang, Pinzhi Huang, Ellis Brown, Zihao Yang, Yue Yu, Shengbang Tong, Zihan Zheng, Yifan Xu, Muhan Wang, and 1 others. 2025. Cambrian-s: Towards spatial supersensing in video. 
+
+arXiv preprint arXiv:2511.04670 .Shukang Yin, Chaoyou Fu, Sirui Zhao, Ke Li, Xing Sun, Tong Xu, and Enhong Chen. 2024. A survey on multimodal large language models. National Science Review , 11(12):nwae403. Tianhe Yu, Saurabh Kumar, Abhishek Gupta, Sergey Levine, Karol Hausman, and Chelsea Finn. 2020. Gradient surgery for multi-task learning. Advances in neural information processing systems , 33:5824– 5836. Yahan Yu, Duzhen Zhang, Yong Ren, Xuanle Zhao, Xiuyi Chen, and Chenhui Chu. 2025. Progressive lora for multimodal continual instruction tuning. In 
+
+Findings of the Association for Computational Lin-guistics: ACL 2025 , pages 2779–2796. Yan Zeng, Xinsong Zhang, Hang Li, Jiawei Wang, Jipeng Zhang, and Wangchunshu Zhou. 2024. X 2-VLM: All-in-one pre-trained model for vision-language tasks. IEEE TPAMI .Yuexiang Zhai, Shengbang Tong, Xiao Li, Mu Cai, Qing Qu, Yong Jae Lee, and Yi Ma. 2024. Investigating the catastrophic forgetting in multimodal large language model fine-tuning. In Conference on Parsimony and Learning , pages 202–227. PMLR. Wen Zhang, Lingfei Deng, Lei Zhang, and Dongrui Wu. 2022. A survey on negative transfer. IEEE/CAA Journal of Automatica Sinica , 10(2):305–329. 
+
+10 Yuanhan Zhang, Bo Li, haotian Liu, Yong jae Lee, Liangke Gui, Di Fu, Jiashi Feng, Ziwei Liu, and Chunyuan Li. 2024a. Llava-next: A strong zero-shot video understanding model. Yuanhan Zhang, Jinming Wu, Wei Li, Bo Li, Zejun Ma, Ziwei Liu, and Chunyuan Li. 2024b. Video instruction tuning with synthetic data. Preprint ,arXiv:2410.02713. Hongbo Zhao, Fei Zhu, Haiyang Guo, Meng Wang, Rundong Wang, Gaofeng Meng, and Zhaoxiang Zhang. 2025. Mllm-cl: Continual learning for multimodal large language models. arXiv preprint arXiv:2506.05453 .
+
+11 A Experiment Setting 
+
+A.1 Dataset 
+
+For video-language training, we utilize large-scale video-text pairs sourced from several publicly ac-cessible databases. The video training data is a sub-set of LLaVA-Video-178K, which includes VidOR, YouCook2, Charades, ActivityNet, Kinetics-700 Sthsth2, Ego4D, InternVid-10M, HD-VILA-100M, VIDAL. We randomly sampled 20,000 videos, in-cluding three different tasks: multiple-choice, cap-tion and open-ended question. All the training data is demonstrated in Table A. 
+
+A.2 Experiment Design 
+
+To thoroughly investigate the impact of Video-SFT on the visual capabilities of MLLMs, we de-sign three experiments targeting model architec-ture, model scale, and training frame counts, re-spectively. The detailed configurations for these experiments are illustrated in Table B. For the hybrid frame strategy, we employ Qwen3-VL-8B to evaluate a total of 74,500 QA pairs, aiming to adaptively determine the optimal number of frames required to resolve each instruc-tion. Utilizing the prompting strategy illustrated in Figure C, and comprehensively evaluating aspects such as event duration, motion continuity, causal-ity, object interaction, and fine-grained visual at-tributes, we obtain a frame distribution: 57,604 samples at 8 frames, 11,394 at 16 frames, 5,365 at 32 frames, and 137 at 64 frames, with an average of approximately 11 frames. 
+
+B Detailed Experimental Results 
+
+B.1 Detailed Results of Different Visual Tasks 
+
+Figure B illustrates the performance variations of Qwen2.5-VL-7B across different subtask cat-egories within MME, MMStar, and MMBench. In this section, we provide a more comprehensive set of experimental results, detailing the perfor-mance of three models, namely LLaVA-1.5-7B, LLaVA-NeXT-Video-7B, and Qwen2.5-VL-7B, be-fore and after Video-SFT on the aforementioned benchmarks, with a breakdown by individual sub-task. Tables D, E and F respectively present the experimental results on MME, MMStar and MM-Bench. A consistent trend observed across all evaluated models is a degradation in static image perception capabilities following Video-SFT. As shown by the MME and MMStar results, fine-grained tasks suf-fer the most significant performance drops. Specif-ically, tasks requiring high spatial resolution, such as attribute and celebrity recognition, exhibit the sharpest decline. For example, in the MME bench-mark, the celebrity recognition score for LLaVA-1.5-7B dropped by 80.59 points, LLaVA-Next-Video dropped by 52.35 points and Qwen2.5-VL-2.5-7B dropped by 54.71 points. Attribute recogni-tion shows degradation across all three models in MMStar and MMBench. Contrary to the significant decline in perception, cognitive reasoning capabilities demonstrate cer-tain robustness. In several instances, Video-SFT ap-pears to preserve or even enhance logical deduction capacity. On the MME benchmark, Qwen2.5-VL-7B showed improvements in numerical calculation (+7.50), code reasoning (+7.50), and text transla-tion (+7.50) after Video-SFT. Similarly, on MM-Star, the Math and Science & Technology dimen-sions remained stable or improved slightly after Video-SFT. This suggests that while the perception capacity may be damaged due to Video-SFT, the reasoning capacity may benefit from the causal and sequential logic in video data, or at least remains stable. 
+
+B.2 Impact of Input Differences during Training and Inference on Static Visual Capability 
+
+In the Section 4.3, we evaluated image benchmarks using a single input image. To verify whether the performance degradation observed in Video-SFT models stems from a discrepancy between the train-ing modality (multi-frame videos) and the infer-ence modality (single images).We conducted a con-trolled experiment where a single static image is copied multiple times to simulate video input, with the number of copies being the same as the num-ber of frames used during Video-SFT. This setup ensures that the context length and input structure match those of Video-SFT, while the semantic con-tent remains static. We compared the performance of the Qwen2.5-VL-7B model in MME, MMStar and MMBench before and after 8, 16, 32 and 64 frames of Video-SFT. The results are shown in Fig-ure A Degradation persists under identical input modal-ities. For any given number of frames, the Video-SFT model consistently underperforms the Base model. This confirms that the degradation of the model’s static visual ability is mainly caused by 1Table A: Detailed breakdown of training data statistics. The dataset is categorized into three distinct tasks: Caption, Open-Ended, and Multiple-Choice. For each task, we specify the number of samples and the provenance of the source datasets used to construct the SFT corpus. 
+
+Modality Task Samples Dataset 
+
+Video-Text Caption 2k VidOR, YouCook2, Charades, ActivityNet, Kinetics-700 Sthsth2, Ego4D, InternVid-10M, HD-VILA-100M, VIDAL Open-Ended 4k VidOR, YouCook2, Charades, ActivityNet Ego4D, InternVid-10M, HD-VILA-100M, VIDAL Multiple-Choice 14k VidOR, YouCook2, Charades, ActivityNet Ego4D, InternVid-10M, HD-VILA-100M, VIDAL 8 16 32 64 
+
+Number of Training Frames 
+
+> 2091
+> 2165
+> 2239
+> 2312
+> 2386
+> 2460
+> Score
+
+MME    
+
+> Base
+> SFT
+> 816 32 64
+> 55.13
+> 56.57
+> 58.01
+> 59.45
+> 60.89
+> 62.33
+> Accuracy (%)
+
+MMStar     
+
+> 816 32 64
+> 83.33
+> 84.63
+> 85.93
+> 87.23
+> 88.53
+> 89.83
+
+MMBench 
+
+Figure A: Comparison of Qwen2.5-VL-7B model’s performance on MME, MMStar and MMBench before and after 8, 16, 32 and 64 frames of Video-SFT, where the number of input images is the same as the number of frames used in Video-SFT. ▼ indicates performance degradation after Video-SFT. Key Insight: (1) SFT models generally lag behind Base models for any given number of frame. (2) A greater number of redundant image inputs hurt visual performance for MLLMs, justifying our Hybrid-Frame Strategy .Table B: Experimental setup for assessing Video-SFT’s effect on the visual capability of MLLMs. We designed experiments from three aspects: model size, model architecture, and training frame count to explore the influence of Video-SFT on the visual capability of MLLMs.                    
+
+> Task Start Model Training Frames Eval Frames Benchmark Image Video
+> Model Architecture LLaVA-1.5-7B LLaVA-NeXT-Video-7B Qwen2.5-VL-7B 88MME Video-MME MMStar Video-MMMU MMBench MVBench POPE TempCompass Model Size Qwen2.5-VL-3B/7B/32B/72B 88MME Video-MME MMStar Video-MMMU MMBench MVBench POPE TempCompass Training Frames Qwen2.5-VL-7B 8/16/32/64 Hybrid-Frame 8/16/32/64 Hybrid-Frame MMStar POPE Video-MME Video-MMMU MVBench
+
+Video-SFT, rather than the format differences be-tween inference and training inputs. We observe a consistent trend where increasing the number of replicated frames leads to performance drops. For example, in Base model, as the number of in-put images increased from 8 to 64, the score of MME dropped from 2360 to 2272, the accuracy of MMStar decreased from 60.20 to 58.00, and the accuracy of MMBench declined from 87.83 to 85.74. This indicates that simply padding the same static information into long temporal sequences in-troduces redundancy and damages the visual ability 2Perception  
+
+> (Coarse-Grained)
+> Perception
+> (Fine-Grained)
+> Perception
+> (OCR Task)
+> Cognition
+> (Reasoning Tasks)
+> 140
+> 150
+> 160
+> 170
+> 180
+> 190
+> 200
+> Score
+> MME
+> Base
+> SFT
+> Coarse
+> Perception
+> Fine-grained
+> Perception
+> Instance
+> Reasoning
+> Logical
+> Reasoning
+> Math Science &
+> Technology
+> 45
+> 50
+> 55
+> 60
+> 65
+> 70
+> 75
+> Accuracy (%)
+> MMStar
+> Coarse
+> Perception
+> Finegrained
+> Perception
+> (ins-level)
+> Finegrained
+> Perception
+> (cross-ins)
+> Logic
+> Reasoning
+> Relation
+> Reasoning
+> Attribute
+> Reasoning
+> 75
+> 80
+> 85
+> 90
+> 95
+> MMBench
+
+Figure B: Performance impact of Video-SFT on Qwen2.5-VL-7B across Fine-Grained Perception, General Understanding, and Visual Reasoning tasks on MME, MMStar, and MMBench. Each column corresponds to a specific capability dimension in image understanding. ▼ indicates performance degradation after Video-SFT, while ▲ denotes improvement. The results reveal a non-uniform influence of Video-SFT across visual tasks, with Fine-Grained Perception exhibiting the most pronounced performance drop. 
+
+of the model. This finding provides strong support for our proposed hybrid frame strategy, which adap-tively reduces frame counts for redundant content to avoid degradation caused by temporal trap. 
+
+B.3 Impact of Training Strategies under Unified Video Inputs 
+
+We compare performance of Qwen2.5-VL-7B un-der different Video-SFT strategies across multiple frame settings in Table 2. The number of frames used for model inference is the same as that used for Video-SFT. In real-world deployment scenarios, MLLMs are often constrained by latency and com-putational budgets, necessitating inference with fewer frames than were available during training, such as 8 frames. To evaluate the robustness of dif-ferent Video-SFT strategies under this constraint, we conducted an experiment where Qwen2.5-VL-7B trained with different frame counts (8, 16, 32, 64, and our Hybrid strategy) were all evaluated using a fixed input of 8 frames across video bench-marks. The experimental results are shown in Ta-ble C. Compared with the basic model, the perfor-mance of each Video-SFT model adopting different frame rate strategies has been improved. In the MVBench dataset, the performance of the models trained with 16, 32, and 64 frames all decreased significantly compared to those trained with 8 frames. However, our hybrid frame strategy maintained an accuracy rate of 63.94%, which was much higher than that of the models trained with 16, 32, and 64 frames. Meanwhile, in the Video-MME and Video-MMMU benchmarks, the hybrid frame strategy also shows high performance, which indicates that the hybrid frame strategy has strong robustness. 
+
+Table C: Performance comparison of Qwen2.5-VL-7B under different Video-SFT strategies across mul-tiple frame settings (8, 16, 32, 64, and our Hy-brid Strategy) on Video-MME, Video-MMMU, and MVBench. All models are evaluated using a fixed in-put of 8 frames. Numbers in ↑ indicate improvements relative to the base model.                      
+
+> Setting Video-MME Video-MMMU MVBench Inference with 8 Frames
+> Qwen2.5-VL-7B (Base) 51.19 44.22 62.68 + Video-SFT-8F 54.41 ( ↑3.22) 47.56 ( ↑3.34) 64.62 ( ↑1.94) + Video-SFT-16F 54.52 ( ↑3.33) 48.11 ( ↑3.89) 63.05 ( ↑0.37) + Video-SFT-32F 55.67 ( ↑4.48) 47.44 ( ↑3.22) 63.17 ( ↑0.49) + Video-SFT-64F 55.26 ( ↑4.07) 47.44 ( ↑3.22) 63.05 ( ↑0.37) + Hybrid-Frame (Ours) 54.96 ( ↑3.77) 47.22 ( ↑3.00) 63.94 ( ↑1.26)
+
+C Discussion 
+
+C.1 Hybrid-Frame Strategy 
+
+Although our current experiment demonstrates the efficacy of hybrid frame strategy, the current ap-proach relies on a predefined discrete set of frame counts (8, 16, 32, 64) and operates solely on textual instruction. Moving forward, we envision a more robust and effective decision-making framework. 
+
+From text to visual content. A limitation of the current strategy is its blindness to the actual visual dynamics of the video. A complex textual query might correspond to a static scene or a high-speed sequence, necessitating vastly different temporal resolutions. To bridge this gap, future iterations should incorporate visual-content awareness into the decision loop. We can use visual encoders to compute inter-frame feature similarity. By analyz-ing the visual redundancy and motion magnitude, 3Table D: Performance comparison of Qwen2.5-VL-7B, LLaVA-Next Video-7B and LLaVA-1.5-7B before and after Video-SFT in different tasks on the MME Benchmark. Numbers in ↑ indicate improvements, while numbers in ↓ indicate degradations relative to the base model.                                                                                            
+
+> Task Categories Models Qwen2.5-VL-7B LLaVA-Next-Video-7B LLaVA-1.5-7B Base SFT Base SFT Base SFT Perception (Coarse-grained) Existence 195.00 190.00 ( ↓5.00) 200.00 190.00 ( ↓10.00) 195.00 135.00 ( ↓60.00)
+> Count 165.00 170.00 ( ↑5.00) 135.00 153.33 ( ↑18.33) 148.33 105.00 ( ↓43.33)
+> Position 165.00 160.00 ( ↓5.00) 121.67 130.00 ( ↑8.33) 128.33 51.67 ( ↓76.66)
+> Color 195.00 185.00 ( ↓10.00) 150.00 145.00 ( ↓5.00) 150.00 101.67 ( ↓48.33)
+> Perception (Fine-grained) Poster 173.13 183.33 ( ↑10.20) 141.50 145.92 ( ↑4.42) 142.52 95.58 ( ↓46.94)
+> Celebrity 165.00 110.29 ( ↓54.71) 136.47 84.12 ( ↓52.35) 135.88 55.29 ( ↓80.59)
+> Scene 155.50 161.50 ( ↑6.00) 158.00 152.50 ( ↓5.50) 156.50 129.00 ( ↓27.50)
+> Landmark 184.75 183.50 ( ↓1.25) 154.75 158.50 ( ↑3.75) 157.00 115.00 ( ↓42.00)
+> Artwork 148.00 137.75 ( ↓10.25) 110.25 109.50 ( ↓0.75) 116.50 73.25 ( ↓43.25)
+> Perception (OCR) OCR 185.00 155.00 ( ↓30.00) 140.00 87.50 ( ↓52.50) 147.50 50.00 ( ↓97.50)
+> Cognition (Reasoning) Commonsense Reasoning 141.43 149.29 ( ↑7.86) 117.86 115.71 ( ↓2.15) 112.14 76.43 ( ↓35.71)
+> Numerical Calculation 140.00 147.50 ( ↑7.50) 55.00 40.00 ( ↓15.00) 47.50 50.00 ( ↑2.50)
+> Text Translation 185.00 192.50 ( ↑7.50) 97.50 65.00 ( ↓32.50) 55.00 50.00 ( ↓5.00)
+> Code Reasoning 162.50 170.00 ( ↑7.50) 57.50 42.50 ( ↓15.00) 75.00 50.00 ( ↓25.00)
+
+the system can determine whether high frame rates are genuinely required. For example, videos with high inter-frame similarity scores could be sampled sparsely regardless of the textual prompt complex-ity, thereby eliminating redundant computation. 
+
+Multi-model decision-making. Relying on a single model for decision introduces potential bi-ases or hallucinations, particularly for ambiguous instructions. To enhance robustness and accuracy, we can use a multi-model consensus mechanism. By deploying diverse models to independently as-sess, we can aggregate their outputs via weighted voting. This "multi-model decision-making" ap-proach ensures that the selected frame count re-flects a generalized understanding of the task re-quirements, minimizing the risk of error due to the failure of a single model. 
+
+Continuous and adaptive granularity. The current method selects from fixed discrete frame counts and has many limitations. By combining the aforementioned visual redundancy analysis with the multi-model consensus, we can regress a pre-cise, arbitrary frame count that strictly aligns with the spatio-temporal information of the input. It will further improve efficiency and accuracy. 
+
+C.2 General-Purpose Multimodal Models 
+
+Recent advancements in MLLMs have increas-ingly emphasized developing general-purpose mul-timodal models capable of seamlessly process-ing text, images, video, and audio within a uni-fied framework. The unification of the two visual modalities—images and videos—is a crucial step. In this work, we conduct a systematic analysis of MLLMs under Video-SFT. We explore whether current MLLMs can jointly benefit from Video-SFT across both static and temporal visual tasks. Our experiments reveal that current efforts aimed at enhancing the visual understanding of MLLMs often encounter conflicts between image and video modalities. Improvements in video reasoning fail to trans-fer—or even degrade—image understanding. This reveals the temporal trap in visual modality con-flict, which might be because temporal supervi-sion undermines spatial generalization. These find-ings indicate that existing unified training pipelines have not yet achieved true modality synergy. Our Hybrid-Frame Strategy represents a preliminary at-tempt at the unification of image and video process-ing, providing ideas and experience for the future construction of a unified visual or even a universal modal training paradigm. 4Table E: Performance comparison of Qwen2.5-VL-7B, LLaVA-Next Video-7B and LLaVA-1.5-7B before and after Video-SFT in different tasks on the MMStar Benchmark. Numbers in ↑ indicate improvements, while numbers in ↓ indicate degradations relative to the base model. 
+
+Task Capabilities Models Qwen2.5-VL-7B LLaVA-Next-Video-7B LLaVA-1.5-7B Base SFT Base SFT Base SFT Coarse Perception Image Scene & Topic 63.83 60.99 ( ↓2.84) 51.77 48.23 ( ↓3.54) 49.65 32.62 ( ↓17.03) 
+
+Image Emotion 70.97 67.74 ( ↓3.23) 80.65 67.74 ( ↓12.91) 80.65 54.84 ( ↓25.81) 
+
+Image Style & Quality 88.46 87.18 ( ↓1.28) 69.23 75.64 ( ↑6.41) 69.23 38.46 ( ↓30.77) 
+
+Fine-grained Perception Attribute & Celebrity 57.63 53.39 ( ↓4.24) 34.75 27.97 ( ↓6.78) 28.81 25.42 ( ↓3.39) 
+
+Object Counting 48.91 47.83 ( ↓1.08) 28.26 33.70 ( ↑5.44) 22.83 28.26 ( ↑5.43) 
+
+Object Location 70.00 67.50 ( ↓2.50) 45.00 27.50 ( ↓17.50) 20.00 32.50 ( ↑12.50) 
+
+Instance Reasoning Single-Instance Attribute Reasoning 68.69 68.69 57.58 51.52 ( ↓6.06) 53.54 42.42 ( ↓11.12) 
+
+Cross-Instance Attribute Comparison 67.42 68.54 ( ↑1.12) 32.58 31.46 ( ↓1.12) 26.97 20.22 ( ↓6.75) 
+
+Cross-Instance Relation Reasoning 72.58 77.42 ( ↑4.84) 33.87 24.19 ( ↓9.68) 29.03 16.13 ( ↓12.90) 
+
+Logical Reasoning Diagram Reasoning 68.18 68.18 24.55 21.82 ( ↓2.73) 21.82 31.82 ( ↑10.00) 
+
+Common Reasoning 63.37 56.44 ( ↓6.93) 37.62 37.62 31.68 23.76 ( ↓7.92) 
+
+Code & Sequence Reasoning 51.28 51.28 41.03 33.33 ( ↓7.70) 30.77 30.77 
+
+Mathematics Numeric Commonsense & Calculation 62.50 62.50 18.75 37.50 ( ↑18.75) 27.08 31.25 ( ↑4.17) 
+
+Statistical Analysis 60.47 62.79 ( ↑2.32) 36.05 31.40 ( ↓4.65) 26.74 30.23 ( ↑3.49) 
+
+Geometry 68.97 68.97 23.28 21.55 ( ↓1.73) 23.28 24.14 ( ↑0.86) 
+
+Science & Technology Natural Science 47.26 49.32 ( ↑2.06) 23.29 17.81 ( ↓5.48) 18.49 22.60 ( ↑4.11) 
+
+Engineering 41.30 45.65 ( ↑4.35) 17.39 17.39 28.26 26.09 ( ↓2.17) 
+
+Geography & Earth Science 46.55 51.72 ( ↑5.17) 50.00 32.76 ( ↓17.24) 27.59 27.59 
+
+5Table F: Performance comparison of Qwen2.5-VL-7B, LLaVA-Next Video-7B and LLaVA-1.5-7B before and after Video-SFT in different tasks on the MMBench Benchmark. Numbers in ↑ indicate improvements, while numbers in ↓ indicate degradations relative to the base model. 
+
+Task Categories Models Qwen2.5-VL-7B LLaVA-Next-Video-7B LLaVA-1.5-7B Base SFT Base SFT Base SFT Coarse Perception Image Scene 98.28 98.28 79.12 73.96 ( ↓5.16) 78.38 47.17 ( ↓31.21) 
+
+Image Emotion 83.00 84.50 ( ↑1.50) 54.50 70.00 ( ↑15.50) 74.00 43.50 ( ↓30.50) 
+
+Image Quality 58.67 62.67 ( ↑4.00) 36.67 40.67 ( ↑4.00) 37.33 34.67 ( ↓2.66) 
+
+Image Topic 93.57 94.29 ( ↑0.72) 76.43 68.57 ( ↓7.86) 74.29 50.71 ( ↓23.58) 
+
+Image Style 96.70 97.17 ( ↑0.47) 61.79 58.49 ( ↓3.30) 58.02 28.77 ( ↓29.25) 
+
+Fine-grained Perception (Single-Instance) Celebrity Recognition 96.97 96.72 ( ↓0.25) 64.14 69.19 ( ↑5.05) 68.94 27.53 ( ↓41.41) 
+
+Object Localization 73.33 73.33 48.57 40.63 ( ↓7.94) 40.32 27.94 ( ↓12.38) 
+
+Attribute Recognition 97.73 97.35 ( ↓0.38) 68.18 62.88 ( ↓5.30) 70.45 38.26 ( ↓32.19) 
+
+OCR 94.87 95.51 ( ↑0.64) 54.49 62.82 ( ↑8.33) 54.49 51.92 ( ↓2.57) 
+
+Fine-grained Perception (Cross-Instance) Action Recognition 94.88 94.42 ( ↓0.46) 82.33 68.37 ( ↓13.96) 73.49 45.58 ( ↓27.91) 
+
+Attribute Comparison 94.33 90.07 ( ↓4.26) 36.17 17.02 ( ↓19.15) 19.86 18.44 ( ↓1.42) 
+
+Spatial Relationship 64.97 61.58 ( ↓3.39) 32.77 33.90 ( ↑1.13) 31.07 32.20 ( ↑1.13) 
+
+Attribute Reasoning Function Reasoning 94.08 92.76 ( ↓1.32) 62.50 61.18 ( ↓1.32) 65.13 50.33 ( ↓14.80) 
+
+Physical Property 77.17 76.71 ( ↓0.46) 42.92 51.14 ( ↑8.22) 55.25 39.73 ( ↓15.52) 
+
+Identity Reasoning 99.43 98.30 ( ↓1.13) 92.61 83.52 ( ↓9.09) 48.86 44.32 ( ↓4.54) 
+
+Relation Reasoning Natural Relation 87.71 86.59 ( ↓1.12) 45.25 34.64 ( ↓10.61) 41.90 20.11 ( ↓21.79) 
+
+Physical Relation 60.64 58.51 ( ↓2.13) 44.68 41.49 ( ↓3.19) 41.49 37.23 ( ↓4.26) 
+
+Social Relation 91.28 91.28 58.72 63.95 ( ↑5.23) 69.19 30.81 ( ↓38.38) 
+
+Logic Reasoning Future Prediction 70.00 63.85 ( ↓6.15) 38.46 20.77 ( ↓17.69) 38.46 33.08 ( ↓5.38) 
+
+Image-Text Understanding 88.30 89.01 ( ↑0.71) 41.49 41.84 ( ↑0.35) 37.23 32.27 ( ↓4.96) 
+
+6Hybrid-Frame Strategy Prompt 
+
+You are an expert Video Data Strategist. Your task is to perform a holistic assessment of a QA pair to estimate the optimal video frame count required to faithfully answer the instruction. Objective: You must infer the necessary temporal evidence and spatial granularity based on the text descriptions, determining the adaptive frame count 8, 16, 32, or 64. Holistic Assessment Framework: Analyze the input QA pair across the following five dimensions defined in your architecture: 1. Event Duration: Does the text describe a long-term state (low frames) or a fleeting, split-second occurrence (high frames)? 2. Motion Continuity: Is the action smooth and continuous, or does it involve rapid, disjointed changes? 3. Causal Relations: Does the answer require understanding a "cause and effect" sequence (e.g., "Why did the glass break?") which requires higher temporal density to see the trigger? 4. Object Interactions: Are there complex interactions between objects (e.g., handing something over, fighting) that require precise tracking? 5. Fine-Grained Visual Attributes: Does the instruction demand high spatial clarity for small details (e.g., reading text, checking eye color)? Decision Logic: 8 Frames (Global/Static Baseline): Criteria: Low temporal dependency. The answer relies on static scenes, global atmosphere, or objects with no significant interaction or motion. Dimensions: Long duration, zero motion, no causal complexity. 16 Frames (Coarse Temporal Evidence): Criteria: The instruction focuses on a clear, single action or distinct event. Dimensions: Moderate duration, simple motion continuity, clear subject-object relation. 32 Frames (Dense Spatiotemporal Reasoning): Criteria: Required for multi-step sequences, procedural descriptions, or complex object interactions. Dimensions: Strong causal relations (sequence matters), multiple object interactions. 64 Frames (High-Fidelity Granularity): Criteria: Critical for analyzing micro-events, high-speed motion, or finding "needle-in-a-haystack" visual attributes. Dimensions: Fleeting duration (instant), high motion complexity, or extreme need for fine-grained visual attributes. Input QA Pair: {qa_string} Output: Based on the assessment of the dimensions above, output ONLY the single integer representing the optimal frame count 8, 16, 32, or 64.   
+
+> Figure C: The prompt used for Hybrid-Frame Strategy. It comprehensively evaluates aspects such as event duration, motion continuity, causality, object interaction, and fine-grained visual attributes, aiming to adaptively determine the optimal number of frames required to resolve each instruction.
+
+7

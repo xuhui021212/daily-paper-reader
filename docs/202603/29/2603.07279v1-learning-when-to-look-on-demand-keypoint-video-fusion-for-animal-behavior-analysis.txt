@@ -1,0 +1,558 @@
+Title: Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis
+
+URL Source: https://arxiv.org/pdf/2603.07279v1
+
+Published Time: Tue, 10 Mar 2026 00:50:41 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis 
+
+Weihan Li 1 Jingyang Ke 1 Yule Wang 1 Chengrui Li 1 Anqi Wu 1
+
+## Abstract 
+
+Understanding animal behavior from video is es-sential for neuroscience research. Modern labora-tories typically collect two complementary data streams: skeletal keypoints from pose estima-tion tools and raw video recordings. Keypoint-based methods are efficient but suffer from geo-metric ambiguity, environmental blindness, and sensitivity to occlusions. Video-based methods capture rich context but require processing ev-ery frame, making them impractical for the hun-dreds of hours of recordings that modern experi-ments produce. We introduce LookAgain, a mul-timodal framework that combines the efficiency of keypoints with the representational power of video through on-demand visual grounding. Dur-ing training, LookAgain uses dense visual fea-tures to pretrain a motion encoder and to train a gating module that learns which frames re-quire visual context. During inference, this gat-ing module activates visual processing only when keypoint signals are ambiguous, while maintain-ing performance comparable to using all frames. Experiments on single-animal and multi-animal benchmarks show that LookAgain achieves strong performance with significantly reduced computa-tional cost, enabling high-quality behavior analy-sis on long-duration recordings. 
+
+## 1. Introduction 
+
+Neuroscience laboratories routinely collect two types of data when studying animal behavior: video recordings and skeletal keypoints extracted by pose estimation tools such as DeepLabCut (Mathis et al., 2018) or SLEAP (Pereira et al., 2022). Keypoints provide a compact representation of body configuration, while video preserves rich visual context. Despite the abundance of such paired data, existing 
+
+> 1
+
+School of Computational Science & Engineering, Georgia Institute of Technology, Atlanta, USA. Correspondence to: Anqi Wu <anqiwu@gatech.edu >.
+
+Preprint. March 10, 2026. 
+
+methods typically operate within a single modality, either learning from keypoint trajectories or from video, but rarely both. Keypoint-based approaches (Luxem et al., 2022; Weinreb et al., 2024; Azabou et al., 2023) have driven significant progress in behavior analysis, but they face fundamental challenges. First, keypoints are just coordinate sequences, creating geometric ambiguity: using global coordinates loses position invariance, while using egocentric alignment loses directional information such as distinguishing left turns from right turns, and fails in multi-animal scenarios where a consistent reference frame is hard to define. Sec-ond, keypoints suffer from environmental blindness, as they cannot see the surroundings. A mouse approaching a feeder may exhibit the same keypoint trajectory as one walking in an empty arena, yet these behaviors have entirely differ-ent meanings. Third, keypoints are sensitive to occlusions. In social scenarios, animals frequently occlude each other, causing keypoint estimates to fluctuate dramatically. With-out visual context to resolve these ambiguities, downstream analysis becomes unreliable. Recent video-based approaches address these issues by learning directly from pixels, but they come with substantial computational costs. BEAST (Wang et al., 2025) requires pretraining a video encoder on domain-specific data. Other methods such as Sun et al. (Sun et al., 2024) use frozen vision encoders but still process every frame. When mod-ern experiments generate hundreds of hours of continuous recordings, frame-by-frame visual processing becomes pro-hibitively slow. We introduce LookAgain , a framework that bridges key-points and video through a simple principle: use keypoints as the primary modality and invoke visual processing only when motion signals are insufficient. The key insight is to decouple training from inference. During training, which includes both pretraining and fine-tuning, we have access to limited but well-prepared datasets where processing ev-ery frame is feasible. In pretraining, dense visual features guide the motion encoder in learning rich representations from keypoint sequences. In fine-tuning, we train a gat-ing module that learns when visual context is needed; this module can be trained for both supervised classification 1
+
+> arXiv:2603.07279v1 [q-bio.QM] 7 Mar 2026 Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis
+
+and unsupervised behavior segmentation. During inference, when facing hours of new video, we no longer need the expensive visual encoder to process every frame. Instead, the trained gating module decides on-the-fly which frames require visual features. We evaluate LookAgain on single-animal behavior (Stur-man et al., 2020) and multi-animal social interactions (Sun et al., 2023), where occlusion, identity ambiguity, and com-plex interaction dynamics typically challenge conventional methods. Our experiments show that activating only 25 percent of frames achieves performance comparable to us-ing all frames while dramatically reducing computational cost. This design enables both supervised classification and unsupervised behavior segmentation to run efficiently on long-duration recordings that would be intractable for dense video methods such as vision foundation models. 
+
+Contributions. This work makes three contributions. First, training-inference decoupling : we use dense vi-sual features during training but activate visual processing on-demand during inference, enabling efficient analysis of long-duration recordings. Second, learned visual gating :we introduce a gating module that learns when keypoints are insufficient and visual context is needed. Third, uni-fied evaluation : we demonstrate strong performance on both supervised classification and unsupervised behavior segmentation, where the model automatically discovers and labels behavioral patterns without manual annotation. 
+
+## 2. Related Work 
+
+Keypoint-based animal behavior analysis. Given ex-tracted keypoints, a rich line of work learns behavioral rep-resentations from pose trajectories. Unsupervised methods segment continuous behavior into discrete segmentations: Keypoint-MoSEq. (Weinreb et al., 2024) uses autoregres-sive hidden Markov models to identify behavioral sylla-bles, while VAME (Luxem et al., 2022) employs variational autoencoders for motif discovery. BAMS (Azabou et al., 2023) introduces multi-timescale self-supervised learning via future prediction and cross-scale bootstrapping, captur-ing behavioral structure at multiple temporal resolutions. For supervised classification, TREBA (Sun et al., 2021) leverages task programming to learn behavior embeddings that are highly data-efficient, requiring only sparse annota-tions to achieve high performance. These keypoint-based approaches are computationally efficient and scale to long recordings, but they rely solely on skeletal coordinates, which are often noisy due to tracking failures and occlu-sions. Moreover, keypoints cannot capture environmental context such as proximity to objects or arena boundaries, information that is readily available in video but critical for interpreting behavior. 
+
+Video-based animal behavior analysis. Self-supervised video pretraining via masked autoencoding (He et al., 2022; Tong et al., 2022) has proven effective for human action recognition, but these representations do not fully transfer to multi-animal behaviors (Sun et al., 2023). Consequently, domain-specific methods have emerged: B-KinD (Sun et al., 2022) leverages geometric constraints for keypoint discov-ery, while BEAST (Wang et al., 2025) and adapted video foundation models (Sun et al., 2024; Xu et al., 2025; Liu et al., 2025) yield robust behavior representations. How-ever, these methods necessitate dense inference over every frame, leading to a large computational bottleneck. This effi-ciency gap between dense video processing and lightweight keypoint-based approaches motivates our on-demand visual grounding method. 
+
+Adaptive Multimodal Fusion. Hybrid models often ben-efit from adaptive mechanisms that prioritize the most infor-mative modality at each timestep. Early works like Listen to Look (Gao et al., 2020) used cheaper modalities (audio) to gate video processing, while recent VLM-based meth-ods such as Focus (Zhu et al., 2025) select informative keyframes for heavy downstream encoders. In skeleton-based recognition, EPAM-Net (Abdelkawy et al., 2025) and ST-TR (Plizzari et al., 2021) leverage keypoint cues to guide spatial attention via cross-modal alignment, yet they typically perform dense fusion throughout the entire sequence. Specifically in animal behavior analysis, existing hybrid attempts largely rely on static integration or simple feature concatenation (Segalin et al., 2021; Sun et al., 2023; Kozlova et al., 2025) rather than fine-grained gating. 
+
+## 3. Methods 
+
+Figure 1 illustrates the LookAgain framework. We first describe the pretraining stage (Section 3.1, Figure 1(A)), where the Motion Encoder learns to represent keypoint se-quences with visual guidance. We then describe the fine-tuning stage (Section 3.2, Figure 1(B)), where a gating mod-ule learns to activate visual processing on-demand for down-stream tasks. 
+
+3.1. Pretraining Stage Motion Encoder. The Motion Encoder processes key-point sequences for the full temporal extent of recordings, providing the backbone for both representation learning and the gating signal that determines when visual processing is needed. 
+
+Input Features. We consider a video with A animals and 
+
+J keypoints per animal over T timesteps. For each animal 
+
+a at timestep t, we construct a motion descriptor m(a) 
+
+> t
+
+∈
+
+RN by concatenating normalized keypoint coordinates and 2Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis keypoints videos visual grounding pretraining loss motion encoder   
+
+> videos motion-vision fusion
+> motion encoder fine-tuning loss
+> select top-k frames modulate form features tokenization (RVQ) social context temporal context feature extraction (Qwen3-VL)
+> gating
+> visual grounding
+> feature extraction (Qwen3-VL) temporal aggregation
+> (A) (B) keypoints
+> form features tokenization (RVQ) social context temporal context
+
+Figure 1. Overview of the LookAgain framework. (A) Pretraining stage : The Motion Encoder learns to tokenize keypoint sequences and predict visual features from a frozen vision encoder (shown in gray). Four losses guide pretraining: masked keypoint prediction ( Lmask ), cross-modal vision prediction ( Lpred ), motion reconstruction ( Lrecon ), and Residual Vector Quantization (RVQ) commitment ( LRVQ ). (B) 
+
+Fine-tuning stage : The Motion Encoder is frozen (shown in gray), and a gating module learns to determine when to activate visual processing at the frame level. Specifically, the gate identifies the top-k most informative frames, on which visual features are extracted using a frozen vision encoder. These features are then fused with motion representations for supervised behavior classification ( ht → L cls )or unsupervised behavior segmentation ( ft → L seg ). Solid lines denote forward data flow, while dashed lines indicate loss computation. 
+
+confidence scores: 
+
+m(a) 
+
+> t
+
+=
+
+"
+
+k(a)
+
+> t
+
+(W, H ) c(a) 
+
+> t
+
+n(a)
+
+> t
+
+#
+
+, (1) where k(a) 
+
+> t
+
+∈ RJ×2 are the spatial coordinates normalized by frame dimensions ( W, H ), and c(a) 
+
+> t
+
+∈ [0 , 1] J are per-joint confidence scores from the pose estimator. For multi-animal settings, we include features of neighboring animals 
+
+n(a) 
+
+> t
+
+, encoding the relative angle, distance, and keypoint confidence of each neighbor; this term is omitted for single-animal datasets. 
+
+Motion Tokenization. Given a motion sequence m(a)1: T ∈
+
+RT ×N , the encoder fenc (1D convolutions with self-attention) maps the sequence to a latent representation: 
+
+ze = fenc 
+
+ m(a)1: T
+
+ ∈ RT ×Dz , (2) where Dz is the latent dimension. We discretize these con-tinuous representations into motion tokens using Residual Vector Quantization (RVQ) (Zhang et al., 2023; Guo et al., 2024), in which tokenization is implemented via vector quantization. This discretization reduces noise and encour-ages the learning of compact representations. RVQ quan-tizes each continuous latent vector in a two-level manner: the first level maps the input to the nearest codebook entry, capturing coarse motion structure, while the second level quantizes the residual to encode finer-grained details: 
+
+z(1)  
+
+> q
+
+= VQ 1(ze),
+
+z(2)  
+
+> q
+
+= VQ 2
+
+ ze − sg[ z(1)  
+
+> q
+
+],
+
+zq = z(1)  
+
+> q
+
++ z(2)  
+
+> q
+
+,
+
+(3) where VQ i maps each vector to its nearest entry in codebook 
+
+Ci ∈ RKi×Dz , Ki is the number of entries in the codebook, and sg[ ·] denotes the stop-gradient operator. A decoder fdec 
+
+reconstructs the original motion features from zq .
+
+Temporal Context Modeling. The quantized tokens are then projected to model dimension D via a linear layer Proj( ·)
+
+and processed by a Transformer encoder ftemp to capture temporal dependencies: 
+
+emotion = ftemp 
+
+ Proj( zq ) + pmotion 
+
+> 1: T
+
+ ∈ RT ×D, (4) where pmotion  
+
+> 1: T
+
+are learnable positional embeddings for the motion sequence. 
+
+Social Context Modeling. For multi-animal scenarios, we incorporate social context through cross-animal attention. At each timestep t, we stack the motion embeddings from all A animals and apply a Transformer encoder fsocial that attends across animals: 
+
+st = fsocial 
+
+ Stack( {e(a)
+
+> motion ,t
+
+}Aa=1 ) ∈ RA×D . (5) The social context is fused into each animal’s representation via a residual connection: 
+
+˜e(a) 
+
+> motion ,t
+
+= e(a) 
+
+> motion ,t
+
++ MLP  [e(a)
+
+> motion ,t
+
+∥s(a) 
+
+> t
+
+]. (6) This enables reasoning about interaction-dependent social behaviors such as chasing or huddling. The output ˜e(a)
+
+> motion ,t
+
+serves as the final representation from the Motion Encoder, used for both pretraining objectives and downstream fine-tuning. 
+
+Visual Feature Extraction. Given a video frame It ∈
+
+R3×H×W , we extract visual features using a frozen vision encoder. While our framework supports any pretrained encoder, we use the vision encoder fQwen from Qwen3-VL (Team, 2025) for its strong visual understanding capa-bilities: 
+
+vraw  
+
+> t
+
+= Pool( fQwen (It)) ∈ RDv , (7) where Dv is visual dimension, Pool( ·) denotes spatial mean pooling over patch tokens. During pretraining, the Motion Encoder learns to predict these raw visual features vraw  
+
+> t
+
+from keypoint sequences. 3Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis 
+
+Pretraining Objectives. We pretrain the Motion Encoder on unlabeled sequences with four objectives. 
+
+Masked Keypoint Prediction. We randomly mask a sub-set M ⊂ { 1, . . . , T } of timesteps and predict the original keypoint coordinates: 
+
+Lmask = 1
+
+|M| 
+
+X
+
+> t∈M
+
+k(a) 
+
+> t
+
+− ˆk(a)
+
+> t
+> 22
+
+, (8) where ˆk(a) 
+
+> t
+
+is predicted from ˜emotion ,t using a linear layer. 
+
+Cross-Modal Vision Prediction. We predict visual features at future timesteps from the current motion embedding: 
+
+Lpred = X
+
+> h∈H
+
+wh · ℓcos 
+
+ f (h)
+
+> pred
+
+(˜ emotion ,t ), vraw 
+
+> t+h
+
+, (9) where vraw  
+
+> t+h
+
+is the visual feature from Eq. 7, H is a set of prediction horizons, wh are horizon-specific weights, f (h)
+
+> pred
+
+is a learned predictor, and ℓcos is the cosine distance. This objective transfers semantic structure from the vision en-coder into the motion representation space without manual labels. 
+
+Motion Reconstruction. To ensure the quantized tokens retain sufficient information, the RVQ decoder reconstructs the original motion features: 
+
+Lrecon = 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+m(a) 
+
+> t
+
+− ˆm(a)
+
+> t
+> 22
+
+, (10) where ˆm(a) 
+
+> t
+
+= fdec (zq )t is the reconstructed motion feature. This loss encourages the discrete motion tokens to preserve the essential information from the continuous input. 
+
+RVQ Commitment Loss. We use the standard RVQ loss with Exponential Moving Average (EMA) codebook updates, where codebook entries are updated as a running average of the encoder outputs assigned to them rather than through gradient descent: 
+
+LRVQ = ∥sg[ ze] − zq ∥22 + β ∥ze − sg[ zq ]∥22 , (11) where zq is the quantized representation from Eq. 3, sg[ ·]
+
+denotes the stop-gradient operator that blocks gradient flow, and β is the commitment loss weight. The first term pulls codebook entries toward the encoder outputs, while the sec-ond term encourages the encoder to commit to its chosen codebook entries. This bidirectional alignment ensures sta-ble tokenization. 
+
+Total Pretraining Loss. 
+
+Lpretrain = Lmask + λpred Lpred + λRVQ LRVQ + λrecon Lrecon ,
+
+(12) where λpred , λRVQ , and λrecon are weights for each loss term. 
+
+3.2. Fine-tuning Stage 
+
+During fine-tuning, we freeze the Motion Encoder and intro-duce components that enable on-demand visual grounding. We support both supervised classification and unsupervised behavior segmentation, each training its own model parame-ters. 
+
+Visual Grounding Module. We first apply an MLP fproj 
+
+to align the raw visual features with the motion embedding space: 
+
+vt = fproj (vraw  
+
+> t
+
+) ∈ RD . (13) 
+
+Gating. Not all frames benefit equally from expensive visual processing. We design a gating mechanism that identifies frames where the Motion Encoder’s representations may be insufficient by integrating keypoint reliability, motion saliency, and semantic context. The gate score αt ∈ [0 , 1] is computed as: 
+
+αt = σ
+
+
+
+g [¯ ct ∥ qt ∥ st]
+
+, (14) where σ(·) is the sigmoid function, g is an MLP, and [·∥· ]
+
+denotes concatenation. The input terms are: 
+
+¯ct = mean keypoint confidence at time t, qt = log  1 + ∥∆ze,t ∥2
+
+,
+
+st = Linear (˜ emotion ,t ).
+
+(15) Intuitively, the confidence term ¯ct directly reflects keypoint reliability, while qt quantifies motion saliency via the dif-ferential of ze,t from Eq. 2. The semantic term st provides context awareness via ˜emotion ,t from Eq. 6, resolving am-biguities where keypoints are similar but behaviors differ. Then, we select the top-k frames per sequence: 
+
+Tactive = TopK  {αt + ϵt}Tt=1 , k , (16) where ϵt ∼ N (0 , 1) is noise injected during training to encourage exploration; at inference, ϵt = 0 . Visual features at inactive positions are set to zero. 
+
+Temporal Aggregation. Hard selection disrupts the original temporal continuity. To address this and enable gradient flow through αt, we weight the selected features by their gate scores and pass them through a lightweight Transformer 
+
+fagg :
+
+˜vt = fagg 
+
+ {αt · vt + pvis  
+
+> t
+
+}t∈T active 
+
+, (17) where pvis  
+
+> t
+
+are positional embeddings encoding the original temporal positions. This yields an aggregated visual repre-sentation ˜vt, which is shared by both downstream tasks. 
+
+Supervised Behavior Classification. For supervised clas-sification, we fuse the aggregated visual features with the motion embedding: 
+
+ht = ˜ emotion ,t + MLP  [˜ emotion ,t ∥˜vt] · ˜vt. (18) 4Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis 
+
+where ˜emotion ,t is motion embeddings from Eq. 6 and ˜vt
+
+denotes the aggregated visual representation after gating selection. The fused representation ht is passed to an MLP classifier. We use cross-entropy loss with inverse class frequency weighting: 
+
+Lcls = X  
+
+> t:yt̸=∅
+
+wyt · CE(ˆ yt, y t), (19) where ˆyt = MLP cls (ht) is the predicted label and wyt is the class weight. 
+
+Unsupervised Behavior Segmentation. For unsuper-vised segmentation, we fuse the aggregated visual features with the motion tokens: 
+
+ft = zq,t + MLP  [zq,t ∥˜vt] · ˜vt, (20) where zq,t is from the quantized RVQ codes in Eq. 3 and ˜vt
+
+is the aggregated visual representation after gating selection. We use the discrete motion tokens zq,t instead of the contex-tualized embedding ˜emotion ,t because quantization already groups similar motion patterns, providing a natural initial-ization for clustering. We learn K trainable cluster centers 
+
+{μk}Kk=1 using Deep Embedded Clustering (DEC) (Xie et al., 2016). The key motivation for adopting DEC is to pro-vide a label-free training signal that encourages confident and discrete structure in the learned representations, which in turn facilitates stable learning of the gating mechanism. To further promote temporally coherent gating behavior, we impose a total-variation penalty on the gate scores. Thus, the final unsupervised objective is: 
+
+Lseg = LDEC (f1: T , μ1: K ) + λTV LTV (α1: T ), (21) where λTV is a constant weight. See Appendix A for loss de-tails. During evaluation, we assign each frame to its nearest cluster center. For datasets with ground-truth labels, we map each cluster to its majority class via voting. For datasets without labels, the discovered clusters can be interpreted by visualizing the corresponding video segments. 
+
+## 4. Experiment 
+
+Datasets. We evaluate our model on two datasets. 
+
+• Single Mouse (Sturman et al., 2020): This dataset captures a mouse exploring an open arena, with annotations for two individual behaviors: Grooming and Rearing. Videos are recorded from a top-down view at 25 Hz with 13 tracked anatomical keypoints. The dataset contains 20 videos, each approximately 10 minutes long. 
+
+• Mouse Triplet (Sun et al., 2023): This dataset, sourced from the MABe22 competition, documents complex social interactions between three mice within an open arena. It comprises around 2614 top-down short videos recorded at 30 Hz, featuring precise anatomical keypoints for each subject. The dataset is annotated with four distinct social behavior labels: Chase, Huddle, Oral Contact, and Oral-Genital Contact. 
+
+Baselines. We compare our model with four methods. 
+
+• Supervised Transformer : We consider a simple baseline that is essentially our Motion Encoder without the Motion Tokenization part: it applies a standard Transformer encoder directly to the input motion features m1: T , followed by an MLP classification head for frame-level prediction. This model is trained end-to-end with supervised cross-entropy loss, isolating the contribution of our discrete motion tok-enization, self-supervised pretraining, and visual gating in our full model. 
+
+• BAMS (Azabou et al., 2023): Bootstrap Across Multiple Scales (BAMS) is a self-supervised, keypoint-only frame-work that operates directly on tracked trajectories without video input. It employs a multi-scale architecture to in-tegrate short-term modeling of rapid limb dynamics with long-term modeling of broader behavioral contexts. By maximizing mutual information across these scales, BAMS extracts robust features that achieve performance competi-tive with supervised models without requiring labeled data. 
+
+• BEiT + SimCLR + Hand-crafting (Sun et al., 2023): The BEiT + SimCLR + Hand-crafting model is a top-performing baseline designed for the MABe22 competition that inte-grates video and keypoint data for comprehensive behavioral representation. This multi-modal approach consists of three primary components: a large BEiT model for general vi-sual features, a SimCLR encoder pre-trained from scratch on MABe video data to capture domain-specific movement patterns, and hand-crafted geometric features. These hand-crafted features derive from keypoint trajectories to measure internal mouse proportions and multi-animal spatial dynam-ics, such as the area of the triangle formed by the three mice. The resulting feature blocks are concatenated and processed through an MLP for downstream tasks. 
+
+• Keypoint-MoSeq (Weinreb et al., 2024): Keypoint-MoSeq is an unsupervised, keypoint-only method that seg-ments continuous behavior into discrete syllables using au-toregressive hidden Markov models (AR-HMM). It mod-els pose sequences as transitions between latent behavioral states, where each state corresponds to a stereotyped move-ment pattern. The method operates entirely on keypoint trajectories without video input, discovering interpretable behavioral segmentations through probabilistic inference. 
+
+Evaluation. We evaluate our model and baseline models’ performance by computing the F1 score on each behavior class on testing sets. To mitigate randomness, we report the 5Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis (A) (B)   
+
+> Figure 2. Supervised classification results on single mouse data. (A) Test F1 scores for Rearing and Grooming behaviors across different labeled data ratios. Our method outperforms the super-vised Transformer and BAMS baselines, especially when labels are limited. (B) Ablation on top-ksettings (0%, 25%, 50%, 100%) showing that on-demand visual grounding (top-k=25%) achieves comparable performance to full visual processing (top-k=100%) while visual information provides the largest gains when labels are scarce.
+
+average test F1 score over five different random seeds. 
+
+4.1. Single Mouse Behavior Classification 
+
+In this section, we aim to evaluate supervised behavior clas-sification under varying amounts of labeled training data and investigate how the gating mechanism performs across different top-k settings. 
+
+Experimental Setup. We split the pretraining and fine-tuning data by video into training (50%), validation (10%), and testing (40%) sets. The test videos are held out from both pretraining and fine-tuning to ensure fair evaluation. We use a sliding window strategy to generate training sam-ples. For supervised fine-tuning, each window is guaranteed to contain at least one labeled frame. Details on data prepro-cessing are provided in Appendix B. 
+
+Supervised Classification Results. Figure 2(A) compares test F1 scores between our method (top-k=25%, 50%), a su-pervised Transformer, and BAMS (a self-supervised method with a supervised MLP classifier on its learned representa-tions) across different labeled data ratios. Two key findings emerge. First, our method shows substantial improvements in label efficiency: with only 10% of labels, both baselines achieve F1 scores around 0.2 or lower on Grooming, while our method achieves around 0.5 using just 25% of visual frames. BAMS performs poorly under the 10% labeling regime, likely because its representations are pretrained sep-arately and not fine-tuned end-to-end, limiting adaptation to this label-scarce and class-imbalanced setting. Second, the two behaviors show different difficulty levels. Rearing is consistently well-detected by all methods across label ratios, likely because the mouse stands upright, producing large movements in both keypoints and video. Grooming is more challenging as it involves subtle movements of the head and front paws while the body remains mostly static. Figure 2(B) shows a complete comparison across top-k set-tings (0%, 25%, 50%, 100%), ranging from keypoint-only to full visual processing. Two observations stand out. First, top-k=25% achieves comparable F1 to top-k=100% given 30% training labels, demonstrating that on-demand visual grounding can match full video processing with significantly reduced computation. Second, the keypoint-only setting (top-k=0%) shows a steep improvement as labels increase, similar to the supervised Transformer, while settings with visual grounding (top-k > 0%) show a flatter curve. This in-dicates that visual information is particularly valuable when labeled data is scarce. 
+
+4.2. Multi-Animal Social Behavior 
+
+In this section, we aim to evaluate both supervised classifi-cation and unsupervised behavior segmentation in a more challenging multi-animal setting, where social interactions and occlusions are common. 
+
+Experimental Setup. The original keypoints provided in this dataset suffer from frequent missing detections and identity shifts due to multi-animal occlusion. We therefore re-estimated keypoints using DeepLabCut (Mathis et al., 2018) on a subset with available videos and removed frames with low confidence scores (see Appendix B for details). We split the pretraining and fine-tuning data by video into training (50%), validation (10%), and testing (40%) sets, with test videos held out from all training stages. Training samples are generated using a sliding window strategy, with each window guaranteed to contain at least one labeled frame for supervised fine-tuning. 
+
+Supervised Classification Results. Figure 3(A) compares test F1 scores across behavior classes for our method, BEiT + SimCLR + Hand-crafted features, and BAMS. For each method, we evaluate three variants where applica-ble: keypoint-video fusion, video-only, and keypoint-only. For our method, keypoint-video fusion uses top-k=100%, keypoint-only disables visual grounding (top-k=0%), and video-only removes the Motion Encoder and uses only vi-sual features. For the baseline, video-only uses BEiT and SimCLR, while keypoint-only uses hand-crafted features. BAMS only supports keypoint input. Our method consistently outperforms all baselines across behavior classes. Keypoint-video fusion achieves the best 6Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis (A) (B)  
+
+> Figure 3. Supervised classification results on multi-animal social behavior data. (A) Per-class test F1 scores comparing our method with BEiT + SimCLR + Hand-crafted features and BAMS. For each method, we evaluate keypoint-video fusion, video-only, and keypoint-only variants where applicable. Our method consistently outperforms all baselines across behavior classes, with keypoint-video fusion achieving the best performance. Visual information benefits Chase, Huddle, and Oral-Genital Contact, but introduces noise for Oral Contact, likely because Oral Contact depends on precise geometric relationships that keypoints capture directly. (B) Ablation on top-k
+> settings (25%, 50%, 75%, 100%). F1 scores increase with more visual frames for most behaviors, except Oral Contact where keypoint features alone are more effective.
+
+F1 scores, and video-only outperforms keypoint-only for most behaviors except Oral Contact. This suggests that visual information helps detect Chase, Huddle, and Oral-Genital Contact, but introduces noise for Oral Contact. We hypothesize that Oral Contact depends primarily on pre-cise geometric relationships between snouts or ears, which keypoints capture directly, while visual features may intro-duce confounding information from similar-looking poses or background context. Figure 3(B) shows an ablation across top-k settings (25%, 50%, 75%, 100%). F1 scores increase with more visual frames for all behaviors except Oral Contact, further con-firming that visual grounding benefits most social behaviors while keypoint features remain more reliable for Oral Con-tact. 
+
+Unsupervised Segmentation Results. Figure 4(A) com-pares test macro F1 scores for our method, BAMS, and Keypoint-MoSeq. For BAMS, we apply K-Means cluster-ing on its learned representations to obtain behavior seg-mentation. Macro F1 computes the F1 score for each class separately and averages them, weighting all behavior classes equally regardless of frequency. This is important for un-supervised evaluation where majority voting may cause multiple clusters to map to frequent classes. Our method shows increasing F1 as more visual frames are included (from top-k=0% to 100%). Notably, even with top-k=0%, our method outperforms other baselines, suggesting that the Motion Encoder already captures visual semantics through cross-modal pretraining. Figure 4(B) visualizes segmentation results alongside key-point trajectories and ground truth labels. Our method with top-k=100% produces segmentation most similar to the ground truth, demonstrating the benefit of fusing keypoint and visual information. In contrast, BAMS exhibits rapid switching between segments. This is expected, as BAMS is designed for self-supervised representation learning rather than segmentation, and its objective does not explicitly en-courage temporally coherent or well-separated clusters. Figure 4(C) demonstrates that our method can discover meaningful behaviors without supervision. We show three example clusters: the first captures Feeding behavior, where mice stay near the feeder at the top center of the arena. This environment-dependent behavior cannot be detected by keypoint-only methods. The second and third clusters capture distinct social interactions: Oral-Genital Contact and Oral Contact, respectively. These results highlight the interpretability of our unsupervised segmentation. 
+
+4.3. Ablation Study 
+
+In this section, we aim to investigate two design choices: (1) whether pretraining is necessary for supervised classifi-cation, and (2) whether our gating mechanism outperforms simpler alternatives. 
+
+Is Pretraining Necessary? Figure 5(A) compares test F1 scores with and without pretraining across both datasets (all experiments use top-k=50%). Pretrain+supervised finetune consistently outperforms supervised finetune-only for every behavior class. This is because pretraining enables the Mo-7Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis (A) (C) 
+
+> Feeding Oral-Genital Contact Oral Contact
+> (B)
+> keypoints for all mice (x and y) true labels LookAgain Keypoint Moseq BAMS
+
+Figure 4. Unsupervised segmentation results on multi-animal so-cial behavior data. (A) Test macro F1 scores comparing our method with BAMS and Keypoint-MoSeq. Our method outperforms base-lines even with top-k=0%, and its F1 score consistently increases as additional visual information is incorporated. (B) Visualization of segmentation results. Top: keypoint trajectories for all three mice. Bottom: segmentation bars from ground truth, our method, Keypoint-MoSeq, and BAMS. Our method produces segmentation most consistent with ground truth. (C) Example clusters discov-ered by our method: Feeding (mouse near feeder), Oral-Genital Contact, and Oral Contact. Our method can discover environment-dependent behaviors like Feeding, which keypoint-only methods cannot detect. 
+
+tion Encoder to learn rich representations from unlabeled pose sequences, with visual features providing guidance that transfers semantic structure into the motion space. With-out pretraining, the model must learn both motion repre-sentations and behavior classification simultaneously from limited labeled data. 
+
+Gating vs. Uniform Sampling. Figure 5(B) compares our learned gating mechanism against uniform random sam-pling of visual frames. Our gating consistently achieves higher test macro F1 scores. The performance gap is largest at top-k=25% and decreases at higher percentages. This is expected: when only a small fraction of frames receive visual processing, selecting the most informative frames matters significantly. As more frames are included, uni-form sampling increasingly covers the informative frames by chance, reducing the advantage of learned gating. 
+
+Gating Component Analysis. Figure 5(C) ablates each component of the gating function in Eq. 14 with top-k=50%: the confidence term ¯ct for keypoint reliability, qt for motion saliency, and the semantic term st for context awareness. Removing any component decreases performance, confirm-ing that all three are necessary. Among them, qt is the most important: its removal causes the largest drop in test macro F1. This suggests that identifying frames with salient motion is critical for effective visual grounding. (A) (B) (C) 
+
+Figure 5. Ablation studies. (A) Pretrain+supervised finetune vs. supervised finetune-only: pretraining improves performance across all behavior classes on both datasets. (B) Learned gating vs. uni-form sampling: our gating mechanism outperforms random frame selection, with the largest gains at lower top-k ratios. (C) Gating component analysis: all three components are necessary, with mo-tion saliency mt being the most important. 
+
+## 5. Conclusion 
+
+We introduce LookAgain, a multimodal framework for ani-mal behavior analysis that bridges the efficiency of keypoint-based methods with the representational power of video. The key insight is to decouple training from inference: dur-ing training, dense visual features guide the Motion Encoder and supervise a gating module; during inference, the gating module activates visual processing only when motion cues are insufficient. This design enables efficient analysis of long-duration recordings without sacrificing performance. Experiments demonstrate strong performance on both super-vised classification and unsupervised behavior segmentation across single-animal and multi-animal benchmarks. 
+
+Limitations and Future Work. The current implemen-tation treats keypoints as the primary anchor and discards frames with low-quality keypoint estimates during prepro-cessing. A promising direction is to develop bi-directional feedback where the vision encoder helps refine or recover missing keypoints, enabling the utilization of these currently discarded data. Additionally, while LookAgain effectively leverages general-purpose vision foundation models, their representations are not explicitly tuned for laboratory animal behavior. Future work could explore domain-specific visual pretraining to improve sensitivity to fine-grained behavioral shifts. 
+
+## Impact Statement 
+
+This paper presents work whose goal is to advance the field of animal behavior analysis in neuroscience research. Our method enables more efficient analysis of laboratory animal recordings, potentially reducing the computational resources 8Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis 
+
+required for behavioral studies. 
+
+## References 
+
+Abdelkawy, A., Ali, A., and Farag, A. Epam-net: An efficient pose-driven attention-guided multimodal net-work for video action recognition. Neurocomputing , 633: 129781, 2025. Azabou, M., Mendelson, M., Ahad, N., Sorokin, M., Thakoor, S., Urzay, C., and Dyer, E. Relax, it doesn’t mat-ter how you get there: A new self-supervised approach for multi-timescale behavior analysis. Advances in Neural Information Processing Systems , 36:28491–28509, 2023. Gao, R., Oh, T.-H., Grauman, K., and Torresani, L. Listen to look: Action recognition by previewing audio. In 
+
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pp. 10457–10467, 2020. Guo, C., Mu, Y., Javed, M. G., Wang, S., and Cheng, L. Momask: Generative masked modeling of 3d human motions. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pp. 1900– 1910, 2024. He, K., Chen, X., Xie, S., Li, Y., Doll ´ar, P., and Girshick, R. Masked autoencoders are scalable vision learners. In 
+
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pp. 16000–16009, 2022. Kozlova, E., Bonnetto, A., and Mathis, A. Dlc2action: a deep learning-based toolbox for automated behavior segmentation. bioRxiv , pp. 2025–09, 2025. Liu, Y.-S., Yeh, H.-Y., Hu, Y.-T., Wu, B.-S., Chen, Y.-F., Yang, J.-B., Jasmin, S., Hsu, C.-L., Lin, S., Chen, C.-H., et al. Castle: a training-free foundation-model pipeline for cross-species behavioral classification. bioRxiv , pp. 2025–08, 2025. Luxem, K., Mocellin, P., Fuhrmann, F., K ¨ursch, J., Miller, S. R., Palop, J. J., Remy, S., and Bauer, P. Identifying behavioral structure from deep variational embeddings of animal motion. Communications Biology , 5(1):1267, 2022. Mathis, A., Mamidanna, P., Cury, K. M., Abe, T., Murthy, V. N., Mathis, M. W., and Bethge, M. Deeplabcut: mark-erless pose estimation of user-defined body parts with deep learning. Nature neuroscience , 21(9):1281–1289, 2018. Pereira, T. D., Tabris, N., Matsliah, A., Turner, D. M., Li, J., Ravindranath, S., Papadoyannis, E. S., Normand, E., Deutsch, D. S., Wang, Z. Y., et al. Sleap: A deep learning system for multi-animal pose tracking. Nature methods ,19(4):486–495, 2022. Plizzari, C., Cannici, M., and Matteucci, M. Spatial tempo-ral transformer network for skeleton-based action recog-nition. In International conference on pattern recognition ,pp. 694–701. Springer, 2021. Segalin, C., Williams, J., Karigo, T., Hui, M., Zelikowsky, M., Sun, J. J., Perona, P., Anderson, D. J., and Kennedy, A. The mouse action recognition system (mars) software pipeline for automated analysis of social behaviors in mice. Elife , 10:e63720, 2021. Sturman, O., von Ziegler, L., Schl ¨appi, C., Akyol, F., Privit-era, M., Slominski, D., Grimm, C., Thieren, L., Zerbi, V., Grewe, B., et al. Deep learning-based behavioral analysis reaches human accuracy and is capable of outperforming commercial solutions. Neuropsychopharmacology , 45 (11):1942–1952, 2020. Sun, J. J., Kennedy, A., Zhan, E., Anderson, D. J., Yue, Y., and Perona, P. Task programming: Learning data efficient behavior representations. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pp. 2876–2885, 2021. Sun, J. J., Ryou, S., Goldshmid, R. H., Weissbourd, B., Dabiri, J. O., Anderson, D. J., Kennedy, A., Yue, Y., and Perona, P. Self-supervised keypoint discovery in behav-ioral videos. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pp. 2171– 2180, 2022. Sun, J. J., Marks, M., Ulmer, A. W., Chakraborty, D., Geuther, B., Hayes, E., Jia, H., Kumar, V., Oleszko, S., Partridge, Z., et al. Mabe22: A multi-species multi-task benchmark for learned representations of behavior. In International Conference on Machine Learning , pp. 32936–32990. PMLR, 2023. Sun, J. J., Zhou, H., Zhao, L., Yuan, L., Seybold, B., Hen-don, D., Schroff, F., Ross, D. A., Adam, H., Hu, B., et al. Video foundation models for animal behavior analysis. 
+
+bioRxiv , pp. 2024–07, 2024. Team, Q. Qwen3 technical report, 2025. URL https: //arxiv.org/abs/2505.09388 .Tong, Z., Song, Y., Wang, J., and Wang, L. Videomae: Masked autoencoders are data-efficient learners for self-supervised video pre-training. Advances in neural infor-mation processing systems , 35:10078–10093, 2022. Wang, Y., Yu, H., Blau, A., Zhang, Y., Laboratory, T. I. B., Paninski, L., Hurwitz, C., and Whiteway, M. Self-supervised pretraining of vision transformers for animal behavioral analysis and neural encoding. arXiv preprint arXiv:2507.09513 , 2025. 9Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis 
+
+Weinreb, C., Pearl, J. E., Lin, S., Osman, M. A. M., Zhang, L., Annapragada, S., Conlin, E., Hoffmann, R., Makowska, S., Gillis, W. F., et al. Keypoint-moseq: pars-ing behavior by linking point tracking to pose dynamics. 
+
+Nature Methods , 21(7):1329–1339, 2024. Xie, J., Girshick, R., and Farhadi, A. Unsupervised deep embedding for clustering analysis. In International con-ference on machine learning , pp. 478–487. PMLR, 2016. Xu, T., Zhou, T., Wang, Y., Yang, P., Tang, S., Shao, K., Tang, Z., Liu, Y., Chen, X., Wang, H., et al. Mousegpt: A large-scale vision-language model for mouse behavior analysis. arXiv preprint arXiv:2503.10212 , 2025. Zhang, J., Zhang, Y., Cun, X., Zhang, Y., Zhao, H., Lu, H., Shen, X., and Shan, Y. Generating human motion from textual descriptions with discrete representations. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pp. 14730–14740, 2023. Zhu, Z., Xu, H., Luo, Y., Liu, Y., Sarkar, K., Yang, Z., and You, Y. Focus: Efficient keyframe selection for long video understanding. arXiv preprint arXiv:2510.27280 ,2025. 10 Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis 
+
+## A. Additional Details. 
+
+Implementation. We train LookAgain using four NVIDIA L40 GPUs during pretraining, with an initial learning rate of 1 × 10 −4 decayed to 1 × 10 −5 via cosine annealing over 300 epochs. During fine-tuning, we use two L40 GPUs with an initial learning rate of 5 × 10 −5, decayed to 1 × 10 −5 over 50 epochs. The model is implemented in PyTorch using Distributed Data Parallel (DDP). The model hyperparameters are as follows: Dz = 128 in Eq. 2, K1 = K2 = 512 in Eq. 3, D = 256 in Eq. 4, and 
+
+Dv = 2048 in Eq. 7. For the encoder–decoder architecture in Residual Vector Quantization (RVQ), fenc and fdec each comprise two 1D convolu-tional layers followed by a single attention layer. Among the Transformer modules, ftemp consists of four layers with 256 hidden dimensions, while fsocial and fagg each consist of two layers with 256 hidden dimensions. All MLPs are two-layer networks. The loss weights are set to λpred = 0 .5, λRVA = 0 .1, λrecon = 0 .1, λTV = 0 .1, and β = 0 .25 . We use a multi-scale temporal horizon H = 4 , 8, 16 with corresponding weights wh = 1 .0, 0.7, 0.4.
+
+Deep Embedded Clustering (DEC). We use a DEC-style objective (Xie et al., 2016) to induce self-consistent clustering in the embedding space. Let {μk}Kk=1 denote trainable cluster centers, and define the soft assignment 
+
+qtk =
+
+ 1 + ∥ft − μk∥2−1
+
+P 
+
+> k′
+
+(1 + ∥ft − μk′ ∥2)−1 . (22) Following prior work, we use a simplified DEC formulation with α = 1 . These assignments are sharpened using the target distribution 
+
+ptk = q2
+
+> tk
+
+/ P 
+
+> t
+
+qtk 
+
+P 
+
+> k′
+
+q2 
+
+> tk ′
+
+/ P 
+
+> t
+
+qtk ′
+
+, (23) and optimized by minimizing the KL divergence 
+
+LDEC = X
+
+> t
+
+X
+
+> k
+
+ptk log ptk 
+
+qtk 
+
+. (24) This objective encourages samples to commit more strongly to a single cluster, yielding compact and well-separated unsupervised clusters. Importantly, it provides a label-free learning signal for the gating module: opening the gate is beneficial only if it results in sharper cluster assignments. 
+
+Temporal Smoothness (TV) Regularization. To prevent erratic gate switching, we impose a total-variation penalty on the gating signal: 
+
+LTV = 1
+
+T − 1
+
+> T
+
+X
+
+> t=2
+
+|αt − αt−1|. (25) This regularization encourages temporally coherent gating decisions, reflecting the continuity of behavior. 11 Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis 
+
+## B. Data Preprocessing. 
+
+For the single-mouse dataset (Sturman et al., 2020), the data are egocentric: both the videos and the estimated keypoints are provided in an egocentric coordinate frame. We construct both pretraining and fine-tuning datasets using a sliding window of 128 frames with a stride of 64. During fine-tuning, no stride is used, and each window is required to contain labels. Owing to the high quality of the keypoints in this dataset, no keypoints are discarded. For the mouse triplet dataset (Sun et al., 2023), we use the original keypoints and videos from the mouse submission folder ,which contains approximately 1,800 videos. We manually annotate a subset of videos with high-quality keypoints to train a DeepLabCut model (Mathis et al., 2018), which is then used to re-estimate keypoints for all videos. Keypoints with confidence scores below 0.25 are discarded. We create the pretraining dataset using a sliding window of 128 frames with a stride of 64, and the fine-tuning dataset using a sliding window of 96 frames without stride, requiring label inclusion. Windows shorter than the specified length are zero-padded, and padded frames are masked out during training and loss computation. This applies to all methods for fair comparison. This results in 5,097 windows for pretraining and 300 windows for fine-tuning. For the video data, since each frame contains three mice, we crop each frame to center on an individual mouse using a large crop size. This ensures that all interacting mice and relevant environmental context are preserved, while removing irrelevant visual information and helping the vision model focus on each target mouse. 12

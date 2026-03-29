@@ -6,77 +6,77 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-03-28
-- 运行时间：2026-03-28 19:40:19 UTC
+- 最新运行日期：2026-03-29
+- 运行时间：2026-03-29 19:41:42 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日聚焦医疗 AI 与 3D 重建，重点解析了 Gastric-X 胃癌多模态基准与 PAS3R 长
-- 详情：[/202603/28/README](/202603/28/README)
+今日深度研读 19 篇前沿论文，重点聚焦胃肠道病灶识别与动态视频世界模型的混合记忆架构
+- 详情：[/202603/29/README](/202603/29/README)
 
 ### 精读区论文标签
-1. [Gastric-X: A Multimodal Multi-Phase Benchmark Dataset for Advancing Vision-Language Models in Gastric Cancer Analysis](/202603/28/2603.19516v2-gastric-x-a-multimodal-multi-phase-benchmark-dataset-for-advancing-vision-language-models-in-gastric-cancer-analysis)  
+1. [Abnormalities and Disease Detection in Gastro-Intestinal Tract Images](/202603/29/2603.22378v1-abnormalities-and-disease-detection-in-gastro-intestinal-tract-images)  
    标签：评分：9.0/10、query:medvid
-   evidence：包含内窥镜图像的胃癌分析多模态基准
-2. [PAS3R: Pose-Adaptive Streaming 3D Reconstruction for Long Video Sequences](/202603/28/2603.21436v1-pas3r-pose-adaptive-streaming-3d-reconstruction-for-long-video-sequences)  
+   evidence：胃肠道图像与视频的计算机辅助诊断
+2. [Out of Sight but Not Out of Mind: Hybrid Memory for Dynamic Video World Models](/202603/29/2603.25716v1-out-of-sight-but-not-out-of-mind-hybrid-memory-for-dynamic-video-world-models)  
    标签：评分：9.0/10、query:lvu
-   evidence：长视频序列的位姿自适应流式3D重建
-3. [MedOpenClaw: Auditable Medical Imaging Agents Reasoning over Uncurated Full Studies](/202603/28/2603.24649v1-medopenclaw-auditable-medical-imaging-agents-reasoning-over-uncurated-full-studies)  
-   标签：评分：9.0/10、query:medvid
-   evidence：VLM对完整医学研究和多序列卷的推理
-4. [Think-as-You-See: Streaming Chain-of-Thought Reasoning for Large Vision-Language Models](/202603/28/2603.02872v1-think-as-you-see-streaming-chain-of-thought-reasoning-for-large-vision-language-models)  
+   evidence：用于动态视频建模的混合记忆
+3. [Learning When to Look: On-Demand Keypoint-Video Fusion for Animal Behavior Analysis](/202603/29/2603.07279v1-learning-when-to-look-on-demand-keypoint-video-fusion-for-animal-behavior-analysis)  
    标签：评分：8.0/10、query:lvu
-   evidence：大视觉语言模型的流式思维链推理
-5. [A Skill-augmented Agentic Framework and Benchmark for Multi-Video Understanding](/202603/28/2603.14733v1-a-skill-augmented-agentic-framework-and-benchmark-for-multi-video-understanding)  
+   evidence：通过按需视觉接地高效处理数百小时的视频
+4. [Temporal Gains, Spatial Costs: Revisiting Video Fine-Tuning in Multimodal Large Language Models](/202603/29/2603.17541v1-temporal-gains-spatial-costs-revisiting-video-fine-tuning-in-multimodal-large-language-models)  
    标签：评分：8.0/10、query:lvu
-   evidence：多视频理解的智能体框架和基准测试
-6. [Relax Forcing: Relaxed KV-Memory for Consistent Long Video Generation](/202603/28/2603.21366v1-relax-forcing-relaxed-kv-memory-for-consistent-long-video-generation)  
+   evidence：多模态大语言模型的视频微调研究
+5. [A Two-stage Transformer Framework for Temporal Localization of Distracted Driver Behaviors](/202603/29/2603.21048v1-a-two-stage-transformer-framework-for-temporal-localization-of-distracted-driver-behaviors)  
    标签：评分：8.0/10、query:lvu
-   evidence：用于一致性长视频生成的松弛KV内存
-7. [AgentRVOS: Reasoning over Object Tracks for Zero-Shot Referring Video Object Segmentation](/202603/28/2603.23489v1-agentrvos-reasoning-over-object-tracks-for-zero-shot-referring-video-object-segmentation)  
-   标签：评分：8.0/10、query:lvu
-   evidence：对物体轨迹进行推理以实现零样本视频分割
+   evidence：驾驶员监控视频流中的时序动作定位
+6. [OmniFM: Toward Modality-Robust and Task-Agnostic Federated Learning for Heterogeneous Medical Imaging](/202603/29/2603.21660v1-omnifm-toward-modality-robust-and-task-agnostic-federated-learning-for-heterogeneous-medical-imaging)  
+   标签：评分：8.0/10、query:medvid
+   evidence：异构医学影像的任务无关联邦学习
+7. [Fast undersampled dynamic MRI reconstruction using explicit representation learning with Gaussian splatting](/202603/29/2603.21980v1-fast-undersampled-dynamic-mri-reconstruction-using-explicit-representation-learning-with-gaussian-splatting)  
+   标签：评分：8.0/10、query:medvid
+   evidence：心脏MRI序列的时空分析
 
 ### 速读区论文标签
-1. [Gated Differential Linear Attention: A Linear-Time Decoder for High-Fidelity Medical Segmentation](/202603/28/2603.02727v2-gated-differential-linear-attention-a-linear-time-decoder-for-high-fidelity-medical-segmentation)  
+1. [Semantic Class Distribution Learning for Debiasing Semi-Supervised Medical Image Segmentation](/202603/29/2603.05202v1-semantic-class-distribution-learning-for-debiasing-semi-supervised-medical-image-segmentation)  
    标签：评分：8.0/10、query:medvid
-   evidence：用于保持解剖边界的高保真医学分割的线性时间解码器
-2. [LLandMark: A Multi-Agent Framework for Landmark-Aware Multimodal Interactive Video Retrieval](/202603/28/2603.02888v1-llandmark-a-multi-agent-framework-for-landmark-aware-multimodal-interactive-video-retrieval)  
-   标签：评分：8.0/10、query:lvu
-   evidence：具有自适应推理的多模态交互式视频检索
-3. [ProSMA-UNet: Decoder Conditioning for Proximal-Sparse Skip Feature Selection](/202603/28/2603.03187v1-prosma-unet-decoder-conditioning-for-proximal-sparse-skip-feature-selection)  
+   evidence：用于医学图像分割的语义类别分布学习
+2. [PDD: Manifold-Prior Diverse Distillation for Medical Anomaly Detection](/202603/29/2603.07142v1-pdd-manifold-prior-diverse-distillation-for-medical-anomaly-detection)  
    标签：评分：8.0/10、query:medvid
-   evidence：低对比度临床成像中医学图像分割的稀疏跳跃特征选择
-4. [FC-VFI: Faithful and Consistent Video Frame Interpolation for High-FPS Slow Motion Video Generation](/202603/28/2603.04899v1-fc-vfi-faithful-and-consistent-video-frame-interpolation-for-high-fps-slow-motion-video-generation)  
-   标签：评分：8.0/10、query:lvu
-   evidence：高帧率视频生成的时序建模
-5. [ReXInTheWild: A Unified Benchmark for Medical Photograph Understanding](/202603/28/2603.19517v1-rexinthewild-a-unified-benchmark-for-medical-photograph-understanding)  
+   evidence：复杂解剖结构中医学异常检测的流形级建模
+3. [LightMedSeg: Lightweight 3D Medical Image Segmentation with Learned Spatial Anchors](/202603/29/2603.07228v1-lightmedseg-lightweight-3d-medical-image-segmentation-with-learned-spatial-anchors)  
+   标签：评分：8.0/10、query:medvid
+   evidence：轻量级3D医学图像分割架构
+4. [Skill-Evolving Grounded Reasoning for Free-Text Promptable 3D Medical Image Segmentation](/202603/29/2603.08215v1-skill-evolving-grounded-reasoning-for-free-text-promptable-3d-medical-image-segmentation)  
+   标签：评分：8.0/10、query:medvid
+   evidence：具有接地推理的自由文本提示 3D 医学图像分割
+5. [RayMap3R: Inference-Time RayMap for Dynamic 3D Reconstruction](/202603/29/2603.20588v1-raymap3r-inference-time-raymap-for-dynamic-3d-reconstruction)  
    标签：评分：7.0/10、query:medvid
-   evidence：医学照片理解和领域特定推理的基准
-6. [CS-MUNet: A Channel-Spatial Dual-Stream Mamba Network for Multi-Organ Segmentation](/202603/28/2603.19659v1-cs-munet-a-channel-spatial-dual-stream-mamba-network-for-multi-organ-segmentation)  
-   标签：评分：7.0/10、query:medvid
-   evidence：基于 Mamba 的网络用于医学影像中的多器官分割
-7. [PCSTracker: Long-Term Scene Flow Estimation for Point Cloud Sequences](/202603/28/2603.19762v1-pcstracker-long-term-scene-flow-estimation-for-point-cloud-sequences)  
+   evidence：基于RGB图像序列的流式三维重建
+6. [Scene Graph-guided SegCaptioning Transformer with Fine-grained Alignment for Controllable Video Segmentation and Captioning](/202603/29/2603.20887v1-scene-graph-guided-segcaptioning-transformer-with-fine-grained-alignment-for-controllable-video-segmentation-and-captioning)  
    标签：评分：7.0/10、query:lvu
-   evidence：点云序列的长期场景流估计
-8. [Hyper-Connections for Adaptive Multi-Modal MRI Brain Tumor Segmentation](/202603/28/2603.19844v1-hyper-connections-for-adaptive-multi-modal-mri-brain-tumor-segmentation)  
+   evidence：多模态视频解释与可控分割
+7. [DGRNet: Disagreement-Guided Refinement for Uncertainty-Aware Brain Tumor Segmentation](/202603/29/2603.21086v1-dgrnet-disagreement-guided-refinement-for-uncertainty-aware-brain-tumor-segmentation)  
    标签：评分：7.0/10、query:medvid
-   evidence：用于医学图像/视频分割的深度学习
-9. [Efficiency Follows Global-Local Decoupling](/202603/28/2603.19567v1-efficiency-follows-global-local-decoupling)  
-   标签：评分：6.0/10、query:lvu
-   evidence：用于全局上下文聚合的神经记忆分支
-10. [Hyper-Connections for Adaptive Multi-Modal MRI Brain Tumor Segmentation](/202603/28/2603.19844v2-hyper-connections-for-adaptive-multi-modal-mri-brain-tumor-segmentation)  
+   evidence：结合文本条件细化的MRI脑肿瘤分割
+8. [Representation-Level Adversarial Regularization for Clinically Aligned Multitask Thyroid Ultrasound Assessment](/202603/29/2603.21095v1-representation-level-adversarial-regularization-for-clinically-aligned-multitask-thyroid-ultrasound-assessment)  
+   标签：评分：7.0/10、query:medvid
+   evidence：临床对齐的甲状腺超声评估多任务框架
+9. [Hierarchical Text-Guided Brain Tumor Segmentation via Sub-Region-Aware Prompts](/202603/29/2603.21083v1-hierarchical-text-guided-brain-tumor-segmentation-via-sub-region-aware-prompts)  
    标签：评分：6.0/10、query:medvid
-   evidence：体积多模态 MRI 脑肿瘤分割
-11. [MedQ-Engine: A Closed-Loop Data Engine for Evolving MLLMs in Medical Image Quality Assessment](/202603/28/2603.19863v1-medq-engine-a-closed-loop-data-engine-for-evolving-mllms-in-medical-image-quality-assessment)  
-   标签：评分：6.0/10、query:medvid
-   evidence：用于医学图像质量评估的多模态大语言模型
-12. [GHOST: Ground-projected Hypotheses from Observed Structure-from-Motion Trajectories](/202603/28/2603.20583v2-ghost-ground-projected-hypotheses-from-observed-structure-from-motion-trajectories)  
+   evidence：分层文本引导的脑肿瘤分割框架
+10. [Privacy-Preserving Federated Action Recognition via Differentially Private Selective Tuning and Efficient Communication](/202603/29/2603.21305v1-privacy-preserving-federated-action-recognition-via-differentially-private-selective-tuning-and-efficient-communication)  
    标签：评分：6.0/10、query:lvu
-   evidence：从大规模行车记录仪视频中自监督分割轨迹
+   evidence：高效通信的联邦视频动作识别
+11. [Test-Time Adaptation via Cache Personalization for Facial Expression Recognition in Videos](/202603/29/2603.21309v2-test-time-adaptation-via-cache-personalization-for-facial-expression-recognition-in-videos)  
+   标签：评分：6.0/10、query:lvu
+   evidence：用于视频识别的低成本无梯度个性化方法
+12. [PRM-as-a-Judge: A Dense Evaluation Paradigm for Fine-Grained Robotic Auditing](/202603/29/2603.21669v1-prm-as-a-judge-a-dense-evaluation-paradigm-for-fine-grained-robotic-auditing)  
+   标签：评分：6.0/10、query:lvu
+   evidence：通过观察序列直接从轨迹视频中审计策略执行情况
 
 
 <div class="dpr-home-promo-card">
