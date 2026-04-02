@@ -1,0 +1,2851 @@
+Title: VecAttention: Vector-wise Sparse Attention for Accelerating Long Context Inference
+
+URL Source: https://arxiv.org/pdf/2603.29494v1
+
+Published Time: Wed, 01 Apr 2026 00:57:04 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+## VecAttention: Vector-wise Sparse Attention for Accelerating Long Context Inference 
+
+Anmin Liu 1,2* , Ruixuan Yang 3, Huiqiang Jiang 4, Bin Lin 4, Minmin Sun 4,Yong Li 4, Chen Zhang 5,† 
+
+, Tao Xie 2,1,† 1SCS, Peking University, Beijing, China 2Key Lab of HCST (PKU), MOE, Beijing, China 
+
+> 3
+
+Fudan University, Shanghai, China 4Alibaba Group, China 
+
+> 5
+
+Shanghai Jiao Tong University, Shanghai, China 
+
+Abstract 
+
+Long-context video understanding and generation pose a significant computational challenge for Transformer-based video models due to the quadratic complexity of self-attention. While existing sparse attention methods employ coarse-grained patterns to improve efficiency, they typi-cally incur redundant computation and suboptimal perfor-mance. To address this issue, in this paper, we propose 
+
+VecAttention , a novel framework of vector-wise sparse at-tention that achieves superior accuracy-efficiency trade-offs for video models. We observe that video attention maps exhibit a strong vertical-vector sparse pattern, and further demonstrate that this vertical-vector pattern offers consis-tently better accuracy-sparsity trade-offs compared with ex-isting coarse-grained sparse patterns. Based on this ob-servation, VecAttention dynamically selects and processes only informative vertical vectors through a lightweight important-vector selection that minimizes memory access overhead and an optimized kernel of vector sparse atten-tion. Comprehensive evaluations on video understand-ing (VideoMME, LongVideoBench, and VCRBench) and generation (VBench) tasks show that VecAttention deliv-ers a 2.65 × speedup over full attention and a 1.83 ×
+
+speedup over state-of-the-art sparse attention methods, with comparable accuracy to full attention. Our code is available at https://github.com/anminliu/ VecAttention .
+
+1. Introduction 
+
+Large video models have recently advanced rapidly across two major tracks: video understanding (Vision-Language Models in short as VLMs) [6, 7, 53] and video genera-tion (Diffusion Transformers in short as DiTs) [19, 31, 37]. 
+
+> *Work done during internship at Alibaba Group.
+> †Corresponding authors.
+
+However, the quadratic complexity of attention with respect to the context length makes inference latency grow sharply with longer videos. In practical deployments, this factor leads to latency at the minute to hour level for realistic in-puts [23, 42], inflating serving cost and limiting scalability in production. A growing body of evidence [18, 20, 23, 45] suggests that attention maps are inherently sparse: only a small subset of token-to-token interactions substantially contributes to model outputs (we refer to the ideal inter-action selection as the oracle sparse pattern). Leveraging sparsity can reduce FLOPs without sacrificing quality. Existing work typically imposes coarse-grained patterns, most notably (1) line patterns, e.g., grid-like or vertical-slash strided selections [18, 20, 23], and (2) block patterns, which activate a few rectangular blocks with high estimated importance [15, 45, 54]. Such work indeed cuts global com-putation, but often keeps redundant computation inside each selected region, leaving a sizable gap to the oracle. We empirically observe that neither line nor block masks from the existing work closely approximate the oracle in recall (how informative the preserved entries are) or spar-sity (how many entries are dropped), as shown in Figure 1a and Figure 1b. More importantly, their granularity is mis-matched to how information concentrates in video attention: the most salient entries are typically organized into fine, fragmented line segments, rather than forming continuous straight lines traversing the entire attention map or bulky rectangular regions. This mismatch explains why coarse masks still compute many uninformative interactions. We further validate this observation in Section 2, where exper-iments across diverse video scenarios show that vertical-vector sparsity provides a far closer approximation to the oracle than coarse line or block patterns. To address the issue of the existing work, in this pa-per, we propose VecAttention, a framework of fine-grained vector-wise sparse attention tailored for long-context video inference in both VLMs and DiTs. VecAttention opera-1    
+
+> arXiv:2603.29494v1 [cs.CV] 31 Mar 2026 Oracle Line(70.3%,0.91) Block(69.4%,0.88) V-Vec(68.9%,0.95) H-Vec(70.0%,0.89)
+
+(a) Video understanding (causal VLM) Oracle Line(59.8%,0.73) Block(59.8%,0.66) V-Vec(59.7%,0.81) H-Vec(59.8%,0.72) 
+
+(b) Video generation (non-causal DiT) FullAttention FlexPrefill XAttention AnchorAttention VecAttention 
+
+> 0
+> 20
+> 40
+> Time (ms)  0.0% Sparsity
+> 58.1% Sparsity
+> 50.2% Sparsity
+> 73.6% Sparsity
+> 93.0% Sparsity
+> Sparse Attention Computation
+> Important-Region Selection
+
+(c) Attention breakdown 
+
+Figure 1. (a–b) Under the same sparsity budget, vertical-vector (V-Vec) achieves higher recall and better approximates the oracle pattern than horizontal-vector (H-Vec) and other coarse line/block patterns, for both VLMs (video understanding) and DiTs (video generation). Markers such as (68.9%, 0.95) denote (sparsity, re-call), with sparsity in percentage. (c) On VideoMME at matched full-accuracy settings, VecAttention attains higher effective spar-sity and faster attention computation, with low important-region selection overhead, compared to existing coarse-grained methods. 
+
+tionalizes the preceding observation in two steps. (1) Gran-ularity selection. We define the region unit as a column vec-tor in the attention map (a “vertical vector”), which aligns with temporal query similarity and naturally trades off accu-racy vs. sparsity at a finer granularity than line/block masks. (2) Efficient important-vector selection. Fine granularity naively implies a large estimated attention map and pro-hibitive HBM load/store if one were to materialize it. Ve-cAttention avoids this issue by integrating on-the-fly selec-tion into the tiled QK GEMM operation: each on-chip tile computes cheap statistics that identify informative columns without writing intermediate QK output tiles back to HBM. Thus, we can obtain the indices of columns with low ex-tra overhead (see Figure 1c), and then restrict subsequent attention operations to those columns. Across diverse video lengths and resolutions, VecAtten-tion consistently reduces inference latency without under-mining accuracy, demonstrating that fine-grained vector-wise sparsity is a practical and accurate alternative to coarse line/block patterns for large video models. Specifically, ex-periments across multiple benchmarks of video understand-ing and generation show that VecAttention can achieve a 2.65 × speedup over full attention and a 1.83 × speedup over state-of-the-art sparse attention methods, while maintaining accuracy comparable to full attention. Layer 0 Layer 7 Layer 14 Layer 21 
+
+(a) Video Understanding Layer 8 Layer 11 Layer 14 Layer 17 
+
+(b) Video Generation 
+
+Figure 2. Attention maps visualized on different layers across tasks of video understanding and video generation. 
+
+2. Background and Observation 
+
+2.1. Attention Formulation 
+
+We first introduce the computation of the attention mecha-nism in video models as follows: 
+
+S = QK ⊤
+
+√D , A = softmax( S) , O = AV , (1) where Q = [q1, . . . , qN ]⊤ ∈ RN ×D , K =[k1, . . . , kN ]⊤ ∈ RN ×D , and V = [v1, . . . , vN ]⊤ ∈
+
+RN ×D denote the query, key, and value matrices, respec-tively. Here N denotes the input context length, S denotes the attention scores, A ∈ RN ×N represents the attention map whose element A[i, j ] measures the attention weight between qi and kj , and O ∈ RN ×D is the attention output. 
+
+2.2. Attention Exhibits Fine-Grained Vertical-Vector Pattern 
+
+Visualization of Attention Map. As shown in Figure 2, we visualize the attention maps of different video mod-els across tasks of both video understanding and video generation. We first observe that the attention maps ex-hibit extremely high sparsity—most values are close to zero—indicating that the majority of computations in atten-tion can be safely skipped, focusing on only a small set of informative regions. Furthermore, the sparse patterns (i.e., the shapes and spatial distributions of important regions) appear as fine-grained vertical vectors scattered through-out the attention map. In contrast, existing coarse-grained sparse patterns [18, 45] include many uninformative verti-cal vectors, leading to redundant computation. We provide a more comprehensive visualization exhibited in the atten-tion maps in Section 7. 
+
+Statistical Comparison of Different Sparse Patterns. 
+
+Figure 3 presents a statistical comparison of different sparse patterns in approximating the attention map. We evaluate all 20.0 0.2 0.4 0.6 0.8 1.0 
+
+> Sparsity
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Recall
+> Oracle Pattern
+> Line Pattern
+> Block Pattern
+> Vertical-Vector Pattern
+> Horizontal-Vector Pattern
+
+(a) VideoMME (InternVL) 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> Sparsity
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Recall
+> Oracle Pattern
+> Line Pattern
+> Block Pattern
+> Vertical-Vector Pattern
+> Horizontal-Vector Pattern
+
+(b) LongVideoBench (InternVL) 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> Sparsity
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Recall
+> Oracle Pattern
+> Line Pattern
+> Block Pattern
+> Vertical-Vector Pattern
+> Horizontal-Vector Pattern
+
+(c) VCRBench (InternVL) 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> Sparsity
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Recall
+> Oracle Pattern
+> Line Pattern
+> Block Pattern
+> Vertical-Vector Pattern
+> Horizontal-Vector Pattern
+
+(d) VBench (Wan) 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Sparsity
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Recall
+> Oracle Pattern
+> Line Pattern
+> Block Pattern
+> Vertical-Vector Pattern
+> Horizontal-Vector Pattern
+
+(e) VideoMME (QwenVL) 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> Sparsity
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Recall
+> Oracle Pattern
+> Line Pattern
+> Block Pattern
+> Vertical-Vector Pattern
+> Horizontal-Vector Pattern
+
+(f) LongVideoBench (QwenVL) 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> Sparsity
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Recall
+> Oracle Pattern
+> Line Pattern
+> Block Pattern
+> Vertical-Vector Pattern
+> Horizontal-Vector Pattern
+
+(g) VCRBench (QwenVL) 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> Sparsity
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Recall
+> Oracle Pattern
+> Line Pattern
+> Block Pattern
+> Vertical-Vector Pattern
+> Horizontal-Vector Pattern
+
+(h) VBench (HunyuanVideo) 
+
+Figure 3. Sparsity–recall tradeoff of different sparse patterns across long-context video understanding (left three columns) and video generation (right column) tasks. The top row shows results on the causal InternVL-3.5-8B VLM and non-causal HunyuanVideo DiT, while the bottom row presents the causal Qwen2.5-VL-7B VLM and non-causal Wan2.1-T2V-14B DiT. The vertical-vector pattern consistently yields higher recall under the same sparsity than horizontal-vector pattern and coarse line/block pattern, closely tracking the oracle pattern across different datasets and models. 
+
+patterns under the following setting: the block size and vec-tor size are both set to 128, the oracle pattern is regarded as a block pattern with block size 1, and the line pattern includes both vertical and slash lines. For each pattern, we partition the full attention map into regions based on its granularity, compute region importance as the mean attention weights within each region, rank all regions in descending impor-tance, and progressively select them. After each selection step, we update the mask and record the resulting spar-sity and recall, yielding a sparsity-recall trade-off curve for each pattern. We observe that, across different vision tasks and vision models, the fine-grained vertical-vector sparse pattern consistently outperforms coarse-grained counter-parts and horizontal vector patterns, achieving significantly higher recall at comparable sparsity levels and closely ap-proaching the oracle statistics. This finding highlights that the vertical-vector pattern effectively captures the intrinsic fine-grained sparsity structure of attention maps. We pro-vide extended results on statistical comparison of different sparse patterns in Section 8. Notably, we consistently ob-serve that the vertical-vector sparse pattern emerges across diverse modalities, closely aligning with the oracle pattern, as discussed in Section 9. 
+
+3. VecAttention 
+
+In this section, we present VecAttention, a novel framework of vector-wise sparse attention that achieves significant ac-celeration for long-context inference. As illustrated in Fig-ure 4, VecAttention operates through two stages: 1. Important-Vector Selection: We utilize tile-based vec-tor selection TilingSelect with minS filter to select impor-tant vertical vectors with minimal HBM access. 2. Vector Sparse Computation: Attention is computed on only selected vectors using optimized GPU kernels. The detailed implementations of the kernel for both stages are provided in Section 10. 
+
+3.1. Important-Vector Selection 
+
+3.1.1. Challenges Vector Importance Definition. In vision tasks, adjacent to-kens typically correspond to pixels that are close in time or space, and thus tend to exhibit similar attention preferences toward the same key tokens [34]. Motivated by this prop-erty, we introduce a query pooling strategy that efficiently estimates the importance of vertical vectors while substan-tially reducing computational overhead. Formally, given the query matrix Q ∈ RN ×D , we obtain the pooled queries Qp ∈ RNp×D by 
+
+Qp[i] = 1
+
+PqiP q
+
+X
+
+t=( i−1) Pq +1 
+
+Q[t], i = 1 , . . . , N p, (2) where Pq is a hyperparameter controlling the vector size , N
+
+is the input context length, and Np = N/P q is the number of pooled query blocks. 3Estimated Attention Map  
+
+> Inner Loop KV Index
+
+···                
+
+> Index 128910 11 12 20 · · · · · · 13 21 · · · · · ·
+> K Block Group
+> TilingSelect with minS Filter 911 12
+> 912
+> 911
+> Indexing
+> 910 11 12
+> Calculate Row Max
+> minS Filter
+
+Vector Sparse Attention     
+
+> 911 12
+> Q Block
+> Compute on SRAM
+> Select Load
+> Output
+> KV Block
+> Output to HBM
+> Attention Map
+> Load Load
+> Output to HBM
+> Load
+
+Important-Vector Selection 
+
+> Pooling
+
+Figure 4. The overview of VecAttention, which can be divided into two stages: (1) Important-Vector Selection via TilingSelect and minS Filter; (2) Vector Sparse Attention on selected vectors. 
+
+Each pooled query Qp[i] serves as a compact representa-tion of its corresponding query group in Q, capturing their shared semantic information. Using the pooled queries Qp
+
+and the original keys K, we compute the estimated atten-tion map Ap ∈ RNp×N following Equation (1). Each ele-ment Ap[i, j ] in Ap represents the estimated importance of a vertical vector A[iP q : ( i + 1) Pq , j ] in the full attention map A ∈ RN ×N .
+
+The Performance Bottleneck in Fine-Grained Vector Selection. With the definition of vector importance, a naive approach would apply row-wise topK or topP filtering over the entire estimated attention map Ap to select the impor-tant vertical vectors. However, this approach introduces se-vere performance bottlenecks for two challenges. • Challenge-1 : Row-wise topK/topP relies on expensive sorting operations to identify important entries, resulting in substantial computational overhead. As shown in Fig-ure 6, the topP part alone accounts for more than 75% of the total runtime. To address this challenge, we propose a sorting-free minS filter in Section 3.1.2. • Challenge-2 : The naive approach must materialize the 
+
+Θ( N 2P −1 
+
+> q
+
+) estimated attention map, leading to heavy HBM read/write traffic that dominates runtime in long-context settings. For instance, at a context length of 64K, the naive approach incurs up to 26.3 GB of HBM ac-cess (see Figure 6), resulting in heavy memory bandwidth pressure. To address this challenge, we propose TilingS-elect to fuse vector selection into the tiled-based GEMM operation in Section 3.1.3. 
+
+3.1.2. Solution to Challenge-1: Sorting-Free minS 
+
+Existing approaches typically adopt row-wise topK [35, 49] or topP [20, 25] filtering strategies to identify important re-gions. In the topK strategy, exactly the k largest elements in each row are selected as important positions, while in the topP (or nucleus) strategy, elements are selected such that their cumulative attention scores exceed a threshold 0 4 8 12 16 20 24             
+
+> Head
+> 0
+> 6
+> 12
+> 18
+> 24
+> Layer
+> topP (75.1%, 0.96)
+> 04812 16 20 24
+> Head
+> 0
+> 6
+> 12
+> 18
+> 24
+> Layer
+> topK (75.0%, 0.97)
+> 04812 16 20 24
+> Head
+> 0
+> 6
+> 12
+> 18
+> 24
+> Layer
+> minS (75.0%, 0.96)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+
+Figure 5. Recall heatmaps of different filter strategies under the same sparsity. The minS filter strategy achieves comparable recall under the same sparsity level. Markers such as (75.0%, 0.96) de-note (sparsity, recall), with sparsity in percentage. 
+
+p. However, both strategies rely on sorting operations that introduce substantial computational overhead. Although some implementations approximate these operations using binary search [25, 48], this operation remains inefficient on GPUs because its data-dependent branching and non-coalesced memory accesses cause severe warp divergence and prevent effective parallelization. We instead propose minS filtering, a simple sorting-free threshold-based approach that operates as follows. For each row i, we first compute its maximum attention score 
+
+msi = rowmax( si) = N
+
+max 
+
+> j=1
+
+⟨Qp[i], kj ⟩√D
+
+and then apply the following threshold-based filtering rule: 
+
+Mi = ( si ≥ (msi − α)) , Idx( i) = {j | Mi(j) = 1 },
+
+(3) where Mi ∈ { 0, 1}N denotes the binary mask obtained from filtering the score vector si, α is a filtering ratio that controls sparsity, and Idx( i) indicates the indices of the im-portant elements in the i-th row of the estimated attention map. Beyond being sorting-free, minS further improves ef-ficiency by applying filtering directly on the dot-product at-tention scores, thus avoiding the need for softmax compu-tation and reducing memory access. As shown in Figure 5, our minS filtering strategy achieves recall comparable to topP and topK under the same 4sparsity level. However, as illustrated in Figure 6, minS substantially reduces selection latency (3.77 × speedup) due to its sorting-free and memory-access-efficient design. This result demonstrates that minS provides a better trade-off among recall, sparsity, and runtime efficiency in fine-grained vector selection compared to traditional topK and topP strategies. 
+
+Dynamic Programming for Offline Search of Per-Head Filter Ratios. Previous studies [5, 45] have shown that the sparsity and importance of different attention heads vary significantly. Consequently, applying a uniform spar-sity across all attention heads often results in suboptimal overall performance. To address this issue, we propose a dynamic-programming-based Per-head Filter Ratio Predic-tion technique, which determines the optimal filter ratio α
+
+for each attention head individually to achieve the best per-formance under a given target sparsity constraint. Considering a model with a total of H attention heads, we define a dynamic programming table DP[ h][ ρ], where 
+
+h ∈ { 1, 2, . . . , H } and ρ ∈ [0 , 1] . Each entry DP[ h][ ρ]
+
+represents the optimal performance achievable by the first 
+
+h attention heads under an average sparsity of ρ. Note that 
+
+DP[0][ ·] = 0 . The DP recurrence relation is given by 
+
+DP[ h][ ρ]= max 
+
+> α≥0
+
+
+
+DP h − 1 ρ·h − sp h(α)
+
+h − 1
+
++Perf h(α)
+
+
+
+, (4) where sp h(α) denotes the sparsity of the h-th attention head corresponding to a given filter ratio α, and Perf h(α) mea-sures the corresponding performance of the h-th head. The functions sp h(α) and Perf h(α) can be recorded offline by sampling a set of candidates. Under the target sparsity ρT ,the optimal overall performance is given by DP[ H][ ρT ].
+
+3.1.3. Solution to Challenge-2: Tile-Fused TilingSelect 
+
+To alleviate the memory traffic brought by materializing large estimated attention map, we propose TilingSelect ,which fuses the selection operation directly into the tiled GEMM computation of Sp = QpK⊤/√D.Specifically, each query tile Qtile  
+
+> p
+
+∈ RBQp ×D and key tile Ktile ∈ RBK ×D are loaded into on-chip memory to compute Stile  
+
+> p
+
+= Qtile  
+
+> p
+
+(Ktile )⊤/√D ∈ RBQp ×BK . Instead of writing Stile  
+
+> p
+
+back to HBM, we immediately apply the minS filtering strategy and retain only the indices of impor-tant elements. This fused design reduces HBM access from 
+
+Θ( N 2P −1 
+
+> q
+
+) to Θ( N 2P −1 
+
+> q
+
+(1 −ρ)) , where ρ denotes the spar-sity level. Under high sparsity settings (see Figures 1 and 2), TilingSelect significantly lowers HBM traffic and thus re-duces latency. As confirmed in Figure 6, at a sparsity level of 0.9, TilingSelect with minS filtering requires only 1.8 GB of memory access—far lower than 18.3 GB required by the naive minS approach—yielding a 2.42 × speedup in vector selection. Naive+topP 
+
+> Naive+minS
+> TilingSelect+minS
+> 0
+> 50
+> 100
+> 150
+> Time (ms)
+> x3.77
+> x2.42
+> Pooling
+> Matmul
+> Mask
+> Softmax
+> TopP
+> MinS
+> FusedKernel
+> HBM R/W (GB)
+> 5
+> 10
+> 15
+> 20
+> 25
+> HBM R/W (GB)
+
+Figure 6. Time and memory-traffic breakdown at context length 
+
+N =64K and sparsity 0.9. Compared with a naive materialize-then-filter baseline (e.g., topP), TilingSelect with minS avoids writ-ing estimated attention map to HBM, cutting memory traffic from 18.3 GB to 1.8 GB and reducing selection latency by 2.42 ×, yield-ing an overall 9.12 × speedup. 
+
+System-Algorithm Co-optimization. During the tiling-based selection, we introduce an additional parameter Gk,which denotes the number of K-tiles of shape BK × D pro-cessed by each thread block. This optimization brings two major benefits. (1) Controlling thread-block parallelism. 
+
+When the input length N is small or the vector size Pq
+
+is large, the pooled query matrix Qp becomes relatively short, resulting in a flat estimated attention map. In this case, relying solely on Qp-dimension parallelism leads to under-utilization of GPU computational resources during the flat GEMM operation. By decreasing Gk, we enable higher parallelism along the K dimension, thereby improv-ing SM occupancy and achieving better hardware utiliza-tion. (2) Cross-tile minS optimization. When a thread block iteratively processes multiple K-tiles, we maintain a per-row running maximum ( row-max accumulator ) across tiles. This row-max accumulator enables a more global thresh-olding in the subsequent tiles, where each tile can reuse the accumulated maximum to perform cross-tile minS filter-ing. This accumulation mechanism enhances filtering con-sistency, leading to improved accuracy. 
+
+3.2. Vector-Sparse Computation 
+
+After selecting important vectors, we perform attention computation on only these vectors. Unlike conventional block-sparse implementations that load contiguous key– value tiles, our vector-sparse attention dynamically fetches discrete keys and values with the selected key-value indices, following the sharding strategy of FlashAttention [10]. Specifically, the set Idx( i) from Equation (3), which rep-resents the positions of vertical vectors in attention map for 
+
+i-th query block (see Equation (2)), contains the indices of 5the important key-value vectors to be loaded. We then com-pute the sparse attention output for this query block as 
+
+O[IB (i)] = softmax 
+
+ Q[IB (i)] K[Idx( i)] ⊤
+
+√D
+
+
+
+V [Idx( i)] ,
+
+(5) where the slicing operator [·] extracts the corresponding rows from the full Q, K, or V matrices. IB (i) = {j|j ∈
+
+[iP q : ( i + 1) Pq ]} represents the row indices of the i-th query block (the query block size is set equal to the vec-tor size Pq ), and Idx( i) is the index set selecting a subset of K[Idx( i)] ∈ Rni×D and V [Idx( i)] ∈ Rni×D , with ni
+
+denoting the number of selected key-value vectors. During kernel execution, only the selected key-value vectors K[Idx( i)] and V [Idx( i)] are loaded into on-chip memory, and all intermediate attention scores and out-puts are accumulated locally. This vector-sparse computa-tion minimizes HBM traffic and preserves high arithmetic throughput, while effectively leveraging the vector-sparse patterns of video attention. 
+
+4. Evaluation 
+
+4.1. Setup 
+
+Models. We evaluate VecAttention on two categories of video tasks: video understanding and video generation . For video understanding, we employ two VLMs with distinct architectures: Qwen2.5-VL-Instruct [2] and InternVL-3.5-8B [38]. For video generation, we adopt two state-of-the-art DiTs: Wan2.1-T2V-14B [37] and HunyuanVideo-T2V-13B [19]. Together, these models represent the current fron-tier in both video understanding and video generation. 
+
+Benchmarks. We evaluate VecAttention on a diverse suite of video benchmarks. For video understanding, we use three representative benchmarks— VideoMME [12], 
+
+LongVideoBench [40], and VCRBench [32]—which span a broad range of task types including perception, recognition, OCR, and high-level reasoning. For video generation, we employ VBench [17] to assess the fidelity and consistency of the generated videos. 
+
+Baselines. We compare VecAttention against strong baselines on tasks of both video understanding and video generation. For video understanding, we benchmark against 
+
+FlexPrefill [20], XAttention [45], and AnchorAttention [57], which is a recent method based on stripe granularity . No-tably, AnchorAttention employs a stripe-based granularity conceptually similar to our vertical-vector granularity, but with substantially larger stripe sizes that result in coarser sparse patterns. To ensure fair comparison, we meticulously follow the configurations from original papers and official implemen-tations. For FlexPrefill, we use τ = 0 .1; for AnchorAt-tention, step = 16 and block size = 128 ; for XAttention,                                                      
+
+> Table 1. Performance of different models and different methods on video understanding tasks. All values are percentages (i.e., multi-plied by 100) without the % symbol.
+> Model Avg. Sp. Video MME Long Video VCR-Bench Avg. Acc.
+> InternVL-3.5-8B #Frames: 64 #Tokens: 17K
+> Full Atten. 0.0 65.7 59.4 32.9 52.7 FlexPref. 76.5 52.3 59.0 30.0 47.1 XAtten. 78.1 56.0 59.9 32.5 49.5 AnchorAtten. 78.6 57.4 59.4 31.3 49.4
+> VecAtten. 78.6 60.6 59.0 33.8 51.1
+> Qwen2.5-VL-7B-Instruct #FPS: 1 #Tokens: 26K
+> Full Atten. 0.0 63.9 59.9 25.8 49.9 FlexPref. 73.6 62.0 56.7 22.5 47.1 XAtten. 73.6 63.0 58.5 20.0 47.2 AnchorAtten. 74.6 64.4 60.8 22.9 49.4
+> VecAtten. 78.5 64.8 59.4 25.4 49.9
+
+S = 16 in video understanding tasks. We systematically sweep each method’s sparsity-controlling parameters ( γ for FlexPrefill, τ for XAttention, θ for AnchorAttention) to align sparsity levels before accuracy comparison. For video generation, we compare against XAttention ( S = 8 ) and Sparse VideoGen [42]. The Full Attention baseline is im-plemented using FlashAttention-2 [10]. For VecAttention, we set the vector size Pq = 64 , key-block size Bk = 16 ,and key-block group size Gk = 16 for video understanding and Gk = 8192 for video generation (due to consistently long sequences, where high Q-dimension parallelism suf-fices). The filtering ratio α is dynamically adjusted to con-trol sparsity. All experiments are conducted on NVIDIA A100 (80GB) GPUs. 
+
+4.2. Accuracy Results 
+
+Video Understanding. As evidenced by Table 1, Ve-cAttention consistently achieves superior accuracy-sparsity trade-offs across almost all video understanding bench-marks. Notably, VecAttention maintains near-full accu-racy while operating at significantly higher sparsity levels compared to baselines. For the Qwen2.5-VL-7B-Instruct model, VecAttention matches Full Attention performance on long-video inputs (1 frame per second sampling) while achieving 78.5% average sparsity—a remarkable compres-sion that demonstrates the effectiveness of our vector-wise sparse pattern. The advantage is particularly pronounced on complex reasoning tasks (VCRBench) where precise at-tention to specific temporal regions is crucial. This result aligns with our core insight that fine-grained vertical-vector sparsity better preserves critical information compared to coarse-grained alternatives. 6Table 2. Performance of different models and methods on video generation tasks, with 50 inference steps and a 6% warm-up ratio.                                   
+
+> Model Sparsity(%) ↑PSNR ↑SSIM ↑LPIPS ↓
+> Wan 2.1-T2V-14B 720P, #Tokens 76K
+> XAttention 54.6 19.7 0.658 0.348 SVG 52.2 18.7 0.639 0.381 VecAttention 52.3 19.7 0.668 0.339
+> HunyuanVideo-T2V-13B 720P, #Tokens 119K
+> XAttention 60.8 21.2 0.734 0.348 SVG 60.1 21.8 0.769 0.326
+> VecAttention 62.1 22.8 0.779 0.330
+
+Video Generation. VecAttention is applied to Wan2.1 and HunyuanVideo DiT models to generate long videos (av-erage context lengths: 76K and 119K tokens, respectively) using VBench prompts. As shown in Table 2, under com-parable sparsity levels, VecAttention consistently outper-forms other sparse-attention baselines across all quantita-tive metrics (PSNR, SSIM, and LPIPS). Qualitative com-parisons in Section 12 provide compelling visual evidence: for identical prompts, videos generated by VecAttention exhibit superior visual fidelity and temporal consistency, closely matching Full Attention outputs. In contrast, base-line methods introduce noticeable visual artifacts and in-consistent scene elements, particularly in complex scenes requiring long-range temporal dependencies. 
+
+4.3. Latency Results 
+
+Microbenchmarks. We conduct detailed microbench-marks on VideoMME to quantify the accuracy-efficiency trade-offs of VecAttention. By sweeping sparsity thresh-olds across all methods, we establish comprehensive Pareto frontiers. As demonstrated in Figure 7, our fine-grained vertical-vector sparse pattern enables VecAttention to reach remarkable 93% sparsity without compromising accuracy, substantially exceeding the coarse-grained patterns. The optimized techniques of important-vector selection in VecAttention translate this theoretical advantage into practical speedups, yielding up to  2.65 × acceleration for attention computation and  1.17 × improvement in end-to-end Time-To-First-Token (TTFT) speedup. This result demonstrates that our approach not only reduces FLOPs but also efficiently handles the system-level challenges of fine-grained sparsity. 
+
+Attention Computation Breakdown. Figure 1c further breaks down the runtime contributions of important-region selection and sparse attention computation under accuracy-preserving settings. We can see that the superior speedup of VecAttention primarily comes from two factors: (1) the finer-grained sparsity enables substantially higher overall sparsity levels, reducing the cost of sparse attention compu-tation; and (2) the optimized techniques in important-vector selection keep the overhead in line with coarse-grained baselines, or even lower. This breakdown analysis validates that VecAttention avoids the common pitfall where selec-tion overhead negates the benefits of increased sparsity. 
+
+4.4. Ablation Study 
+
+As shown in Figure 8, each parameter plays a distinct role in the accuracy-efficiency trade-off. • Vector Size ( Pq ) governs the granularity of our sparse pattern. Increasing Pq improves latency through reduced estimation cost but eventually degrades accuracy due to coarser representation. The optimal value Pq = 64 
+
+balances these competing objectives, providing sufficient granularity for accurate selection while maintaining effi-cient implementation. • K Tile Size ( Bk) controls memory-compute balance within thread blocks. Larger Bk values increase shared memory and register usage, reducing thread-block con-currency but enabling richer local candidate sets for se-lection. Our chosen Bk = 16 maximizes SM occupancy while maintaining selection quality. • Group Size ( Gk) enables cross-tile optimization by con-trolling serial iteration depth over K-tiles. While larger 
+
+Gk prolongs register lifetimes and reduces memory-compute overlap, it facilitates cross-tile minS accumula-tion for globally consistent filtering. The optimal Gk =16 provides substantial accuracy improvements with low computational overhead. This analysis demonstrates that VecAttention’s parame-ters are not merely implementation details but fundamental design choices that systematically balance algorithmic ef-fectiveness and hardware efficiency. 
+
+5. Related Work 
+
+5.1. Long-Context Video Models 
+
+We consider two major families of video models [59]: vision-language models (VLMs) [16, 29, 36] for video un-derstanding and diffusion transformers (DiTs) [9, 21, 46] for video generation. VLMs have evolved from image-based architectures [16] with temporal adapters or token schedulers into large multimodal models capable of long-context reasoning and cross-modal grounding, as demon-strated by systems such as VideoLLaMA 3 [51], Qwen2.5-VL [2], and InternVideo2 [39]. Meanwhile, DiTs have become the prevailing backbone for high-quality video synthesis, transitioning from U-Net-based diffusion mod-els [21] to attention-centric architectures that capture long-range spatial-temporal structure, exemplified by models such as Wan2.1 [37] and HunyuanVideo [19]. However, both VLMs and DiTs suffer from rapidly increasing atten-70.0 0.2 0.4 0.6 0.8 1.0 
+
+> Sparsity
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> 0.65
+> Accuracy
+> XAttention
+> FlexPrefill
+> AnchorAttention
+> VecAttention
+
+(a) Sparsity vs. Accuracy 0.5 1.0 1.5 2.0 2.5 3.0  
+
+> Attention Speedup
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> 0.65
+> Accuracy
+> XAttention
+> FlexPrefill
+> AnchorAttention
+> VecAttention
+
+(b) Attention Speedup vs. Accuracy 0.85 0.90 0.95 1.00 1.05 1.10 1.15 1.20  
+
+> TTFT Speedup
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> 0.65
+> Accuracy
+> XAttention
+> FlexPrefill
+> AnchorAttention
+> VecAttention
+
+(c) TTFT Speedup vs. Accuracy 
+
+Figure 7. Microbenchmarks of efficiency-accuracy trade-offs across different sparse attention methods on VideoMME. VecAttention preserves accuracy at up to 93% sparsity and translates it into practical gains, which are 2.65 × acceleration for attention and 1.17 × end-to-end TTFT. 20 40 60   
+
+> Attention Time(ms)
+> 0.59
+> 0.60
+> 0.61
+> 0.62
+> 0.63
+> Accuracy
+> VecAttention Pq=64
+> VecAttention Pq=128
+
+(a) Effects of Vector Size Pq25 50 75      
+
+> Attention Time(ms)
+> 0.56
+> 0.58
+> 0.60
+> 0.62
+> Accuracy
+> VecAttention Bk=8
+> VecAttention Bk=16
+> VecAttention Bk=32
+> VecAttention Bk=64
+
+(b) Effects of K Tile Size Bk20 40 60     
+
+> Attention Time(ms)
+> 0.525
+> 0.550
+> 0.575
+> 0.600
+> 0.625
+> Accuracy
+> VecAttention Gk=1
+> VecAttention Gk=8
+> VecAttention Gk=16
+> VecAttention Gk=8192
+
+(c) Effects of K-Block Group Size 
+
+Gk
+
+Figure 8. Ablation study on VideoMME, which contains diverse video inputs ranging from 11 seconds to 1 hour in duration, for three key parameters. 
+
+tion costs as video length and resolution grow, making effi-cient long-context computation a central challenge. 
+
+5.2. Sparse Attention 
+
+The quadratic complexity of attention has motivated exten-sive research on sparse attention [28, 33], which aims to exploit the inherent sparsity of attention maps to reduce redundant computation while preserving model accuracy. Prior work [4, 8, 13, 27, 49, 50] exploits sparsity by mod-ifying the attention architecture itself, typically requiring costly retraining or task-specific fine-tuning to preserve ac-curacy. Methods focus on the memory-bound decoding stage—e.g., token-eviction techniques [30, 43, 58] such as H2O [58], StreamingLLM [43], and selective-loading tech-niques [26, 35, 52] such as Quest [35]—whose optimiza-tions do not transfer to the compute-bound prefill stage. In contrast, prefill attention and DiT denoising exhibit differ-ent sparsity and arithmetic intensity, leaving significant op-portunities for acceleration that remain largely unexplored. To accelerate prefill computation, recent methods pri-marily rely on coarse-grained importance estimation. MIn-ference [18] identifies a line pattern in LLMs—using ver-tical lines and slash blocks to speed up prefill inference. FlexPrefill [20] builds upon this pattern and dynamically determines whether each attention head should adopt a line or block sparse pattern. MMInference [23] extends line-pattern sparsity to VLMs through a feature-permutation grid strategy. XAttention [45] and SpargeAttention [54] generalize block-sparse attention across LLMs, VLMs, and DiTs, improving the applicability of block patterns. In ad-dition, many block-based sparsity methods leverage spa-tiotemporal redundancy in DiTs, including STA [55], Ra-dial Attention [22], Sparse VideoGen [42], and Sparse VideoGen2 [47]. We also note the emergence of multiple methods that ex-plore finer-grained sparse patterns. AnchorAttention [57] identifies static anchor positions in LLMs—regions that consistently remain important—and derives a stripe sparse pattern by comparing token importance against these an-chors. FG-Attention [11] constructs an asynchronous gather-load mechanism in DiTs to enable more fine-grained sparse computation. However, neither of these methods analyzes in depth the performance overhead of important-region selection under fine-grained sparsity. We instead adopt TilingSelect with minS filtering to reduce this over-head and enable efficient vector-wise sparse attention. 
+
+6. Conclusion 
+
+In this paper, we have presented VecAttention, a frame-work of vector-wise sparse attention that exploits the intrin-sic vertical-vector sparsity in video attention maps to sub-stantially reduce computational overhead while preserving model accuracy. By coupling an efficient important-vector selection strategy with an optimized kernel of vector sparse attention, VecAttention achieves a more favorable accuracy-8efficiency balance than previous SOTA. Extensive exper-iments on tasks of long-context video understanding and video generation demonstrate that VecAttention achieves up to 2.65 × speedup over full attention and 1.83 × over prior sparse attention methods without degrading performance. 
+
+Acknowledgments 
+
+We thank the anonymous reviewers for their constructive feedback. This work was partially supported by Na-tional Natural Science Foundation of China (Grants No. U25A6023, 92464301, and 62502305), Fundamental and Interdisciplinary Disciplines Breakthrough Plan of the Ministry of Education of China (No. JYB2025XDXM118), and Natural Science Foundation of Shanghai (Grant No. 25ZR1402275). Tao Xie is also affiliated with the Key Lab-oratory of High Confidence Software Technologies (Peking University), Ministry of Education China; Beijing Tong-ming Lake Information Technology Application Innovation Center; Institute of Systems for Advanced Computing at Fudan University, Shanghai, China; Shanghai Research Institute of Systems of Open Computing, Shanghai, China. 
+
+References 
+
+[1] Muhammad Arslan, Hussam Ghanem, Saba Munawar, and Christophe Cruz. A survey on RAG with LLMs. Procedia Computer Science , 246:3781–3790, 2024. 3 [2] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, Humen Zhong, Yuanzhi Zhu, Mingkun Yang, Zhao-hai Li, Jianqiang Wan, Pengfei Wang, Wei Ding, Zheren Fu, Yiheng Xu, Jiabo Ye, Xi Zhang, Tianbao Xie, Zesen Cheng, Hang Zhang, Zhibo Yang, Haiyang Xu, and Junyang Lin. Qwen2.5-VL technical report. CoRR , 2025. 6, 7 [3] Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. LongBench: A bilingual, multitask benchmark for long context under-standing. In Proceedings of the Annual Meeting of the As-sociation for Computational Linguistics , pages 3119–3137, 2024. 1 [4] Iz Beltagy, Matthew E. Peters, and Arman Cohan. Long-former: The long-document transformer. CoRR , 2020. 8 [5] Zefan Cai, Yichi Zhang, Bofei Gao, Yuliang Liu, Yucheng Li, Tianyu Liu, Keming Lu, Wayne Xiong, Yue Dong, Junjie Hu, and Wen Xiao. PyramidKV: Dynamic KV cache com-pression based on pyramidal information funneling. In Pro-ceedings of the Conference on Language Modeling , 2025. 5 [6] Joya Chen, Zhaoyang Lv, Shiwei Wu, Kevin Qinghong Lin, Chenan Song, Difei Gao, Jia-Wei Liu, Ziteng Gao, Dongx-ing Mao, and Mike Zheng Shou. VideoLLM-online: Online video large language model for streaming video. In Proceed-ings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 18407–18418, 2024. 1 [7] Yukang Chen, Fuzhao Xue, Dacheng Li, Qinghao Hu, Ligeng Zhu, Xiuyu Li, Yunhao Fang, Haotian Tang, Shang Yang, Zhijian Liu, Yihui He, Hongxu Yin, Pavlo Molchanov, Jan Kautz, Linxi Fan, Yuke Zhu, Yao Lu, and Song Han. LongVILA: Scaling long-context visual language models for long videos. In Proceedings of the International Conference on Learning Representations , 2025. 1 [8] Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. Generating long sequences with sparse transformers. CoRR ,2019. 8 [9] Florinel-Alin Croitoru, Vlad Hondru, Radu Tudor Ionescu, and Mubarak Shah. Diffusion models in vision: A survey. 
+
+IEEE Transactions on Pattern Analysis and Machine Intelli-gence , 45(9):10850–10869, 2023. 7 [10] Tri Dao. FlashAttention-2: Faster attention with better par-allelism and work partitioning. In Proceedings of the Inter-national Conference on Learning Representations , 2024. 5, 6[11] Sankeerth Durvasula, Kavya Sreedhar, Zain Moustafa, Suraj Kothawade, Ashish Gondimalla, Suvinay Subramanian, Narges Shahidi, and Nandita Vijaykumar. FG-Attn: Lever-aging fine-grained sparsity in diffusion transformers. CoRR ,2025. 8 [12] Chaoyou Fu, Yuhan Dai, Yongdong Luo, Lei Li, Shuhuai Ren, Renrui Zhang, Zihan Wang, Chenyu Zhou, Yunhang Shen, Mengdan Zhang, Peixian Chen, Yanwei Li, Shao-hui Lin, Sirui Zhao, Ke Li, Tong Xu, Xiawu Zheng, En-hong Chen, Caifeng Shan, Ran He, and Xing Sun. Video-MME: The first-ever comprehensive evaluation benchmark of multi-modal LLMs in video analysis. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 24108–24118, 2025. 6 [13] Yizhao Gao, Zhichen Zeng, Dayou Du, Shijie Cao, Peiyuan Zhou, Jiaxing Qi, Junjie Lai, Hayden Kwok-Hay So, Ting Cao, Fan Yang, and Mao Yang. SeerAttention: Learning intrinsic sparse attention in your LLMs. CoRR , 2025. 8 [14] Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Ab-hinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. The Llama 3 herd of models. CoRR , 2024. 1 [15] Junxian Guo, Haotian Tang, Shang Yang, Zhekai Zhang, Zhijian Liu, and Song Han. Block Sparse Attention. 
+
+https : / / github . com / mit - han - lab / Block -Sparse-Attention , 2024. 1 [16] Kai Han, Jianyuan Guo, Yehui Tang, Wei He, Enhua Wu, and Yunhe Wang. Free Video-LLM: Prompt-guided visual per-ception for efficient training-free video LLMs. CoRR , 2024. 7[17] Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si, Yuming Jiang, Yuanhan Zhang, Tianxing Wu, Qingyang Jin, Nattapol Chanpaisit, Yaohui Wang, Xinyuan Chen, Limin Wang, Dahua Lin, Yu Qiao, and Ziwei Liu. VBench: Com-prehensive benchmark suite for video generative models. In 
+
+Proceedings of the IEEE/CVF Conference on Computer Vi-sion and Pattern Recognition , pages 21807–21818, 2024. 6 [18] Huiqiang Jiang, Yucheng Li, Chengruidong Zhang, Qianhui Wu, Xufang Luo, Surin Ahn, Zhenhua Han, Amir H Abdi, Dongsheng Li, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. MInference 1.0: Accelerating pre-filling for long-context 
+
+9LLMs via dynamic sparse attention. Advances in Neural In-formation Processing Systems , 37:52481–52515, 2024. 1, 2, 8[19] Weijie Kong, Qi Tian, Zijian Zhang, Rox Min, Zuozhuo Dai, Jin Zhou, Jiangfeng Xiong, Xin Li, Bo Wu, Jianwei Zhang, Kathrina Wu, Qin Lin, Junkun Yuan, Yanxin Long, Aladdin Wang, Andong Wang, Changlin Li, Duojun Huang, Fang Yang, Hao Tan, Hongmei Wang, Jacob Song, Jiawang Bai, Jianbing Wu, Jinbao Xue, Joey Wang, Kai Wang, Mengyang Liu, Pengyu Li, Shuai Li, Weiyan Wang, Wenqing Yu, Xinchi Deng, Yang Li, Yi Chen, Yutao Cui, Yuanbo Peng, Zhentao Yu, Zhiyu He, Zhiyong Xu, Zixiang Zhou, Zun-nan Xu, Yangyu Tao, Qinglin Lu, Songtao Liu, Dax Zhou, Hongfa Wang, Yong Yang, Di Wang, Yuhong Liu, Jie Jiang, and Caesar Zhong. HunyuanVideo: A systematic framework for large video generative models. CoRR , 2025. 1, 6, 7 [20] Xunhao Lai, Jianqiao Lu, Yao Luo, Yiyuan Ma, and Xun Zhou. FlexPrefill: A context-aware sparse attention mecha-nism for efficient long-sequence inference. In Proceedings of the International Conference on Learning Representations ,2025. 1, 4, 6, 8 [21] Senmao Li, Taihang Hu, Joost van de Weijer, Fahad Shah-baz Khan, Tao Liu, Linxuan Li, Shiqi Yang, Yaxing Wang, Ming-Ming Cheng, and Jian Yang. Faster diffusion: Re-thinking the role of unet encoder in diffusion models. In 
+
+Advances in Neural Information Processing Systems , pages 85203–85240, 2024. 7 [22] Xingyang Li, Muyang Li, Tianle Cai, Haocheng Xi, Shuo Yang, Yujun Lin, Lvmin Zhang, Songlin Yang, Jinbo Hu, Kelly Peng, Maneesh Agrawala, Ion Stoica, Kurt Keutzer, and Song Han. Radial Attention: O(n log n) sparse atten-tion for long video generation. In Advances in Neural Infor-mation Processing Systems , 2025. 8 [23] Yucheng Li, Huiqiang Jiang, Chengruidong Zhang, Qian-hui Wu, Xufang Luo, Surin Ahn, Amir H Abdi, Dongsheng Li, Jianfeng Gao, Yuqing Yang, and Lili Qiu. MMInfer-ence: Accelerating pre-filling for long-context VLMs via modality-aware permutation sparse attention. In Proceed-ings of the International Conference on Machine Learning ,pages 34998–35020, 2025. 1, 8 [24] Yizhi Li, Yinghao Ma, Ge Zhang, Ruibin Yuan, Kang Zhu, Hangyu Guo, Yiming Liang, Jiaheng Liu, Zekun Wang, Jian Yang, Siwei Wu, Xingwei Qu, Jinjie Shi, Xinyue Zhang, Zhenzhu Yang, Yidan Wen, Yanghai Wang, Shihao Li, Zhaoxiang Zhang, Zachary Liu, Emmanouil Benetos, Wen-hao Huang, and Chenghua Lin. OmniBench: Towards the future of universal omni-language models. CoRR , 2025. 5 [25] Chaofan Lin, Jiaming Tang, Shuo Yang, Hanshuo Wang, Tian Tang, Boyu Tian, Ion Stoica, Song Han, and Mingyu Gao. Twilight: Adaptive attention sparsity with hierarchical top-p pruning. In Advances in Neural Information Process-ing Systems , 2025. 4 [26] Guangda Liu, Chengwei Li, Jieru Zhao, Chenqi Zhang, and Minyi Guo. ClusterKV: Manipulating LLM KV cache in semantic space for recallable compression. In Proceedings of the ACM/IEEE Design Automation Conference , pages 1– 7, 2025. 8 [27] Enzhe Lu, Zhejun Jiang, Jingyuan Liu, Yulun Du, Tao Jiang, Chao Hong, Shaowei Liu, Weiran He, Enming Yuan, Yuzhi Wang, Zhiqi Huang, Huan Yuan, Suting Xu, Xinran Xu, Guokun Lai, Yanru Chen, Huabin Zheng, Junjie Yan, Jian-lin Su, Yuxin Wu, Yutao Zhang, Zhilin Yang, Xinyu Zhou, Mingxing Zhang, and Jiezhong Qiu. MoBA: Mixture of block attention for long-context LLMs. In Advances in Neu-ral Information Processing Systems , 2025. 8 [28] Xupeng Miao, Shenhan Zhu, Fangcheng Fu, Ziyu Guo, Zhi Yang, Yaofeng Tu, Zhihao Jia, and Bin Cui. X-former elucidator: Reviving efficient attention for long context language modeling. In Proceedings of the International Joint Conference on Artificial Intelligence , pages 8179– 8187, 2024. 8 [29] Thong Nguyen, Yi Bin, Junbin Xiao, Leigang Qu, Yicong Li, Jay Zhangjie Wu, Cong-Duy Nguyen, See Kiong Ng, and Luu Anh Tuan. Video-language understanding: A sur-vey from model architecture, model training, and data per-spectives. In Findings of the Association for Computational Linguistics , pages 3636–3657, 2024. 7 [30] Matanel Oren, Michael Hassid, Nir Yarden, Yossi Adi, and Roy Schwartz. Transformers are multi-state RNNs. In Pro-ceedings of the Conference on Empirical Methods in Natural Language Processing , pages 18724–18741, 2024. 8 [31] William Peebles and Saining Xie. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF Inter-national Conference on Computer Vision , pages 4172–4182, 2023. 1 [32] Yukun Qi, Yiming Zhao, Yu Zeng, Xikun Bao, Wenxuan Huang, Lin Chen, Zehui Chen, Jie Zhao, Zhongang Qi, and Feng Zhao. VCR-Bench: A comprehensive evalua-tion framework for video chain-of-thought reasoning. CoRR ,2025. 6 [33] Yutao Sun, Zhenyu Li, Yike Zhang, Tengyu Pan, Bowen Dong, Yuyi Guo, and Jianyong Wang. Efficient Attention Mechanisms for Large Language Models: A survey. CoRR ,2026. 8 [34] Xin Tan, Yuetao Chen, Yimin Jiang, Xing Chen, Kun Yan, Nan Duan, Yibo Zhu, Daxin Jiang, and Hong Xu. Dynamic sparsity in large-scale video DiT training. In Proceedings of the ACM International Conference on Architectural Support for Programming Languages and Operating Systems , pages 101–116, 2026. 3 [35] Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. Quest: Query-aware sparsity for efficient long-context LLM inference. In Proceedings of the International Conference on Machine Learning , pages 47901–47911, 2024. 4, 8 [36] Yunlong Tang, Jing Bi, Siting Xu, Luchuan Song, Susan Liang, Teng Wang, Daoan Zhang, Jie An, Jingyang Lin, Rongyi Zhu, Ali Vosoughi, Chao Huang, Zeliang Zhang, Pinxin Liu, Mingqian Feng, Feng Zheng, Jianguo Zhang, Ping Luo, Jiebo Luo, and Chenliang Xu. Video understand-ing with large language models: A survey. IEEE Transac-tions on Circuits and Systems for Video Technology , 36(2): 1355–1376, 2026. 7 [37] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianx-
+
+10 iao Yang, Jianyuan Zeng, Jiayu Wang, Jingfeng Zhang, Jin-gren Zhou, Jinkai Wang, Jixuan Chen, Kai Zhu, Kang Zhao, Keyu Yan, Lianghua Huang, Mengyang Feng, Ningyi Zhang, Pandeng Li, Pingyu Wu, Ruihang Chu, Ruili Feng, Shiwei Zhang, Siyang Sun, Tao Fang, Tianxing Wang, Tianyi Gui, Tingyu Weng, Tong Shen, Wei Lin, Wei Wang, Wenmeng Zhou, Wente Wang, Wenting Shen, Wenyuan Yu, Xianzhong Shi, Xiaoming Huang, Xin Xu, Yan Kou, Yangyu Lv, Yifei Li, Yijing Liu, Yiming Wang, Yingya Zhang, Yitong Huang, Yong Li, You Wu, Yu Liu, Yulin Pan, Yun Zheng, Yuntao Hong, Yupeng Shi, Yutong Feng, Zeyinzi Jiang, Zhen Han, Zhi-Fan Wu, and Ziyu Liu. Wan: Open and advanced large-scale video generative models. CoRR , 2025. 1, 6, 7 [38] Weiyun Wang, Zhangwei Gao, Lixin Gu, Hengjun Pu, Long Cui, Xingguang Wei, Zhaoyang Liu, Linglin Jing, Sheng-long Ye, Jie Shao, Zhaokai Wang, Zhe Chen, Hongjie Zhang, Ganlin Yang, Haomin Wang, Qi Wei, Jinhui Yin, Wenhao Li, Erfei Cui, Guanzhou Chen, Zichen Ding, Changyao Tian, Zhenyu Wu, Jingjing Xie, Zehao Li, Bowen Yang, Yuchen Duan, Xuehui Wang, Zhi Hou, Haoran Hao, Tianyi Zhang, Songze Li, Xiangyu Zhao, Haodong Duan, Nianchen Deng, Bin Fu, Yinan He, Yi Wang, Conghui He, Botian Shi, Jun-jun He, Yingtong Xiong, Han Lv, Lijun Wu, Wenqi Shao, Kaipeng Zhang, Huipeng Deng, Biqing Qi, Jiaye Ge, Qipeng Guo, Wenwei Zhang, Songyang Zhang, Maosong Cao, Jun-yao Lin, Kexian Tang, Jianfei Gao, Haian Huang, Yuzhe Gu, Chengqi Lyu, Huanze Tang, Rui Wang, Haijun Lv, Wanli Ouyang, Limin Wang, Min Dou, Xizhou Zhu, Tong Lu, Dahua Lin, Jifeng Dai, Weijie Su, Bowen Zhou, Kai Chen, Yu Qiao, Wenhai Wang, and Gen Luo. InternVL3.5: Ad-vancing open-source multimodal models in versatility, rea-soning, and efficiency. CoRR , 2025. 6 [39] Yi Wang, Kunchang Li, Xinhao Li, Jiashuo Yu, Yinan He, Guo Chen, Baoqi Pei, Rongkun Zheng, Zun Wang, Yansong Shi, Tianxiang Jiang, Songze Li, Jilan Xu, Hongjie Zhang, Yifei Huang, Yu Qiao, Yali Wang, and Limin Wang. Intern-video2: Scaling foundation models for multimodal video un-derstanding. In Proceedings of the European Conference on Computer Vision , pages 396–416, 2024. 7 [40] Haoning Wu, Dongxu Li, Bei Chen, and Junnan Li. LongVideoBench: A benchmark for long-context inter-leaved video-language understanding. Advances in Neural Information Processing Systems , 37:28828–28857, 2024. 6 [41] Junde Wu, Jiayuan Zhu, Yuyuan Liu, Min Xu, and Yueming Jin. Agentic reasoning: A streamlined framework for en-hancing LLM reasoning with agentic tools. In Proceedings of the Annual Meeting of the Association for Computational Linguistics , pages 28489–28503, 2025. 3 [42] Haocheng Xi, Shuo Yang, Yilong Zhao, Chenfeng Xu, Muyang Li, Xiuyu Li, Yujun Lin, Han Cai, Jintao Zhang, Dacheng Li, Jianfei Chen, Ion Stoica, Kurt Keutzer, and Song Han. Sparse Video-Gen: Accelerating video diffusion transformers with spatial-temporal sparsity. In Proceedings of the International Conference on Machine Learning , pages 68208–68224, 2025. 1, 6, 8 [43] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. In Proceedings of the International Confer-ence on Learning Representations , 2024. 8 [44] Jin Xu, Zhifang Guo, Jinzheng He, Hangrui Hu, Ting He, Shuai Bai, Keqin Chen, Jialin Wang, Yang Fan, Kai Dang, Bin Zhang, Xiong Wang, Yunfei Chu, and Junyang Lin. Qwen2.5-Omni technical report. CoRR , 2025. 1 [45] Ruyi Xu, Guangxuan Xiao, Haofeng Huang, Junxian Guo, and Song Han. XAttention: Block sparse attention with an-tidiagonal scoring. In Proceedings of the International Con-ference on Machine Learning , pages 69819–69831, 2025. 1, 2, 5, 6, 8 [46] Ling Yang, Zhilong Zhang, Yang Song, Shenda Hong, Run-sheng Xu, Yue Zhao, Wentao Zhang, Bin Cui, and Ming-Hsuan Yang. Diffusion models: A comprehensive survey of methods and applications. ACM Computing Surveys , 56(4): 1–39, 2023. 7 [47] Shuo Yang, Haocheng Xi, Yilong Zhao, Muyang Li, Jintao Zhang, Han Cai, Yujun Lin, Xiuyu Li, Chenfeng Xu, Kelly Peng, Jianfei Chen, Song Han, Kurt Keutzer, and Ion Stoica. Sparse VideoGen2: Accelerate video generation with sparse attention via semantic-aware permutation. In Advances in Neural Information Processing Systems , 2025. 8 [48] Zihao Ye, Lequn Chen, Ruihang Lai, Wuwei Lin, Yineng Zhang, Stephanie Wang, Tianqi Chen, Baris Kasikci, Vinod Grover, Arvind Krishnamurthy, and Luis Ceze. FlashInfer: Efficient and customizable attention engine for LLM infer-ence serving. In Proceedings of Machine Learning and Sys-tems , 2025. 4 [49] Jingyang Yuan, Huazuo Gao, Damai Dai, Junyu Luo, Liang Zhao, Zhengyan Zhang, Zhenda Xie, Yuxing Wei, Lean Wang, Zhiping Xiao, Yuqing Wang, Chong Ruan, Ming Zhang, Wenfeng Liang, and Wangding Zeng. Native sparse attention: Hardware-aligned and natively trainable sparse at-tention. In Proceedings of the Annual Meeting of the Asso-ciation for Computational Linguistics , pages 23078–23097, 2025. 4, 8 [50] Manzil Zaheer, Guru Guruganesh, Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Ontanon, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, and Amr Ahmed. Big Bird: Transformers for longer sequences. Advances in Neural Information Processing Systems , 33:17283–17297, 2020. 8 [51] Boqiang Zhang, Kehan Li, Zesen Cheng, Zhiqiang Hu, Yuqian Yuan, Guanzheng Chen, Sicong Leng, Yuming Jiang, Hang Zhang, Xin Li, Peng Jin, Wenqi Zhang, Fan Wang, Li-dong Bing, and Deli Zhao. VideoLLaMA 3: Frontier mul-timodal foundation models for image and video understand-ing. CoRR , 2025. 7 [52] Hailin Zhang, Xiaodong Ji, Yilin Chen, Fangcheng Fu, Xu-peng Miao, Xiaonan Nie, Weipeng Chen, and Bin Cui. PQ-Cache: Product quantization-based KVCache for long con-text LLM inference. Proceedings of the ACM on Manage-ment of Data , 3(3):1–30, 2025. 8 [53] Jingyi Zhang, Jiaxing Huang, Sheng Jin, and Shijian Lu. Vision-language models for vision tasks: A survey. IEEE Transactions on Pattern Analysis and Machine Intelligence ,46(8):5625–5644, 2024. 1 
+
+11 [54] Jintao Zhang, Chendong Xiang, Haofeng Huang, Jia Wei, Haocheng Xi, Jun Zhu, and Jianfei Chen. SpargeAttention: Accurate and training-free sparse attention accelerating any model inference. In Proceedings of the International Con-ference on Machine Learning , 2025. 1, 8 [55] Peiyuan Zhang, Yongqi Chen, Runlong Su, Hangliang Ding, Ion Stoica, Zhengzhong Liu, and Hao Zhang. Fast video generation with sliding tile attention. In Proceedings of the International Conference on Machine Learning , 2025. 8 [56] Peiyuan Zhang, Kaichen Zhang, Bo Li, Guangtao Zeng, Jingkang Yang, Yuanhan Zhang, Ziyue Wang, Haoran Tan, Chunyuan Li, and Ziwei Liu. Long context transfer from language to vision. Transactions on Machine Learning Re-search , 2025. 2 [57] Yu Zhang, Dong Guo, Fang Wu, Guoliang Zhu, Dian Ding, and Yiming Zhang. AnchorAttention: Difference-aware sparse attention with stripe granularity. In Proceedings of the Conference on Empirical Methods in Natural Language Processing , pages 8537–8549, 2025. 6, 8, 1 [58] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher R´ e, Clark Barrett, Zhangyang Wang, and Beidi Chen. H2O: Heavy-hitter oracle for efficient generative in-ference of large language models. Advances in Neural Infor-mation Processing Systems , 36:34661–34710, 2023. 8 [59] Pengyuan Zhou, Lin Wang, Zhi Liu, Yanbin Hao, Pan Hui, Sasu Tarkoma, and Jussi Kangasharju. A survey on gener-ative AI and LLM for video generation, understanding, and streaming. CoRR , 2024. 7 
+
+12 VecAttention: Vector-wise Sparse Attention for Accelerating Long Context Inference 
+
+## Supplementary Material 
+
+7. Visualization of Attention Maps 
+
+Figure 9 presents visualizations of attention maps across different layers and heads when performing inference on video benchmarks using the Qwen2.5-VL-7B-Instruct and Wan2.1 models, respectively. It can be observed that salient regions (highlighted in red) often manifest as fine-grained vertical line segments (vertical-vector pattern). It should be noted that, in theory, the vertical-vector pattern can be grouped into coarser structures such as blocks or lines. For instance, a vertical line pattern can be formed by aggregat-ing all vertical vectors within the same column, while a di-agonal (slash) line pattern can be constructed by selecting vertical vectors aligned along a diagonal direction. This hi-erarchical composability enables the fine-grained vertical-vector pattern to effectively approximate diverse coarse-grained patterns, enhancing its flexibility and representa-tional power. 
+
+8. Extended Statistical Comparison of Differ-ent Sparse Patterns 
+
+As shown in Figure 10 and Figure 11, we further approx-imate the attention maps presented in Figure 9 using dif-ferent sparse patterns, following the same approximation methodology as described in Figure 3. As can be observed, across nearly all attention heads, the vertical-vector pattern consistently outperforms other sparse patterns—including the fine-grained horizontal-vector pattern as well as the coarse-grained line and block patterns—achieving the clos-est approximation to the oracle pattern. 
+
+9. Does Vertical-Vector Pattern Exist across Other Modalities? 
+
+In Figure 12a, we present attention maps across different layers and heads of Meta-Llama3-8B-Instruct [14] on Long-Bench [3]. We observe that the vertical-vector sparse pat-tern also exists in LLMs, albeit in a more regular and coarse-grained form—such as concentration around diagonal re-gions and sink tokens, or clustering within specific block-like regions. This observation is further supported by the Pareto curves of different sparse patterns in Figure 12b: in many heads, the performance gap between the vertical-vector pattern and other coarse-grained patterns is small, with both closely approximating the oracle pattern. Recent studies [18, 20, 54] have identified such reg-ular, coarse-grained sparse patterns in LLMs, and lever-aged them for model acceleration—e.g., FlexPrefill [20] ex-ploiting vertical-slash patterns and XAttention [45] utilizing block patterns. More recently, AnchorAttention [57] explic-itly identifies anchor tokens in LLMs to exploit vertical-vector sparsity, demonstrating that the vertical-vector pat-tern is not only prevalent but also highly promising for prac-tical efficiency improvements. Furthermore, the vertical-vector sparse pattern is also observed in Qwen2.5-Omni-7B [44], which jointly processes text, images, and audio, as shown in Figure 13, demonstrating its practical potential even under more complex, multimodal input scenarios. 
+
+10. Kernel Implementations 
+
+10.1. Important-Vector Selection 
+
+As shown in Algorithm 1, our kernel of Important-Vector Selection provides an efficient approximation of the most informative key vectors by combining the TilingSelect strat-egy with a lightweight minS filtering mechanism. The ker-nel operates at the granularity of query–key tiles: each GPU thread block is responsible for one query tile of size BQ and a group of GK key tiles, and performs tiling-based GEMM computations with the on-the-fly filtering to identify high-saliency key positions. During the iteration over K-tiles, the kernel maintains a 
+
+per-row running maximum —a row-wise accumulator stored in on-chip memory—which records, for each query row, the maximum attention score observed across all previously processed tiles. After each tile’s partial attention matrix is computed, its row-wise maximum is compared against the accumulator to update a progressively tighter global thresh-old. This accumulated maximum is then reused by sub-sequent tiles to perform cross-tile minS filtering , enabling more stable and global importance estimation without re-visiting previous tiles or re-evaluating thresholds. For each query tile, the kernel extracts both (i) an 
+
+important-vector index set , formed by concatenating all se-lected indices returned from tile-level filtering, and (ii) a 
+
+per-row count vector , obtained by summing the number of selected key positions contributed by each tile. These two outputs correspond to the index matrix I ∈ NNp×nk , and the count vector C ∈ NNp in Algorithm 1. Here Np is the length of Qp and nk = max 1≤j≤Np Cj ,By coupling tile-structured GEMM, cross-tile max ac-cumulation, and cross-tile minS filtering, the kernel yields a compact and accurate approximation of the important key vectors with minimal memory traffic and computa-tional overhead. The resulting index and count sets (I, C)
+
+1Layer 0 Head 0 Layer 0 Head 7 Layer 0 Head 14 Layer 0 Head 21          
+
+> Layer 7 Head 0 Layer 7 Head 7 Layer 7 Head 14 Layer 7 Head 21
+> Layer 14 Head 0 Layer 14 Head 7 Layer 14 Head 14 Layer 14 Head 21
+> Layer 21 Head 0 Layer 21 Head 7 Layer 21 Head 14 Layer 21 Head 21
+
+(a) VideoMME (Qwen2.5-VL-7B-Instruct) Layer 6 Head 0 Layer 6 Head 3 Layer 6 Head 6 Layer 6 Head 9           
+
+> Layer 12 Head 0 Layer 12 Head 3 Layer 12 Head 6 Layer 12 Head 9
+> Layer 18 Head 0 Layer 18 Head 3 Layer 18 Head 6 Layer 18 Head 9
+> Layer 24 Head 0 Layer 24 Head 3 Layer 24 Head 6 Layer 24 Head 9
+
+(b) VBench (Wan2.1) 
+
+Figure 9. Visualization of attention maps across various layers and attention heads in tasks of video understanding and video generation. 
+
+are subsequently consumed by the downstream kernel of vector-sparse attention. 
+
+10.2. Vector-Sparse Computation 
+
+Algorithm 2 presents the implementation of our Vector-Sparse Attention Computation kernel. The kernel follows a similar design spirit to the kernel of vertical-slash sparse FlashAttention in MInference [18], but operates without block counts or block-level indexing. Instead, it directly consumes the important-vector index matrix I and the cor-responding important-vector count vector C generated by the upstream kernel of Important-Vector Selection in Algo-rithm 1. In the kernel, each thread block is assigned to process a single Q-tile, whose size is set to BQ = Pq , matching the vector size used during important-vector selection. This choice is intentional: under the vertical-vector sparse pat-tern, all queries within a vector-sized region share the same set of important key–value rows. Thus, assigning one Q-tile of size BQ = Pq per thread block yields shared in-dex access patterns. For each Q-tile, the kernel iterates over the important vertical vectors specified by I and C, and loads only the required K/V rows via GatherLoad . It then performs tile-level attention score computation followed by FlashAttention-style running-max and running-normalizer accumulation. These accumulators, m(iq ) and ℓ(iq ), are maintained in on-chip memory and updated incrementally as each important-Key tile is processed. The kernel’s latency is directly determined by the spar-sity structure discovered during Important-Vector Selection, allowing the model to benefit from large reductions in at-tention computation when the attention map contains high sparsity. 
+
+11. Comparison across Different Context Lengths 8K 16K 32K 64K 128K       
+
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> Normalized Time  72% 76%
+> 81%
+> 83%
+> 94%
+> 76%
+> 86%
+> 90% 91% 96%
+> 64%
+> 83%
+> 90%
+> 96% 96%
+> 94%
+> 97%
+> 98% 98% 98%
+> FlexPrefill
+> XAttention
+> AnchorAttention
+> VecAttention
+> Sparse Attention Computation
+> Important-Region Selection
+
+Figure 14. Attention latency breakdown normalized to full atten-tion across different context lengths on V-NIAH [56]. Markers (e.g., 64%) indicate the sparsity ratio. 
+
+As shown in Figure 14, VecAttention consistently outper-forms all baselines in terms of attention latency across con-text lengths ranging from 8K to 128K. As the input context length increases, VecAttention leverages the fine-grained vertical-vector sparse pattern to achieve higher sparsity ra-tios without compromising accuracy, thereby significantly reducing sparse attention computation time. Moreover, the TilingSelect and minS techniques in VecAttention effec-tively address the performance bottleneck in fine-grained vector selection (as detailed in Section 3.1), resulting in a selection overhead that is comparable to—or lower than—that of coarse-grained baselines. 
+
+12. Qualitative Comparison of Videos Gener-ated by Different Methods 
+
+As shown in Figure 15, the video generated by VecAtten-tion is the closest to that produced with Full Attention. It 20.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 0 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 0 Head 7 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 0 Head 14 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 0 Head 21 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 7 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 7 Head 7 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 7 Head 14 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 7 Head 21 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 14 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 14 Head 7 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 14 Head 14 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 14 Head 21 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 21 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 21 Head 7 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 21 Head 14 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 21 Head 21 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern Figure 10. Sparsity-recall trade-off of various sparse patterns across different layers and attention heads of Qwen2.5-VL-7B-Instruct, evaluated on the VideoMME benchmark. 
+
+successfully preserves both the visual elements and tem-poral consistency characteristic of Full Attention genera-tion. In contrast, the baseline methods—XAttention and Sparse VideoGen—introduce extraneous artifacts, such as additional bodies of water within the oasis, not described in the prompt. This comparison demonstrates that VecAt-tention more accurately identifies fine-grained, semantically important regions for attention, effectively maintaining the fidelity and precision of the video generation model without compromising quality. 
+
+13. Limitations 
+
+Our work has two main limitations, which also point to promising directions for future research. First, while we have demonstrated the effectiveness of the vertical-vector sparse pattern across different modalities, its generalization to complex downstream tasks remains to be fully explored. For instance, evaluation on applications in dynamic scenar-ios such as agent reasoning [41] or retrieval-augmented gen-eration (RAG) [1] is still limited. As a next step, we plan to extend our analysis across a more diverse set of models and downstream tasks, with the goal of identifying modality-and task-adaptive sparsity strategies. Second, our current study primarily focuses on vertical-vector patterns, leaving other fine-grained structures—such as horizontal vectors or diagonal (slash) vectors—less examined in terms of their end-to-end impact on accuracy and efficiency. While ini-tial results suggest that vertical structures are dominant in many cases, different patterns may offer complementary ad-vantages under specific conditions. In future work, we aim to develop a more comprehensive framework that dynami-30.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 6 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 6 Head 3 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 6 Head 6 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 6 Head 9 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 12 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 12 Head 3 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 12 Head 6 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 12 Head 9 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 18 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 18 Head 3 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 18 Head 6 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 18 Head 9 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 24 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 24 Head 3 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 24 Head 6 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 24 Head 9 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern Figure 11. Sparsity-recall trade-off of various sparse patterns across different layers and attention heads of Wan2.1, evaluated on VBench. 
+
+cally selects or combines multiple fine-grained sparse pat-terns based on input characteristics and model behavior. 4Layer 0 Head 0 Layer 0 Head 3 Layer 0 Head 6 Layer 0 Head 9 
+
+Layer 8 Head 0 Layer 8 Head 3 Layer 8 Head 6 Layer 8 Head 9 
+
+Layer 16 Head 0 Layer 16 Head 3 Layer 16 Head 6 Layer 16 Head 9 
+
+Layer 24 Head 0 Layer 24 Head 3 Layer 24 Head 6 Layer 24 Head 9 (a) Attention maps 0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 0 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 0 Head 3 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 0 Head 6 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 0 Head 9 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 8 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 8 Head 3 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 8 Head 6 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 8 Head 9 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 16 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 16 Head 3 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 16 Head 6 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 16 Head 9 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 24 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 24 Head 3 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 24 Head 6 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 24 Head 9 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern (b) Sparsity-recall tradeoff of various sparse patterns 
+
+Figure 12. The sparse pattern in Meta-Llama3-8B-Instruct evaluated on LongBench. Layer 0 Head 0 Layer 0 Head 7 Layer 0 Head 14 Layer 0 Head 21 
+
+Layer 8 Head 0 Layer 8 Head 7 Layer 8 Head 14 Layer 8 Head 21 
+
+Layer 16 Head 0 Layer 16 Head 7 Layer 16 Head 14 Layer 16 Head 21 
+
+Layer 24 Head 0 Layer 24 Head 7 Layer 24 Head 14 Layer 24 Head 21 
+
+(a) Attention maps 0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 0 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 0 Head 7 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 0 Head 14 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 0 Head 21 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 8 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 8 Head 7 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 8 Head 14 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 8 Head 21 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 16 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 16 Head 7 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 16 Head 14 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 16 Head 21 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 24 Head 0 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 24 Head 7 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 24 Head 14 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+Sparsity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Recall
+
+Layer 24 Head 21 
+
+Oracle Pattern 
+
+Line Pattern 
+
+Block Pattern 
+
+Vertical-Vector Pattern 
+
+Horizontal-Vector Pattern (b) Sparsity-recall tradeoff of various sparse patterns 
+
+Figure 13. The sparse pattern in Qwen2.5-Omni-7B evaluated on OmniBench [24]. 
+
+5(a) Full Attention 
+
+> (b) XAttention
+> (c) Sparse VideoGen
+> (d) VecAttention
+
+Figure 15. Qualitative comparison of videos generated with different sparse attention methods. The input prompt is sampled from VBench: “In the vast desert, an aerial shot shows an oasis nestled among the dunes, featuring tall palm trees and exuding an air of serenity. Realistic, Natural lighting, Peaceful.” 
+
+6Algorithm 1 Important-Vector Selection 
+
+1: Input: Q, K ∈ RN ×D ; query pooling size Pq ; K-tile size BK ; K-tile-group size GK ; minS filtering ratio α
+
+2: Output: important-vector index I ∈ NNp×nk ; count 
+
+C ∈ NNp
+
+# Row-wise mean pooling on queries (Equation (2) )
+
+3: Qp ← MeanPool( Q, P q ) ∈ RNp×D
+
+# Number of Q-tiles and K-tile-groups 
+
+4: Nq ←
+
+l Np
+
+> BQ
+
+m
+
+, Ng ←
+
+l NBK GK
+
+m
+
+# Parallel across Q-tile dimension 
+
+5: for iq = 0 to Nq − 1 do 
+
+6: Q(iq ) ← Qp[iq BQ : ( iq + 1) BQ, :] ∈ RBQ×D
+
+7: I(iq ) ← [ ] # local index buffer 
+
+8: C(iq ) ← 0BQ ∈ RBQ # per-row count buffer # Parallel across K-tile-groups 
+
+9: for ig = 0 to Ng − 1 do 
+
+10: δk ← ig · BK GK
+
+# Collect K-tiles in this group 
+
+11: K(ig ) ← { K[δk + jB K : δk + ( j + 1) BK , :] | j =0, . . . , G K − 1}
+
+12: mS ← (−∞ ) 1BQ ∈ RBQ
+
+# Iterate over K-tiles within the group 
+
+13: for Ktile ∈ K (ig ) do 
+
+14: Stile ← Q(iq )(Ktile )⊤/√D ∈ RBQ×BK
+
+# Update row-wise maximum scores 
+
+15: mS ← max  mS , rowmax( Stile ) ∈ RBQ
+
+# Binary mask using minS filtering (Equation (3) )
+
+16: M ← Stile > (mS − α)
+
+# Selected indices and per-row counts for this tile 
+
+17: (Itile , Ctile ) ← Indexing( M , δ k )
+
+# Accumulate indices and counts 
+
+18: I(iq ) ← Concatenate  I(iq ), Itile 
+
+19: C(iq ) ← C(iq ) + Ctile 
+
+# Move K offset to next K-tile 
+
+20: δk ← δk + BK
+
+21: end for 
+
+22: end for 
+
+23: end for 
+
+# Merge all index and count of each Q-tile 
+
+24: I ← Concatenate  I(0) , I(1) , . . . , I(Nq −1) 
+
+25: C ← Concatenate  C(0) , C(1) , . . . , C(Nq −1) 
+
+Algorithm 2 Vector-Sparse Computation 
+
+1: Input: Q, K, V ∈ RN ×D ; vector size Pq (we set the Q-tile size BQ = Pq ); important-vector index 
+
+I ∈ NNp×nk ; important-vector count C ∈ NNp ;
+
+2: Output: attention output O ∈ RN ×D
+
+3: Scale factor τ ← 1/√D
+
+4: Initialize O ← 0N ×D ∈ RN ×D
+
+# Number of Q-tiles (tile size BQ = Pq )
+
+5: Nq ←
+
+l NBQ
+
+m
+
+# Parallel across Q-tile dimension 
+
+6: for iq = 0 to Nq − 1 do 
+
+7: Q(iq ) ← Q[iq BQ : ( iq + 1) BQ, :] ∈ RBQ×D
+
+# Initialize tile-local accumulators 
+
+8: O(iq ) ← 0BQ×D ∈ RBQ×D
+
+9: m(iq ) ← (−∞ ) 1BQ ∈ RBQ
+
+10: ℓ(iq ) ← 0BQ ∈ RBQ
+
+# Loop over vertical-vector indices 
+
+11: j ← 0
+
+12: while j < C[iq ] do 
+
+13: i(iq ,j ) ← I[iq , j : j + BK ] ∈ NBK
+
+# Load K/V rows referenced by i(iq ,j )
+
+14: Ktile ← GatherLoad( K, i(iq ,j )) ∈ RBK ×D
+
+15: V tile ← GatherLoad( V , i(iq ,j )) ∈ RBK ×D
+
+16: S ← τ Q(iq )(Ktile )⊤ ∈ RBQ×BK
+
+17: S ← mask( S)
+
+18: m(iq ) 
+
+> new
+
+← max  m(iq ), rowmax( S) ∈ RBQ
+
+19: S ← S − m(iq )
+
+> new
+
+20: P ← exp( S) ∈ RBQ×BK
+
+21: ℓ(iq ) 
+
+> new
+
+← rowsum( P ) ∈ RBQ
+
+22: α ← exp  m(iq ) − m(iq )
+
+> new
+
+ ∈ RBQ
+
+23: ℓ(iq ) ← αℓ (iq ) + ℓ(iq )
+
+> new
+
+24: O(iq ) ← αO (iq ) + P V tile 
+
+25: m(iq ) ← m(iq )
+
+> new
+
+26: j ← j + BK
+
+27: end while 
+
+28: O(iq ) ← diag  ℓ(iq )−1O(iq )
+
+29: O[iq BQ : ( iq + 1) BQ, :] ← O(iq )
+
+30: end for 
+
+7

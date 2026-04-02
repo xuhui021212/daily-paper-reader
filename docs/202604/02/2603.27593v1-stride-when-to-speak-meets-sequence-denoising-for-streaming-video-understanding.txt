@@ -1,0 +1,1105 @@
+Title: STRIDE: When to Speak Meets Sequence Denoising for Streaming Video Understanding
+
+URL Source: https://arxiv.org/pdf/2603.27593v1
+
+Published Time: Tue, 31 Mar 2026 01:36:54 GMT
+
+Number of Pages: 36
+
+Markdown Content:
+# STRIDE: When to Speak Meets Sequence Denoising for Streaming Video Understanding 
+
+Junho Kim 1∗, Hosu Lee 2∗, James M. Rehg 1, Minsu Kim 3†‡ , Yong Man Ro 2† 
+
+> 1
+
+UIUC , 2 KAIST , 3 Google DeepMind 
+
+> ∗Equal contribution
+
+, †Corresponding author , ‡Work done as an advisory role only. 
+
+Recent progress in video large language models (Video-LLMs) has enabled strong offline reasoning over long and complex videos. However, real-world deployments increasingly require streaming perception and proactive interaction, where video frames arrive online and the system must decide not only what to respond, but also when to respond. In this work, we revisit proactive activation in streaming video as a structured sequence modeling problem, motivated by the observation that temporal transitions in streaming video nat-urally form span-structured activation patterns. To capture this span-level structure, we model activation signals jointly over a sliding temporal window and update them iteratively as new frames arrive. We propose 
+
+STRIDE (Structured Temporal Refinement with Iterative DEnoising), which employs a lightweight masked diffusion module at the activation interface to jointly predict and progressively refine activation signals across the window. Extensive experiments on diverse streaming benchmarks and downstream models demonstrate that STRIDE shows more reliable and temporally coherent proactive responses, significantly improving when-to-speak decision quality in online streaming scenarios.  
+
+> Contact:
+
+arkimjh@illinois.edu, leehosu01@kaist.ac.kr  
+
+> Project Page:
+
+https://interlive-team.github.io/STRIDE  
+
+> Huggingface:
+
+https://huggingface.co/interlive  
+
+> Code:
+
+https://github.com/interlive-team/STRIDE 
+
+## 1 Introduction 
+
+Along with recent advances in large language models (LLMs) Brown et al. (2020); Touvron et al. (2023); OpenAI (2022); Reid et al. (2024); Yang et al. (2025a), large vision-language models (LVLMs) Li et al. (2023); Liu et al. (2023b); Dai et al. (2023); Liu et al. (2023a); Chen et al. (2023) have also achieved impressive performance across a wide range of image understanding and reasoning tasks. Building upon these advances, various video specialized models ( i.e., 
+
+Video-LLMs) Lin et al. (2023); Zhang et al. (2023); Kim et al. (2024); Zhang et al. (2024a); Li et al. (2025c) further extend them to the temporal sequences, demonstrating remarkable capabilities in reasoning over video contents. However, existing Video-LLMs mostly operate in an offline manner, processing pre-recorded videos with access to the entire temporal context before generating responses. This fundamentally limits their capabilities to real-world streaming deployments such as egocentric assistants Huang et al. (2024c), autonomous driving Xie et al. (2025), or embodied AI agents Wei et al. (2025), where the model must continuously perceive an ongoing video stream and decide when and 
+
+what to respond in real time. Recognizing this gap, recent works have delved into streaming video understanding (SVU), where models continu-ously ingest incoming frames and maintain a temporal understanding on-the-fly Wang et al. (2024d); Zhang et al. (2025b); Yang et al. (2025c); Ning et al. (2025); Yao et al. (2025); Zhang et al.. Despite these advances, the approach is still reactive , lacking a capability to determine when a response should be triggered. Expanding beyond the stream-ing scope, several works have explored proactive response generation by leveraging special tokens Chen et al. (2024a, 2025a); Xu et al. (2025) to implicitly learn response timing or an agent-driven interaction approach Xiong et al. (2025); Yang et al. (2025b). More recently, several standalone activation modules Qian et al. (2024, 2025); Wang et al. (2025a) have been proposed, especially those that decouple the streaming pipeline into two stages: a lightweight front-end that predicts activation signals at each frame to identify triggering moments, followed by a downstream Video-LLM that, when activated, consumes the accumulated frame cache to generate responses. Within this decomposed framework, a straightforward way to train the activation module is to treat it as a binary 1
+
+> arXiv:2603.27593v1 [cs.CV] 29 Mar 2026
+
+classification problem as in Qian et al. (2024, 2025); Wang et al. (2025a), where at each time step a model predicts whether to trigger a response under binary supervision. However, such approach reduces activation to point-wise 
+
+0/1 decisions, answering “ should I respond now? ” at each time step, without explicitly modeling how activation states transition across a temporal span. This often results in flickering activations and poorly resolved transition boundaries, causing unstable triggering behavior and fragmented activation spans. In practice, a reliable activation module must not only predict isolated labels, but also model how activation states change over time, capturing consistent 0→1 onsets, sustained 1→1 persistence, and well-resolved 1→0 offsets, so as to form coherent contiguous activation spans. In this sense, streaming and proactive triggering is more analogous to a span-structured decision rather than a point-wise one. To account for this span-level structure, an activation module should jointly model the activation sequence within a temporal neighborhood, so that the downstream Video-LLM can be activated under well-scoped visual context (neither prematurely with insufficient evidence nor too late after the moment has passed). Motivated by recent advances in masked diffusion models Nie et al. (2025); You et al. (2025); Li et al. (2025a) (MDMs), which enable joint prediction over partially masked discrete sequences, we revisit streaming and proactive activation as structured sequence modeling over an activation window. Unlike point-wise decision-making, masked diffusion op-erates on an entire sequence and iteratively refines corrupted states within context, naturally aligning with the span-structure of streaming trigger. Building on this, we propose STRIDE (Structured T emporal Refinement with I terative 
+
+DE noising), a proactive streaming framework that models the when-to-speak decision as structured sequence predic-tion, explicitly capturing span-level structure and activation state transitions. Specifically, during training, we employ boundary-aware span masking strategies that corrupt contiguous regions of the activation sequence, encouraging the model to reason about onset and offset from broader temporal context rather than relying on isolated binary signals. At inference time, as new frames arrive, STRIDE progressively updates the activation window by carrying forward confident states and remasking uncertain positions, enabling temporally coherent span under partial observability while remaining plug-and-play and compatible with off-the-shelf Video-LLMs. Through extensive experiments and comprehensive analyses on streaming benchmarks and downstream models, we corroborate that STRIDE produces more reliable and temporally coherent proactive responses in online settings, significantly improving the when-to-speak decisions. Our contributions can be summarized as follows: 
+
+• We revisit proactive streaming activation in Video-LLMs and reformulate the when-to-speak problem as struc-tured sequence modeling over a temporal activation window, establishing span-level activation as the predic-tion unit. 
+
+• We propose STRIDE (Structured T emporal Refinement with I terative DE noising), a lightweight masked diffusion-based activation model that jointly predicts activation sequences and captures span-level structure. 
+
+• We validate STRIDE through extensive experiments on diverse streaming benchmarks and downstream back-bones, demonstrating more stable proactive triggering and improved temporal consistency in online settings. 
+
+## 2 Related Work 
+
+2.1 Large Vision-Language Models 
+
+Early works on LVLMs Liu et al. (2023b); Dai et al. (2023); Li et al. (2024a) have demonstrated that visual instruction tuning, which pairs a vision encoder with a LLM backbone and trains on instruction-following data, can output strong general-purpose capabilities for back-and-forth multi-modal conversation. Subsequent efforts Chen et al. (2023); Wang et al. (2024c); Zhu et al. (2025b); Wang et al. (2025b) have focused on scaling model and data, improving visual tokenization, and aligning vision and language representations at scale. Especially, Qwen families Bai et al. (2023); Wang et al. (2024b); Bai et al. (2025b,a) improve visual processing efficiency and capability with dynamic resolution and stronger multi-modal pretraining, enabling more robust perception and reasoning over complex visual inputs. In addition, Video-LLMs Zhang et al. (2023); Li et al. (2024c); Song et al. (2024); Zhang et al. (2024a) extend its scope to temporal understanding by treating video as a sequence of images, introducing video-specific connector Lin et al. (2023); Kim et al. (2024); Zhang et al. (2025a) and training pipelines Li et al. (2024b); Share (2024); Zhang et al. (2024b) that better capture spatiotemporal dynamics, thereby leading to stronger performance on video QA and captioning 2tasks. Despite these advances, most LVLMs remain confined to an offline setting, where the entire video clip is available prior to inference, limiting their applicability in real-time streaming scenarios. 
+
+2.2 Streaming Video Understanding 
+
+A growing body of works Qian et al. (2024); Zhang et al. (2025c); Li et al. (2025b) has explored expanding video under-standing into the streaming regime, where frames arrive online and frameworks must maintain state over time. One line of research adapts models to streaming interaction by redesigning training objectives and data formats for contin-uous inputs Chen et al. (2024a), incorporating memory-augmented architectures for multi-turn streaming Zhang et al. (2025b); Xiong et al. (2025), and leveraging real-time commentary pipelines that integrate video speech transcripts with instruction tuning Chen et al. (2025a); Xu et al. (2025). Another branch emphasizes efficiency for unbounded video streams through memory aggregation for long streams Zhang et al. (2025b), streaming-aligned KV-cache strate-gies Xu et al. (2025); Ning et al. (2025); Yang et al. (2025c), and redundant visual token dropping based on inter-frame similarity Yao et al. (2025). While these approaches have enabled Video-LLMs to process continuous streams, they remain fundamentally reactive , generating responses only upon instantaneous user queries. Addressing this gap, another direction tackles the proactive response , which targets deciding when to respond as the video unfolds. Several approaches exploit EOS token within autoregressive generation to implicitly determine re-sponse timing Chen et al. (2024a); Xu et al. (2025), conflating the triggering with language generation. Agentic methods explicitly model task-relevant temporal intervals for goal-driven triggering Yang et al. (2025b), or query-aware visual pruning with proactive response mechanisms Zhang et al.. Most relevant to our work, recent modular approaches Qian et al. (2024, 2025); Wang et al. (2025a, 2024d) explicitly decouple the pipeline into a lightweight front-end that predicts per-frame binary activation signals and a downstream Video-LLM that generates responses upon triggering. While such a modular design preserves the downstream Video-LLM’s capabilities, reducing activation to point-wise binary supervision undermines the temporal coherence of contiguous activation spans. In this work, we retain the modular design while recasting activation as a structured sequence prediction problem, leveraging masked diffusion to jointly model activation sequences over a temporal window and capture span-level temporal coherence. 
+
+2.3 Discrete Diffusion Language Models 
+
+Recent progress in discrete diffusion language models (dLLMs) Nie et al. (2025); Sahoo et al. (2024); Lou et al. (2023) revisits diffusion as an alternative to autoregressive decoding for text generation using masked diffusion models mechanism. Instead of generating tokens strictly left-to-right, dLLMs iteratively denoise masked token sequences, enabling bidirectional conditioning and parallel token updates, which naturally supports controllable generation. Subsequent efforts have further scaled dLLMs by converting pretrained autoregressive models into diffusion-based counterparts Gong et al. (2024); Ye et al. (2025), and improved their alignment and inference efficiency through parallel decoding strategies Chen et al. (2025b). Especially, LLaDA series scale masked diffusion to large LLMs Nie et al. (2025) and further explores post-training alignment Zhu et al. (2025a) as well as system-level scaling by converting pretrained AR models into diffusion models Bie et al. (2025), thereby inheriting knowledge while retaining the non-autoregressive generation benefits. This research scope has also been extended to the multi-modal setting, where vision encoders are coupled with diffusion language backbones for visual instruction following Li et al. (2025a); You et al. (2025); Yu et al. (2025); Cheng et al. (2025), demonstrating that dLLMs can benefit from parallel decoding and bidirectional reasoning in vision-language tasks. Different from these works that primarily replace the autoregressive decoder for textual response generation, our work leverages masked diffusion for proactive streaming activation. We treat the when-to-speak signal as a structured discrete activation sequence over a temporal window, jointly predicting the activation states for the incoming video streams. 
+
+## 3 Proposed Method  
+
+> 3.0.1 Preliminaries: Masked Diffusion Models.
+
+Recently, diffusion language models (dLLMs) Nie et al. (2025); Zhu et al. (2025a); Li et al. (2025a); You et al. (2025) have shown remarkable progress as an alternative paradigm to autoregressive language modeling, replacing left-to-right token generation with a masked diffusion process that iteratively denoises discrete token sequences. Given a sequence of L tokens x0 = ( x10, . . . , x L 
+
+> 0
+
+), the forward process progressively corrupts x0 by independently replacing 3Downstream Video -LLM 
+
+Streaming Question 
+
+> Act. Token
+
+Streaming Responses 
+
+> The chef pours oil into the pan and
+> turns on the stove to start cooking.
+
+Incoming Frames 
+
+## Activation Model      
+
+> Query Token
+> Visual Token
+> Frame Cache
+> What dish is being
+> prepared, and what
+> are the key steps? Seq. Denoising
+> 𝑣 102Video
+> Stream
+> 𝑣 1𝑣 10,𝑣 10,
+
+Training : Masked Denoising Process (@ 𝑇 #)         
+
+> 𝑡 =1
+> 𝑡 =0
+> 𝒱 233𝑎 [3378∶33]𝑞
+> The chef sears seafood in spiced oil,
+> building the base.
+> Broth, okra, and thyme are added. It’s a
+> Creole -style seafood stew.
+
+𝑇 #                    
+
+> Mask Token
+> only if :active
+> 010011
+> 011[Mask] 00
+> [Mask] [Mask] [Mask] [Mask] [Mask] [Mask]
+> 011[Mask] 0[Mask]
+> [Mask] [Mask] [Mask] [Mask] 0[Mask]
+> 00[Mask] [Mask] [Mask] [Mask]
+> Accumulated Frames Cached Frames Clean -up
+
+STRIDE       
+
+> MDM:
+> avg. of
+> unmasking loss
+> active
+> inactive
+> or
+> 𝑎 +
+> ,𝑎 +
+> .𝑎 +
+> /𝑎 +
+> -0,𝑎 +
+> -
+> 1[Mask] 0[Mask] [Mask] 0
+
+Act. Model 𝝅   
+
+> [01:49]
+> [03:08]
+> [04:34]
+> Visual Cache Act. Region
+> [00:00]
+> 𝑣 6
+> Proactive Trigger Time
+> Activation Decision
+
+𝐴 -
+
+𝐴 .
+
+𝐴 /Figure 1 Overview of STRIDE , which operates in a streaming setting where frames arrive online. A lightweight activation model based on masked diffusion maintains an activation region over a sliding temporal window and iteratively denoises masked activation states to predict a coherent trigger segment. A trigger is issued only if an active span is sustained for a predefined span ratio. When activation is triggered, the accumulated frame context is forwarded to a downstream Video-LLM to generate the response. 
+
+each token with a mask token [M] with probability t ∈ [0 , 1] , generating a partially masked sequence xt. At t = 0 
+
+the sequence is fully observed, while at t = 1 it is entirely masked. The core of MDMs is a mask predictor pθ (· | xt) with bidirectional attention that takes xt as input and predicts all masked tokens simultaneously. The reverse process Austin et al. (2021); Shi et al. (2024); Sahoo et al. (2024) recovers 
+
+x0 from xt by iteratively applying this mask predictor, which is trained by minimizing a cross-entropy loss computed only over the masked positions: 
+
+L(θ) = −Et, x0,xt
+
+"
+
+1
+
+t
+
+LX
+
+i=1 
+
+1[xit = M] log pθ (xi
+
+0 | xt)
+
+#
+
+, (1) where t ∼ U [0 , 1] and xt is sampled from the forward process. This serves as an upper bound on the negative log-likelihood of the model distribution Nie et al. (2025); Bie et al. (2025). At inference, generation proceeds by initializing a fully masked sequence x1 and simulating the reverse process through K discrete steps decreasing from t = 1 → 0. At each step, the mask predictor predicts all masked positions, and a subset of predictions is accepted while the remaining positions are remasked for subsequent refinement. This iterative predict-and-refine procedure enables MDMs to generate coherent sequences through progressive unmasking with bidirectional context. 
+
+3.1 STRIDE: Proactive Streaming Framework 
+
+3.1.1 Problem Formulation. 
+
+The proposed STRIDE (shown in figure 1) considers the streaming video understanding setting where a model con-tinuously processes video streams V={v1, v 2, . . . , v T , . . . } with vT denoting the incoming visual frame arriving at time step T , interleaved with user queries and model-generated responses over time. Unlike offline Video-LLMs that have access to the holistic video sequences before generating a response, a streaming model must work under partial observability, where only the frames observed so far V≤T ={v1, . . . , v T } and context priors CT (e.g., user query q and prior interaction history) are available. At every time step T , the model faces two sequential decisions: (i) whether to respond, and (ii) if so, what to respond. STRIDE adopts a two-stage streaming framework to decouple these decisions. 
+
+3.1.2 Two-Stage Architecture. 
+
+As illustrated in figure 1, STRIDE is designed with the two-stage streaming framework. A lightweight Activation Model 
+
+π continuously monitors the incoming stream and determines whether a proactive response should be triggered. Once 4Left -Context (Causal) 𝒂 Target (Bidirectional) 𝒂 !                                                                           
+
+> Copy Sequence Duplication
+> (a) Boundary -Anchored Masking
+> (b) Span Unmasking
+> (c) Full Masking
+> Masking Strategies
+> 011100
+> 000111
+> 01110
+> 001110
+> 011100
+> 0[M] [M] [M] 11
+> [M] 1[M]
+> [M] [M] [M] [M] [M] [M]
+> Activation Boundary Masks Boundary Transition
+> 1
+> Revealed Homogeneous Region Mimic Unmasking Patterns
+> Global Activation Layout / Cold Start
+> Corrupted Input ( 𝑎 ")
+> Corrupted Input ( 𝑎 ")
+> Corrupted Input ( 𝑎 ")
+> GT
+> (𝑎 !)
+> GT
+> (𝑎 !)
+> GT
+> (𝑎 !)
+> [M] 1[M]
+> 011001
+> 001[M] 001
+> Denoised State at Time 𝑇
+> Activation Window Shift at 𝑇 +1
+> Eviction
+> Confidence
+> Retention (𝜏 )
+> (New)
+> Video Frame
+> 𝑣 !"#
+> 0[M] 1[M]
+> Selective Re -masking
+> Progressive Denoising (𝐾 steps)
+> 0[M] 1[M] [M]
+> 01
+> 0[M] 1
+> 00
+> 00
+> 11
+> 1
+> Frame Cache User Query
+> 𝑡 =0
+> 𝑡 =1
+> Inference Stage of STRIDE
+> 1
+> Next Selective Re -masking
+> Denoising
+> Re -mask Keep stat e
+> 0011@𝑇 @𝑇 +1 @𝑇 @𝑇 +1
+> 0[M]
+> 0
+
+Figure 2 Activation modeling and inference stage of STRIDE . Training applies sequence duplication and three masking strategies (boundary-anchored masking, span unmasking, full masking). During inference, the activation window slides with incoming frames, retaining confident past decisions while selectively re-masking and progressively denoising uncertain positions. 
+
+a response is triggered at time step T , the accumulated visual context since the most recent query time Tq , denoted 
+
+V[Tq :T ], together with the interaction context CT , is forwarded to a downstream Video-LLM, which generates the response RT = f (CT , V[Tq :T ]). The generated response RT is appended to the interaction context, updating it to CT ′ = CT ∪ R T , enabling awareness of prior responses and maintaining dialogue coherence across multiple activation events. After each triggered response, the visual accumulation is cleared and restarted from the current time step, ensuring that subsequent activation decisions operate on fresh streaming context. This modular design cleanly separates when-to-speak modeling from downstream response generation. 
+
+3.1.3 Span-Level Activation Modeling. 
+
+To formalize the activation decision, we represent activation as a window-level sequence of size W anchored at time step T , and model it as a sequence-level prediction over this temporal window. Specifically, we define an activation region aT = [ aT −W , . . . , a T ] ∈ { 0, 1}W , indicating inactive or active states within the window. This windowed formulation enables the activation model to learn contiguous activation spans and their transition dynamics ( 0→1
+
+onset, 1→1 persistence, 1→0 offset), aligning the prediction unit with span-level structures rather than isolated point-wise decisions. As the video stream unfolds, incoming frames are sampled at 1 FPS and encoded into visual tokens by a vision encoder, which are accumulated in a running visual cache. At each time step T , the activation region aT is appended after the visual cache as the prediction target. Each activation token takes values from the discrete vocabulary {0, 1, [M] },where [M] denotes masked positions to be denoised. The activation model conditions on the visual cache and jointly infers masked activation states within the temporal window. When the activation state is determined to be active un-der the span-based criterion, the accumulated visual context is forwarded to the downstream Video-LLM for response generation. 
+
+3.2 Training: Activation as Sequence Denoising 
+
+3.2.1 Structured Masking Strategies for Activation Denoising. 
+
+To train the activation model under the structured formulation, we propose a mixture of three corruption strategies instead of the standard MDM Nie et al. (2025), which samples mask positions independently. Such masking is inap-propriate for our activation learning as the target sequence consists of contiguous active regions; isolated unmasked tokens between active positions make the denoising task trivially solvable through local interpolation, bypassing the need for genuine temporal understanding. The proposed masking mixture shown in figure 2 (left) is composed of: 
+
+• Boundary-Anchored Span Masking masks a contiguous block overlapping with at least one activation boundary, forcing the model to determine where the active region begins and ends from broader temporal context. 5• Span Unmasking starts from a fully masked sequence and reveals a contiguous block while keeping boundary-adjacent positions masked, mimicking the inference-time pattern where high-confidence tokens are unmasked consecutively in homogeneous regions. 
+
+• Full Masking initially masks the entire activation sequence (cold-start) to stabilize the reverse step by training the model to estimate the global activation layout from visual context alone. During training, each sample is randomly corrupted using one of three structured masking strategies, each selected with equal probability. These structured strategies encourage the model to reason over contiguous activation spans and their boundary transitions, rather than relying on isolated token predictions. As a result, the activation module learns span-level consistency that better aligns with the sequential and partial observability of streaming proactive triggering.  
+
+> 3.2.2 Recovering Bidirectional Conditioning with Sequence Duplication.
+
+Ma-sked diffusion predicts masked positions using full-sequence context, whereas an AR-pretrained activation model is trained with causal attention that only exposes left context. We therefore introduce an input reparameterization that enables bidirectional conditioning without altering the underlying causal attention layers. Specifically, we em-ploy sequence duplication , appending a copy of the activation region to form [a, a′], where the copy carry identical activation tokens but serve distinct roles. The duplicated sequence a′ produces diffusion predictions, while a serves as a conditioning prefix under causal attention. Concretely, since a is entirely placed before a′, every token in a′ can access all positions of a as left-context, providing full-window visibility for denoising without modifying the causal attention mask.  
+
+> 3.2.3 Training Objective.
+
+Following the denoising process in equation (1), we train the activation module by minimizing the masked cross-entropy loss over a′, conditioned on the user query q and the visual cache V≤T :
+
+L(θ) = −Et, a′ 
+
+> 0,a′
+> t
+
+ 1
+
+t
+
+> W
+
+X
+
+> j=1
+
+1[a′jt = M] log pθ (a′j 
+
+> 0
+
+| q, V≤t, a′
+
+> t
+
+)
+
+ , (2) where a′ 
+
+> 0
+
+is the ground-truth activation sequence, a′ 
+
+> t
+
+is obtained by applying aforementioned our masking strategies at noise level t ∼ U [0 , 1] , and the user query q along with the visual cache V≤t serves as a fixed conditioning prefix, analogous to the prompt in the supervised fine-tuning of dLLMs Nie et al. (2025); Li et al. (2025a). 
+
+3.3 Inference: Streaming as Progressive Unmasking 
+
+At inference time, STRIDE maintains a sliding activation window and performs progressive refinement as illustrated in figure 2 (right); confident past decisions are preserved, while uncertain and newly introduced positions are jointly refined with masked diffusion. Concretely, new time step T +1 proceeds in two stages: (i) Selective Re-masking: The activation sequence of size W is shifted forward so that the region falling outside the window is evicted and a new frame is appended, causing the activation sequence to advance in time. The fully resolved activation aj+1  
+
+> T
+
+previously assigned to position j + 1 at time T now maps to position j at time T + 1 . To determine whether each carried-forward decision remains reasonable given the new visual evidence vT +1 , we apply a confidence-based retention: if pθ (ajT +1 = aj+1  
+
+> T
+
+| q, V≤T +1 , aT +1 ) > τ , position j inherits its previous decision; otherwise, it is re-masked to [M] so that uncertain positions re-enter the denoising process alongside the newly appended slots. (ii) K-Step Progressive Denoising: The masked positions obtained from the previous stage, comprising both newly ap-pended slots and low-confidence re-masked slots, are resolved over K denoising steps by prioritizing high-confidence positions first. At each step, the model computes the activation probability pj = pθ (aj = 1 | q, V≤T +1 , aT +1 ) for ev-ery masked position and derives a confidence score cj = max( pj , 1−pj ), which measures how strongly the prediction leans toward either triggering or not. The top-k positions ranked by cj are unmasked, where k = ⌈Ninit /K ⌉ and Ninit 
+
+is the number of masked positions established in stage (i), while the rest remain masked for subsequent refinement. 6By revealing high-confidence decisions first, this schedule establishes reliable temporal anchors that progressively stabilize the remaining ambiguous boundary regions. After K steps, the activation window is fully resolved. A trigger at time T + 1 is issued only if an active span is sustained for at least γ consecutive positions, where γ denotes the required span ratio for triggering. 
+
+## 4 Experiments 
+
+4.1 Experimental Setting  
+
+> 4.1.1 Implementation & Training Details.
+
+The activation model is initialized from a compact vision-language model using Qwen3-VL-2B Bai et al. (2025a) to minimize streaming overhead. The downstream Video-LLMs are kept frozen, ensuring full modularity between the two stages. Incoming video frames are sampled at 1 FPS and encoded into the visual cache as the stream progresses. For the denoising process, we adopt the low-confidence remasking strategy Nie et al. (2025) with K=8 sampling steps during inference. τ is set to 0.75, and γ is set to 1 following the benchmark evaluation protocol. The entire activation model is trained on a single node of 8 NVIDIA H100 GPUs, while evaluation is conducted on a single H100 GPU. Comprehensive hyperparameter settings and additional configurations are provided in the Appendix. For the training data, we curate a diverse collection of temporally annotated video datasets spanning multiple video understanding tasks, including dense video captioning Caba Heilbron et al. (2015); Liu et al. (2024b); Huang et al. (2024b), temporal activity detection Sigurdsson et al. (2016, 2018), grounded video QA Wang et al. (2024a), sequential step recognition Zhou et al. (2018), and moment localization Anne Hendricks et al. (2017). We convert each temporal annotation into a binary activation sequence aligned with the frame sampling rate, where frames within annotated spans are labeled as active ( 1) and the remaining frames as inactive ( 0).  
+
+> 4.1.2 Benchmarks & Baselines.
+
+We evaluate STRIDE on three complementary benchmarks. OVO-Bench Niu et al. (2025) assesses online video un-derstanding across backward tracing, real-time visual perception, and forward active responding, where the model must delay its response until sufficient future evidence is available. StreamingBench Lin et al. (2024b) evaluates streaming comprehension through 18 tasks spanning real-time visual understanding, omni-source understanding, and contextual understanding including proactive output and sequential question answering. In addition, we evalu-ate on subsets of ET-Bench Liu et al. (2024b), including Temporal Video Grounding (TVG), Episodic Memory (EPM), Temporal Action Localization (TAL), Dense Video Captioning (DVC), and Step Localization and Captioning (SLC). This setup evaluates activation timing precision by measuring how accurately the model identifies event boundaries. For baselines, we compare against various offline Video-LLMs, online streaming proactive models Chen et al. (2024a); Qian et al. (2025); Wang et al. (2025a), and proprietary models Reid et al. (2024); OpenAI (2024). In addition, we include Baseline-AR , which serves as the primary counterpart to STRIDE . Baseline-AR follows the same architec-ture and training setup as our method but replaces the masked diffusion activation module with an autoregressive binary prediction head trained with BCE loss, following the activation formulation described in prior work Wang et al. (2025a). This setup isolates the activation modeling strategy, enabling a direct comparison between masked denoising and autoregressive binary prediction. 
+
+4.2 Qualitative Results on Streaming Video Understanding 
+
+tables 1 and 2 present results on OVO-Bench and StreamingBench, respectively. The proposed STRIDE outperforms the autoregressive baseline (i.e., Baseline-AR) Wang et al. (2025a) by introducing the proposed masked denoising process. Furthermore, across all three downstream models Team et al. (2025); Wang et al. (2025b); Bai et al. (2025a) on OVO-Bench, STRIDE achieves significant gains in Forward Active Responding, which directly evaluates proactive when-to-speak control. This setting benefits from our span-structured prediction, which models response timing over temporal activation region rather than through independent per-frame decisions. STRIDE also consistently improves Real-Time Visual Perception, indicating that stable triggering allows the downstream Video-LLM to ingest well-scoped visual context at the appropriate moment. On StreamingBench, this advantage extends broadly across all 7Table 1 Evaluation results on OVO-Bench Niu et al. (2025). Baseline-AR uses autoregressive binary prediction. Offline models follow the original single-turn protocol with segmented clips, whereas streaming methods process frames sequentially. Method # of Frames    
+
+> Real-Time Visual Perception Backward Tracing Forward Act. Responding Overall
+
+OCR ACR ATR STU FPD OJR Avg. EPM ASI HLD Avg. REC SSR CRR Avg. Avg. 
+
+Human 
+
+Human - 93.96 92.57 94.83 92.70 91.09 94.02 93.20 92.59 93.02 91.37 92.33 95.48 89.67 93.56 92.90 92.81 
+
+Proprietary Models (Offline), Single-Turn Evaluation 
+
+Gemini 1.5 Pro Reid et al. (2024) 1 FPS 85.91 66.97 79.31 58.43 63.37 61.96 69.32 58.59 76.35 52.64 62.54 35.53 74.24 61.67 57.15 63.00 
+
+GPT-4o OpenAI (2024) 64 69.80 64.22 71.55 51.12 70.30 59.78 64.46 57.91 75.68 48.66 60.75 27.58 73.21 59.40 53.40 59.54 
+
+Open-Source Models (Offline), Single-Turn Evaluation 
+
+LLaVA-Video-7B Zhang et al. (2024b) 64 69.13 58.72 68.83 49.44 74.26 59.78 63.52 56.23 57.43 7.53 40.40 34.10 69.95 60.42 54.82 52.91 LLaVA-OV-7B Li et al. (2024a) 64 66.44 57.80 73.28 53.37 71.29 61.96 64.02 54.21 55.41 21.51 43.71 25.64 67.09 58.75 50.50 52.74 LLaVA-N-Video-7B Li et al. (2024b) 64 69.80 59.60 66.40 50.60 72.30 61.40 63.30 51.20 64.20 9.70 41.70 34.10 67.60 60.80 54.20 53.10 Qwen2-VL-7B Wang et al. (2024b) 64 60.40 50.46 56.03 47.19 66.34 55.43 55.98 47.81 35.48 56.08 46.46 31.66 65.82 48.75 48.74 50.39 InternVL-V2-8B Chen et al. (2024b) 64 67.11 60.55 63.79 46.07 68.32 56.52 60.39 48.15 57.43 24.73 43.44 26.50 59.14 54.14 46.60 50.15 LongVU-7B Shen et al. (2024) 1 FPS 55.70 49.50 59.50 48.30 68.30 63.00 57.40 43.10 66.20 9.10 39.50 16.60 69.00 60.00 48.50 48.50 
+
+Open-Source Models (Streaming) 
+
+Flash-VStream-7B Zhang et al. (2025b) 1 FPS 24.16 29.36 28.45 33.71 25.74 28.80 28.37 39.06 37.16 5.91 27.38 8.02 67.25 60.00 45.09 33.61 VideoLLM-Online-8B Chen et al. (2024a) 2 FPS 8.05 23.85 12.07 14.04 45.54 21.20 20.79 22.22 18.80 12.18 17.73 - - - - -VideoLLM-EyeWO Zhang et al. (2025c) 1 FPS 24.16 27.52 31.89 32.58 44.55 35.87 32.76 39.06 38.51 6.45 28.00 - - - - -Dispider Qian et al. (2025) 1 FPS 57.72 49.54 62.07 44.94 61.39 51.63 54.55 48.48 55.41 4.30 36.06 18.05 37.36 48.75 34.72 41.78 TimeChat-Online-7B Yao et al. (2025) 1 FPS 69.80 48.60 64.70 44.90 68.30 55.40 58.60 53.90 62.80 9.10 42.00 32.50 36.50 40.00 36.40 45.60 StreamAgent-7B Yang et al. (2025b) 1 FPS 71.20 53.20 63.60 53.90 67.30 58.70 61.30 54.80 58.10 25.80 41.70 35.90 48.40 52.00 45.40 49.40 QueryStream-7B Zhang et al. 1 FPS 74.50 47.70 70.70 46.60 71.30 57.60 61.40 54.20 63.50 8.60 42.10 33.20 43.10 40.80 39.03 47.51 
+
+Offline Backbones → Online Inference with STRIDE 
+
+Qwen3-VL-8B Bai et al. (2025a) 1 FPS 69.80 59.60 73.30 57.30 71.30 58.70 65.00 55.60 63.50 12.90 44.00 37.70 60.80 40.40 46.30 51.77 + Baseline-AR Wang et al. (2025a) 1 FPS 73.80 65.10 73.30 62.40 70.30 71.20 69.35 54.90 66.90 17.20 46.33 29.70 56.00 42.50 42.73 52.81 Gemma3-4B Team et al. (2025) 1 FPS 65.80 48.60 56.00 36.00 66.30 50.00 53.78 44.40 41.90 3.20 29.83 14.40 61.40 52.50 42.77 42.13 + STRIDE 1 FPS 73.20 60.60 64.70 39.30 71.30 56.50 60.93 47.80 52.00 4.80 34.87 42.60 64.60 60.00 55.73 50.51 InternVL3-8B Wang et al. (2025b) 1 FPS 65.80 52.30 68.10 51.10 71.30 62.00 61.77 58.90 66.90 9.70 45.17 36.60 64.10 43.30 48.00 51.64 + STRIDE 1 FPS 75.80 54.10 80.20 56.70 74.30 65.20 67.72 58.90 65.50 11.30 45.23 40.10 67.70 66.20 58.00 56.98 Qwen3-VL-8B Bai et al. (2025a) 1 FPS 69.80 59.60 73.30 57.30 71.30 58.70 65.00 55.60 63.50 12.90 44.00 37.70 60.80 40.40 46.30 51.77 + STRIDE 1 FPS 76.50 64.20 79.30 61.20 73.30 63.60 69.68 57.20 72.30 14.00 47.83 46.40 63.10 69.60 59.70 59.07 
+
+three evaluation dimensions: Real-time Visual Understanding, Omni-Source Understanding, and Contextual Under-standing, with the most notable improvements in Proactive Output (PO) subtask that requires the model to determine response timing without explicit timing cue. Together, these results suggest that the proposed framework reliably enhances both the precision of when to respond and the relevance of responses across diverse streaming conditions. 
+
+4.3 Activation Evaluation via Temporal Grounding 
+
+Accurate temporal grounding is central to proactive activation. While the previous benchmarks Niu et al. (2025); Lin et al. (2024b) evaluate the end-to-end behavior of streaming pipelines, they do not directly measure the quality of the activation model itself. To isolate this component, we evaluate the activation model independently on ET-Bench Liu et al. (2024b), which focuses on fine-grained event-level temporal understanding. As shown in table 3, the gain from replacing binary classification with masked diffusion is substantial: STRIDE outperforms Baseline-AR by 27.1 on TVG and 8.3 on average, demonstrating that structured sequence denoising provides considerably sharper boundary reso-lution than per-frame supervision. Notably, STRIDE achieves these results with only 2B parameters, outperforming both streaming baselines and temporal-localization specialized MLLMs of standard size (7–13B parameters) on the overall average. 
+
+4.4 Ablation Studies on STRIDE Components 
+
+4.4.1 Effects of Masking Strategies. 
+
+table 4(a) evaluates how different masking strategies affect the learning of span-structured activation sequences. The standard MDM protocol independent masking performs the worst across all metrics, indicating that activation prediction cannot be treated as independent point-wise denoising since it fails to capture the temporal structure of activation transitions. To better reflect the span-level nature of activation, we adopt three complementary masking patterns described in section 3.2: boundary-anchored span masking (Span), full masking (Full), and span unmasking (Span). Span masks contiguous regions near activation boundaries, Full masks the entire sequence to simulate the cold-start condition, and Span exposes boundary refinement patterns encountered during denoising. Combining these strategies significantly improves performance, suggesting that diverse span corruption patterns help the model learn coherent activation spans for better boundary prediction. 8Table 2 Evaluation results on StreamingBench Lin et al. (2024b). Baseline-AR uses autoregressive binary prediction. Offline models follow the original single-turn protocol with segmented clips, whereas streaming methods process frames sequentially. Method # of Frames    
+
+> Real-Time Visual Understanding Omni-Source Understanding Contextual Understanding Overall
+
+OP CR CS ATP EU TR PR SU ACP CT Avg. ER SCU SD MA Avg. ACU MCU SQA PO Avg. Avg. 
+
+Human 
+
+Human - 89.47 92.00 93.60 91.47 95.65 92.52 88.00 88.75 89.74 91.30 91.46 88.00 88.24 93.60 90.27 90.26 88.80 90.40 95.00 100 93.55 91.66 
+
+Proprietary Models (Offline) 
+
+Gemini 1.5 pro Reid et al. (2024) 1 FPS 79.02 80.47 83.54 79.67 80.00 84.74 77.78 64.23 71.95 48.70 75.69 46.80 39.60 74.90 80.00 60.22 51.41 40.73 54.80 45.10 48.73 67.07 
+
+GPT-4o OpenAI (2024) 64 77.11 80.47 83.91 76.47 70.19 83.80 66.67 62.19 69.12 49.22 73.28 41.20 37.20 43.60 56.00 44.50 41.20 38.40 32.80 56.86 38.70 60.15 
+
+Open-Source Models (Offline) 
+
+LLaVA-OV-7B Li et al. (2024a) 32 80.38 74.22 76.03 80.72 72.67 71.65 67.59 65.45 65.72 45.08 71.12 40.80 37.20 33.60 44.80 38.40 35.60 36.00 27.27 29.55 32.74 56.36 Qwen2-VL-7B Wang et al. (2024b) 1 FPS 75.20 82.81 73.19 77.45 68.32 71.03 72.22 61.19 61.47 46.11 69.04 41.20 22.00 32.80 43.60 34.90 31.20 26.00 39.60 22.73 31.66 54.14 MiniCPM-V 2.6 8B Yao et al. (2024) 32 71.93 71.09 77.92 75.82 64.60 65.73 70.37 56.10 62.32 53.37 67.44 40.80 24.00 34.00 41.20 35.00 34.00 31.60 41.92 22.22 34.97 53.85 InternVL-V2-8B Chen et al. (2024b) 16 68.12 60.94 69.40 77.12 67.70 62.93 59.26 53.25 54.96 56.48 63.72 37.60 26.40 37.20 42.00 35.80 32.00 31.20 32.32 40.91 32.42 51.40 Kangaroo-7B Liu et al. (2024a) 64 71.12 84.38 70.66 73.20 67.08 61.68 56.48 55.69 62.04 38.86 64.60 37.60 31.20 28.80 39.20 34.20 32.80 26.40 33.84 16.00 30.06 51.10 LongVA-7B Zhang et al. (2024a) 128 70.03 63.28 61.20 70.92 62.73 59.50 61.11 53.66 54.67 34.72 59.96 39.60 32.40 28.00 41.60 35.40 32.80 29.60 30.30 15.91 29.95 48.66 VILA-1.5-8B Lin et al. (2024a) 14 53.68 49.22 70.98 56.86 53.42 53.89 54.63 48.78 50.14 17.62 52.32 41.60 26.40 28.40 36.00 33.10 26.80 34.00 23.23 17.65 27.35 43.20 Video-LLaMA2-7B Cheng et al. (2024) 32 55.86 55.47 57.41 58.17 52.80 43.61 39.81 42.68 45.61 35.23 49.52 30.40 32.40 30.40 36.00 32.40 24.80 26.80 18.67 0.00 21.93 40.40 
+
+Open-Source Models (Streaming) 
+
+Flash-VStream-7B Zhang et al. (2025b) 1 FPS 25.89 43.57 24.91 23.87 27.33 13.08 18.52 25.20 23.87 48.70 23.23 25.91 24.90 25.60 28.40 26.00 24.80 25.20 26.80 1.96 24.12 24.04 VideoLLM-Online-8B Chen et al. (2024a) 2 FPS 39.07 40.06 34.49 31.05 45.54 32.40 31.48 34.16 42.49 27.89 35.99 31.20 26.51 24.10 32.00 28.45 24.19 29.20 30.80 3.92 26.55 32.48 Dispider Qian et al. (2025) 1 FPS 74.92 75.53 74.10 73.08 74.44 59.92 76.14 62.91 62.16 45.80 67.63 35.46 25.26 38.57 43.34 35.66 39.62 27.65 34.80 25.34 33.61 53.12 StreamAgent Yang et al. (2025b) 1 FPS 79.63 78.31 79.28 75.87 74.74 76.92 82.94 66.31 73.69 55.40 74.31 35.86 26.26 38.87 44.04 36.26 39.72 30.25 39.60 28.90 34.62 57.02 TimeChat-Online-7B Yao et al. (2025) 1 FPS 80.80 79.70 80.80 83.30 74.80 78.80 78.70 64.20 68.80 58.00 75.28 - - - - - - - - - - -QueryStream-7B Zhang et al. 1 FPS 82.11 83.59 78.23 82.69 75.47 80.06 79.63 63.01 67.90 42.55 74.04 - - - - - - - - - - -
+
+Offline Backbones → Online Inference with STRIDE 
+
+Qwen3-VL-8B Bai et al. (2025a) 1 FPS 62.70 68.00 69.70 53.30 67.50 65.10 67.60 48.00 68.00 40.90 60.88 36.80 18.00 32.80 34.00 30.40 25.60 23.60 31.20 32.40 28.20 46.84 + Baseline-AR Wang et al. (2025a) 1 FPS 79.00 72.70 85.50 70.80 73.30 76.60 81.50 63.40 80.70 44.60 73.79 45.20 29.20 35.20 35.20 36.20 35.60 37.20 48.40 24.30 36.38 57.12 Gemma3-4B Team et al. (2025) 1 FPS 63.80 69.50 68.80 54.40 60.20 65.10 59.30 40.70 62.70 21.80 57.49 28.80 31.20 30.40 46.40 34.20 34.40 31.20 38.80 12.40 29.20 46.03 + STRIDE 1 FPS 66.80 71.90 66.60 57.20 66.50 70.70 60.20 43.10 65.00 23.80 60.00 35.60 31.60 36.00 44.00 36.80 33.60 35.20 44.80 41.60 38.80 50.14 InternVL3-8B Wang et al. (2025b) 1 FPS 74.90 82.00 75.70 61.20 72.00 67.60 74.10 66.70 78.10 34.20 68.71 40.40 27.60 38.80 45.60 38.10 38.00 26.00 36.80 31.20 33.00 53.97 + STRIDE 1 FPS 74.90 78.90 76.70 68.60 77.00 77.30 77.80 71.50 83.00 33.20 72.45 39.60 22.40 44.00 50.80 39.20 34.00 35.20 43.20 42.80 38.80 57.58 Qwen3-VL-8B Bai et al. (2025a) 1 FPS 62.70 68.00 69.70 53.30 67.50 65.10 67.60 48.00 68.00 40.90 60.88 36.80 18.00 32.80 34.00 30.40 25.60 23.60 31.20 32.40 28.20 46.84 + STRIDE 1 FPS 77.10 75.00 77.30 72.80 76.40 77.90 76.90 69.90 84.30 46.10 74.24 42.80 24.00 45.20 53.20 41.30 32.00 38.40 46.40 42.80 39.90 59.29 
+
+Table 3 Online activation accuracy on ET-Bench Liu et al. (2024b). The Baseline-AR uses autoregressive prediction, while other setups are the same as STRIDE .Frames Params TVG F1 EPM F1 TAL F1 DVC F1 SLC F1 Avg 
+
+Temporal-Localization Specialized MLLMs 
+
+VTimeLLM Huang et al. (2024a) 100 7B 7.6 1.9 18.2 12.4 8.7 9.8 VTG-LLM Guo et al. (2025) 96 7B 15.9 3.7 14.4 40.2 20.8 19.0 TimeChat Ren et al. (2024) 96 7B 26.2 3.9 10.1 16.6 5.6 12.5 LITA Huang et al. (2024b) 100 13B 22.2 4.6 18.0 39.7 21.0 21.1 ETChat Liu et al. (2024b) 1 FPS 5B 38.6 10.2 30.8 38.4 24.4 28.5 
+
+Streaming Baselines 
+
+VideoLLM-Online Chen et al. (2024a) 2 FPS 8B 13.2 3.8 9.1 24.0 9.9 12.0 Dispider Qian et al. (2025) 1 FPS 9B 36.1 15.5 27.3 33.8 18.8 26.3 StreamBridge Wang et al. (2025a) 1 FPS 8B 34.3 – 24.3 38.3 22.6 –
+
+Baseline-AR Wang et al. (2025a) 1 FPS 2B 35.7 2.5 21.2 39.6 22.6 24.3 
+
+STRIDE 1 FPS 2B 62.8 10.7 24.6 36.5 28.5 32.6 
+
+Table 4 Ablation studies on ET-Bench evaluating (a) masking strategy design, (b) sequence duplication, and (c) selective re-masking. TVG F1 EPM F1 TAL F1 DVC F1 SLC F1 Avg 
+
+(a) Masking Strategy 
+
+Indep. only 8.5 3.3 6.1 8.8 9.2 7.2 Span only 30.6 6.1 22.9 25.4 20.6 21.1 Span + Full 36.8 7.0 26.0 24.0 21.3 23.0 Span + Full + Span 62.8 10.7 24.6 36.5 28.5 32.6 
+
+(b) Sequence Duplication 
+
+w/o Seq. Duplication 49.6 6.0 23.6 19.9 15.2 22.9 w/ Seq. Duplication 62.8 10.7 24.6 36.5 28.5 32.6 
+
+(c) Selective Re-masking 
+
+w/o Re-masking (last-only) 39.5 2.5 19.1 30.7 21.2 22.6 w/ Re-masking (selective) 62.8 10.7 24.6 36.5 28.5 32.6 
+
+4.4.2 Effect of Sequence Duplication. 
+
+Masked diffusion relies on contextual reasoning over the activation window, whereas the pretrained backbone used in STRIDE follows causal attention and therefore only exposes left context during prediction. This mismatch limits the model’s ability to jointly infer activation states within the window. To mitigate this, we apply sequence duplica-tion , which provides full-window context to the prediction tokens while preserving the causal backbone. As shown in table 4(b), removing sequence duplication leads to a consistent performance drop across all tasks, reducing the average score from 32.6 to 22.9. The degradation is particularly notable in temporally sensitive tasks such as TVG and DVC, indicating that accurate boundary reasoning benefits from access to the full activation window. These results demonstrate that sequence duplication effectively recovers bidirectional context for diffusion-based refine-ment, enabling full-window conditioning through a simple input reparameterization without modifying the causal architecture. 
+
+4.4.3 Effect of Selective Re-masking. 
+
+In the streaming setting, activation predictions are carried forward as the window advances. If these states are pre-served without revision, early mistakes can propagate and gradually corrupt the activation sequence. To examine this effect, we compare our selective re-masking strategy with a simplified variant that masks only the newly appended position ( last-only ), leaving previous decisions fixed. As shown in table 4(c), restricting re-masking to the last position leads to a substantial performance drop, reducing the average score from 32.6 to 22.6. As only predicting last token falls into autoregressive prediction, the resulting performance is also similar to Baseline-AR in table 3. In contrast, 9STRIDE          
+
+> Baseline -AR
+> Time to Event Onset (s) Event Progress (%) Time Since Event End (s)
+> Time to Event Onset (s) Event Progress (%) Time Since Event End (s) (a) Pre-Event (b) During Event (c) Post-Event
+> Figure 3 Activation transition frequency results around event boundaries on ET-Bench TVG. Baseline-AR model shows frequent oscillations near boundaries, whereas STRIDE produces more robust activation spans.
+
+selectively re-masking low-confidence positions allows the model to revise uncertain decisions as new frames arrive, enabling refinement of the activation sequence by using the updated context information. 
+
+4.5 Behavioral Analysis of STRIDE Properties  
+
+> 4.5.1 Flickering Analysis around Event Boundaries.
+
+While ET-Bench quantifies activation accuracy, it is also limited to capture the temporal stability of activation deci-sions. In particular, per-frame activation models may suffer from flickering behavior due to their inherently isolated predictions, where predictions rapidly oscillate between active and inactive states (0 ↔1), resulting in unstable trigger-ing and poorly resolved transition boundaries. To analyze this phenomenon, we measure the frequency of activation transitions relative to event boundaries. Specifically, we align predictions around ground-truth events and accumulate transition counts within three regions (figure 3): (a) pre-event (-60s to onset), (b) during-event (normalized by event progress %), and (c) post-event (offset to +60s), using the TVG task of ET-Bench where each instance corresponds to a single event. As in the figure, across all regions, Baseline-AR exhibits substantially higher transition frequency, indicating unsta-ble activation sequences with frequent on/off oscillations. This instability becomes particularly striking near event boundaries, where transition frequency sharply increases, suggesting difficulty in resolving the precise onset and offset of events. In contrast, STRIDE produces significantly smoother activation patterns with far fewer transitions. The reduced flickering indicates that modeling activation as structured sequence denoising encourages temporally coherent predictions, allowing the model to maintain consistent activation spans and more reliably capture event boundaries.  
+
+> 4.5.2 Latency–Accuracy Trade-off for Denoising Steps.
+
+We analyze the effect of the denoising step K on both activation model accuracy and inference latency as illustrated in figure 4. This trade-off is particularly important in the streaming setting, where the activation model operates on-line and directly determines the model’s response latency. Increasing K allows the model to perform more refinement steps, improving activation accuracy but also increasing inference time. In practice, we observe that performance saturates quickly: around K = 8 steps already achieves near-maximum mean F1 across ET-Bench subtasks. This behavior likely stems from the small output space of the activation sequence, where each position only takes binary states (0 or 1), making the denoising process relatively easier to converge than large vocabulary space. At K = 8 , the inference latency is approximately ∼100 ms, which is practical enough to support real-time operation for streaming frame rates of downstream models.  
+
+> 4.5.3 Streaming Efficiency and Memory Footprint.
+
+Extending the latency-accuracy trade-off analysis in figure 4, we decompose the computational overhead introduced by the activation model under a streaming setup. The measurement is conducted on a single H100 GPU with a 128-frame context budget. As shown in table 5, when a subsequent response is required, the 113 ms (new frame and K = 8 
+
+denoising steps) added by STRIDE incurs only a 7% additional latency compared to the 1511 ms required by the base model Qwen3VL-8B Bai et al. (2025a) without the triggering module. When a trigger is unnecessary, STRIDE saves 10 # Number of Denoising Step 𝑲 Figure 4 Trade-off between ET-Bench performance (mean F1) and inference latency for denoising step K. 
+
+> Table 5
+
+Latency and VRAM usage of the downstream Video-LLM and STRIDE activation modules (with AR variation) during streaming inference.   
+
+> Procedure Latency (ms) VRAM
+
+Downstream Video-LLM 
+
+Response Gen. (TTFT) 1276 17.8 GB Response Gen. (TTLT) 1511 + 13 MB 
+
+STRIDE 
+
+Activation Sate (Base) 5.2 GB + 1 Denoising Step 12 + 10 MB + Append Frame 20 + 30 MB 
+
+Baseline-AR 
+
+Activation Sate (Base) 5.2 GB + Append Frame 26 + 30 MB 
+
+approximately 91% of the total processing time (113 ms vs. 1276 ms). Furthermore, compared to the per-frame decision baseline (Baseline-AR, 26 ms), the extra latency from the diffusion process (113 ms) is limited to 87 ms. In terms of memory, STRIDE maintains a lightweight footprint of 5.2 GB. Executing denoising process requires an additional 10 MB, and each new frame introduces 30 MB of incremental memory usage. These highlight the advantage of the two-stage design: a lightweight activation model gates the expensive downstream model. Even with the masked diffusion module employed in STRIDE, trigger modeling introduces only minimal latency and memory overhead, maintaining efficient streaming inference. 
+
+## 5 Conclusion 
+
+We present STRIDE , a framework for proactive streaming video understanding that models activation as a structured temporal sequence rather than independent per-frame decisions. By leveraging a lightweight masked diffusion mod-ule to jointly refine activation signals over a sliding window, STRIDE captures span-level temporal structure and produces more stable and coherent triggering behavior in streaming settings. Extensive experiments and analyses show that jointly modeling activation over a temporal window significantly improves event boundary localization and reduces unstable triggering, while introducing only minimal overhead to the overall streaming pipeline. 
+
+## References 
+
+Lisa Anne Hendricks, Oliver Wang, Eli Shechtman, Josef Sivic, Trevor Darrell, and Bryan Russell. Localizing moments in video with natural language. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , 2017. Jacob Austin, Daniel D Johnson, Jonathan Ho, Daniel Tarlow, and Rianne Van Den Berg. Structured denoising diffusion models in discrete state-spaces. Advances in neural information processing systems , 34:17981–17993, 2021. Jinze Bai, Shuai Bai, Shusheng Yang, Shijie Wang, Sinan Tan, Peng Wang, Junyang Lin, Chang Zhou, and Jingren Zhou. Qwen-vl: A versatile vision-language model for understanding, localization, text reading, and beyond. arXiv preprint arXiv:2308.12966 , 1 (2):3, 2023. Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, Wenbin Ge, Zhifang Guo, Qidong Huang, Jie Huang, Fei Huang, Binyuan Hui, Shutong Jiang, Zhaohai Li, Mingsheng Li, Mei Li, Kaixin Li, Zicheng Lin, Junyang Lin, Xuejing Liu, Jiawei Liu, Chenglong Liu, Yang Liu, Dayiheng Liu, Shixuan Liu, Dunjie Lu, Ruilin Luo, Chenxu Lv, Rui Men, Lingchen Meng, Xuancheng Ren, Xingzhang Ren, Sibo Song, Yuchong Sun, Jun Tang, Jianhong Tu, Jianqiang Wan, Peng Wang, Pengfei Wang, Qiuyue Wang, Yuxuan Wang, Tianbao Xie, Yiheng Xu, Haiyang Xu, Jin Xu, Zhibo Yang, Mingkun Yang, Jianxin Yang, An Yang, Bowen Yu, Fei Zhang, Hang Zhang, Xi Zhang, Bo Zheng, Humen Zhong, Jingren Zhou, Fan Zhou, Jing Zhou, Yuanzhi Zhu, and Ke Zhu. Qwen3-vl technical report. arXiv preprint arXiv:2511.21631 , 2025a. Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, et al. Qwen2. 5-vl technical report. arXiv preprint arXiv:2502.13923 , 2025b. 
+
+11 Tiwei Bie, Maosong Cao, Kun Chen, Lun Du, Mingliang Gong, Zhuochen Gong, Yanmei Gu, Jiaqi Hu, Zenan Huang, Zhenzhong Lan, et al. Llada2. 0: Scaling up diffusion language models to 100b. arXiv preprint arXiv:2512.15745 , 2025. Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. Language models are few-shot learners. Advances in neural information processing systems , 33:1877–1901, 2020. Fabian Caba Heilbron, Victor Escorcia, Bernard Ghanem, and Juan Carlos Niebles. Activitynet: A large-scale video benchmark for human activity understanding. In Proceedings of the ieee conference on computer vision and pattern recognition , pages 961–970, 2015. Joya Chen, Zhaoyang Lv, Shiwei Wu, Kevin Qinghong Lin, Chenan Song, Difei Gao, Jia-Wei Liu, Ziteng Gao, Dongxing Mao, and Mike Zheng Shou. Videollm-online: Online video large language model for streaming video. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 18407–18418, 2024a. Joya Chen, Ziyun Zeng, Yiqi Lin, Wei Li, Zejun Ma, and Mike Zheng Shou. Livecc: Learning video llm with streaming speech transcription at scale. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 29083–29095, 2025a. Zhe Chen, Jiannan Wu, Wenhai Wang, Weijie Su, Guo Chen, Sen Xing, Zhong Muyan, Qinglong Zhang, Xizhou Zhu, Lewei Lu, et al. Internvl: Scaling up vision foundation models and aligning for generic visual-linguistic tasks. arXiv preprint arXiv:2312.14238 ,2023. Zhe Chen, Weiyun Wang, Hao Tian, Shenglong Ye, Zhangwei Gao, Erfei Cui, Wenwen Tong, Kongzhi Hu, Jiapeng Luo, Zheng Ma, et al. How far are we to gpt-4v? closing the gap to commercial multimodal models with open-source suites. Science China Information Sciences , 67(12):220101, 2024b. Zigeng Chen, Gongfan Fang, Xinyin Ma, Ruonan Yu, and Xinchao Wang. dparallel: Learnable parallel decoding for dllms. arXiv preprint arXiv:2509.26488 , 2025b. Shuang Cheng, Yuhua Jiang, Zineng Zhou, Dawei Liu, Wang Tao, Linfeng Zhang, Biqing Qi, and Bowen Zhou. Sdar-vl: Stable and efficient block-wise diffusion for vision-language understanding. arXiv preprint arXiv:2512.14068 , 2025. Zesen Cheng, Sicong Leng, Hang Zhang, Yifei Xin, Xin Li, Guanzheng Chen, Yongxin Zhu, Wenqi Zhang, Ziyang Luo, Deli Zhao, et al. Videollama 2: Advancing spatial-temporal modeling and audio understanding in video-llms. arXiv preprint arXiv:2406.07476 , 2024. Wenliang Dai, Junnan Li, Dongxu Li, Anthony Tiong, Junqi Zhao, Weisheng Wang, Boyang Li, Pascale Fung, and Steven Hoi. InstructBLIP: Towards general-purpose vision-language models with instruction tuning. In Advances in Neural Information Processing Systems , 2023. Shansan Gong, Shivam Agarwal, Yizhe Zhang, Jiacheng Ye, Lin Zheng, Mukai Li, Chenxin An, Peilin Zhao, Wei Bi, Jiawei Han, et al. Scaling diffusion language models via adaptation from autoregressive models. arXiv preprint arXiv:2410.17891 , 2024. Yongxin Guo, Jingyu Liu, Mingda Li, Dingxin Cheng, Xiaoying Tang, Dianbo Sui, Qingbin Liu, Xi Chen, and Kevin Zhao. Vtg-llm: Integrating timestamp knowledge into video llms for enhanced video temporal grounding. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 39, pages 3302–3310, 2025. Bin Huang, Xin Wang, Hong Chen, Zihan Song, and Wenwu Zhu. Vtimellm: Empower llm to grasp video moments. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 14271–14280, 2024a. De-An Huang, Shijia Liao, Subhashree Radhakrishnan, Hongxu Yin, Pavlo Molchanov, Zhiding Yu, and Jan Kautz. Lita: Language instructed temporal-localization assistant. In European Conference on Computer Vision , pages 202–218. Springer, 2024b. Yifei Huang, Jilan Xu, Baoqi Pei, Yuping He, Guo Chen, Lijin Yang, Xinyuan Chen, Yaohui Wang, Zheng Nie, Jinyao Liu, et al. Vinci: A real-time embodied smart assistant based on egocentric vision-language model. arXiv preprint arXiv:2412.21080 , 2024c. Junho Kim, Hyunjun Kim, Hosu Lee, and Yong Man Ro. Salova: Segment-augmented long video assistant for targeted retrieval and routing in long-form video analysis. arXiv preprint arXiv:2411.16173 , 2024. Bo Li, Yuanhan Zhang, Dong Guo, Renrui Zhang, Feng Li, Hao Zhang, Kaichen Zhang, Yanwei Li, Ziwei Liu, and Chunyuan Li. Llava-onevision: Easy visual task transfer. arXiv preprint arXiv:2408.03326 , 2024a. Feng Li, Renrui Zhang, Hao Zhang, Yuanhan Zhang, Bo Li, Wei Li, Zejun Ma, and Chunyuan Li. Llava-next-interleave: Tackling multi-image, video, and 3d in large multimodal models. arXiv preprint arXiv:2407.07895 , 2024b. Junnan Li, Dongxu Li, Silvio Savarese, and Steven Hoi. Blip-2: Bootstrapping language-image pre-training with frozen image encoders and large language models. In International Conference on Machine Learning . PMLR, 2023. 
+
+12 Kunchang Li, Yali Wang, Yinan He, Yizhuo Li, Yi Wang, Yi Liu, Zun Wang, Jilan Xu, Guo Chen, Ping Luo, et al. Mvbench: A comprehensive multi-modal video understanding benchmark. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 22195–22206, 2024c. Shufan Li, Konstantinos Kallidromitis, Hritik Bansal, Akash Gokul, Yusuke Kato, Kazuki Kozuka, Jason Kuen, Zhe Lin, Kai-Wei Chang, and Aditya Grover. Lavida: A large diffusion language model for multimodal understanding. arXiv preprint arXiv:2505.16839 , 2025a. Wei Li, Bing Hu, Rui Shao, Leyang Shen, and Liqiang Nie. Lion-fs: Fast & slow video-language thinker as online video assistant. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 3240–3251, 2025b. Yanwei Li, Chengyao Wang, and Jiaya Jia. Llama-vid: An image is worth 2 tokens in large language models. In European Conference on Computer Vision , pages 323–340. Springer, 2025c. Bin Lin, Yang Ye, Bin Zhu, Jiaxi Cui, Munan Ning, Peng Jin, and Li Yuan. Video-llava: Learning united visual representation by alignment before projection. arXiv preprint arXiv:2311.10122 , 2023. Ji Lin, Hongxu Yin, Wei Ping, Pavlo Molchanov, Mohammad Shoeybi, and Song Han. Vila: On pre-training for visual language models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 26689–26699, 2024a. Junming Lin, Zheng Fang, Chi Chen, Zihao Wan, Fuwen Luo, Peng Li, Yang Liu, and Maosong Sun. Streamingbench: Assessing the gap for mllms to achieve streaming video understanding. arXiv preprint arXiv:2411.03628 , 2024b. Haotian Liu, Chunyuan Li, Yuheng Li, and Yong Jae Lee. Improved baselines with visual instruction tuning. arXiv preprint arXiv:2310.03744 , 2023a. Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. Visual instruction tuning. In Advances in Neural Information Processing Systems , 2023b. Jiajun Liu, Yibing Wang, Hanghang Ma, Xiaoping Wu, Xiaoqi Ma, Xiaoming Wei, Jianbin Jiao, Enhua Wu, and Jie Hu. Kangaroo: A powerful video-language model supporting long-context video input. arXiv preprint arXiv:2408.15542 , 2024a. Ye Liu, Zongyang Ma, Zhongang Qi, Yang Wu, Ying Shan, and Chang W Chen. Et bench: Towards open-ended event-level video-language understanding. Advances in Neural Information Processing Systems , 37:32076–32110, 2024b. Aaron Lou, Chenlin Meng, and Stefano Ermon. Discrete diffusion modeling by estimating the ratios of the data distribution. arXiv preprint arXiv:2310.16834 , 2023. Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li. Large language diffusion models. arXiv preprint arXiv:2502.09992 , 2025. Zhenyu Ning, Guangda Liu, Qihao Jin, Wenchao Ding, Minyi Guo, and Jieru Zhao. Livevlm: Efficient online video understanding via streaming-oriented kv cache and retrieval. arXiv preprint arXiv:2505.15269 , 2025. Junbo Niu, Yifei Li, Ziyang Miao, Chunjiang Ge, Yuanhang Zhou, Qihao He, Xiaoyi Dong, Haodong Duan, Shuangrui Ding, Rui Qian, et al. Ovo-bench: How far is your video-llms from real-world online video understanding? In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 18902–18913, 2025. OpenAI. ChatGPT. https://openai.com/blog/chatgpt/, 2022. OpenAI. Hello gpt-4o, 2024. URL https://openai.com/index/hello-gpt-4o/. Rui Qian, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Shuangrui Ding, Dahua Lin, and Jiaqi Wang. Streaming long video understand-ing with large language models. Advances in Neural Information Processing Systems , 37:119336–119360, 2024. Rui Qian, Shuangrui Ding, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Yuhang Cao, Dahua Lin, and Jiaqi Wang. Dispider: Enabling video llms with active real-time interaction via disentangled perception, decision, and reaction. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 24045–24055, 2025. Machel Reid, Nikolay Savinov, Denis Teplyashin, Dmitry Lepikhin, Timothy Lillicrap, Jean-baptiste Alayrac, Radu Soricut, An-geliki Lazaridou, Orhan Firat, Julian Schrittwieser, et al. Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context. arXiv preprint arXiv:2403.05530 , 2024. Shuhuai Ren, Linli Yao, Shicheng Li, Xu Sun, and Lu Hou. Timechat: A time-sensitive multimodal large language model for long video understanding. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 14313–14323, 2024. 
+
+13 Subham Sahoo, Marianne Arriola, Yair Schiff, Aaron Gokaslan, Edgar Marroquin, Justin Chiu, Alexander Rush, and Volodymyr Kuleshov. Simple and effective masked diffusion language models. Advances in Neural Information Processing Systems , 37: 130136–130184, 2024. Share. Sharegemini: Scaling up video caption data for multimodal large language models, June 2024. URL https://github.com/ Share14/ShareGemini. Xiaoqian Shen, Yunyang Xiong, Changsheng Zhao, Lemeng Wu, Jun Chen, Chenchen Zhu, Zechun Liu, Fanyi Xiao, Balakrishnan Varadarajan, Florian Bordes, et al. Longvu: Spatiotemporal adaptive compression for long video-language understanding. arXiv preprint arXiv:2410.17434 , 2024. Jiaxin Shi, Kehang Han, Zhe Wang, Arnaud Doucet, and Michalis Titsias. Simplified and generalized masked diffusion for discrete data. Advances in neural information processing systems , 37:103131–103167, 2024. Gunnar A Sigurdsson, Gül Varol, Xiaolong Wang, Ali Farhadi, Ivan Laptev, and Abhinav Gupta. Hollywood in homes: Crowd-sourcing data collection for activity understanding. In European conference on computer vision , pages 510–526. Springer, 2016. Gunnar A Sigurdsson, Abhinav Gupta, Cordelia Schmid, Ali Farhadi, and Karteek Alahari. Charades-ego: A large-scale dataset of paired third and first person videos. arXiv preprint arXiv:1804.09626 , 2018. Enxin Song, Wenhao Chai, Guanhong Wang, Yucheng Zhang, Haoyang Zhou, Feiyang Wu, Haozhe Chi, Xun Guo, Tian Ye, Yanting Zhang, et al. Moviechat: From dense token to sparse memory for long video understanding. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 18221–18232, 2024. Gemma Team, Aishwarya Kamath, Johan Ferret, Shreya Pathak, Nino Vieillard, Ramona Merhej, Sarah Perrin, Tatiana Matejovi-cova, Alexandre Ramé, Morgane Rivière, et al. Gemma 3 technical report. arXiv preprint arXiv:2503.19786 , 2025. Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, et al. Llama: Open and efficient foundation language models. arXiv preprint arXiv:2302.13971 ,2023. Haibo Wang, Zhiyang Xu, Yu Cheng, Shizhe Diao, Yufan Zhou, Yixin Cao, Qifan Wang, Weifeng Ge, and Lifu Huang. Grounded-videollm: Sharpening fine-grained temporal grounding in video large language models. arXiv preprint arXiv:2410.03290 , 2024a. Haibo Wang, Bo Feng, Zhengfeng Lai, Mingze Xu, Shiyu Li, Weifeng Ge, Afshin Dehghan, Meng Cao, and Ping Huang. Stream-bridge: Turning your offline video large language model into a proactive streaming assistant. arXiv preprint arXiv:2505.05467 ,2025a. Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, et al. Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution. arXiv preprint arXiv:2409.12191 , 2024b. Weiyun Wang, Zhe Chen, Wenhai Wang, Yue Cao, Yangzhou Liu, Zhangwei Gao, Jinguo Zhu, Xizhou Zhu, Lewei Lu, Yu Qiao, et al. Enhancing the reasoning ability of multimodal large language models via mixed preference optimization. arXiv preprint arXiv:2411.10442 , 2024c. Weiyun Wang, Zhangwei Gao, Lixin Gu, Hengjun Pu, Long Cui, Xingguang Wei, Zhaoyang Liu, Linglin Jing, Shenglong Ye, Jie Shao, et al. Internvl3. 5: Advancing open-source multimodal models in versatility, reasoning, and efficiency. arXiv preprint arXiv:2508.18265 , 2025b. Yueqian Wang, Xiaojun Meng, Yuxuan Wang, Jianxin Liang, Jiansheng Wei, Huishuai Zhang, and Dongyan Zhao. Videollm knows when to speak: Enhancing time-sensitive video comprehension with video-text duet interaction format. arXiv preprint arXiv:2411.17991 , 2024d. Meng Wei, Chenyang Wan, Xiqian Yu, Tai Wang, Yuqiang Yang, Xiaohan Mao, Chenming Zhu, Wenzhe Cai, Hanqing Wang, Yilun Chen, et al. Streamvln: Streaming vision-and-language navigation via slowfast context modeling. arXiv preprint arXiv:2507.05240 , 2025. Bin Xie, Yingfei Liu, Tiancai Wang, Jiale Cao, and Xiangyu Zhang. Glad: A streaming scene generator for autonomous driving. 
+
+arXiv preprint arXiv:2503.00045 , 2025. Haomiao Xiong, Zongxin Yang, Jiazuo Yu, Yunzhi Zhuge, Lu Zhang, Jiawen Zhu, and Huchuan Lu. Streaming video understanding and multi-round interaction with memory-enhanced knowledge. arXiv preprint arXiv:2501.13468 , 2025. Ruyi Xu, Guangxuan Xiao, Yukang Chen, Liuning He, Kelly Peng, Yao Lu, and Song Han. Streamingvlm: Real-time understanding for infinite video streams. arXiv preprint arXiv:2510.09608 , 2025. An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025a. 
+
+14 Haolin Yang, Feilong Tang, Lingxiao Zhao, Xiang An, Ming Hu, Huifa Li, Xinlin Zhuang, Yifan Lu, Xiaofeng Zhang, Abdalla Swikir, et al. Streamagent: Towards anticipatory agents for streaming video understanding. arXiv preprint arXiv:2508.01875 ,2025b. Yanlai Yang, Zhuokai Zhao, Satya Narayan Shukla, Aashu Singh, Shlok Kumar Mishra, Lizhu Zhang, and Mengye Ren. Streammem: Query-agnostic kv cache memory for streaming video understanding. arXiv preprint arXiv:2508.15717 , 2025c. Linli Yao, Yicheng Li, Yuancheng Wei, Lei Li, Shuhuai Ren, Yuanxin Liu, Kun Ouyang, Lean Wang, Shicheng Li, Sida Li, et al. Timechat-online: 80% visual tokens are naturally redundant in streaming videos. In Proceedings of the 33rd ACM International Conference on Multimedia , pages 10807–10816, 2025. Yuan Yao, Tianyu Yu, Ao Zhang, Chongyi Wang, Junbo Cui, Hongji Zhu, Tianchi Cai, Haoyu Li, Weilin Zhao, Zhihui He, et al. Minicpm-v: A gpt-4v level mllm on your phone. arXiv preprint arXiv:2408.01800 , 2024. Jiacheng Ye, Zhihui Xie, Lin Zheng, Jiahui Gao, Zirui Wu, Xin Jiang, Zhenguo Li, and Lingpeng Kong. Dream 7b: Diffusion large language models. arXiv preprint arXiv:2508.15487 , 2025. Zebin You, Shen Nie, Xiaolu Zhang, Jun Hu, Jun Zhou, Zhiwu Lu, Ji-Rong Wen, and Chongxuan Li. Llada-v: Large language diffusion models with visual instruction tuning. arXiv preprint arXiv:2505.16933 , 2025. Runpeng Yu, Xinyin Ma, and Xinchao Wang. Dimple: Discrete diffusion multimodal large language model with parallel decoding. 
+
+arXiv preprint arXiv:2505.16990 , 2025. Boqiang Zhang, Kehan Li, Zesen Cheng, Zhiqiang Hu, Yuqian Yuan, Guanzheng Chen, Sicong Leng, Yuming Jiang, Hang Zhang, Xin Li, et al. Videollama 3: Frontier multimodal foundation models for image and video understanding. arXiv preprint arXiv:2501.13106 , 2025a. Hang Zhang, Xin Li, and Lidong Bing. Video-llama: An instruction-tuned audio-visual language model for video understanding. 
+
+arXiv preprint arXiv:2306.02858 , 2023. Haoji Zhang, Yiqin Wang, Yansong Tang, Yong Liu, Jiashi Feng, and Xiaojie Jin. Flash-vstream: Efficient real-time understanding for long video streams. arXiv preprint arXiv:2506.23825 , 2025b. Kairui Zhang, Zhenyu Yang, Bing Wang, Shengsheng Qian, and Changsheng Xu. Querystream: Advancing streaming video understanding with query-aware pruning and proactive response. In The Fourteenth International Conference on Learning Rep-resentations .Peiyuan Zhang, Kaichen Zhang, Bo Li, Guangtao Zeng, Jingkang Yang, Yuanhan Zhang, Ziyue Wang, Haoran Tan, Chunyuan Li, and Ziwei Liu. Long context transfer from language to vision. arXiv preprint arXiv:2406.16852 , 2024a. Yuanhan Zhang, Jinming Wu, Wei Li, Bo Li, Zejun Ma, Ziwei Liu, and Chunyuan Li. Video instruction tuning with synthetic data. 
+
+arXiv preprint arXiv:2410.02713 , 2024b. Yulin Zhang, Cheng Shi, Yang Wang, and Sibei Yang. Eyes wide open: Ego proactive video-llm for streaming video. arXiv preprint arXiv:2510.14560 , 2025c. Luowei Zhou, Chenliang Xu, and Jason Corso. Towards automatic learning of procedures from web instructional videos. In 
+
+Proceedings of the AAAI conference on artificial intelligence , volume 32, 2018. Fengqi Zhu, Rongzhen Wang, Shen Nie, Xiaolu Zhang, Chunwei Wu, Jun Hu, Jun Zhou, Jianfei Chen, Yankai Lin, Ji-Rong Wen, et al. Llada 1.5: Variance-reduced preference optimization for large language diffusion models. arXiv preprint arXiv:2505.19223 ,2025a. Jinguo Zhu, Weiyun Wang, Zhe Chen, Zhaoyang Liu, Shenglong Ye, Lixin Gu, Yuchen Duan, Hao Tian, Weijie Su, Jie Shao, et al. In-ternvl3: Exploring advanced training and test-time recipes for open-source multimodal models. arXiv preprint arXiv:2504.10479 ,2025b. 
+
+15 Appendix Contents 
+
+A Detailed Training Setup for STRIDE 16 
+
+A.1 Training Dataset Configuration . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 A.2 Training Hyperparameters . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 
+
+B Detailed Architecture and Inference of STRIDE 18 
+
+B.1 Masked Diffusion Formulation for Activation Span Modeling . . . . . . . . . . . . . . . . . . . . . . . 18 B.2 Training Objective for Activation Diffusion . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 B.3 Inference Procedure for Activation Span Prediction . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 
+
+C Detailed Benchmark and Evaluation Setup 19 
+
+C.1 Additional Benchmark Explanation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 C.2 Comparison with Autoregressive Baseline . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 
+
+D Additional Experimental Analysis 21 
+
+D.1 Sensitivity Analysis for τ . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 D.2 Scalability Analysis for Activation Backbone . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 D.3 Qualitative Examples of STRIDE . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 
+
+E Limitation and Discussion 22 
+
+E.1 Failure Cases and Discussion . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 
+
+## A Detailed Training Setup for STRIDE 
+
+A.1 Training Dataset Configuration 
+
+We build the training data for activation span modeling by collecting and carefully curating seven publicly available video understanding datasets Caba Heilbron et al. (2015); Liu et al. (2024b); Sigurdsson et al. (2016, 2018); Wang et al. (2024a); Anne Hendricks et al. (2017); Liu et al. (2024b) that provide temporal annotations of events or actions. These datasets cover tasks such as dense video captioning, temporal activity localization, grounded video question answering, and procedural understanding. For each dataset, we use the provided temporal boundaries of events to construct activation spans that indicate when a relevant event occurs in the video. To make the data suitable for our objective, we reorganize the annotations into a unified format where each training sample consists of a video, a query describing the event of interest, and the corresponding temporal span defined by the event start and end times. Based on this span, we construct an activation signal over the video timeline: frames (or tokens) that fall within the annotated event span are labeled as 1 (active ), while all other positions are labeled as 
+
+0 (inactive ). This binary activation sequence serves as the supervision signal for training the model to detect when the queried event becomes relevant in the video stream. table 6 summarizes the statistics of the curated training datasets. Training samples are constructed differently de-pending on whether a query corresponds to a single event or multiple events in the video. For datasets such as dense video captioning Caba Heilbron et al. (2015); Liu et al. (2024b), temporal activity detection Sigurdsson et al. (2016, 2018), grounded video QA Wang et al. (2024a), and moment localization Anne Hendricks et al. (2017), each caption or query typically describes a single event. In these cases, the query is paired with the corresponding video segment, and the activation span is defined using the annotated start and end timestamps of the event. For datasets involving 16 Table 6 Training dataset statistics. Videos : number of source videos; Items : total annotation entries; Single : single-event entries;  
+
+> Multi : multi-event entries (average event count in parentheses); Segs : total training segments.
+
+Dataset Videos Items Single Multi Segs ActivityNet-Captions Caba Heilbron et al. (2015) 10,009 37,421 37,421 – 37,421 LITA Huang et al. (2024b) 10,000 32,489 32,489 – 32,489 YouCook2 Zhou et al. (2018) 1,333 11,480 10,337 1,143 ( ×7.7) 19,174 ET-Instruct Liu et al. (2024b) 91,121 136,072 71,966 64,106 ( ×5.1) 398,609 Charades Sigurdsson et al. (2016) 7,811 48,684 48,067 617 ( ×2.1) 49,374 CharadesEgo Sigurdsson et al. (2018) 6,158 61,575 57,828 3,747 ( ×2.0) 65,488 DiDeMo Anne Hendricks et al. (2017) 8,208 22,911 22,911 – 22,911 Grounded-VideoLLM Wang et al. (2024a) 17,096 61,812 61,812 – 61,812      
+
+> Total 151,736 412,444 342,831 69,613 687,278
+
+multiple actions or procedural steps Sigurdsson et al. (2016, 2018); Zhou et al. (2018); Liu et al. (2024b), a single query may correspond to multiple events in the video. For action recognition tasks, the action label itself is used as the query, while for procedural datasets we use the original question or caption as the query and construct activation spans for each relevant event. To prevent repeated activation for events that have already occurred, we sample a random time point between the end of the previous event and the start of the current event and set all activation positions before that point to 0. This encourages the model to ignore previously completed events and focus on the target span. Overall, the training set contains 141.7K videos with 379.9K annotations, including 310.3K single-event and 69.6K multi-event samples, resulting in 654.7K training segments. For multi-event samples, the average number of events per sample is reported in parentheses. 
+
+A.2 Training Hyperparameters 
+
+To ensure reproducibility, we report the full set of hyperparameters used for training STRIDE (Qwen3-VL 2B and 4B) in Table 7. We process the input video stream at 1 FPS, accommodating up to 256 frames with a maximum spatial resolution of 512 ×512 . Correspondingly, the temporal activation window size ( W ) is set to 256. The model is trained using the AdamW optimizer ( β1 = 0 .9, β2 = 0 .999 ) with a global batch size of 256 and no weight decay. We apply differential learning rates: 3 × 10 −5 for the language head and 1 × 10 −5 for the language backbone, with a linear warmup of 512 steps followed by cosine decay. We use a gradient clipping threshold of 1.0, bfloat16 precision, and DeepSpeed ZeRO-2.                          
+
+> Table 7 Detailed training hyperparameters for STRIDE .Config Value Input frames 1 FPS LR scheduler Linear warm-up with cosine decay Warmup steps 512 Optimizer AdamW ( β1=0 .9,β2=0 .999 )Global Batch size 256 Learning rate (lang. head) 3×10 −5
+> Learning rate (lang. backbone) 1×10 −5
+> Weight decay 0Gradient clipping 1.0 Training precision bfloat16
+> DeepSpeed ZeRO-2 Input Resolution Upto 512 ×512
+> Act. Window size ( W)256
+
+For each training sample, the visual context window is constructed with a length uniformly sampled between max( L, 8) 
+
+and min( L, 256) seconds, where L denotes the source video length. This window is then randomly positioned along the video timeline, ensuring that the target event may or may not fall within the observable window. To allow the model to attend only to the current event of interest while disregarding previously completed events within the same 17 window, the fixed inactive positions from multi-event samples (section A.1) are overridden onto the masked activa-tion sequence after masking corruption. This ensures that these positions that these positions remain as 0 regardless of the applied mask. When the event of interest lies entirely outside the context window, the entire activation se-quence is set to 0, training the model not to trigger. Conversely, all activation positions that temporally overlap with the target event are set to 1, enabling the downstream model to be invoked at the appropriate time. 
+
+## B Detailed Architecture and Inference of STRIDE 
+
+B.1 Masked Diffusion Formulation for Activation Span Modeling 
+
+In STRIDE , activation span prediction is formulated as a masked diffusion process over a discrete activation sequence defined along the video timeline. Given a video and a query describing an event of interest, the supervision signal is represented as a binary activation sequence a0 = ( a10, . . . , a W 
+
+> 0
+
+) of length W , where ai 
+
+> 0
+
+∈ { 0, 1} indicates whether the queried event is active at position i. Positions inside the annotated event span are labeled as 1 (active ), while all other positions are labeled as 0 (inactive ).  
+
+> B.1.1 Forward Corruption Process.
+
+To enable iterative refinement during training, we apply a masked diffusion corruption process to the activation sequence. Starting from the ground-truth sequence a0, the forward process progressively masks tokens using a special symbol [M] . At noise level t ∈ [0 , 1] , tokens are replaced by [M] with probability t, producing a partially corrupted sequence at. The corruption process factorizes across positions: 
+
+q(at | a0) = 
+
+> W
+
+Y
+
+> i=1
+
+q(ait | ai
+
+> 0
+
+), q(ait | ai
+
+> 0
+
+) = 
+
+(
+
+1 − t if ait = ai
+
+> 0
+
+,t if ait = [M] . (3) Here, it is important to note that STRIDE does not apply token-wise independent masking in practice. Instead, we use the proposed structured masking strategy (section 3.2.1) during training, where masking patterns are constructed to preserve contiguous temporal context along the video timeline while selectively hiding portions of the activation sequence. This encourages the model to infer coherent activation spans rather than predicting isolated token states.  
+
+> B.1.2 Reverse Denoising Process.
+
+The forward corruption process admits a reverse denoising process that reconstructs the clean activation sequence from a corrupted sequence. Given a partially masked activation sequence at, the model predicts the original activa-tion token at each masked position conditioned on the observed context. During the reverse process, tokens that have already been revealed remain unchanged, while masked positions are progressively unmasked according to the model’s predictions or kept masked for further refinement. Through this iterative denoising process, the model gradually recovers the activation sequence and refines activation predictions across the entire video timeline. 
+
+B.2 Training Objective for Activation Diffusion 
+
+The model is trained by minimizing a cross-entropy loss over masked activation positions. Following the masked diffusion formulation, the objective can be written as: 
+
+L(θ) = −Et∼U [0 ,1] , at∼q(at|a0)
+
+"
+
+1
+
+t
+
+> W
+
+X
+
+> i=1
+
+1[ait = [M] ] log pθ (ai 
+
+> 0
+
+| at)
+
+#
+
+, (4) where a0 denotes the ground-truth activation sequence and at is the corrupted sequence obtained through the forward masking process. The indicator function 1[·] restricts the loss to masked positions only, allowing the model to leverage all unmasked tokens as context when predicting activation states. The 1/t weighting normalizes the expected number of masked positions, ensuring that the loss contribution remains balanced across different noise levels t.18 B.3 Inference Procedure for Activation Span Prediction 
+
+During inference, STRIDE predicts activation spans through an iterative reverse denoising process over the activation sequence. The process starts from a fully masked activation sequence a1 = ( [M] , . . . , [M] ) of length W . Reverse denoising is then performed through K discrete refinement steps following a noise schedule 1 = tK > t K−1 >
+
+· · · > t 0. At each step from tk to tk−1, the model predicts activation tokens for all currently masked positions conditioned on the video and query representations. A fraction (tk − tk−1)/t k of masked positions with the highest confidence scores are revealed, while the remaining positions stay masked for further refinement. Positions that have already been revealed remain unchanged during the remaining denoising steps. Through this iterative predict-and-refine procedure, it progressively reconstructs the activation sequence and produces temporally consistent activation spans across the video timeline. To support streaming inference, STRIDE maintains the activation sequence as a sliding window over the most recent 
+
+W positions of the timeline. When a new frame at time T +1 arrives, the window shifts forward: the oldest position is removed from the window, previously resolved activations are carried forward to their shifted positions, and a new slot corresponding to the incoming frame is appended. To verify whether previously inferred activations remain valid under the updated visual context V≤T +1 , STRIDE performs selective re-masking using a confidence threshold 
+
+τ . If the confidence of a carried-forward decision exceeds τ , the activation is retained; otherwise, the position is re-masked as [M] so that it re-enters the denoising process. The resulting masked set consists of both newly appended positions and low-confidence carried-forward positions, which are then refined through the same K-step denoising procedure described above. After the window is fully resolved, a trigger is issued only when an active span occupies at least a fraction γ of the activation window, where γ denotes the span ratio. Since the activation model processes the video stream at 1 FPS, the visual context grows linearly with elapsed time. To prevent excessive computational overhead from unbounded context accumulation, we set the maximum context window size to 256 frames. When the accumulated context exceeds this limit, we retain only the most recent 128 frames and rebuild the context window from that point onward, effectively halving the temporal scope while pre-serving the latest visual evidence. Although cases where no trigger occurs for more than 256 consecutive seconds are rare in our evaluation benchmarks, this sliding window mechanism ensures that STRIDE remains deployable in arbitrarily long streams without memory overflow. 
+
+## C Detailed Benchmark and Evaluation Setup 
+
+C.1 Additional Benchmark Explanation  
+
+> C.1.1 OVO-Bench.
+
+OVO-Bench Niu et al. (2025) evaluates temporal awareness in online video understanding by posing questions at specific timestamps during a video stream, rather than after the entire video has been observed. This timestamp-conditioned protocol reflects a core challenge of streaming scenarios: the model must reason under partial observ-ability, where future frames are not yet available at query time. The benchmark comprises 644 videos with 2,814 human-curated question-answer pairs across 12 tasks. The tasks are organized into three scenarios that capture distinct temporal reasoning patterns. Backward Tracing requires the model to recall and reason about past events, covering tasks such as EPM (Episodic Memory), ASI (Action Sequence Identification), and HLD (Hallucination Detection). Real-Time Visual Perception tests understanding of what is currently happening at the query timestamp, with six tasks spanning spatial understanding (STU), object recognition (OJR), attribute recognition (ATR), action recognition (ACR), optical character recognition (OCR), and future prediction (FPD). Forward Active Responding is the most distinctive scenario: the model receives a question whose answer depends on events that have not yet occurred, and must actively decide to wait rather than respond prematurely. This includes REC (Repetition Event Count), SSR (Sequential Steps Recognition), and CRR (Clues Reveal Responding). Backward Tracing and Real-Time Visual Perception tasks adopt a multiple-choice format with accuracy as the evaluation metric. The Forward Active Responding scenario employs both accuracy-based and score-based evaluation metrics through a multiple-triggering evaluation pipeline that densely queries models along the temporal axis. This scenario is directly relevant to proactive streaming, as it requires the model to judge when sufficient evidence has been gathered, a capability closely aligned with activation timing. 19 C.1.2 StreamingBench. 
+
+StreamingBench Lin et al. (2024b) is designed to evaluate streaming comprehension by presenting questions at differ-ent temporal positions within a video, simulating how a user might interact with a model during real-time playback. The benchmark contains 900 videos with 4,500 human-curated QA pairs (five per video), evaluated across 18 tasks under three dimensions. Real-time Visual Understanding (10 tasks) covers a broad range of perceptual abilities in-cluding object perception (OP), causal reasoning (CR), clips summarization (CS), attribute perception (ATP), event understanding (EU), text-rich understanding (TR), prospective reasoning (PR), spatial understanding (SU), action per-ception (ACP), and counting (CT). These tasks collectively test whether the model can track and interpret visual changes as the stream progresses. Omni-Source Understanding (4 tasks) requires integrating audio and visual sig-nals, with tasks on emotion recognition (ER), scene understanding (SCU), source discrimination (SD), and multimodal alignment (MA). Contextual Understanding (4 tasks) evaluates higher-level reasoning over accumulated context, in-cluding misleading context understanding (MCU), anomaly context understanding (ACU), sequential question an-swering (SQA), and proactive output (PO). The PO task is notable in that the model must determine the appropriate moment to respond without receiving an explicit user query, directly testing proactive timing capabilities. A response is considered correct only if the difference between the actual output timestamp and the ground-truth timestamp is less than two seconds. All tasks follow a multiple-choice format with accuracy as the primary metric. Each question is evaluated on the video segment from the beginning to the timestamp when the question is asked, approximating streaming conditions.  
+
+> C.1.3 ET-Bench.
+
+ET-Bench Liu et al. (2024b) is a large-scale benchmark for event-level video understanding that emphasizes fine-grained temporal localization over multi-event videos. The full benchmark spans 7,300 samples across 12 tasks with 7,000 videos (251.4 hours) covering 8 domains. In our work, we evaluate on a subset of five tasks that directly measure temporal boundary prediction quality, which serves as a proxy for activation timing accuracy independent of the end-to-end streaming pipeline. The five tasks we adopt are as follows. Temporal Video Grounding (TVG) requires localizing the temporal segment that matches a given text description within a video. Episodic Memory (EPM) extends this to egocentric scenarios, where the model must locate the moment relevant to a natural-language question (e.g., “Where did I put my keys?”). Temporal Action Localization (TAL) involves detecting all segments containing a specified action category, testing the model’s ability to identify repeated events with accurate boundaries. Dense Video Captioning (DVC) requires jointly segmenting a video into events and generating a caption for each, evaluating both localization and description quality. Step Localization and Captioning (SLC) is similar but targets instructional videos, where the model must identify and describe sequential procedural steps. These tasks span grounding and dense captioning capabilities under the ET-Bench taxonomy, sharing the common requirement of precise event boundary detection. To evaluate temporal localization performance, we report the F1 score as the evaluation metric for all five tasks. This metric directly measures how accurately the predicted event boundaries align with the ground-truth segments, allowing us to assess the quality of activation timing produced by the model. 
+
+C.2 Comparison with Autoregressive Baseline 
+
+To provide a fair comparison with autoregressive activation modeling, we reproduce an autoregressive baseline (Baseline-AR) following the design described in StreamBridge Wang et al. (2025a). Since the original training code and model parameters are not publicly available, we implement the baseline ourselves and train it under the same experimental setting as STRIDE . In particular, the baseline uses the same backbone, training data, and input configu-ration, ensuring that the comparison primarily reflects the difference between autoregressive point-wise triggering and the proposed span-level denoising formulation.  
+
+> C.2.1 Architecture.
+
+We adopt Qwen3-VL 2B as the backbone, processing up to 256 frames at 1 FPS to match the input configuration used in STRIDE . Following StreamBridge Wang et al. (2025a), a learnable <ACT> token is appended after the visual 20 embedding of each frame. The token is passed through a lightweight score head that performs binary classification to predict whether a trigger should be issued at the corresponding time step.  
+
+> C.2.2 Training & Inference.
+
+The training data is constructed from the same annotations used for training STRIDE . For each annotated event segment, the last P % of frames within the segment are labeled as active (trigger-positive), while all remaining frames are labeled as inactive . To expose the model to diverse activation patterns, P is randomly sampled from a uniform distribution over [0 , 50] for each training sample, following the training protocol of StreamBridge Wang et al. (2025a). At inference time, the score head outputs a trigger probability for each frame independently. A fixed threshold of 0.35 is applied to determine whether a trigger should be issued at each time step, following StreamBridge Wang et al. (2025a). This point-wise decision mechanism contrasts with STRIDE , which jointly denoises the activation sequence to produce span-level activation predictions. 
+
+## D Additional Experimental Analysis 
+
+D.1 Sensitivity Analysis for τ
+
+In a streaming setting, the activation window slides as new visual context arrives. To re-evaluate previously resolved decisions against new visual evidence, we apply a confidence-based retention threshold τ (see Selective Re-masking in figure 2). Here, τ = 0 unconditionally retains all prior decisions, while τ = 1 effectively rebuilds the activation window from scratch at every step. To validate the effect of the Selective Re-masking threshold τ (section 3), we evaluate performance on ET-Bench by sweeping τ from 0 to 1. Retention Threshold 𝝉        
+
+> Score Difference from Task Average
+> Figure 5 Sensitivity of STRIDE to the retention constant τacross five temporal understanding tasks (TVG, EPM, TAL, DVC, SLC) in ET-Bench Liu et al. (2024b). The y-axis shows the score difference relative to each task’s average. Task-wise average scores are shown in the legend.
+
+As shown in figure 5, unconditional inheritance ( τ = 0 ) results in the lowest scores, with a particularly large drop of 
+
+−19 .7 pt on TVG. Performance peaks broadly in the range τ ∈ [0 .75 , 0.85] across most tasks, after which tightening the retention criterion causes a gradual decline. Based on these observations, τ = 0 .75 is used in all evaluations. 
+
+D.2 Scalability Analysis for Activation Backbone 
+
+To examine how STRIDE scales with different size activation backbones, we conduct an additional experiment by replacing the default Qwen3-VL 2B activation backbone with a larger size Qwen3-VL 4B model. The 4B variant is trained nder the same data and training configuration as the 2B model and evaluated across three downstream 21 Video-LLMs Team et al. (2025); Wang et al. (2025b); Bai et al. (2025a) on OVO-Bench (table 8) and StreamingBench (table 9). Across all downstream backbones, STRIDE -4B consistently achieves higher overall scores than STRIDE -2B, confirming that the activation backbone benefits from increased model capacity and that the improvement transfers regardless of the downstream Video-LLM, supporting the scalability of the proposed plug-in design. 
+
+Table 8 Scalability analysis on activation backbone scale ( STRIDE -2B vs. 4B) on OVO-Bench Niu et al. (2025) across multiple downstream Video-LLMs. Method 
+
+Real-Time Visual Perception Backward Tracing Fwd. Act. Responding Overall 
+
+OCR ACR ATR STU FPD OJR Avg. EPM ASI HLD Avg. REC SSR CRR Avg. Avg. Gemma3-4B Team et al. (2025) 65.8 48.6 56.0 36.0 66.3 50.0 53.78 44.4 41.9 3.2 29.83 14.4 61.4 52.5 42.77 42.13 + STRIDE -2B 73.2 60.6 64.7 39.3 71.3 56.5 60.93 47.8 52.0 4.8 34.87 42.6 64.6 60.0 55.73 50.51 + STRIDE -4B 75.2 56.9 67.2 40.4 67.3 56.5 60.58 51.5 48.0 4.3 34.60 46.5 66.2 60.0 57.57 50.92 
+
+InternVL3-8B Wang et al. (2025b) 65.8 52.3 68.1 51.1 71.3 62.0 61.77 58.9 66.9 9.7 45.17 36.6 64.1 43.3 48.00 51.64 + STRIDE -2B 75.8 54.1 80.2 56.7 74.3 65.2 67.72 58.9 65.5 11.3 45.23 40.1 67.7 66.2 58.00 56.98 + STRIDE -4B 78.5 56.9 75.0 54.5 71.3 63.6 66.63 59.6 67.6 16.1 47.77 44.4 68.4 59.2 57.33 57.24 
+
+Qwen3-VL-8B Bai et al. (2025a) 69.8 59.6 73.3 57.3 71.3 58.7 65.00 55.6 63.5 12.9 44.00 37.7 60.8 40.4 46.30 51.77 + STRIDE -2B 76.5 64.2 79.3 61.2 73.3 63.6 69.68 57.2 72.3 14.0 47.83 46.4 63.1 69.6 59.70 59.07 + STRIDE -4B 75.2 64.2 76.7 62.9 73.3 66.3 69.77 59.3 74.3 12.4 48.67 57.1 64.6 65.4 62.37 60.27 
+
+Table 9 Scalability analysis on activation backbone scale ( STRIDE -2B vs. 4B) on StreamingBench Lin et al. (2024b) across multiple downstream Video-LLMs. Method                                                                                                                                                                                                                                     
+
+> Real-Time Visual Understanding Omni-Source Understanding Contextual Understanding Overall
+> OP CR CS ATP EU TR PR SU ACP CT Avg. ER SCU SD MA Avg. ACU MCU SQA PO Avg. Avg. Gemma3-4B Team et al. (2025) 63.8 69.5 68.8 54.4 60.2 65.1 59.3 40.7 62.7 21.8 57.49 28.8 31.2 30.4 46.4 34.20 34.4 31.2 38.8 12.4 29.20 40.30 +STRIDE -2B 66.8 71.9 66.6 57.2 66.5 70.7 60.2 43.1 65.0 23.8 60.00 35.6 31.6 36.0 44.0 36.80 33.6 35.2 44.8 41.6 38.80 45.20 +STRIDE -4B 66.2 63.3 68.1 58.1 67.1 71.7 63.0 41.5 66.7 21.2 59.93 32.8 30.4 36.0 46.4 36.40 35.2 36.8 48.0 44.0 41.00 45.78
+> InternVL3-8B Wang et al. (2025b) 74.9 82.0 75.7 61.2 72.0 67.6 74.1 66.7 78.1 34.2 68.71 40.4 27.6 38.8 45.6 38.10 38.0 26.0 36.8 31.2 33.00 46.60 +STRIDE -2B 74.9 78.9 76.7 68.6 77.0 77.3 77.8 71.5 83.0 33.2 72.45 39.6 22.4 44.0 50.8 39.20 34.0 35.2 43.2 42.8 38.80 50.15 +STRIDE -4B 77.7 81.2 79.5 70.0 75.2 77.3 73.1 72.4 84.3 37.8 73.82 38.8 25.6 43.6 55.6 40.90 39.2 35.2 44.4 44.8 40.90 51.87
+> Qwen3-VL-8B Bai et al. (2025a) 62.7 68.0 69.7 53.3 67.5 65.1 67.6 48.0 68.0 40.9 60.88 36.8 18.0 32.8 34.0 30.40 25.6 23.6 31.2 32.4 28.20 39.83 +STRIDE -2B 77.1 75.0 77.3 72.8 76.4 77.9 76.9 69.9 84.3 46.1 74.24 42.8 24.0 45.2 53.2 41.30 32.0 38.4 46.4 42.8 39.90 51.81 +STRIDE -4B 80.7 78.9 79.8 73.1 78.9 84.1 77.8 69.9 84.0 42.5 76.01 42.8 21.2 41.6 54.4 40.00 36.0 36.8 40.8 46.0 39.90 51.97
+
+D.3 Qualitative Examples of STRIDE 
+
+We provide qualitative examples of activation span prediction on OVO-Bench, StreamingBench, and ET-Bench in figures 6 to 17. Each example visualizes the temporal timeline of the video together with the query arrival time, the ground-truth event span, and the activation span predicted by STRIDE . These timelines illustrate how the model pro-gressively identifies the relevant event segment and aligns its activation predictions with the ground-truth temporal boundaries under streaming conditions. 
+
+## E Limitation and Discussion 
+
+E.1 Failure Cases and Discussion 
+
+Although STRIDE improves temporal stability of activation decisions, several practical limitations remain in streaming deployments. First, the activation model operates on sparsely sampled frames (1 FPS) and relies on downstream Video-LLMs whose streaming interfaces typically process visual tokens at relatively low frame rates. As a result, extremely short-lived events or rapid visual transitions may not be fully captured by the activation window, since the visual evidence may disappear before sufficient temporal context is accumulated. figure 18 illustrates such a case, where a brief visual event occurs between sampled frames and therefore cannot be reliably localized by the activation model. Another challenging scenario arises when queries refer to broad or loosely defined events rather than a single well-localized moment. In such cases, multiple candidate segments may partially satisfy the query semantics, leading to dispersed or multi-span activations. figure 19 presents an example where the model encounters several visually 22 plausible moments corresponding to the query, which may introduce ambiguity in determining the most appropriate triggering point. These observations suggest that proactive activation remains sensitive to both temporal sampling granularity and query specificity, highlighting directions for future improvements in streaming perception and query grounding.                                 
+
+> Question:
+> Find event: "a shark is swimming underwater" 020 40 60 80 100 120 140
+> GT Pred
+> 0s 0s 3s 5s
+> 8s 10s 13s 15s
+> 18s 20s 23s 25s
+> 28s 30s 33s 35s
+> 38s 40s 45s 50s
+> 55s 60s 65s 70s
+> 80s 90s 100s 110s
+> 120s 130s 140s 150s
+
+Figure 6 Qualitative example from ET-Bench (TVG). 
+
+23 Question: 
+
+Find event: "a family is being recorded while having dinner" 0 20 40 60 80 100 120 140  
+
+> GT Pred
+
+0s 10s 15s 20s 
+
+25s 30s 40s 50s 
+
+60s 70s 80s 90s 
+
+97s 98s 100s 101s 
+
+103s 104s 105s 107s 
+
+108s 110s 111s 112s 
+
+114s 115s 117s 118s 
+
+120s 130s 140s 150s 
+
+Figure 7 Qualitative example from ET-Bench (TVG). 
+
+24 Question: 
+
+Find event answering: "How many pots did I see on the gas cooker?" 0 50 100 150 200 250 300  
+
+> GT Pred
+
+0s 12s 24s 33s 
+
+34s 36s 36s 37s 
+
+38s 39s 48s 60s 
+
+72s 84s 96s 108s 
+
+120s 132s 144s 156s 
+
+168s 180s 192s 204s 
+
+216s 228s 240s 252s 
+
+264s 276s 288s 300s 
+
+Figure 8 Qualitative example from ET-Bench (EPM). 
+
+25 Question: 
+
+Find all events of: "clean and jerk" 0 20 40 60 80 100 120 140  
+
+> GT Pred
+
+0s 10s 15s 20s 
+
+25s 29s 34s 39s 
+
+39s 43s 49s 54s 
+
+59s 64s 69s 74s 
+
+79s 80s 85s 89s 
+
+90s 95s 98s 108s 
+
+114s 118s 119s 124s 
+
+128s 133s 138s 147s 
+
+Figure 9 Qualitative example from ET-Bench (TAL). 
+
+26 Question: 
+
+Dense captioning: "making tomato soup" 0 50 100 150 200  
+
+> GT Pred
+
+0s 17s 33s 44s 
+
+50s 56s 66s 67s 
+
+79s 83s 91s 100s 
+
+103s 114s 116s 126s 
+
+133s 143s 149s 153s 
+
+164s 166s 174s 183s 
+
+185s 195s 199s 206s 
+
+216s 224s 232s 248s 
+
+Figure 10 Qualitative example from ET-Bench (DVC). 
+
+27 Question: 
+
+Step localization: "make a latte" 0 10 20 30 40 50 60  
+
+> GT Pred
+
+0s 2s 4s 7s 
+
+9s 10s 13s 16s 
+
+17s 20s 22s 24s 
+
+26s 29s 30s 32s 
+
+34s 35s 38s 42s 
+
+43s 45s 47s 49s 
+
+51s 52s 54s 56s 
+
+58s 60s 62s 64s 
+
+Figure 11 Qualitative example from ET-Bench (SLC). 
+
+28 Question: 
+
+what color was the phone? [0:38] 
+
+Options: 
+
+• A. blue 
+
+• B. white 
+
+• C. black 
+
+• D. red 0 200 400 600 800 1000 1200  
+
+> Pred Query Time
+
+0s 34s 35s 36s 
+
+37s 38s 39s 80s 
+
+120s 160s 200s 240s 
+
+280s 320s 360s 400s 
+
+440s 480s 520s 560s 
+
+600s 640s 680s 720s 
+
+760s 800s 840s 880s 
+
+960s 1040s 1120s 1200s 
+
+Figure 12 Qualitative example from OVO-Bench (EPM). 
+
+29 Question: 
+
+What is the state of the person’s hand shown? [10:40] 
+
+Options: 
+
+• A. The person’s hand is shown with a bandage. 
+
+• B. The person’s hand is shown with a tattoo. 
+
+• C. The person’s hand is shown with a glove. 
+
+• D. The person’s hand is shown with cuts and dirt. 0 100 200 300 400 500 600 700                          
+
+> Pred Query Time
+> 0s 48s 72s 95s
+> 119s 143s 167s 191s
+> 214s 238s 262s 286s
+> 310s 334s 358s 381s
+> 405s 429s 453s 477s
+> 500s 524s 548s 572s
+> 596s 620s 638s 639s
+> 640s 641s 667s 714s
+
+Figure 13 Qualitative example from OVO-Bench (OJR). 
+
+30 Question: 
+
+What are these two people holding? [15:22] 
+
+Options: 
+
+• A. Black Camera 
+
+• B. Silver round medal 
+
+• C. Football 
+
+• D. Platinum round medal 0 200 400 600 800  
+
+> Pred Query Time
+
+0s 49s 97s 146s 
+
+195s 243s 292s 341s 
+
+389s 438s 487s 535s 
+
+584s 633s 682s 730s 
+
+779s 828s 876s 900s 
+
+901s 902s 903s 904s 
+
+906s 907s 908s 909s 
+
+910s 911s 925s 973s 
+
+Figure 14 Qualitative example from OVO-Bench (OJR). 
+
+31 Question: 
+
+What material are the stairs made of? [8:03] 
+
+Options: 
+
+• A. Metal. 
+
+• B. Wood. 
+
+• C. Marble. 
+
+• D. Concrete. 0 100 200 300 400 500 600  
+
+> Pred Query Time
+
+0s 42s 83s 125s 
+
+166s 208s 249s 291s 
+
+332s 374s 416s 457s 
+
+471s 472s 473s 474s 
+
+475s 476s 477s 478s 
+
+480s 481s 482s 483s 
+
+484s 485s 486s 487s 
+
+499s 540s 582s 623s 
+
+Figure 15 Qualitative example from StreamingBench (Attribute Recognition). 
+
+32 Question: 
+
+What was the name of the café shown just now? [3:04] 
+
+Options: 
+
+• A. The Green Café. 
+
+• B. The Fun Café. 
+
+• C. Power Up Café. 
+
+• D. Stage 52 Café. 0 100 200 300 400 500 600  
+
+> Pred Query Time
+
+0s 42s 83s 125s 
+
+165s 166s 168s 170s 
+
+173s 175s 178s 180s 
+
+183s 185s 188s 190s 
+
+193s 195s 198s 200s 
+
+203s 208s 249s 291s 
+
+332s 374s 416s 457s 
+
+499s 540s 582s 623s 
+
+Figure 16 Qualitative example from StreamingBench (Object Recognition). 
+
+33 Question: 
+
+What graphics card models are shown on the benchmarking results right now? [5:09] 
+
+Options: 
+
+• A. 4080 FE, 4090 Suprim X, 4090 Matrix. 
+
+• B. 4090 FE, 4080 Suprim X, 4090 Matrix. 
+
+• C. 4090 FE, 4090 Suprim X, 4080 Matrix. 
+
+• D. 4090 FE, 4090 Suprim X, 4090 Matrix. 0 50 100 150 200 250 300 350                          
+
+> Pred Query Time
+> 0s 26s 52s 78s
+> 104s 129s 155s 181s
+> 207s 208s 213s 218s
+> 223s 228s 233s 237s
+> 242s 247s 252s 257s
+> 259s 262s 285s 293s
+> 299s 304s 310s 311s
+> 337s 349s 362s 388s
+
+Figure 17 Qualitative example from StreamingBench (Text-Rich Understanding). 
+
+34 Question: 
+
+When the cue ball touches the red ball, output "Red Touched". [6:33] 0 100 200 300 400 500 600  
+
+> Pred Query Time
+
+0s 20s 40s 61s 
+
+81s 101s 121s 141s 
+
+162s 182s 202s 222s 
+
+242s 263s 283s 303s 
+
+323s 343s 364s 384s 
+
+404s 424s 444s 465s 
+
+485s 505s 525s 545s 
+
+566s 586s 606s 626s 
+
+Figure 18 Failure Case from StreamingBench (Proactive Output). 
+
+35 Question: 
+
+Please describe the scene that just occurred in the video. [7:43] 
+
+Options: 
+
+• A. A panda wearing pants meditated in front of a cherry blossom tree and said, ’Hey there,’, I’m Po the Dragon Warrior. 
+
+• B. A panda wearing pants closed its eyes and meditated in front of the cherry blossom tree, saying ’Breathe’ 
+
+• C. A panda wearing pants closed its eyes and meditated in front of the cherry blossom tree, then took a deep breath and said ’Out through the mouth’ before exhaling 
+
+• D. A panda wearing pants closed its eyes and meditated in front of an apple tree, then took a deep breath and said ’Out through the mouth’ before exhaling 0 100 200 300 400 500                          
+
+> Pred Query Time
+> 0s 40s 79s 119s
+> 159s 198s 238s 277s
+> 303s 305s 307s 310s
+> 312s 314s 317s 334s
+> 336s 338s 341s 343s
+> 357s 396s 400s 402s
+> 405s 407s 436s 476s
+> 491s 494s 515s 555s
+
+Figure 19 Failure Case from StreamingBench (Scene Understanding). 
+
+36

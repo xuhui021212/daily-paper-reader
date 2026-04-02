@@ -1,0 +1,892 @@
+Title: DCARL: A Divide-and-Conquer Framework for Autoregressive Long-Trajectory Video Generation
+
+URL Source: https://arxiv.org/pdf/2603.24835v1
+
+Published Time: Fri, 27 Mar 2026 00:20:47 GMT
+
+Number of Pages: 29
+
+Markdown Content:
+# DCARL: A Divide-and-Conquer Framework for Autoregressive Long-Trajectory Video Generation 
+
+Junyi Ouyang 1,2, Wenbin Teng 1,2, Gonglin Chen 1,2, Yajie Zhao 1,2, and Haiwei Chen 1,2 
+
+> 1
+
+Institute for Creative Technologies  
+
+> 2
+
+University of Southern California 
+
+{junyiouy, wenbinte, gonglinc}@usc.edu, zhao@ict.usc.edu, chw9308@hotmail.com 
+
+Abstract. Long-trajectory video generation is a crucial yet challeng-ing task for world modeling, primarily due to the limited scalability of existing video diffusion models (VDMs). Autoregressive models, while offering infinite rollout, suffer from visual drift and poor controllability. To address these issues, we propose DCARL , a novel divide-and-conquer, autoregressive framework that effectively combines the structural stabil-ity of the divide-and-conquer scheme with the high-fidelity generation of VDMs. Our approach first employs a dedicated Keyframe Generator trained without temporal compression to establish long-range, globally consistent structural anchors. Subsequently, an Interpolation Generator synthesizes the dense frames in an autoregressive manner with overlap-ping segments, utilizing the keyframes for global context and a single clean preceding frame for local coherence. Trained on a large-scale inter-net long trajectory video dataset, our method achieves superior perfor-mance in both visual quality (lower FID and FVD) and camera adher-ence (lower ATE and ARE) compared to state-of-the-art autoregressive and divide-and-conquer baselines, demonstrating stable and high-fidelity generation for long trajectory videos up to 32 seconds in length. Project page: https://junyiouy.github.io/projects/dcarl/ 
+
+Keywords: Long-trajectory video generation, Video diffusion models, Controllable video synthesis 
+
+## 1 Introduction 
+
+Long trajectory video generation has emerged as a pivotal research direction in recent years [6–8, 19, 23, 28, 34]. Developing generative models that can simulate large-scale, realistic scenes is of paramount importance for terrain reconstruc-tion, autonomous driving systems and world models. To achieve this, existing methods [1, 9, 10, 33] typically leverage video diffusion models (VDMs) to fa-cilitate high-fidelity generation. However, while these models perform well on room-sized scenes, they scale poorly to the synthesis of extended sequences (e.g., 30-second videos). This is primarily because predicting the entire sequence col-lectively incurs a prohibitive computational cost, limiting their effectiveness for long-duration and large-scene tasks. 
+
+> arXiv:2603.24835v1 [cs.CV] 25 Mar 2026
+
+2 J. Ouyang et al. Generated  
+
+> Reference
+> 32s 0s16 s
+> Generated
+> Generated
+> Reference
+> Reference Input Frame
+
+Fig. 1: Given a single Input Frame (left), a camera trajectory and a text descrip-tion(omitted for brevity), DCARL generates high-fidelity and temporally consis-tent future scene sequences spanning 32 s. The figure showcases synthesis results across three diverse environments: urban (top), snowy suburban (middle), and rural (bottom). The bottom panel shows the corresponding 3D point cloud reconstructions by π3 [24] of the generated sequences. The Generated sequences exhibit strong visual realism and long-term temporal coherence that closely match the quality of Reference sequences, highlighting our method’s efficacy for long-trajectory generation. 
+
+Autoregressive (AR) diffusion models [3, 13, 15] introduce causal attention mechanisms to VDMs, enabling long-sequence rollout through sliding-window inference and sophisticated noise scheduling. However, these models often suffer from severe drift due to exposure bias—a phenomenon arising from the discrep-ancy between training on ground-truth contexts and inferring from self-generated frames [23, 35]. These compounding prediction errors not only degrade visual quality but also severely compromise the effectiveness of external control signals like camera poses. As the synthesized content deviates from the valid manifold, the model increasingly loses its ability to interpret and adhere to the geometric constraints provided by the control trajectory. This decoupling creates a funda-mental misalignment between the intended camera instructions and the actual synthesized motion, ultimately causing purely AR methods to fail in maintaining trajectory consistency over long trajectories. DCARL 3
+
+Existing methods seek to alleviate exposure bias by mitigating the training– inference mismatch. Diffusion Forcing [3, 20] injects random Gaussian noise into conditional inputs, while Self Forcing [13] trains causal models on self-generated rollouts to narrow the distribution gap. Although these strategies mitigate local drifting, they fail to explicitly bound error propagation, leaving the challenge of stable frame quality and precise camera control on long trajectories largely unad-dressed. Furthermore, techniques [17,32] that incorporate attention sinks [26] can further impede controllability; fixed sink frames often introduce sink collapse [5] and severely hinder the model’s responsiveness to dynamic pose instructions, ul-timately degrading camera motion fidelity and scene transitions across extended trajectories. Therefore, in this work, we propose DCARL , a novel framework that uti-lizes VDM in an autoregressive norm. Our method follows a divide-and-conquer scheme, employing dual generators specifically tailored for the synthesis of global keyframes and local dense frames. Our key insight is that purely autoregressive generation inherently suffers from unbounded error accumulation. To overcome this, our framework first employs a full-sequence generator to jointly synthe-size sparse keyframes across entire video timeline. By modeling these global keyframes jointly rather than sequentially, we effectively bypass autoregressive error propagation, establishing structurally accurate and semantic-consistent an-chors for the entire long sequence. Building upon these global anchors, our dense frame generator synthesizes the intermediate video segments via a constrained interpolation process. Specif-ically, the local generation is conditioned on both the surrounding keyframes, which serve as fixed constraints, and the preceding dense segment. We iden-tify two failure modes in keyframe-interpolation-based video generation. First, the model can become overly anchored to the provided keyframes, resulting in keyframe duplication in their temporal neighborhood rather than synthesiz-ing smooth, physically plausible motion, which yields unnatural dynamics. The second is boundary inconsistency, where the video exhibits abrupt transitions at segment boundaries. To address these issues, we propose Motion-Inductive Noisy Conditioning and a Seamless Boundary Consistency module, enabling more dy-namic and natural long-video generation. As validated by our empirical results, our modeling of global keyframe anchors and local transitions achieves highly stable generation of high-fidelity, long trajectory videos with precise camera con-trol. Notably, our approach successfully mitigates the severe visual drifts lie in existing autoregressive approaches, enabling controllable long trajectory video generation. 
+
+## 2 Related Works 
+
+Autoregressive Video Generation. Autoregressive video generation models synthesize a long sequence in a causal manner by predicting the next frame (or block) conditioned on past generated content. Therefore, they naturally support streaming output and long-horizon rollout, but they also amplify exposure bias, 4 J. Ouyang et al. 
+
+error accumulation, and long-context constraints. Recent works [3,4,13,17,20,37] focuses on training-time forcing or rollout alignment to reduce the train–test mis-match. They replace purely teacher-forced learning with varying degrees of self-conditioned rollouts, aiming to make the training distribution closer to inference and thereby suppress drift over long trajectories. A second line of works [30–32] targets inference-time long-context stabilization and efficiency without, or with minimal, retraining. Although these methods achieve high-fidelity video genera-tion and precise motion control, they fall short in long horizon scene generation task as the rapid scene changes increase extra challenges for pure autoregressive generation. 
+
+Long Horizon Scene Generation. Long-horizon scene generation targets tem-porally consistent, controllable rollouts that remain plausible over hundreds to thousands of frames, where the core challenges are compounding drift, long-context scaling, and multi-view consistency. One line of work extends diffusion world models to make long rollouts more stable and controllable: VISTA [8] and GAIA [19] emphasize richer conditional interfaces and design choices that better preserve structure across iterative sampling, while Epona [34] explicitly frames long-horizon synthesis as autoregressive diffusion and trains the model to tolerate its own rollout errors. A second family pursues drift-bounding objec-tives for interactive generation: LIVE [12] constrains long-term deviation through consistency-style training signals, aiming to prevent unbounded error accumula-tion without relying solely on teacher forcing. 
+
+## 3 Preliminary 
+
+Autoregressive Generation. Long-horizon video generation is typically for-mulated as an iterative factorization of the joint distribution conditioned on the control signals C:
+
+p(V|C ) = 
+
+> S
+
+Y
+
+> i=1
+
+p(Si|S<i , C), (1) where the sequence V is partitioned into S contiguous blocks {S1, . . . , S S } of size B. This unified formulation encompasses various granularities of generation depending on the choice of B: token-level AR where B represents sub-frame units such as spatial-temporal patches, frame-level AR where B = 1 for sequential frame-wise rollout, and segment-level AR where B > 1 for simultaneous synthesis of multiple frames. Architecturally, these paradigms employ intra-block bidirectional attention for temporal correlation and inter-block causal dependency for scalability. While a larger block size B improves generation quality and consistency by expanding the bidirectional receptive field, it increases training overhead in memory and computation, necessitating a balanced design for scalable long-video synthesis. 
+
+Divide-and-Conquer Paradigm. An alternative strategy for long-video syn-thesis involves a hierarchical decomposition of the generation task into global DCARL 5Keyframe Generator                            
+
+> 𝐺 𝐾
+> Interpolation Generator
+> 𝐺 𝐼
+> Keyframe
+> Selection
+> {𝐼 𝑘 𝑖 ,…,𝐼 𝑘 𝑗 }
+> Keyframe Set 𝒦
+> Generated Set 𝒱
+> Previous Frame
+> Selection
+> {𝐼 𝑡 𝑖 ∗−𝑝 ,…,𝐼 𝑡 𝑖 ∗−1}
+> +
+> 𝐼 𝑘 1𝐼 𝑘 i𝐼 𝑘 j…𝐼 𝑘 M
+> 𝐼 t1…
+> ……
+> 𝐼 ti∗𝐼 ti∗+1…𝐼 tj∗…𝐼 NInput Image 𝐼 0
+> Cam Traj .𝒯
+> Caption 𝒞
+> A video…
+> Stage1:Keyframe Generation
+> Stage2: Semi -Autoregressive Interpolation
+
+Fig. 2: Our Two-Stage Autoregressive Pipeline for Long-Term Video Syn-thesis. Our model synthesizes a long video sequence V = {I1, . . . , I N } conditioned on multimodal inputs: the initial image I0, camera trajectory T , and caption C. The Keyframe Generator GK produces a global Keyframe Set K, establishing the overall structural evolution of the video. The Interpolation Generator GI generates the final frames in an autoregressive manner. 
+
+structural planning and local detail refinement. This paradigm is typically formu-lated by introducing a sparse structural proxy K, such as keyframes or semantic layouts, which abstracts the temporal evolution of the sequence: 
+
+p(V|C ) = p(K|C )p(V|K , C). (2) Establishing the global trajectory via K transforms dense synthesis into a con-strained interpolation task. This hierarchy bounds prediction errors within struc-tural anchors, preventing the unbounded drift typical of autoregressive rollout. While decoupling long-range structure from local synthesis enables scalable gen-eration, the paradigm remains sensitive to the noise inherent in the structural proxy K and requires high-fidelity conditional mapping in p(V|K , C) to maintain overall consistency. 
+
+## 4 Methods 
+
+4.1 Overview 
+
+We define the task of long-trajectory scene generation as generating a dense video sequence V = {I1, I 2, . . . , I N } of length N , conditioned on an initial frame 
+
+I0 and a sequence of control signals (e.g., camera poses) T = {c1, c 2, . . . , c N }.The goal is to model the conditional distribution p(V| I0, T ).As illustrated in Fig. 2, our framework follows a two-stage divide-and-conquer pipeline. In the first stage, the keyframe generator GK synthesizes a sparse keyframe set K = {Ik1 , . . . , I kM } conditioned on the initial image I0, camera trajectory T , and caption C. These keyframes establish the overall structural evolution of the video. In the second stage, the interpolation generator GI syn-thesizes the dense sequence V in a segment-wise manner. 6 J. Ouyang et al. 
+
+Following the autoregressive paradigm, GI synthesizes each segment Si by generating its constituent frames simultaneously. The generation is conditioned on a selected subset of keyframes {Iki , . . . , I kj } and a history of p previously generated frames {It∗ 
+
+> i−p
+
+, . . . , I t∗ 
+
+> i−1
+
+} with t∗ 
+
+> i
+
+being the first frame index of the current segment. This design decouples global structural planning from local de-tail interpolation, effectively reducing cumulative drift while maintaining precise adherence to the given trajectory. 
+
+4.2 Keyframe Generation 
+
+The keyframe generator GK generates the keyframe set K as defined in Sec. 4.1. Specifically, we implement this mapping through a DiT-based [18] flow matching process ΦK :
+
+K = D ΦK (ϵ | E (I0), P, C), (3) where ϵ ∼ N (0 , I) is the initial Gaussian noise. Here, E and D denote the VAE encoder and decoder, and P = {ck1 , . . . , c kM } represents the sampled poses from the global trajectory T . Our insight is generating keyframes would achieve bounded or mitigated error accumulation as illustrated by the following propo-sition: 
+
+Proposition 1 (Temporal Degradation via Perturbation Analysis). Let 
+
+et = It − I∗ 
+
+> t
+
+denote the cumulative generation error at frame t, where It and I∗
+
+> t
+
+are the generated and ground-truth frames. Modeling the autoregressive (AR) generation as It+1 = F(It, ϵ t), where F is the generator mapping and ϵt is the sampling noise. Assuming F is L-Lipschitz continuous with respect to the state (L = sup ∥∇ I F∥ ≥ 1), a first-order perturbation analysis yields the cumulative error bound ∥ebase N ∥ ≤ PNj=1 LN −j ∥ηj ∥, where ηj represents the local injection error at step j. If ∥ηj ∥ is bounded by a constant η, this cumulative error diverges at least linearly O(N ) (and exponentially if L > 1). Our divide-and-conquer strategy mitigates this via keyframe anchoring; the interpolation error at any frame ∥eours t ∥ is bounded by the convex combination of its anchoring keyframe errors plus a local constant. 
+
+Please refer to the supplementary material for complete proof. To ensure structural integrity and control precision, we incorporate the following designs: 
+
+Spatial-Structural Preservation. Standard temporal VAEs typically employ temporal compression, which is inherently lossy and degrades visual quality for sparse sequences with significant spatial displacement. To circumvent this, we treat the M keyframes as a batch of independent images by reshaping the frame dimension into the batch dimension during encoding and decoding. This ensures that each generated keyframe maintains full spatial fidelity, providing a reliable foundation for subsequent interpolation. 
+
+Keyframe Sampling Strategy. We construct the structural skeleton by sam-pling keyframes from the sequence using a temporal stride ∆k . To ensure ro-bustness across diverse motion scales, ∆k is randomly drawn from a discrete set of candidate strides during training. During testing, a constant stride ∆k test DCARL 7
+
+is maintained. The selection of ∆k test serves as a critical hyperparameter that modulates the trade-off between the computational efficiency of the keyframe generation process and the precision of the structural guidance provided to the interpolation model. 
+
+4.3 Interpolation Generation 
+
+The interpolation generator GI synthesizes the dense video sequence V in a segment-wise manner. Specifically, for each segment Si, we construct an input latent sequence zin by concatenating the noise with temporal context. The DiT-based flow matching process ΦI is formulated as: 
+
+Si = GI (Hi, Ki, Ti, C)= D ΦI (zin , Ti, C), (4) where zin = [ ϵ, zHi , zKi ] represents the sequence formed by concatenating the initial Gaussian noise ϵ, the encoded history zHi = E(Hi), and the selected keyframes zKi = E(Ki) along the temporal dimension. 
+
+Keyframe Selection Policy. For each segment Si = {It∗ 
+
+> i
+
+, . . . , I t∗ 
+
+> j
+
+} and the corresponding trajectory Ti = {ct∗ 
+
+> i
+
+, . . . , c t∗ 
+
+> j
+
+} in the interpolation stage, we select a local subset of keyframes Ki ⊂ K to provide temporal context. This subset encompasses all keyframes within the segment’s temporal span, along with the nearest keyframes that immediately precede and follow the segment: 
+
+Ki = {Ik ∈ K | kpre ≤ k ≤ knext }, (5) where kpre = max k:Ik ∈K ,k<t ∗ 
+
+> i
+
+k and knext = min k:Ik ∈K ,k>t ∗ 
+
+> j
+
+k. This policy ensures that each segment is synthesized with both look-back and look-ahead structural constraints, preventing trajectory drift at the segment boundaries. 
+
+Autoregressive Rollout. To synthesize long-trajectory videos, GI operates via a sliding window. During each sampling step of the denoising process, the noisy latent z (which originates from ϵ) is continuously updated while being anchored by the fixed historical tokens zHi and global keyframe tokens zKi within zin .This hybrid conditioning allows the model to leverage both local continuity and global anchors in a unified attention space, which effectively mitigates exposure bias and error accumulation compared to purely autoregressive methods, while maintaining superior adherence to the camera trajectory Ti.
+
+Motion-Inductive Noisy Conditioning. A common failure mode in interpo-lation is keyframe duplication, where the model replicates pixels from keyframes instead of synthesizing motion. This identity mapping shortcut occurs because clean keyframes zKi allow the model to minimize training loss by anchoring to visual guides rather than learning complex temporal transitions, leading to stuttering or unnatural transitions. To mitigate this, we perturb the keyframe latents with a consistent noise level during both training and inference: 
+
+˜zKi = αczKi + σcϵ, ϵ ∼ N (0, I), (6) 8 J. Ouyang et al. 
+
+where the coefficients αc and σc are hyperparameters that control the keyframe guidance and the noise intensity, respectively. This perturbation breaks the pixel-level shortcut, forcing ΦI to prioritize underlying motion dynamics and trajec-tory adherence. 
+
+Seamless Boundary Consistency. To eliminate visual fractures at segment junctions, we implement a latent substitution strategy consistently during train-ing and inference. Specifically, we define a p-frame overlap between segments and replace the first p latents of segment Si with historical latents zHi at each denoising step τ . To ensure generalization to these deterministic boundaries, zHi
+
+is kept noise-free during ΦI training. By bridging the distribution gap, this de-sign enforces strict continuity and prevents flickering or motion jumps, ensuring a seamless temporal flow across all segment boundaries. 
+
+## 5 Experiments 
+
+5.1 Experiments Setup Implementation Details. Our model is built upon the Wan2.1-T2V-1.3B [22] architecture. We integrate camera control by adding camera feature maps to visual tokens within each DiT block, following the ReCamMaster [1] design. Both keyframe and interpolation generators are trained for 30,000 steps using the AdamW optimizer (LR: 5 × 10 −5, weight decay: 0.01, β: (0.9, 0.95)) with an effective batch size of 16 across 8 NVIDIA H100 GPUs. We process a 480-hour subset of the OpenDV-YouTube (ODV-YT) dataset [29], segmented into 1-minute clips at 10 fps. Camera poses are reconstructed using π3 [24] every 0.5 seconds, with intermediate frames recovered via spherical linear and linear interpolation. Semantic scene descriptions are generated by Qwen2.5-Omni [27] from frames sampled at 20-second intervals. For keyframe generation, the model is trained with |K| = 21 and temporal strides ∆k ∈ { 4, 8, 16 }, while ∆k test = 8 is fixed during inference. For the inter-polation stage, the number of conditioning keyframes |K| is randomly sampled from [1 , 10] during training. In the inference phase, we apply Motion-Inductive Noisy Conditioning with αc = 0 .7, σc = 0 .3, and set the boundary overlap to 
+
+p = 1 . Please refer to the supplementary material for further details. 
+
+Baselines. We compare our method with Diffusion Forcing (DiffF) [3], Self Forc-ing(SelfF) [13], Deep Forcing(DeepF) [32], Vista [8] and Stable Virtual Camera (SEVA) [36]. All models are finetuned for fair comparison. 
+
+Datasets. To evaluate the capability of generating videos across large spatial spans and maintain structural integrity in expansive static scenes, we conduct experiments on two large-scale datasets: the ODV-YT validation set and the nuScenes [2] validation set for zero-shot testing. All experiments are conducted on 150 sequences. 
+
+Evaluation Metrics. For video quality , we use Fréchet Inception Distance (FID) [11] and Fréchet Video Distance (FVD) [21] as primary metrics, report-ing both overall and per-segment scores to assess stability. For camera control DCARL 9SEVA  Vista  DiffF Ours    
+
+> 0s 16s 32s 8s 24s
+> SelfF DeepF  SEVA  Vista  DiffF Ours  SelfF DeepF
+
+Fig. 3: Qualitative comparison of long-trajectory video generation. We compare our method against several state-of-the-art baselines. Each method is provided with the same initial frame as input. Our approach demonstrates superior long-trajectory con-sistency and visual fidelity over a 32-second duration. 
+
+accuracy , we utilize π3 [24] to extract 6-DoF camera poses and report Absolute Trajectory Error (ATE) and Absolute Rotation Error (ARE) after alignment. For segment continuity , we further use Motion Smoothness (MS) [14], PSNR and SSIM [25] to evaluate the discrepancy between adjacent generated segments. 
+
+5.2 Comparison on Long Trajectory Generation. 
+
+In Fig. 3, Tab. 1, and Tab. 2, we present qualitative and quantitative com-parisons. While autoregressive baseline methods can generate reasonable short-term results, they suffer from severe error accumulation and temporal drifting as the video length increases. Notably, even with the incorporation of specialized strategies designed to mitigate drifting, these methods still exhibit sharp perfor-mance degradation on extended sequences. In contrast, our divide-and-conquer 10 J. Ouyang et al. 
+
+Table 1: Quantitative comparison on 32-second videos of the ODV-YT dataset. Met-rics are reported as FID / FVD for visual quality and temporal continuity, and ATE / ARE for global path adherence. Our method maintains superior stability and fidelity over extended durations. Method Overall FID/FVD ↓ 0-8 s 8-16 s 16-24 s 24-32 s ATE ↓ ARE ↓                                   
+
+> DiffF 35.0 / 664.1 25.3 / 390.7 39.8 / 684.5 45.2 / 856.8 54.1 / 1067.1 0.469 19.448 SelfF 58.0 / 2113.6 26.2 / 533.5 62.8 / 1911.3 92.8 / 3402.2 119.4 / 4183.8 0.610 14.386 DeepF 42.3 / 1558.5 26.1 / 545.3 49.1 / 1472.3 63.7 / 2342.2 77.2 / 2832.6 0.571 15.144 Vista 66.7 / 1550.0 29.1 / 428.7 66.3 / 1212.6 103.9 / 2452.3 134.1 / 3774.5 0.641 19.332 SEVA 22.2 / 548.0 27.2 / 582.0 30.7 / 643.2 31.8 / 623.8 33.1 / 602.0 0.294 8.527
+> Ours 19.2 / 203.7 19.6 / 191.4 25.1 / 255.8 27.3 / 276.0 28.6 / 313.8 0.237 7.669
+
+Table 2: Quantitative evaluation of zero-shot generalization on 16-second videos of the nuScenes dataset. Our approach achieves consistent high-fidelity generation and precise camera control in both FVD and ATE. Method Overall FID/FVD ↓ 0-4 s 4-8 s 8-12 s 12-16 s ATE ↓ ARE ↓                                     
+
+> DiffF 37.1 / 566.6 29.3 / 376.3 41.8 / 573.7 51.7 / 738.9 60.9 / 906.2 0.154 13.704 SelfF 53.1 / 711.2 53.1 / 394.8 59.3 / 592.1 69.1 / 989.0 78.7 / 1504.7 0.092 12.464 DeepF 50.3 / 618.4 52.5 / 343.3 59.0 / 577.3 64.7 / 887.2 69.9 / 1174.8 0.104 10.774 Vista 68.7 / 1239.1 27.3 / 445.1 54.2 / 847.0 111.8 / 1860.8 160.5 / 2966.4 0.195 16.607 SEVA 35.9 / 487.9 30.2 / 493.7 41.3 / 529.1 54.7 / 595.2 72.1 / 769.4 0.117 6.289
+> Ours 19.6 / 225.4 23.3 / 239.9 26.5 / 264.3 31.1 / 323.0 30.8 / 345.2 0.045 5.274
+
+autoregressive design leverages global keyframes as structural anchors to ensure both long-range visual stability and effective camera control. This advantage is further demonstrated by our robust zero-shot generalization to unseen envi-ronments. When evaluated on the nuScenes dataset, our approach consistently maintains high generation quality and precise path adherence, significantly sur-passing baseline methods without requiring additional fine-tuning. Besides, our method outperform SEVA in terms of camera controllability and video qual-ity. Quantitatively, these results confirm that our framework remains remark-ably stable across the entire horizon, providing superior performance in both in-distribution and out-of-distribution scenarios. For more visualization results, please refer to the supplementary material. 
+
+5.3 Ablation Study Keyframe Spatial-Structural Preservation. We compare our image-level encoding with a temporal compression baseline to evaluate its necessity for sparse keyframe generation. Results are calculated using the generated keyframe sequences for 16-second videos on ODV-YT. As shown in Tab. 3 and Fig. 4, ap-plying temporal compression to keyframes with large spatial spans leads to signif-icant performance drops. Specifically, the spatial displacement between distant keyframes makes the VAE’s 4:1 temporal compression inherently lossy, which severely degrades quality (higher FID). Furthermore, such compression obscures DCARL 11    
+
+> Fig. 4: Qualitative comparison of keyframe model designs. The top row shows the results of the temporal compression baseline, while the bottom row shows our proposed design. Our approach provides significantly clearer visual details and superior structural accuracy compared to the baseline.
+
+fine-grained geometric cues, hindering the camera encoder from learning precise representations, as evidenced by the elevated ATE and ARE.          
+
+> Table 3: Ablation study on keyframe model design. We compare our proposed image-level encoding against a temporal compression baseline, which treats keyframes as a video sequence with temporal downsampling. Our design achieves superior performance in both visual quality and trajectory adherence in keyframe generation. Model Design FID ↓ATE ↓ARE ↓
+> Temporal compression 19.6 0.155 7.276 Ours 16.3 0.100 3.999
+
+Keyframe Sampling Strides. We investigate the impact of sampling strate-gies by varying the generation stride ∆k gen and interpolation stride ∆k int on 16-second ODV-YT video generation. Specifically, keyframes are initially synthe-sized at a stride of ∆k gen and subsequently filtered to the interpolation stride 
+
+∆k int to serve as conditioning anchors for the dense synthesis stage. As shown in Tab. 4, ∆k gen is the primary determinant of both visual quality and trajec-tory fidelity. Increasing ∆k gen from 4 to 16 consistently enhances the quality of structural anchors, which directly improves the final FID and FVD. In con-trast, the interpolation stride ∆k int exerts a negligible influence on the overall performance. Regarding trajectory adherence, we find that neither excessively dense nor sparse generation is optimal for ATE and ARE; the former introduces redundant constraints that hinder motion naturalness, while the latter provides insufficient guidance to bound drift. Our balanced configuration of (8 , 8) achieves the optimal trade-off between structural stability and generative quality. 
+
+Motion-Inductive Noisy Conditioning. Conditioning the interpolation model on noisy keyframes is essential for high-quality synthesis, as discussed in Sec. 4.3. We evaluate this in Tab. 5 and Fig. 5 on 16-second ODV-YT sequences. Quan-titatively, we observe that while FID remains relatively stable, the FVD signif-12 J. Ouyang et al. 
+
+Table 4: Ablation on keyframe intervals for generation ( ∆k gen ) and interpolation (∆k int ). Keyframes are initially generated at stride ∆k gen and subsequently filtered to 
+
+∆k int for dense interpolation. 
+
+(∆k gen , ∆k int ) (4, 4) (4, 8) (4, 16) (8, 8) (8, 16) (16, 16) FID ↓ 21.4 21.0 20.9 19.3 19.0 18.8 
+
+FVD ↓ 201.8 199.9 204.6 196.0 201.5 187.8 
+
+ATE ↓ 0.148 0.147 0.131 0.096 0.098 0.104 ARE ↓ 4.98 4.91 5.08 3.96 4.06 4.74 w/o train w/ infer w/o train w/ infer w/ 
+
+Fig. 5: Ablation on noisy keyframe design. We compare W/o noisy keyframe , Train w/ noisy keyframe , and our full Train/infer w/ noisy keyframe strategy. Applying noise during both stages effectively mitigates memory bias and ensures smoother transitions. 
+
+Table 5: Ablation on noisy keyframe design. All methods take the same generated keyframes as input. Applying noisy keyframes during both training and inference achieves the best dynamic video quality (lowest FVD). Training Design FID ↓ FVD ↓
+
+W/o noisy keyframe 19.0 246.5 Train w/ noisy keyframe 19.9 240.9 Train/infer w/ noisy keyframe 19.3 201.7 
+
+icantly deteriorates when noise is not consistently applied during both training and inference. Qualitative results in Fig. 5 reveal two distinct artifact patterns: (1) unnatural transitions , such as fade-like blending between keyframes, and (2) 
+
+motion stagnation , where the model replicates imperfect conditioning keyframes. These temporal artifacts—which involve mode collapse where the model copies pixels rather than learning motion dynamics—explain why the FVD increases sharply despite the stable FID. This confirms that joint noisy training and infer-ence forces the model to bypass "copy-paste" shortcuts and achieve smoother, more realistic video generation. DCARL 13                           
+
+> Table 6: Ablation on segment continuity design. We compare Overlap (simple over-lapping), +Sub (latent substitution), and our full +Sub+Train strategy. Our method effectively bridges segment junctions, achieving the best motion smoothness and struc-tural fidelity. Design MS ↑PSNR ↑SSIM ↑
+> Overlap 0.969 18.15 0.534 + Sub 0.968 17.95 0.524 + Sub + Train 0.972 18.75 0.562 overlap +sub +sub +train
+> Fig. 6: Ablation on Frame Continuity Design. The designs test continuity at segment boundaries: overlap (simple overlap); + sub (overlap + latent substitution); and +sub + train (our trained continuity mechanism).
+
+Seamless Boundary Consistency. We evaluate the segment consistency mech-anism by providing Ground-Truth (GT) frames as boundary conditions and com-paring generated frames proximal to the segment junctions against these targets. As shown in Tab. 6 and Fig. 6, simple segment overlap ( Overlap ) fails to guar-antee visual coherence; the final frame of a preceding segment often deviates from the required starting pose of the subsequent one, resulting in noticeable motion and temporal fractures. While naively replacing the first frame with the preceding segment’s last latent ( +Sub ) ensures junction continuity, it introduces pronounced artifacts. This stems from a distribution mismatch where the model, expecting noisy inputs, struggles to process a clean and deterministic condition-ing frame without explicit consistency training. In contrast, our full strategy (+Sub+Train ) effectively bridges this gap, achieving superior smoothness and structural fidelity at segment junctions. 
+
+Necessity of Keyframe Anchoring. We evaluate the necessity of struc-tural anchors by removing keyframe conditioning during the interpolation stage. Quantitatively, Tab. 7 shows that without keyframe guidance, the model suffers from long-term drifting and poor camera accuracy, with FID/FVD increasing sharply as the sequence extends and ATE/ARE being significantly worse. This confirms that keyframes are essential for bounding accumulated errors over long 14 J. Ouyang et al. 
+
+Table 7: Ablation study on the effect of keyframes for 32-second videos on the OpenDV-YT dataset. The inclusion of keyframes significantly enhances long-term con-sistency and trajectory fidelity. Method Overall FID/FVD ↓ 0-8 s 8-16 s 16-24 s 24-32 s ATE ↓ ARE ↓          
+
+> w/o Keyframe 25.2 / 376.7 21.1 / 247.1 31.5 / 407.5 38.2 / 546.5 45.2 / 665.3 0.387 12.184
+> Ours 19.2 / 203.7 19.6 / 191.4 25.1 / 255.8 27.3 / 276.0 28.6 / 313.8 0.237 7.669
+
+Fig. 7: Qualitative ablation of keyframe guidance on 32-second videos. The top row shows the results without keyframe conditioning, and the bottom row shows our full model with keyframe anchors. 
+
+durations. Qualitatively, Fig. 7 illustrates that the unguided variant fails to main-tain camera control during complex maneuvers, such as a left turn followed by a straight trajectory, resulting in noticeable scene distortion and path deviation. In contrast, our full model leverages keyframe anchors to ensure both visual stability and precise trajectory adherence across the entire 32-second horizon. 
+
+## 6 Conclusion and Future Works 
+
+In this paper, we presented DCARL , a divide-and-conquer framework that re-formulates long-trajectory video generation through an autoregressive modeling paradigm. By decoupling the complex synthesis task into global structural plan-ning via keyframe anchors and local refinement via segment-wise interpolation, our approach effectively bounds the cumulative drift inherent in traditional au-toregressive methods. Extensive experiments on the large-scale OpenDV-YouTube and nuScenes datasets demonstrate that DCARL consistently achieves state-of-the-art performance in both visual fidelity and trajectory adherence. Notably, our framework enables the stable synthesis of high-quality long trajectories for extended horizons up to 32 seconds, significantly surpassing existing baselines. While our dual-generator design ensures stability, a promising direction is to investigate unified architectures that can jointly model the distribution of sparse keyframes and dense sequences within a single latent space without compromis-ing generation quality. DCARL 15 
+
+## Acknowledgements 
+
+Research was sponsored by the Army Research Office and was accomplished under Cooperative Agreement Number W911NF-25-2-0040. The views and con-clusions contained in this document are those of the authors and should not be interpreted as representing the official policies, either expressed or implied, of the Army Research Office or the U.S. Government. The U.S. Government is au-thorized to reproduce and distribute reprints for Government purposes notwith-standing any copyright notation herein. This material is based upon work supported by the Intelligence Advanced Research Projects Activity under prime Contract No. 140D0423C0034. 
+
+## References 
+
+1. Bai, J., Xia, M., Fu, X., Wang, X., Mu, L., Cao, J., Liu, Z., Hu, H., Bai, X., Wan, P., et al.: Recammaster: Camera-controlled generative rendering from a single video. In: Proceedings of the IEEE/CVF International Conference on Computer Vision. pp. 14834–14844 (2025) 2. Caesar, H., Bankiti, V., Lang, A.H., Vora, S., Liong, V.E., Xu, Q., Krishnan, A., Pan, Y., Baldan, G., Beijbom, O.: nuscenes: A multimodal dataset for autonomous driving. arXiv preprint arXiv:1903.11027 (2019) 3. Chen, B., Martí Monsó, D., Du, Y., Simchowitz, M., Tedrake, R., Sitzmann, V.: Diffusion forcing: Next-token prediction meets full-sequence diffusion. Advances in Neural Information Processing Systems 37 , 24081–24125 (2024) 4. Cui, J., Wu, J., Li, M., Yang, T., Li, X., Wang, R., Bai, A.: Yuanhao ban, and cho-jui hsieh. selfforcing++: Towards minute-scale high-quality video generation. arXiv preprint arXiv:2510.02283 2(3), 7 (2025) 5. Cui, J., Wu, J., Li, M., Yang, T., Li, X., Wang, R., Bai, A., Ban, Y., Hsieh, C.J.: Lol: Longer than longer, scaling video generation to hour. arXiv preprint arXiv:2601.16914 (2026) 6. Gao, R., Chen, K., Xiao, B., Hong, L., Li, Z., Xu, Q.: Magicdrive-v2: High-resolution long video generation for autonomous driving with adaptive control. In: Proceedings of the IEEE/CVF International Conference on Computer Vision. pp. 28135–28144 (2025) 7. Gao, R., Chen, K., Xie, E., Hong, L., Li, Z., Yeung, D.Y., Xu, Q.: Magicdrive: Street view generation with diverse 3d geometry control. arXiv preprint arXiv:2310.02601 (2023) 8. Gao, S., Yang, J., Chen, L., Chitta, K., Qiu, Y., Geiger, A., Zhang, J., Li, H.: Vista: A generalizable driving world model with high fidelity and versatile controllability. Advances in Neural Information Processing Systems 37 , 91560–91596 (2024) 9. He, H., Xu, Y., Guo, Y., Wetzstein, G., Dai, B., Li, H., Yang, C.: Cameractrl: En-abling camera control for video diffusion models. In: The Thirteenth International Conference on Learning Representations (2025) 10. He, H., Yang, C., Lin, S., Xu, Y., Wei, M., Gui, L., Zhao, Q., Wetzstein, G., Jiang, L., Li, H.: Cameractrl ii: Dynamic scene exploration via camera-controlled video diffusion models. In: Proceedings of the IEEE/CVF International Conference on Computer Vision. pp. 13416–13426 (2025) 16 J. Ouyang et al. 11. Heusel, M., Ramsauer, H., Unterthiner, T., Nessler, B., Hochreiter, S.: Gans trained by a two time-scale update rule converge to a local nash equilibrium. Advances in neural information processing systems 30 (2017) 12. Huang, J., Ye, Z., Hu, X., He, T., Zhang, G., Shi, S., Bian, J., Jiang, L.: Live: Long-horizon interactive video world modeling. arXiv preprint arXiv:2602.03747 (2026) 13. Huang, X., Li, Z., He, G., Zhou, M., Shechtman, E.: Self forcing: Bridging the train-test gap in autoregressive video diffusion. arXiv preprint arXiv:2506.08009 (2025) 14. Huang, Z., Zhang, F., Xu, X., He, Y., Yu, J., Dong, Z., Ma, Q., Chanpaisit, N., Si, C., Jiang, Y., et al.: Vbench++: Comprehensive and versatile benchmark suite for video generative models. arXiv preprint arXiv:2411.13503 (2024) 15. Jin, Y., Sun, Z., Li, N., Xu, K., Jiang, H., Zhuang, N., Huang, Q., Song, Y., Mu, Y., Lin, Z.: Pyramidal flow matching for efficient video generative modeling. arXiv preprint arXiv:2410.05954 (2024) 16. Ling, L., Sheng, Y., Tu, Z., Zhao, W., Xin, C., Wan, K., Yu, L., Guo, Q., Yu, Z., Lu, Y., et al.: Dl3dv-10k: A large-scale scene dataset for deep learning-based 3d vision. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 22160–22169 (2024) 17. Liu, K., Hu, W., Xu, J., Shan, Y., Lu, S.: Rolling forcing: Autoregressive long video diffusion in real time. arXiv preprint arXiv:2509.25161 (2025) 18. Peebles, W., Xie, S.: Scalable diffusion models with transformers. In: Proceedings of the IEEE/CVF international conference on computer vision. pp. 4195–4205 (2023) 19. Russell, L., Hu, A., Bertoni, L., Fedoseev, G., Shotton, J., Arani, E., Corrado, G.: Gaia-2: A controllable multi-view generative world model for autonomous driving. arXiv preprint arXiv:2503.20523 (2025) 20. Song, K., Chen, B., Simchowitz, M., Du, Y., Tedrake, R., Sitzmann, V.: History-guided video diffusion. arXiv preprint arXiv:2502.06764 (2025) 21. Unterthiner, T., Van Steenkiste, S., Kurach, K., Marinier, R., Michalski, M., Gelly, S.: Towards accurate generative models of video: A new metric & challenges. arXiv preprint arXiv:1812.01717 (2018) 22. Wan, T., Wang, A., Ai, B., Wen, B., Mao, C., Xie, C.W., Chen, D., Yu, F., Zhao, H., Yang, J., et al.: Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 (2025) 23. Wang, H., Liu, D., Xie, H., Liu, H., Ma, E., Yu, K., Wang, L., Wang, B.: Mila: Multi-view intensive-fidelity long-term video generation world model for au-tonomous driving. arXiv preprint arXiv:2503.15875 (2025) 24. Wang, Y., Zhou, J., Zhu, H., Chang, W., Zhou, Y., Li, Z., Chen, J., Pang, J., Shen, C., He, T.: π3: Permutation-Equivariant Visual Geometry Learning. arXiv preprint arXiv:2507.13347 (2025) 25. Wang, Z., Bovik, A.C., Sheikh, H.R., Simoncelli, E.P.: Image quality assessment: from error visibility to structural similarity. IEEE transactions on image processing 
+
+13 (4), 600–612 (2004) 26. Xiao, G., Tian, Y., Chen, B., Han, S., Lewis, M.: Efficient streaming language models with attention sinks. arXiv preprint arXiv:2309.17453 (2023) 27. Xu, J., Guo, Z., He, J., Hu, H., He, T., Bai, S., Chen, K., Wang, J., Fan, Y., Dang, K., et al.: Qwen2. 5-omni technical report. arXiv preprint arXiv:2503.20215 (2025) 28. Yan, Y., Xu, Z., Lin, H., Jin, H., Guo, H., Wang, Y., Zhan, K., Lang, X., Bao, H., Zhou, X., et al.: Streetcrafter: Street view synthesis with controllable video diffusion models. In: Proceedings of the Computer Vision and Pattern Recognition Conference. pp. 822–832 (2025) DCARL 17 29. Yang, J., Gao, S., Qiu, Y., Chen, L., Li, T., Dai, B., Chitta, K., Wu, P., Zeng, J., Luo, P., et al.: Generalized predictive model for autonomous driving. In: Proceed-ings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 14662–14672 (2024) 30. Yang, S., Huang, W., Chu, R., Xiao, Y., Zhao, Y., Wang, X., Li, M., Xie, E., Chen, Y., Lu, Y., et al.: Longlive: Real-time interactive long video generation. arXiv preprint arXiv:2509.22622 (2025) 31. Yesiltepe, H., Meral, T.H.S., Akan, A.K., Oktay, K., Yanardag, P.: Infinity-rope: Action-controllable infinite video generation emerges from autoregressive self-rollout. arXiv preprint arXiv:2511.20649 (2025) 32. Yi, J., Jang, W., Cho, P.H., Nam, J., Yoon, H., Kim, S.: Deep forcing: Training-free long video generation with deep sink and participative compression. arXiv preprint arXiv:2512.05081 (2025) 33. Yu, J., Bai, J., Qin, Y., Liu, Q., Wang, X., Wan, P., Zhang, D., Liu, X.: Context as memory: Scene-consistent interactive long video generation with memory retrieval. In: Proceedings of the SIGGRAPH Asia 2025 Conference Papers. pp. 1–11 (2025) 34. Zhang, K., Tang, Z., Hu, X., Pan, X., Guo, X., Liu, Y., Huang, J., Yuan, L., Zhang, Q., Long, X.X., Cao, X., Yin, W.: Epona: Autoregressive diffusion world model for autonomous driving. In: Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) (2025) 35. Zhang, L., Agrawala, M.: Packing input frame context in next-frame prediction models for video generation. arXiv preprint arXiv:2504.12626 (2025) 36. Zhou, J., Gao, H., Voleti, V., Vasishta, A., Yao, C.H., Boss, M., Torr, P., Rupprecht, C., Jampani, V.: Stable virtual camera: Generative view synthesis with diffusion models. arXiv preprint arXiv:2503.14489 (2025) 37. Zhu, H., Zhao, M., He, G., Su, H., Li, C., Zhu, J.: Causal forcing: Autoregressive diffusion distillation done right for high-quality real-time interactive video genera-tion. arXiv preprint arXiv:2602.02214 (2026) DCARL 1
+
+## Appendix 
+
+Overview. In this supplementary material, we first provide a detailed proof of Proposition 1 from the main paper in Section A. We then present additional implementation details in Section B, followed by additional results and analysis in Section C. Finally, we discuss the limitations of our work in Section D. 
+
+## A Proof of Proposition 1 
+
+We evaluate the generation quality using the Mean Squared Error (MSE), defined as MSE (et) = E[∥et∥2] = ∥E[et]∥2 + Tr (Cov (et)) , where ∥E[et]∥2 represents the squared systematic bias (drift) and Tr (Cov (et)) represents the error variance. 
+
+Part I: Statistical Divergence of Pure Autoregressive Generation 
+
+In pure AR generation, It+1 = F(It, ϵ t), where It is the generated frame and ϵt is the sampling noise. We analyze the stability by considering the cumulative error 
+
+et = It −I∗ 
+
+> t
+
+, where I∗ 
+
+> t
+
+is the ground-truth frame. Using a first-order perturbation, we add and subtract F(I∗ 
+
+> t
+
+, ϵ t) to decompose the error: 
+
+et+1 = [ F(It, ϵ t) − F (I∗ 
+
+> t
+
+, ϵ t)] + [ F(I∗ 
+
+> t
+
+, ϵ t) − I∗
+
+> t+1
+
+]
+
+≈ ∇ I∗ 
+
+> t
+
+F · et + ηt+1 , (7) where ηt+1 is the single-step drift when conditioned on ground truth. Assuming 
+
+F is L-Lipschitz with L = sup ∥∇ I∗ 
+
+> t
+
+F∥ , we obtain the recursive norm bound 
+
+∥et+1 ∥ ≤ L∥et∥ + ∥ηt+1 ∥.
+
+Proof (Derivation of AR Divergence). 
+
+Divergence Upper Bound. Unrolling the recursive inequality ∥et∥ ≤ L∥et−1∥+
+
+∥ηt∥ from t = 1 to N , with ∥e0∥ = 0 , we have: 
+
+∥e1∥ ≤ ∥ η1∥∥e2∥ ≤ L∥e1∥ + ∥η2∥ ≤ L∥η1∥ + ∥η2∥
+
+. . . 
+
+∥ebase  
+
+> N
+
+∥ ≤ 
+
+> N
+
+X
+
+> t=1
+
+LN −t∥ηt∥. (8) This formula reveals the catastrophic accumulation of error in pure AR models: 
+
+– Case L = 1 : Assuming ∥ηj ∥ ≤ η, the bound simplifies to ∥eN ∥ ≤ PNj=1 η =
+
+O(N ), representing a linear growth of error norm bound. 
+
+– Case L > 1: The geometric series diverges as O(LN ), where local artifacts are exponentially amplified. 2 J. Ouyang et al. 
+
+Divergence Lower Bound. While the Lipschitz upper bound describes the maximum potential error, the intrinsic divergence of pure AR generation is gov-erned by the persistent nature of single-step errors ηt. In practice, the learned mapping F is subject to exposure bias , where the distribution gap between training and inference leads to a non-vanishing systematic drift. We formally assume that the expected single-step error is bounded away from zero, i.e., 
+
+∥E[ηt]∥ ≥ μ > 0, or potentially increases with t as the state It departs from the training distribution. Furthermore, to prevent visual signal decay over time, the mapping F must be non-contractive, meaning it does not shrink the latent state space in any direction. Formally, we assume the minimum singular value (the smallest scaling factor) of the Jacobian Jt = ∇I∗ 
+
+> t
+
+F satisfies σmin (Jt) ≥ 1 for all t. Under this non-contractive assumption, the expected cumulative error ebase N is unrolled through the product of time-varying Jacobians: 
+
+∥E[ebase  
+
+> N
+
+]∥ =
+
+> N
+
+X 
+
+> t=1
+> N−1
+
+Y
+
+> k=t
+
+Jk
+
+!
+
+E[ηt] ≥
+
+> N
+
+X 
+
+> t=1
+> N−1
+
+Y
+
+> k=t
+
+σmin (Jk)
+
+!
+
+μ ≥ N μ,  (9) where QN −1 
+
+> k=t
+
+Jk represents the error transition from step t to N . Since the growth is at least linear in N , the squared bias satisfies ∥E[ebase  
+
+> N
+
+]∥2 = Ω(N 2).
+
+Variance Accumulation. Even in an idealized scenario where the genera-tor is unbiased ( E[ηt] = 0 ), the AR process remains unstable due to stochas-tic noise accumulation. Modeling {ηt} as i.i.d. random variables with variance Tr (Cov (ηt)) = σ2, the variance of the cumulative error is: 
+
+Tr (Cov (ebase  
+
+> N
+
+)) = 
+
+> N
+
+X
+
+> t=1
+
+Tr (Cov (ηt)) = N σ 2. (10) Under the decomposition MSE = ∥Bias ∥2 + Variance, the Mean Squared Er-ror is lower-bounded by Ω(N ). Physically, this indicates that pure AR models lack a corrective mechanism; without global anchors, both systematic drift and stochastic noise force the trajectory to diverge irreversibly from the ground truth. 
+
+Part II: Error Bounding via Keyframe-Assisted Interpolation 
+
+In contrast to the recursive accumulation in pure AR models, our strategy par-titions the sequence into segments Si using sparse keyframes {Ki} at interval T .For any frame t = iT + τ where τ ∈ (0 , T ) is the temporal offset within segment 
+
+Si, the generation process is defined by a conditional interpolation mapping G:
+
+IiT +τ = G(Ki, K i+1 , S i−1, τ, ϵ τ ), (11) where Ki and Ki+1 are the bidirectional global anchors, Si−1 provides the pre-ceding temporal context (momentum), and ϵτ represents the local sampling noise. DCARL 3
+
+Step 1: Unified Decomposition Framework For any frame t = iT + τ in segment Si (τ ∈ (0 , T )), we model the generation process as the superposition of two components: a Brownian Bridge Bτ pinned at the keyframes {Ki, K i+1 }
+
+to ensure global structural alignment, and an autoregressive residual Φi(τ )
+
+to maintain temporal continuity from the preceding segment Si−1. Specifically, 
+
+IiT +τ = Bτ + Φi(τ ), where the Brownian Bridge Bτ is a stochastic process characterized by: 
+
+E[Bτ ] = 
+
+
+
+1 − τT
+
+
+
+Ki + τT Ki+1 , (12) Var (Bτ ) = τ (T − τ )
+
+T σ2
+
+> int
+
+, (13) where σ2 
+
+> int
+
+denotes the interpolation noise intensity. Under this framework, the generated state IiT +τ is the sum of the bridge mean, the cross-segment consistency shift Φi(τ ) (representing momentum), and stochastic bridge noise 
+
+ϵτ ∼ N (0 , Var (Bτ )) .Assuming the ground-truth trajectory I∗ 
+
+> t
+
+follows a similar Brownian Bridge dynamic anchored at ground-truth keyframes {K∗ 
+
+> i
+
+}, the interpolation error eours   
+
+> iT +τ
+
+=
+
+It − I∗ 
+
+> t
+
+is derived by subtracting the respective components: 
+
+eours   
+
+> iT +τ
+
+=
+
+
+
+1 − τT
+
+
+
+e(Ki) + τT e(Ki+1 )
+
+| {z } 
+
+> Eanch (Boundary Interpolation)
+
++ δi(τ )
+
+| {z }  
+
+> Eleak (Momentum Leakage)
+
++ wτ
+
+|{z}  
+
+> Enoise (Local Noise)
+
+,
+
+(14) where Eanch results from the linear interpolation of keyframe drifts e(Ki) = 
+
+Ki −K∗ 
+
+> i
+
+, Eleak = Φ−Φ∗ is the implicit autoregressive error (momentum leakage), and Enoise = ϵ−ϵ∗ is the local stochastic hallucination. To prove global stability, we must show that Eleak remains bounded independently of the sequence length 
+
+N .
+
+Step 2: Damping of Momentum Leakage To maintain temporal continuity while adhering to fixed keyframes, the video model implicitly minimizes the acceleration along the error trajectory δi(τ ), where τ ∈ [0 , T ] is the frame offset. This corresponds to minimizing the second-order energy functional: 
+
+L(δi) = 
+
+Z T
+
+> 0
+
+(δ′′  
+
+> i
+
+(τ )) 2dτ.  (15) Under these dynamics, the momentum error entering from the preceding seg-ment Si−1 is defined as ∆v i−1 = δ′
+
+> i−1
+
+(T ). This term acts as the initial velocity constraint δ′
+
+> i
+
+(0) = ∆v i−1, which is then structurally damped across the current segment. 
+
+Lemma 1 (Damping Coefficient). The transmitted velocity error ∆v i at the boundary satisfies the recurrence ∆v i = γ∆v i−1, where the damping factor is: 
+
+γ = − 12 . (16) 4 J. Ouyang et al. 
+
+Proof. The Euler-Lagrange equation for a functional involving second-order deriva-tives, L = R f (τ, δ i, δ ′
+
+> i
+
+, δ ′′  
+
+> i
+
+)dτ with f = ( δ′′  
+
+> i
+
+)2, is given by: 
+
+∂f ∂δ i
+
+− ddτ 
+
+ ∂f ∂δ ′
+
+> i
+
+
+
++ d2
+
+dτ 2
+
+ ∂f ∂δ ′′ 
+
+> i
+
+
+
+= 0 . (17) Since f only depends on the second derivative δ′′  
+
+> i
+
+, we have ∂f ∂δ i = 0 and ∂f ∂δ ′
+
+> i
+
+= 0 .Substituting ∂f ∂δ ′′ 
+
+> i
+
+= 2 δ′′  
+
+> i
+
+(τ ) into the equation yields: 
+
+d2
+
+dτ 2 (2 δ′′  
+
+> i
+
+(τ )) = 0 = ⇒ 2δ(4)  
+
+> i
+
+(τ ) = 0  (18) Thus, the governing equation is δ(4)  
+
+> i
+
+(τ ) = 0 . The general solution to this fourth-order linear differential equation is a cubic polynomial: 
+
+δi(τ ) = aτ 3 + bτ 2 + cτ + d.  (19) To isolate the effect of velocity leakage, we apply the positional anchoring and smoothness constraints: 
+
+δi(0) = 0 , δi(T ) = 0 (Rigid Positional Anchors) , (20) 
+
+δ′
+
+> i
+
+(0) = ∆v i−1 (Velocity Continuity) , (21) 
+
+δ′′  
+
+> i
+
+(T ) = 0 (Natural Boundary Condition).  (22) Substituting these conditions into the cubic form yields the following algebraic system: 
+
+d = 0 , c = ∆v i−1, (23) 
+
+6aT + 2 b = 0 = ⇒ b = −3aT, (24) 
+
+aT 3 + ( −3aT )T 2 + ∆v i−1T = 0 = ⇒ a = ∆v i−1
+
+2T 2 . (25) The velocity error transmitted to the start of the next segment Si+1 is the derivative at the current segment’s end τ = T :
+
+∆v i = δ′
+
+> i
+
+(T ) = 3 aT 2 + 2 bT + c
+
+= 3 
+
+ ∆v i−1
+
+2T 2
+
+
+
+T 2 + 2 
+
+
+
+− 3∆v i−1
+
+2T
+
+
+
+T + ∆v i−1
+
+= 32 ∆v i−1 − 3∆v i−1 + ∆v i−1
+
+= − 12 ∆v i−1. (26) The geometric progression |γ| = 0 .5 < 1 confirms that the momentum error is exponentially attenuated across segments, ensuring that the system remains globally stable and avoids the cumulative divergence typical of pure AR models. DCARL 5
+
+Furthermore, we analyze the maximum magnitude of the leakage term ∥δi(τ )∥
+
+within a single segment to bound the local drift. By identifying the extremum where δ′
+
+> i
+
+(τ ) = 0 (occurring at τ ∗ = T (1 − √33 )), the intra-segment peak error is given by: 
+
+max    
+
+> τ∈[0 ,T ]
+
+∥δi(τ )∥ =
+
+√39 T ∥∆v i−1∥ ≈ 0.192 T ∥∆v i−1∥. (27) This result shows that the momentum leakage is locally constrained by the keyframe interval T and remains strictly proportional to the incoming veloc-ity error, providing a theoretical guarantee for the unified global bound. 
+
+Step 3: Synthesis of the Unified Global Bound Substituting the results from the previous steps into the decomposition framework of Eq. (14), we syn-thesize the final upper bound for the generation error. By the triangle inequality, the total error norm is bounded by the sum of three distinct components: 
+
+∥eours   
+
+> iT +τ
+
+∥ ≤ ∥Eanch ∥
+
+| {z }
+
+> Keyframe Drift
+
++ ∥Eleak ∥
+
+| {z }
+
+> Momentum Leakage
+
++ ∥Enoise ∥
+
+| {z }
+
+> Interpolation Variance
+
+. (28) We analyze each component to establish the global stability: 
+
+– Keyframe Drift ( ∥Eanch ∥): This term depends on the strategy used to generate {Kj }.1. Global Generation: If keyframes are generated globally (e.g., via a sparse pre-selected set), ∥e(Kj )∥ ≤ Ckf , yielding ∥Eanch ∥ = O(1) .2. Downsampled AR: If keyframes are generated autoregressively with step 
+
+T , the error accumulates over N/T steps. Following Part I, ∥e(Kj )∥ =
+
+O(N/T ), which represents a T -fold suppression of the pure AR drift 
+
+O(N ).
+
+– Momentum Leakage ( ∥Eleak ∥): From Lemma 1, the velocity error satisfies 
+
+∆v i = γ∆v i−1 with |γ| = 0 .5. The cumulative velocity error is bounded by the geometric series Pik=0 γk∥∆v 0∥ ≤ 2∥∆v 0∥. Combined with the intra-segment peak derived in Step 2: 
+
+sup 
+
+> i,τ
+
+∥δi(τ )∥ ≤ 0.192 T · (2 ∥∆v 0∥) = 0 .384 T ∥∆v 0∥. (29) Crucially, this term is only dependent of the keyframe interval (T ) and in-dependent of the total sequence length N , confirming that momentum error does not diverge. 
+
+– Interpolation Variance ( ∥Enoise ∥): The local stochastic error is governed by the Brownian Bridge variance Var (Bτ ) = τ (T −τ ) 
+
+> T
+
+σ2
+
+> int
+
+. To find the upper bound, we maximize this quadratic form with respect to τ :
+
+ddτ 
+
+ τ T − τ 2
+
+T
+
+
+
+= 0 = ⇒ τ = T
+
+2 ; max  
+
+> τ
+
+Var (Bτ ) = T
+
+4 σ2
+
+> int
+
+. (30) Thus, ∥Enoise ∥ ≤ √T 
+
+> 2
+
+σint , indicating that local hallucination is strictly con-strained by the segment length. 6 J. Ouyang et al. 
+
+Conclusion: Combining these results, the unified global bound is: 
+
+∥eours  
+
+> t
+
+∥ ≤ max  
+
+> j
+
+∥e(Kj )∥ + 0 .384 T ∥∆v 0∥ +
+
+√T
+
+2 σint . (31) Unlike the Ω(N ) divergence of pure AR models, our method ensures that the er-ror is dominated by the quality of sparse keyframes and the local segment length 
+
+T . Even in the worst-case AR keyframe scenario, the MSE is suppressed by a fac-tor of T 2, effectively neutralizing catastrophic temporal decay and establishing long-term generation stability. 
+
+Conclusion on Keyframe Scenarios: If keyframes are generated globally, 
+
+∥eours  
+
+> t
+
+∥ = O(1) . If keyframes are generated autoregressively with step T , ∥eours  
+
+> t
+
+∥ =
+
+O(N/T ), achieving a T -fold (and T 2 in MSE) suppression of degradation com-pared to pure AR. The theoretical results establish the advantage of our method over pure AR generation, and the subsequent experimental results further con-firm this advantage empirically. 
+
+## B Implementation Details 
+
+B.1 Training Details Interpolation Stage Training. For the training of the interpolation genera-tor GI , we employ a stochastic keyframe conditioning strategy to enhance the model’s robustness to diverse temporal contexts. Specifically, for each training segment, we randomly sample 1 to 10 conditioning keyframes from the keyframe set K. These keyframes are restricted to a temporal window within ±10 frames of the target segment’s range to simulate local structural anchors. Furthermore, to facilitate the Motion-Inductive Noisy Conditioning (Sec. 4.3), the guidance co-efficient αc is randomly sampled from the range [0 .1, 0.5] during training, ensur-ing that the model learns to prioritize underlying motion dynamics over simple pixel-level replication. 
+
+Baseline Implementation. To ensure a fair and comprehensive comparison, we evaluate our model against several state-of-the-art baselines. For consistency, all compared models are provided with camera trajectories as conditional in-puts. We independently implemented the training and inference pipelines for SEVA [36] and Diffusion Forcing [3] following the architectures described in their respective papers. For other baseline methods, we utilized their official open-source repositories and strictly adhered to the recommended training con-figurations and hyperparameters. All models, including our re-implementations, were trained until convergence to ensure they reached their optimal performance levels for the benchmarking tasks. 
+
+Evaluation Metrics and Resolutions. We report the Fréchet Inception Dis-tance (FID) and Fréchet Video Distance (FVD) to assess visual quality and tem-poral consistency. For FID calculations, while SEVA uses its default 299 × 299 
+
+resolution (aligned with the standard Inception-v3 input), all other methods, DCARL 7
+
+including our own, are evaluated at a resolution of 256 × 448 to match the na-tive aspect ratio of the datasets. For the FVD metric, all compared methods are evaluated at a unified resolution of 224 × 224 using the standard I3D backbone to ensure a consistent and unbiased comparison of temporal dynamics. 
+
+## C Additional Results 
+
+This section provides supplementary qualitative evidence to further substantiate our experimental findings and theoretical analysis. 
+
+C.1 Extended Comparisons in Long-Trajectory Generation 
+
+We present additional visual comparisons to further demonstrate the superiority of the DCARL framework in long-term video synthesis. As illustrated in Fig. A and Fig. B, our method maintains significantly higher temporal consistency and trajectory fidelity over extended horizons compared to existing baselines. While competing methods often suffer from visual drifting or structural collapse as the sequence progresses, DCARL leverages sparse keyframe anchors to ensure stable and realistic scene evolution throughout the entire trajectory. 
+
+C.2 Comparisons in Small-Scene Generation 
+
+To further evaluate the generalization capability of DCARL, we conduct experi-ments on the DL3DV-10K dataset [16], which focuses on detailed small-scene re-construction and generation. The quantitative results are summarized in Tab. A. As illustrated in Fig. C, our method significantly outperforms autoregressive baselines in maintaining long-term visual stability and trajectory adherence. We observe that while existing AR methods often suffer from cumulative expo-sure bias—leading to gradual semantic drift or visual degradation over extended sequences—DCARL effectively eliminates such artifacts, preserving consistent scene appearance throughout the rollout. Furthermore, our model exhibits su-perior alignment with the input camera trajectories. While baseline methods frequently deviate from the intended path or exhibit trajectory drift during com-plex maneuvers, DCARL’s keyframe-anchored strategy ensures that the gener-ated views remain strictly faithful to the provided motion constraints, ensuring high-fidelity controllable generation. 
+
+C.3 Failure Cases 
+
+Despite the robust performance of DCARL, we identify certain scenarios where the model still faces challenges, as illustrated in Fig. D. These failure cases provide insights into current limitations and future research directions. 
+
+Long-distance Perception Limits. The first and second rows of Fig. D demon-strate that there is still room for improvement in long-range spatial perception. In the first row, the model fails to correctly anchor the vegetation, which should 8 J. Ouyang et al. 
+
+Table A: Comparison of our method with state-of-the-art approaches for 32-second video generation on the DL3DV-10K dataset. Method Overall 0-8 s 8-16 s 16-24 s 24-32 s ATE ↓ ARE ↓                            
+
+> DiffF 36.5 / 450.1 32.3 / 397.0 45.9 / 576.4 49.8 / 630.1 54.6 / 687.9 0.517 41.467 SelfF 50.4 / 1062.2 46.3 / 571.5 56.1 / 877.7 78.2 / 1569.3 105.2 / 2374.8 0.699 75.676 DeepF 58.0 / 1279.5 37.4 / 479.7 73.0 / 1454.6 83.4 / 1905.0 85.5 / 1988.0 0.664 66.689 SEVA 24.8 / 275.0 35.9 / 290.6 40.8 / 390.0 39.0 / 371.8 38.0 / 397.0 0.670 68.129
+> Ours 22.8 / 220.1 29.1 / 294.6 33.3 / 344.0 30.1 / 324.1 33.3 / 320.1 0.340 19.646
+
+ideally remain within the center of the roundabout. In the second row, the gener-ated trajectory incorrectly passes through a pedestrian island, indicating a lack of fine-grained understanding of complex road boundaries over long distances. 
+
+Corner Cases and Data Distribution. The third row depicts a challeng-ing corner case where the sequence originates from beneath an overpass. Upon exiting the overpass, the model produces unrealistic and unnatural visual arti-facts. Such failures suggest that the model remains sensitive to rare structural transitions and lighting changes. These observations highlight the necessity of designing more sophisticated long-distance perception mechanisms and further enriching the training set with a more balanced and diverse distribution of corner cases. 
+
+## D Discussion 
+
+While DCARL effectively addresses the cumulative divergence in long-term video synthesis, we acknowledge several limitations that provide avenues for future research. 
+
+Real-time Generation. Although DCARL does not introduce significantly more inference latency compared to standard bidirectional attention-based mod-els, it is not yet optimized for real-time interactive applications. However, our framework offers a promising blueprint for real-time streaming synthesis. Specif-ically, future iterations could employ a dual-stream architecture: a high-speed causal model could handle low-latency frame generation, while a secondary sparse model generates and maintains a global scene representation—either as a collection of memory frames or 3D primitives—to provide structural anchors. Our work demonstrates that this divide-and-conquer approach is instrumental in stabilizing such real-time autoregressive processes. 
+
+Keyframe Generation Quality. Currently, the generation quality of sparse keyframes is slightly constrained by the inherent difficulty of learning long-range data distributions compared to short-window transitions. This challenge mani-fests in maintaining high-frequency visual details and precise camera trajectory adherence over ultra-long horizons. Under limited computational and data re-sources, we believe the dual-generator design remains optimal, and the keyframe generator could be further enhanced by distilling knowledge from 3D founda-tion models. While a unified generator representation might potentially yield DCARL 9SEVA  Vista  DiffF Ours    
+
+> 0s 16s 32s 8s 24s
+> SelfF DeepF  SEVA  Vista  DiffF Ours  SelfF DeepF
+
+Fig. A: Visual comparison of 32-second video generation on the OpenDV-YouTube [29] dataset. 
+
+higher quality, it would require significantly larger compute budgets and more diverse data representations. At present, DCARL ensures robust 32-second video generation with high-fidelity camera control and visual stability. 10 J. Ouyang et al. SEVA  Vista  DiffF Ours 
+
+0s 8s 16s 
+
+> SelfF DeepF  SEVA  Vista  DiffF Ours  SelfF DeepF
+
+Fig. B: Visual comparison of 16-second video generation on the NuScenes [2] dataset. DCARL 11 SEVA  DiffF Ours 
+
+0s 16s 32s 8s 24s 
+
+> SelfF DeepF  SEVA  DiffF Ours  SelfF DeepF  SEVA  DiffF Ours  SelfF DeepF
+
+Fig. C: Qualitative comparison of 32-second video generation on the DL3DV dataset. Compared to other methods, DCARL preserves better stability and high-frequency details in small-scene environments. 12 J. Ouyang et al. 
+
+Fig. D: Visual analysis of failure cases. Rows 1-2: Challenges in long-distance per-ception, such as maintaining roundabout structures and respecting pedestrian islands. Row 3: A corner case involving complex structural transitions (exiting an overpass) that leads to unnatural artifacts.
