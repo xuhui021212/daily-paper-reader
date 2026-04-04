@@ -1,0 +1,861 @@
+Title: MedLoc-R1: Performance-Aware Curriculum Reward Scheduling for GRPO-Based Medical Visual Grounding
+
+URL Source: https://arxiv.org/pdf/2603.28120v1
+
+Published Time: Tue, 31 Mar 2026 01:44:13 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# MedLoc-R1: Performance-Aware Curriculum Reward Scheduling for GRPO-Based Medical Visual Grounding 
+
+Guangjing Yang 1 Ziyuan Qin 2 Chaoran Zhang 1 Chenlin Du 3 Jinlin Wang 1
+
+Wanran Sun 1 Zhenyu Zhang 1 Bing Ji 4 Qicheng Lao 1†
+
+> 1
+
+Beijing University of Posts and Telecommunications 2Emory University 
+
+> 3
+
+Peking University 4Shandong University 
+
+{ygj2018, qicheng.lao }@bupt.edu.cn †Corresponding author 
+
+Abstract 
+
+Medical visual grounding serves as a crucial foundation for fine-grained multimodal reasoning and interpretable clinical decision support. Despite recent advances in reinforcement learning (RL) for grounding tasks, exist-ing approaches such as Group Relative Policy Optimiza-tion (GRPO) suffer from severe reward sparsity when di-rectly applied to medical images, primarily due to the inherent difficulty of localizing small or ambiguous re-gions of interest, which is further exacerbated by the rigid and suboptimal nature of fixed IoU-based reward schemes in RL. This leads to vanishing policy gradients and stagnated optimization, particularly during early train-ing. To address this challenge, we propose MedLoc-R1 , a performance-aware reward scheduling framework that progressively tightens the reward criterion in accor-dance with model readiness. MedLoc-R1 introduces a sliding-window performance tracker and a multi-condition update rule that automatically adjust the reward sched-ule from dense, easily obtainable signals to stricter, fine-grained localization requirements, while preserving the fa-vorable properties of GRPO without introducing auxiliary networks or additional gradient paths. Experiments on three medical visual grounding benchmarks demonstrate that MedLoc-R1 consistently improves both localization ac-curacy and training stability over GRPO-based baselines. Our framework offers a general, lightweight, and effec-tive solution for RL-based grounding in high-stakes med-ical applications. Code & checkpoints are available at https://github.com/MembrAI/MedLoc-R1. 
+
+1. Introduction 
+
+In recent years, reinforcement learning (RL) has demon-strated substantial benefits in training large language mod-els, particularly for aligning model behavior with hu-Fixed Threshold （0.5 ）    
+
+> the Sparse Reward problem
+> Curriculum Reward Scheduling
+> IoU Threshold Schedule
+> 0.0 0.2 0.4 0.6 0.8 1.0 01000 2000 4000 3000 5000 Step
+> Training IoU Rewards under Fixed Threshold vs. Curriculum Reward Scheduling
+> IoU Reward
+> Updating Threshold
+> 0.0 0.2 0.4 0.6 0.8 1.0
+
+Figure 1. Reward curve with performance-aware progressive re-ward scheduling ( in red ) showing dense values compared to the reward curve with fixed reward scheme ( in blue ). The dashed line (in green ) indicates the progression of the reward criterion. 
+
+man preferences and enhancing reasoning capabilities [20, 23, 29]. Motivated by these successes, several studies have begun exploring RL within medical vision–language settings [11, 34]. However, for language-guided visual grounding tasks, an important question remains: do such perception-oriented localization tasks truly benefit from reasoning-centric RL techniques? Recent works such as Visual-RFT [16], VLM-R1 [30], and Med-R1 [11] have shown that GRPO-style RL post-training can indeed yield performance improvements and enhance model generaliza-tion. Yet these studies largely emphasize prompt engineer-ing and fixed-threshold IoU-based reward schemes when explaining the perceptual gains introduced by RL. We ar-gue that, in medical visual grounding, expecting a large vi-sion–language model (LVLM) to learn accurate and fine-grained lesion localization in a single stage is unrealistic. The difficulty becomes even more pronounced when align-ing general-domain LVLMs using post-training RL, as this process resembles asking an individual without medical ex-pertise to localize disease lesions—such a process inher-ently requires gradual, progressive acquisition of spatial and semantic understanding [6, 10, 37, 43]. Unlike natural images, medical images exhibit unique characteristics such as low signal-to-noise ratios, blurred 1
+
+> arXiv:2603.28120v1 [cs.CV] 30 Mar 2026
+
+boundaries, small lesion sizes, and severe class imbalance, making the localization problem significantly more chal-lenging [13, 25, 26, 34]. The recognition difficulty caused by this domain gap often leads the RL policy to experience “frustration,” resulting in training failure to converge, as the model is unable to obtain sufficient positive rewards from multiple attempts. This issue is commonly referred to as the sparse reward problem in RL training [24]. To mitigate reward sparsity and ease the associated training challenges, one intuitive solution is to employ curriculum learning [3], a strategy widely adopted in supervised learning to improve optimization by scheduling task difficulty. However, con-ventional curriculum methods typically rely on sample re-ordering or progressive data exposure [18]—mechanisms that do not directly apply to RL-based grounding, where task difficulty is governed by reward design rather than the input distribution [8]. Moreover, prior RL approaches for visual grounding typically employ a fixed IoU-based reward scheme that cannot automatically adapt its difficulty to the model’s evolving readiness during training [30, 34]. As a result, how to construct a progressive and performance-aware reward curriculum remains an open problem. Motivated by the core principle of curriculum learn-ing—gradual and structured progression—and recognizing the central importance of reward shaping in medical vi-sual grounding, we propose MedLoc-R1 , a performance-aware curriculum reward scheduling framework that dy-namically adjusts the reward criterion according to policy performance. Our scheduling strategy gradually raises the reward criterion as training progresses, enabling a transi-tion from dense to stable rewards, thereby resembling the idea of curriculum learning. Figure 1 shows this pattern: the red reward curve shows progressive reward accumula-tion along with the curriculum reward schedule level in the 
+
+green dashed line. In contrast, the blue curve without re-ward scheduling suffers from persistently sparse rewards. Specifically, our method introduces a sliding-window performance tracking module to quantify recent training dy-namics. Based on state tracking statistics, we define a multi-condition update criterion that progressively elevates the strictness of the reward criterion, enabling a smooth transi-tion from “dense rewards—coarse localization” to “sparse rewards—fine-grained alignment.” This design preserves the desirable properties of GRPO while effectively address-ing the reward sparsity bottleneck—achieved without intro-ducing auxiliary networks or gradient paths. Overall, our contribution can be concluded as follows: • We identify and formally analyze the reward sparsity problem inherent in applying GRPO to medical vi-sual grounding, clearly revealing how traditional fixed-criterion reward designs lead to unstable optimization and severely degraded policy gradient estimation. • We propose a novel curriculum reward scheduling frame-work that leverages sliding-window performance statis-tics to dynamically adjust reward strictness in accordance with model readiness, enabling progressive difficulty con-trol and effectively mitigating vanishing gradients. • We conduct extensive experiments across multiple med-ical grounding benchmarks, demonstrating that our ap-proach significantly improves both training reward dy-namics and localization accuracy, while introducing neg-ligible computational overhead. 
+
+2. Related Work 
+
+Reinforcement Learning and GRPO in Medical Vi-sual Grounding. Medical Visual Grounding task is a set-free [12, 14, 22, 40] cross-modal task that locates a medical entity with a given text prompt. Previous work [21, 36] have shown proper prompts can improve the location perfor-mance of LVLMs. Recent advances in reinforcement learn-ing, particularly value-free methods such as Group Rela-tive Policy Optimization (GRPO) [29], have demonstrated strong optimization stability in visual grounding and mul-timodal tasks on natural images. This genre work [31, 38] proposed to use a rule-based reward to give clear and ro-bust reward signal to replace the value estimation function in PPO [28]. Motivated by these successes, several stud-ies [11, 34, 35] have explored GRPO-based training in med-ical image scenarios. For example, MedGround-R1 [34] in-troduces spatial-semantic rewards, while Med-R1 [11] en-hances multimodal diagnostic reasoning. However, these approaches uniformly adopt fixed IoU thresholds for reward design and fail to address the severe reward sparsity present in early stages of medical grounding, which often results in vanishing gradients and slow policy convergence. 
+
+Curriculum Learning and Reward Sparsity in RL-based Localization. Reward sparsity [19, 24] is a well-known issue in training RL models, leading to failure. Reward shaping [1, 9] is a common mitigation strategy for reward sparsity. Curriculum learning [3] is a train-ing strategy that gradually exposes a model to tasks of in-creasing difficulty, and can used for alleviate reward spar-sity [5, 27]. Curriculum learning (CL) has been applied to medical imaging tasks for staged sample organization [4, 15, 39], and recent work such as MedCCO [26] incorpo-rates CL-inspired strategies to improve multimodal reason-ing in RL-based frameworks. Nevertheless, these methods primarily rely on data ordering or progressive sample expo-sure, which are not directly applicable to localization tasks where difficulty is governed by reward structure [18]. Ex-isting RL curriculum scheduling approaches [17, 35] have not fully addressed adaptive IoU threshold adjustment, leav-ing reward sparsity and convergence stagnation largely un-resolved in RL-driven medical visual grounding. 2Step 0 Step N 
+
+τ0 τtarget 
+
+> ......
+
+τk τk+1          
+
+> ❌
+> ...... ......
+> KL
+> Group Computation
+> ....
+> On
+> Reward Model Reference Model
+> O2
+> O1
+> ....
+> Rn
+> R2
+> R1
+> ....
+> An
+> A2
+> A1
+> τk
+> ... IoU tIoU t+4
+> ....
+> ✅
+> An
+> A2
+> A1
+> Mean Reward
+> ≥Pτk？
+> Reward Std. ≤Sτk？
+> Mean IoU ≥τk+Δ？
+> Satisfy All ?
+> Group Sampling & Rewarding Window Statistics Tracking Checking Task Difficulty Scheduling
+> GRPO Overview
+
+Figure 2. Overview of our proposed MedLoc-R1. We propose a progressive curriculum reward scheduling strategy, driven by tracking performance statistics, including mean reward ¯rk , reward std. σr,k , and the mean IoU ¯mk assessing localization quality. 
+
+3. Methodology 
+
+3.1. Preliminaries 
+
+3.1.1. Group Relative Policy Optimization (GRPO) 
+
+GRPO is a recent variant of Proximal Policy Optimization (PPO) [28] designed to remove explicit value function es-timation. Unlike traditional PPO, which relies on a critic network, GRPO computes policy gradients by exploiting relative reward differences within groups of actions, thereby reducing variance without additional value networks. Given an input x, GRPO samples a group of G candidate actions 
+
+{ai}Gi=1 from the old policy, each associated with an exter-nal reward ri. The normalized advantage Ai for action ai is defined as: 
+
+Ai = ri − mean (r)
+
+std (r) = ri − 1
+
+> G
+
+PGj=1 rj
+
+q 1
+
+> G
+
+PGj=1 (rj − ¯r)2 + γ, (1) where r = ( r1, r 2, .., r G) represents the group of rewards for each action in the group G, and ¯r denotes the group mean reward and γ is a stability term. Also, ri is the fi-nal reward received by candidate action ai. Then, its op-timization objective adopts the clipped PPO form with KL regularization: 
+
+JGRPO (θ) = 1
+
+G
+
+> G
+
+X
+
+> i=1
+
+min 
+
+h
+
+ρiAi, clip (ρi, 1 − ϵ, 1 + ϵ)Ai
+
+i
+
+− β KL πθ ∥ πref 
+
+,
+
+(2) where ρi = πθ (ai|s)  
+
+> πθold (ai|s)
+
+, ϵ is a small constant value for clip-ping, πref is a pre-trained reference policy for KL regular-ization, and β controls the regularization strength. 
+
+3.1.2. Problem Definition: Reward Sparsity 
+
+For the visual grounding task, a common reward function is based on whether the predicted bounding box exceeds a fixed IoU threshold τ with the ground-truth box b∗:
+
+ri = I[IoU( bi, b ∗) ≥ τ ], (3) where I[·] is the indicator function. This reward function will only reward the models when the predicted coordinates contour an area that has a high IoU with the target area. While effective on natural images, this binary reward be-comes problematic in medical image analysis, where small lesions, low contrast, and blurred boundaries make it diffi-cult to meet fixed thresholds (e.g., τ = 0 .5). As a result, for a given threshold τ , we say that all ri ∈ r equals 0. Formally, we have the following definition of this reward sparsity problem in visual grounding: 
+
+∃ τ ∈ R, s.t. ∀i ∈ G, r i = I[IoU( bi, b ∗) ≥ τ ] = 0 . (4) Hence, the intra-group mean and variance goes to zero: 
+
+¯r = 0 , σ r = 0 ⇒ Ai = ri − mean (r)
+
+std (r) = 0 , (5) which leads to vanishing policy gradients and training stag-nation under GRPO, thereby motivating the adaptive cur-riculum strategy proposed in this work. 
+
+3.2. Performance-Aware Curriculum Reward Scheduling 
+
+3.2.1. Task Formulation and Method Overview 
+
+The problem we investigate can be formulated as follows: given an image I and a corresponding query instruction 3q, our goal is to train a vision-language model (VLM) us-ing GRPO to generate reasoning explanations and predict a bounding box ˆb ∈ R4 for accurate localization of the target region. Formally, let the dataset be D = {(Ii, q i, b ∗ 
+
+> i
+
+)}Ni=1 , where 
+
+Ii denotes the i-th image, qi is the associated query in text form, and b∗ 
+
+> i
+
+= [ x∗
+
+> 1
+
+, y ∗ 
+
+> 1
+
+, x ∗
+
+> 2
+
+, y ∗ 
+
+> 2
+
+] represents the ground truth bounding box. Our objective is to learn a parameterized model πθ that maps (I, q ) to both a bounding box prediction and a coherent reasoning process. As discussed in the last section, the fixed threshold set-ting would lead to a reward sparsity issue. Therefore, we propose an approach that employs an adaptive and dynamic reward scheme. Figure 2 gives an overview of MedLoc-R1. Our approach comprises two key components: (1) sliding-window performance and state tracking , which monitors recent training dynamics to provide reliable adaptation sig-nals; and (2) progressive task difficulty regulation and curriculum scheduling , which leverages these signals to adjust task difficulty in a gradual and stable manner. To-gether, these components ensure stable gradient feedback throughout the learning process while continuously driving the model toward higher precision. 
+
+3.2.2. Sliding-Window Performance and State Tracking 
+
+Accurately assessing whether the model has adequately adapted to the current difficulty level is critical for enabling adaptive curriculum scheduling. To achieve this, we intro-duce a sliding-window-based performance tracking mech-anism that continuously monitors recent training dynamics and record the statistics. This mechanism serves two main purposes: (1) quantitatively evaluate the policy’s current ca-pability to meet the IoU threshold, and (2) ensure reliability and stability before increasing task difficulty. Specifically, at each training step k, we maintain a slid-ing time window Wk = {k − N + 1 , . . . , k } of size N to collect prediction results and corresponding rewards gen-erated by the policy in the most recent N training steps. For step t ∈ Wk, the model generates G predicted boxes 
+
+{ˆb(t) 
+
+> i
+
+}Gi=1 based on input images, with IoUs between these boxes and the corresponding ground-truth box b∗(t) being 
+
+IoU( ˆb(t) 
+
+> i
+
+, b ∗(t)). Given the current IoU threshold τk, we de-fine the following three core metrics: 
+
+(a) Window Mean Reward ( ¯rk). This metric quanti-fies the proportion of successful predictions within the re-cent sliding window, serving as an indicator of the policy’s overall performance under the current threshold. Because the reward function is binary (IoU exceeds τk or not), ¯rk
+
+effectively estimates the policy’s hit rate: 
+
+¯rk = 1
+
+N
+
+X
+
+> t∈Wk
+
+1
+
+G
+
+> G
+
+X
+
+> i=1
+
+I
+
+h
+
+IoU( ˆb(t) 
+
+> i
+
+, b ∗(t)) ≥ τk
+
+i
+
+. (6) A higher ¯rk indicates that the current difficulty level no longer imposes substantial challenges, suggesting readiness for progression to a stricter threshold. 
+
+(b) Reward Standard Deviation ( σr,k ). While average reward provides a general measure of success, it is insuffi-cient to assess the consistency of the model’s behavior. To prevent premature threshold escalation caused by transient reward spikes, we incorporate the Reward Standard Devia-tion metric: 
+
+σr,k =
+
+vuut 1
+
+N
+
+X
+
+> t∈Wk
+
+ 1
+
+G
+
+> G
+
+X
+
+> i=1
+
+r(t) 
+
+> i
+
+− ¯rk
+
+2
+
+. (7) This metric measures the consistency of the policy’s outputs over recent steps. A large σr,k indicates unstable perfor-mance, with success on some samples and failure on oth-ers, and thus delays threshold updates. Incorporating this criterion ensures that progression occurs only when perfor-mance is both accurate and consistent, promoting stability in curriculum scheduling. 
+
+(c) IoU Margin ( ¯mk). To ensure that the model ex-ceeds, rather than merely meets, the current threshold τk,we introduce the IoU Margin metric, which measures the average surplus over the current IoU threshold: 
+
+¯mk = 1
+
+N
+
+X
+
+> t∈Wk
+
+1
+
+G
+
+> G
+
+X
+
+> i=1
+
+IoU( ˆb(t) 
+
+> i
+
+, b ∗(t)) − τk. (8) This metric emphasizes whether the policy has the potential to surpass the current stage. If ¯mk is significantly greater than 0, it indicates that the policy’s average output IoU is already much higher than threshold τk, possessing the ca-pability to accept higher difficulty training. Compared to binary reward signals, this metric provides a finer-grained assessment of model capability and miti-gates stagnation, where the policy barely meets current ob-jectives without achieving substantive progress. These three metrics jointly constitute the evaluation ba-sis of our reward scheduling mechanism, providing inter-pretable and controllable signals for curriculum scheduling. 
+
+3.2.3. Progressive Difficulty Regulation and Curriculum Scheduling 
+
+Building on the performance tracking signals introduced in the previous section, we now address the challenge of when and how to increase task difficulty. Fixed IoU thresholds are inherently misaligned with the dynamic nature of pol-icy learning: early-stage thresholds that are too strict re-sult in reward sparsity issue, while overly lenient thresholds in later stages fail to enforce fine-grained localization. To overcome this, we adopt an adaptive mechanism that sched-ules difficulty progression based on model readiness rather than a predefined schedule. Specifically, we define a com-posite update criterion that integrates the three previously 4introduced indicators: 
+
+Ck := (¯ rk ≥ Pτk ) ∧ (σr,k ≤ Sτk ) ∧ ( ¯ mk ≥ ∆) , (9) where Pτk , Sτk , and ∆ represent the minimum acceptable average reward, the maximum allowable reward variance, and the lower bound on IoU margin, respectively. This joint condition ensures that threshold updates occur only when the policy demonstrates accuracy, stability, and surplus ca-pability, preventing premature difficulty escalation. To maintain a progressive yet stable learning schedule, these thresholds are dynamically adapted across stages: Pτk
+
+is gradually relaxed as τk increases, allowing the policy to continue improving even under stricter thresholds; Sτk
+
+is stage-wise increased to tolerate higher variance under stricter conditions; and ∆ is held constant (e.g., 0.10) for stable margin requirements throughout the training process. Once the update condition  Ck is satisfied, the system con-siders the current stage training to have converged, trigger-ing IoU threshold updates using: 
+
+τk+1 = min  τk + δ(τk), τ target 
+
+, (10) where  δ(τk) controls the magnitude of threshold incre-ments. By default, we adopt the following Piecewise De-cay :
+
+δpiecewise (τk) = δ(1) − (δ(1) −δ(2) ) I[τk ≥ β(1) ]
+
+− (δ(2) −δ(3) ) I[τk ≥ β(2) ], (11) with  δ(1) ≥ δ(2) ≥ δ(3) > 0 denoting stage-wise step sizes and  β(1) , β (2)  the boundary thresholds. Beyond this piece-wise schedule, we also consider two continuous alternatives that require only a single hyperparameter  δ0 on top of the necessary  τ0 and  τtarget . A Linear Decay strategy is defined as: 
+
+δlinear (τk) = δ0 ·
+
+
+
+1 − τk − τ0
+
+τtarget − τ0
+
+
+
+, (12) while a Cosine Decay variant provides a smoother transi-tion: 
+
+δcosine (τk) = δ0
+
+2 ·
+
+
+
+1 + cos 
+
+
+
+π · τk − τ0
+
+τtarget − τ0
+
+ 
+
+. (13) All three forms preserve fast progression at early stages and fine-grained refinement near the target threshold, ensur-ing both efficiency and stability during curriculum schedul-ing. If Ck is not met, the threshold remains unchanged and the policy continues to optimize under the current difficulty until the criterion is satisfied again. To prevent outdated training distributions from biasing subsequent evaluations, we partially refresh the sliding win-dow upon each threshold update. Specifically, the earli-est half of samples in Wk are discarded, retaining only the most recent N/ 2 steps, and the remaining half is filled with newly collected data to form Wk+1 . This strategy enables rapid adaptation to the reward distribution under the new threshold while preserving sufficient historical information to avoid over-sensitivity to transient fluctuations. Compared to a full or quarter replacement, this half-retention mecha-nism demonstrates superior stability in continuous multi-stage scheduling. Notably, this refresh operation only af-fects the computation of statistical metrics and leaves the policy update path untouched, ensuring training continuity. Our method integrates curriculum learning into policy opti-mization to alleviate reward sparsity and improve localiza-tion accuracy, all while introducing no extra parameters or computational overhead. 
+
+4. Experiments 
+
+4.1. Experimental Setup 
+
+Datasets. We evaluate our proposal on three medical image grounding datasets of diverse imaging modalities: HAM10000 (dermoscopy), HEEL (X-ray), and TN3K (ul-trasound) [7, 32, 33]. As these datasets were not initially designed for visual grounding, we derive bounding boxes from the provided segmentation masks or region annota-tions. All datasets are randomly split into training and test-ing subsets with an 8:2 ratio. Please refer to the appendix for more details. 
+
+Implementation Details. We implement MedLoc-R1 based on the Qwen2.5-VL family [2], with Qwen2.5-VL-3B-Instruct as our primary reasoning model, and addition-ally evaluate 7B and 32B variants to study scalability. Fol-lowing previous work [30, 42], we implement the code in Pytorch using 4 NVIDIA H800 80G GPUs. We follow the default GRPO setup during RL fine-tuning, with group size G set to 8, temperature to 0.9, and KL divergence ratio β
+
+to 0.4. We use the AdamW optimizer with an initial learn-ing rate of 1e-6 for both SFT and RL, a batch size of 1 per GPU, and 2-step gradient accumulation. The adaptive IoU threshold τk is initialized at  τ0=0 .3 and gradually increased toward  τtarget =0 .8 when using the piecewise decay sched-ule with step sizes  δ(1) =0 .15 , δ(2) =0 .10 , δ(3) =0 .05  and stage boundaries  β(1) =0 .55 , β(2) =0 .75 , with additional re-sults for alternative piecewise configurations reported in the Appendix. For the linear and cosine decay variants, we set  τ0=0 .2, τtarget =0 .8, and  δ0=0 .2. A sliding window of length  N =30  is used to track performance statistics for all schedules. All models are trained for up to 5 epochs, with evaluation conducted at step 1000. 
+
+Evaluation Metrics. Our model outputs bounding boxes without confidence scores, making standard detection met-rics like AP inapplicable. We instead use two metrics: Ac-curacy at specific IoU thresholds (A@0.5 and A@0.8), and a pseudo-mAP, computed as the mean accuracy over 10 5Table 1. Performance comparison across datasets and methods. A@0.5 and A@0.8 denote accuracy at IoU thresholds 0.5 and 0.8. All results are reported over 3 independent runs with different random seeds (42, 43 and 44). Bold indicates the best performance and underline indicates the second-best performance among trained methods. Statistical significance: ∗ p < 0.05, ∗∗ p < 0.01, ∗∗∗ p < 0.001. 
+
+Methods HAM10000 HEEL TN3K 
+
+A@0.5 A@0.8 mAP A@0.5 A@0.8 mAP A@0.5 A@0.8 mAP Zero Shot-3B 35.75 3.39 12.38 13.64 1.64 4.78 9.74 1.29 3.46 Zero Shot-7B 51.42 11.83 24.31 41.79 2.57 14.79 19.12 2.02 7.55 Zero Shot-32B 66.75 17.92 31.01 46.39 4.37 16.92 21.42 3.01 8.71 SFT-3B 90.31 ±1.24 74.22 ±2.15 71.08 ±1.87 92.01 ±1.43 45.18 ±3.42 56.25 ±2.93 62.39 ±2.78 28.71 ±2.84 36.11 ±2.45 VLM-R1-3B 64.65 ±2.93 18.57 ±1.98 31.89 ±2.45 66.79 ±3.21 4.17 ±0.73 21.41 ±2.16 43.01 ±2.87 10.85 ±1.54 20.78 ±1.93 
+
+V -Triune-3B 88.92 ±1.67 64.35 ±2.84 65.48 ±2.12 67.63 ±3.45 25.05 ±2.73 38.61 ±2.87 43.50 ±2.65 15.62 ±1.87 21.85 ±2.03 Raw-IoU-3B 92.86 ±3.17 69.25 ±3.15 66.71 ±3.01 74.24 ±3.71 11.49 ±3.19 35.29 ±3.07 57.17 ±2.31 21.88 ±2.57 29.28 ±2.41 MedLoc-R1-3B piecewise 94.46 ±0.89 76.02 ±1.43 73.91 ±1.12 94.19 ±1.94 47.35 ±2.67 59.01 ±1.89 66.18 ±1.94 29.60 ±2.15 37.96 ±1.67 MedLoc-R1-7B piecewise 96.70 ±0.67 78.98 ±1.23 76.21 ±0.94 96.34 ±0.78 57.83 ±2.34 64.61 ±1.45 67.11 ±2.76 27.02 ±1.98 38.21 ±1.43 MedLoc-R1-32B piecewise 97.20 ±3.21 79.01 ±3.23 76.61 ±1.54 96.27 ±2.71 57.96 ±3.14 64.80 ±2.15 68.01 ±3.63 27.52 ±3.87 38.71 ±3.79 MedLoc-R1-3B linear 92.51 ±2.19 55.67 ±2.36 60.86 ±2.97 92.05 ±2.69 42.17 ±3.31 54.90 ±2.15 62.15 ±3.11 26.97 ±3.19 36.67 ±3.99 MedLoc-R1-3B cosine 93.96 ±3.73 72.79 ±3.98 70.71 ±2.45 93.31 ±2.10 47.67 ±3.61 57.42 ±3.83 65.89 ±3.19 27.21 ±2.71 37.01 ±3.64 
+
+∆ (MedLoc-VLM) +29.81 ∗ +57.45 ∗∗ +42.02 ∗∗∗ +27.40 ∗∗∗ +43.18 ∗∗ +37.60 ∗∗∗ +23.17 ∗∗∗ +18.75 ∗∗ +17.18 ∗∗ 
+
+∆ (MedLoc-VTriune) +5.54 ∗∗ +11.67 ∗∗ +8.43 ∗∗ +26.56 ∗∗∗ +22.30 ∗∗ +20.40 ∗∗∗ +22.68 ∗ +13.98 ∗∗ +16.11 ∗∗ 
+
+∆ (MedLoc-RawIoU) +1.60 ∗∗ +6.77 ∗∗ +7.20 ∗∗ +19.95 ∗∗ +35.86 ∗∗∗ +23.72 ∗∗ +9.01 ∗∗ +6.72 ∗∗ +8.68 ∗∗∗ Steps    
+
+> 700
+> Steps Steps
+> A@0.5(%)
+> 90
+> 300 500 500 700 900 900
+
+HEEL                  
+
+> V-Triune-3B
+> 74.09 80.98
+> 84.27 85.17 89.22 90.81 90.40 94.96 94.71 53.54 56.57 68.18 72.35 80.68 81.31
+> 86.62
+> 94.44 95.94
+> 70.12
+> 79.29 81.11
+> 84.47
+> 87.62
+> 83.52
+> 89.03 88.57
+> 84.02
+> 74.68
+> 64.68
+> 55.83
+> 59.39
+> 57.97
+> 60.88
+> 55.73
+> 57.47 57.68
+> 48.15
+> 47.70
+> 53.32
+> 51.49
+> 57.98
+> 52.25
+> 58.90
+> 57.45
+> 61.89
+> 62.75 62.37
+> 61.62
+> 64.76
+> 61.74
+> 67.63
+> 66.79
+> 70.17
+> 69.47
+> 42.28 42.10
+> 39.15
+> 56.43
+> 43.35
+> 39.57
+> 56.61
+> 41.62
+> 38.64
+> 57.17
+> 42.15
+> 37.98
+> 61.03
+> 42.63
+> 39.91
+> 43.57
+> 42.91
+> 60.66 59.38
+> 44.36
+> 42.67
+> 66.38 66.42
+> 43.51 43.93
+> 43.01 42.18
+> 80
+> 70
+> 60
+> 50
+> 40
+> 300 500 700 900 1100 1100 1100 300
+
+HAM10000 TN3K 
+
+> VLM-R1-3B
+> MedLoc-R1-3B
+
+Figure 3. A@0.5 (%) performance across adjacent training steps on HAM10000, HEEL, and TN3K. Each subplot compares the proposed MedLoc-R1-3B model with two baselines. MedLoc-R1-3B consistently achieves higher A@0.5 and exhibits stronger gains with increasing steps, while V-Triune-3B shows moderate improvement and VLM-R1-3B remains the weakest baseline. 
+
+evenly spaced thresholds from 0.5 to 0.95, i.e., mAP =
+
+1
+
+K
+
+PKk=1 Acc τk with K=10 . We run all experiments with three random seeds and report the average and standard de-viation, and do significance analysis via paired two-tailed t-tests against each baseline under the same seeds. 
+
+Baselines. We compare our method against five baselines. (1) Zero-shot : directly evaluating the pretrained Qwen2.5-VL models without fine-tuning to assess their inherent grounding capability. (2) SFT : supervised fine-tuning with LLaMA Factory [41] to regress bounding boxes, without any RL or reward scheduling. (3) Raw-IoU : GRPO trained with the continuous IoU score as the reward, removing any discrete thresholding. (4) Fixed-threshold (VLM-R1) : fol-lowing VLM-R1 [30], GRPO with a static IoU threshold 
+
+τfixed = 0 .5 to isolate the effect of dynamic thresholding. (5) 
+
+V-Triune : a re-implementation of the V-Triune-style sched-ule [17], which assigns three fixed thresholds to the early (0–10%), middle (10–25%), and late (25–100%) training stages based only on progress. Each baseline is tuned to its best performance through extensive empirical validation within our setting for fairness. 
+
+4.2. Experimental Results 
+
+Quantitative Results. Table 1 reports the quantitative com-parison across the three medical visual grounding datasets. MedLoc-R1 consistently outperforms all baselines under all evaluation metrics, with particularly large gains at the stricter A@0.8 threshold. It also scales effectively, provid-ing consistent gains across 3B, 7B, and 32B models. Fig-ure 3 further shows it converges faster and maintains more stable performance growth than the other baselines, sup-porting the effectiveness of our dynamic curriculum design. These confirm that performance-aware reward scheduling is crucial for stabilizing GRPO training in medical grounding. 
+
+Comparison with baselines. Zero-shot performance from pretrained vision-language models is notably weak across all metrics, highlighting the necessity of task-specific adap-tation for accurate localization in medical domains. SFT substantially offers notable gains by directly optimizing 6Fixed@0.5 GT Ours 
+
+Fixed@0.5 Ours GT 
+
+Given task :Identify the X-ray image and provide 
+
+the bounding box for the calcaneus region. Ensure 
+
+the bounding box accurately covers the calcaneus 
+
+area and does not include too much unrelated areas. 
+
+Output the bounding box coordinate in the format 
+
+[xmin, ymin, xmax, ymax]. Also generate your 
+
+thinking process on how you determined the 
+
+bounding box. 
+
+Given task : Identify the thyroid ultrasound image 
+
+and provide the bounding box for any thyroid 
+
+nodule present. Ensure the bounding box accurately 
+
+covers the nodule area and does not include too 
+
+much unrelated tissue. Output the bounding box 
+
+coordinates in the format [x min , y min , x max , y max ]. 
+
+Generate your thinking process on how you 
+
+determined the bounding box. 
+
+Model Response 
+
+Fixed@0. 5:  Step-by-step reasoning: 1. Identify the heel ... 2. Locate the calcaneal ... at the 
+
+back of the heel. 3. Observe the radiodense ... bony projection ...  4. Ensure that the spur 
+
+has intact cortical continuity ... 5. Determine the length ... 6. Draw the bounding box 
+
+around the identified heel ...The bounding box for the heel is about [80, 215, 470, 460]. 
+
+Ours : To determine the bounding box for the calcaneus region ... The calcaneus is the 
+
+largest bone in the foot .... It is roughly triangular in shape .... I identified the calcaneus 
+
+by locating the prominent, vertically oriented bone that forms the heel ...  This bone has a 
+
+distinct, curved shape that matches the typical appearance of the  calcaneus.  After 
+
+identifying ...I drew a rectangular bounding box ... The bounding box should be as small 
+
+as possible  ...The coordinates for the bounding box are: [79, 218, 250, 346]. 
+
+Ground_truth : [ 55, 218, 255, 349] 
+
+Model Response 
+
+Fixed@0. 5:  Step-by-step reasoning: 1. Identify the thyroid nodule ... 2. Locate the nodule 
+
+... at the center of the image. 3. Observe the image ... circle shape ...  4. Ensure that the 
+
+bounding box covers ... central part of the nodule .... 5. Draw the bounding box around 
+
+...The bounding box for the nodule is about [340, 165, 520, 405]. 
+
+Ours : To determine the bounding box for the thyroid nodule ... The nodule appears as an 
+
+area of increased echogenicity ... The nodule is located centrally ... appearing as a distinct, 
+
+slightly elevated area with higher echogenicity ... To ensure accuracy, I avoided including 
+
+the surrounding thyroid tissue ... Based on these observations, here is the bounding box for 
+
+the thyroid nodule: [346, 150, 598, 407]. This bounding box accurately captures ... nodule. 
+
+Ground_truth : [ 399, 133, 688, 397] Figure 4. Qualitative comparison of our MedLoc-R1 (in red boxes) and fixed-threshold VLM-R1 (in blue boxes) on HEEL and TN3K. Ground truth in green boxes. MedLoc-R1 produces more precise boxes with coherent and semantically rich reasoning. 0 200 400 600 800 1000 1200 
+
+> Step
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Values
+> Training Rewards and Thresholds under Linear-style vs Cosine-style Step Size
+> Linear-style: Thresholds
+> Linear-style: Rewards
+> Linear-style: Step Size
+> Cosine-style: Thresholds
+> Cosine-style: Rewards
+> Cosine-style: Step Size
+
+Figure 5. Visualization of how Linear- and Cosine-style step size influence the evolution of thresholds and training rewards. 
+
+bounding box predictions. However, it can not produce any reasoning process, directly predicting results. In clinical applications where transparency and trust are paramount, lacking interpretability is a critical shortcoming. Among RL-based baselines, Raw-IoU offers a continuous reward signal, but early-stage predictions yield minor score differ-ences, providing insufficient contrast for effective GRPO updates. Fixed-threshold VLM-R1 is limited by the rigid-ity of its static reward boundary, yielding reward sparsity and vanishing gradients in early training and capping op-timization potential in later stages. V-Triune takes a step further by updating thresholds according to a predefined schedule based solely on training progress, ignoring model performance and risking premature difficulty escalation and unstable optimization. MedLoc-R1 addresses these limi-tations by aligning reward difficulty with model readiness through performance-aware curriculum scheduling. Empir-ically, it achieves the strongest results (e.g., +43.18 A@0.8 on HEEL over VLM-R1 and +16.11 mAP on TN3K over V-Triune). Even when compared with Raw-IoU, MedLoc-R1 consistently delivers higher performance, illustrating the benefit of progressively tightening reward boundaries in-stead of relying on continuous signals with weak contrast. Additional baseline results can be found in the Appendix. 
+
+Comparison of decay strategies. We further compare the three step-size schedules in MedLoc-R1. Piecewise decay attains the highest performance but relies on multiple stage-specific step sizes and boundaries. In contrast, linear and cosine decay use only a single initial δ0 and still achieve competitive performance, suggesting that the simpler lin-ear and cosine variants offer a favorable trade-off between performance and tuning complexity. Figure 5 further illus-trates these behaviors: linear decay tightens the threshold at a roughly constant pace, whereas cosine schedule closely mimics piecewise decay with larger threshold increments early and smaller ones later, producing slightly smoother re-ward and threshold trajectories. Despite these differences, all strategies support stable optimization and reach simi-lar final performance, indicating that MedLoc-R1 can work well without extensive step-size tuning. 
+
+Qualitative Results. Figure 4 presents qualitative com-parisons between MedLoc-R1 and the fixed-threshold base-line VLM-R1 ( τfixed =0 .5) on HEEL and TN3K. In both ex-amples, MedLoc-R1 produces bounding boxes that more closely match the anatomical target regions, while VLM-R1 often generates boxes that are either oversized or shifted away from clinically relevant structures. The reasoning traces further highlight the difference between the two methods. MedLoc-R1 identifies key visual cues such as the characteristic curvature of the calcaneus in HEEL and the echogenicity and positional patterns of the thyroid nodule in TN3K, and uses them to justify its localization. In contrast, VLM-R1 tends to provide lengthy procedural descriptions without integrating meaningful diagnostic evidence, which limits its spatial accuracy and interpretive usefulness. These 7Table 2. Ablation on HAM10000 showing the effect of different update criteria . ✓indicates the one is active for threshold update. 
+
+Config ¯rk ≥ Pτk ¯mk ≥ ∆ σr,k ≤ Sτk A@0.5 
+
+Full (Ours) ✓ ✓ ✓ 94.96 
+
+w/o Reward Check ✗ ✓ ✓ 82.33 w/o IoU Margin Check ✓ ✗ ✓ 90.86 w/o Stability Check ✓ ✓ ✗ 89.72 Only Reward Check ✓ ✗ ✗ 88.32 Only IoU Margin Check ✗ ✓ ✗ 84.92 Only Stability Check ✗ ✗ ✓ 86.87 Table 3. Ablation on threshold scheduling strategies on HAM10000. Fixed-Aggressive means it fixes a large δk and re-laxed Pk /Sk , updating thresholds aggressively. The adaptive one dynamically tunes all three during training. See Appendix for configuration details of “Dynamic”. Strategy δk Pk Sk A@0.5 
+
+Adaptive (Ours) Dynamic Dynamic Dynamic 94.96 
+
+Fixed-Aggressive 0.15 0.60 0.40 71.54 Fixed-Conservative 0.05 0.80 0.15 87.92 Fixed-Moderate 0.10 0.70 0.25 83.92 
+
+qualitative observations align with the quantitative results, indicating that performance-aware reward scheduling helps the model focus on medically informative features during training. Representative failure cases are included in the appendix for completeness. 
+
+4.3. Ablation Study 
+
+To validate the contributions of key components in our scheduling framework, we conduct ablation studies on HAM10000, focusing on three aspects: update criteria, scheduling strategy, and the sliding window mechanism. 
+
+Effect of Update Criteria. Table 2 shows the effect of up-date criteria, including reward sufficiency, IoU margin ade-quacy, and reward stability. The full configuration, which requires all three to be satisfied before raising difficulty, achieves the best performance (94.96 A@0.5). Remov-ing any individual component leads to large drops—most severely when omitting the reward check (–12.63), indicat-ing its essential role in preventing premature updates under noisy signals. The IoU margin and stability checks con-tribute to filtering out uncertain or volatile learning phases. Notably, single-criterion variants fail to match the perfor-mance of dual or full configurations, confirming that all three criteria play complementary roles in triggering reli-able, performance-aligned threshold progression. 
+
+Impact of Scheduling Strategy. We then ablate the scheduling strategy under the piecewise decay setting, com-paring a dynamic schedule that adjusts δk, Pk and Sk
+
+against fixed counterparts. As reported in Table 3, our method consistently outperforms all fixed counterparts, with a substantial margin of over 20% compared to ag-
+
+Table 4. Ablation on Step Size Variants in Piecewise De-cay on HAM10000.“Identical” refers to a fixed step size δk =
+
+δ0 throughout training. 
+
+Strategy A@0.5 Dynamic-δk (Ours) 94.96 
+
+Identical-δk = 0 .05 76.29 Identical-δk = 0 .15 79.64 Identical-δk = 0 .25 77.13 0.2 0.4 0.6 
+
+> 0
+> 74
+> 78
+> 82
+> 86
+> 90
+> 94
+> A@0.5 (%)
+> Linear-style
+> Cosine-style
+> Identical (Baseline)
+
+Figure 6. Ablation on Step Size 
+
+δ0 of Linear vs. Cosine Decay 
+
+on HAM10000. 10 20 30 40 50 60 70     
+
+> Window Size
+> 70
+> 75
+> 80
+> 85
+> 90
+> 95
+> 100
+> A@0.5
+> 78.38
+> 87.52
+> 94.96 93.62 93.06
+> 84.47
+> 82.23
+> Impact of Window Size
+> Quarter Half Full
+> Strategy
+> 70
+> 75
+> 80
+> 85
+> 90
+> 95
+> 100
+> 90.61
+> 94.96
+> 84.79
+> Impact of Refresh Strategy
+
+Figure 7. Sliding Window Analysis: Size & Refresh Strategy. Left: A@0.5 across different window sizes. Right: effect of data refresh strategies once the threshold updates. 
+
+gressive settings and 7–11% over more conservative ones. We further isolates the effect of identical step size δk in Table 4, revealing that static pacing, regardless of magni-tude, leads to inferior results. Figure 6 then compares the initial step size δ0 for linear and cosine decay. Both vari-ants outperform the identical baseline and cosine remains strongest. Together, these findings suggest that MedLoc-R1 gains from Capability-aware scheduling, while supporting low-parameter decay schedules without extensive tuning. 
+
+Sliding Window Analysis. Lastly, we study the impact of the sliding window on training trends. Figure 7 shows that the window size significantly influences performance: small windows introduce noise and instability, while overly large ones hinder responsiveness. A size of 30 strikes the best bal-ance between stability and reactivity. And the half-refresh strategy yields the highest accuracy, suggesting it best bal-ances historical context and new information. 
+
+5. Conclusion 
+
+We proposed MedLoc-R1, a reinforcement learning frame-work for medical visual grounding with a progressive cur-riculum reward scheduling mechanism. By adaptively adjusting task difficulty according to model readiness, MedLoc-R1 alleviates reward sparsity, stabilizes training, and improves both grounding accuracy and explanation quality across medical imaging modalities. In future work, we will extend the framework to multi-task settings, such as joint lesion detection and disease classification. 8References 
+
+[1] Marcin Andrychowicz, Filip Wolski, Alex Ray, Jonas Schneider, Rachel Fong, Peter Welinder, Bob McGrew, Josh Tobin, OpenAI Pieter Abbeel, and Wojciech Zaremba. Hind-sight experience replay. Advances in neural information pro-cessing systems , 30, 2017. 2 [2] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wen-bin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, et al. Qwen2.5-vl technical report, 2025. URL https://arxiv. org/abs/2502.13923 , 6:13–23, 2025. 5 [3] Yoshua Bengio, J´ erˆ ome Louradour, Ronan Collobert, and Jason Weston. Curriculum learning. In Proceedings of the 26th International Conference on Machine Learning (ICML) , pages 41–48, 2009. 2 [4] Chenlin Du, Xiaoxuan Chen, Jingyi Wang, Junjie Wang, Zhongsen Li, Zongjiu Zhang, and Qicheng Lao. Prompting vision-language models for dental notation aware abnormal-ity detection. In International Conference on Medical Image Computing and Computer-Assisted Intervention , pages 687– 697. Springer, 2024. 2 [5] Carlos Florensa, David Held, Markus Wulfmeier, Michael Zhang, and Pieter Abbeel. Reverse curriculum generation for reinforcement learning. In Conference on robot learning ,pages 482–495. PMLR, 2017. 2 [6] Jun Gao, Qicheng Lao, Qingbo Kang, Paul Liu, Chenlin Du, Kang Li, and Le Zhang. Boosting your context by dual sim-ilarity checkup for in-context learning medical image seg-mentation. IEEE Transactions on Medical Imaging , 44(1): 310–319, 2024. 1 [7] Haifan Gong, Guanqi Chen, Ranran Wang, Xiang Xie, Mingzhi Mao, Yizhou Yu, Fei Chen, and Guanbin Li. Multi-task learning for thyroid nodule segmentation with thyroid region prior. In 2021 IEEE 18th international symposium on biomedical imaging (ISBI) , pages 257–261. IEEE, 2021. 5 [8] Boris Ivanovic, James Harrison, Apoorva Sharma, Mo Chen, and Marco Pavone. Barc: Backward reachability curriculum for robotic reinforcement learning. In 2019 International Conference on Robotics and Automation (ICRA) , pages 15– 21. IEEE, 2019. 2 [9] Max Jaderberg, Wojciech M Czarnecki, Iain Dunning, Luke Marris, Guy Lever, Antonio Garcia Castaneda, Charles Beat-tie, Neil C Rabinowitz, Ari S Morcos, Avraham Ruderman, et al. Human-level performance in 3d multiplayer games with population-based reinforcement learning. Science , 364 (6443):859–865, 2019. 2 [10] Peiyuan Jing, Kinhei Lee, Zhenxuan Zhang, Huichi Zhou, Zhengqing Yuan, Zhifan Gao, Lei Zhu, Giorgos Papanasta-siou, Yingying Fang, and Guang Yang. Reason like a ra-diologist: Chain-of-thought and reinforcement learning for verifiable report generation. Medical Image Analysis , page 103910, 2025. 1, 2 [11] Yuxiang Lai, Jike Zhong, Ming Li, Shitian Zhao, Yuheng Li, Konstantinos Psounis, and Xiaofeng Yang. Med-r1: Reinforcement learning for generalizable medical reasoning in vision-language models. IEEE Transactions on Medical Imaging , 2026. 1, 2 [12] Liunian Harold Li, Pengchuan Zhang, Haotian Zhang, Jian-wei Yang, Chunyuan Li, Yiwu Zhong, Lijuan Wang, Lu Yuan, Lei Zhang, Jenq-Neng Hwang, et al. Grounded language-image pre-training. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 10965–10975, 2022. 2 [13] Geert Litjens, Thijs Kooi, Babak Ehteshami Bejnordi, Ar-naud Arindra Adiyoso Setio, Francesco Ciompi, Mohsen Ghafoorian, Jeroen Awm Van Der Laak, Bram Van Gin-neken, and Clara I S´ anchez. A survey on deep learning in medical image analysis. Medical image analysis , 42:60–88, 2017. 2 [14] Shilong Liu, Zhaoyang Zeng, Tianhe Ren, Feng Li, Hao Zhang, Jie Yang, Qing Jiang, Chunyuan Li, Jianwei Yang, Hang Su, et al. Grounding dino: Marrying dino with grounded pre-training for open-set object detection. In Euro-pean conference on computer vision , pages 38–55. Springer, 2024. 2 [15] Zhendong Liu, Van Manh, Xin Yang, Xiaoqiong Huang, Karim Lekadir, V´ ıctor Campello, Nishant Ravikumar, Ale-jandro F Frangi, and Dong Ni. Style curriculum learning for robust medical image segmentation. In International Confer-ence on Medical Image Computing and Computer-Assisted Intervention , pages 451–460. Springer, 2021. 2 [16] Ziyu Liu, Zeyi Sun, Yuhang Zang, Xiaoyi Dong, Yuhang Cao, Haodong Duan, Dahua Lin, and Jiaqi Wang. Visual-rft: Visual reinforcement fine-tuning. In Proceedings of the IEEE/CVF International Conference on Computer Vision ,pages 2034–2044, 2025. 1 [17] Yan Ma, Linge Du, Xuyang Shen, Shaoxiang Chen, Pengfei Li, Qibing Ren, Lizhuang Ma, Yuchao Dai, Pengfei Liu, and Junjie Yan. One rl to see them all: Visual triple unified rein-forcement learning. arXiv preprint arXiv:2505.18129 , 2025. 2, 6 [18] Sanmit Narvekar, Bei Peng, Matteo Leonetti, Jivko Sinapov, Matthew Taylor, and Peter Stone. Curriculum learning for reinforcement learning domains: A framework and survey. 
+
+Journal of Machine Learning Research , 21(181):1–50, 2020. 2[19] Andrew Y Ng, Stuart Russell, et al. Algorithms for inverse reinforcement learning. In Icml , page 2, 2000. 2 [20] Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Car-roll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al. Training language models to follow instructions with human feedback. Ad-vances in neural information processing systems , 35:27730– 27744, 2022. 1 [21] Ziyuan Qin, Huahui Yi, Qicheng Lao, and Kang Li. Medical image understanding with pretrained vision lan-guage models: A comprehensive study. arXiv preprint arXiv:2209.15517 , 2022. 2 [22] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever. Learning transferable visual models from natural language supervision, 2021. 2 [23] Rafael Rafailov, Archit Sharma, Eric Mitchell, Christo-pher D Manning, Stefano Ermon, and Chelsea Finn. Direct 
+
+9preference optimization: Your language model is secretly a reward model. Advances in neural information processing systems , 36:53728–53741, 2023. 1 [24] Desik Rengarajan, Gargi Vaidya, Akshay Sarvesh, Dileep Kalathil, and Srinivas Shakkottai. Reinforcement learning with sparse rewards using guidance from offline demonstra-tion, 2022. 2 [25] Olaf Ronneberger, Philipp Fischer, and Thomas Brox. U-net: Convolutional networks for biomedical image segmen-tation. In International Conference on Medical image com-puting and computer-assisted intervention , pages 234–241. Springer, 2015. 2 [26] Shaohao Rui, Kaitao Chen, Weijie Ma, and Xiaosong Wang. Improving medical reasoning with curriculum-aware rein-forcement learning. arXiv preprint arXiv:2505.19213 , 2025. 2[27] Atsushi Saito. Curriculum learning based on reward sparse-ness for deep reinforcement learning of task completion di-alogue management. In Proceedings of the 2018 EMNLP workshop SCAI: The 2nd international workshop on search-oriented conversational AI , pages 46–51, 2018. 2 [28] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Rad-ford, and Oleg Klimov. Proximal policy optimization algo-rithms. In arXiv preprint arXiv:1707.06347 , 2017. 2, 3 [29] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y.K. Li, Y. Wu, and Daya Guo. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. 1, 2 [30] Haozhan Shen, Peng Liu, Jingcheng Li, Chunxin Fang, Yibo Ma, Jiajia Liao, Qiaoli Shen, Zilun Zhang, Kangjia Zhao, Qianqian Zhang, Ruochen Xu, and Tiancheng Zhao. Vlm-r1: A stable and generalizable r1-style large vision-language model. arXiv preprint arXiv:2504.07615 , 2025. 1, 2, 5, 6 [31] Lin Sun, Guangxiang Zhao, Xiaoqi Jian, Yuhan Wu, Wei-hong Lin, Yongfu Zhu, Linglin Zhang, Jinzhu Wu, Jun-feng Ran, Sai-er Hu, et al. Tinyr1-32b-preview: Boost-ing accuracy with branch-merge distillation. arXiv preprint arXiv:2503.04872 , 2025. 2 [32] Osamah Taher and Kasım ¨ Ozacar. Medcapsnet: A modified densenet201 model integrated with capsule network for heel disease detection and classification. Heliyon , 10(14), 2024. 5[33] Philipp Tschandl, Cliff Rosendahl, and Harald Kittler. The ham10000 dataset, a large collection of multi-source der-matoscopic images of common pigmented skin lesions. Sci-entific data , 5(1):180161, 2018. 5 [34] Huihui Xu, Yuanpeng Nie, Hualiang Wang, Ying Chen, Wei Li, Junzhi Ning, Lihao Liu, Hongqiu Wang, Lei Zhu, Jiyao Liu, et al. Medground-r1: Advancing medical image ground-ing via spatial-semantic rewarded group relative policy op-timization. In International Conference on Medical Image Computing and Computer-Assisted Intervention , pages 391– 401. Springer, 2025. 1, 2 [35] Guangjing Yang, ZhangYuan Yu, Ziyuan Qin, Xinyuan Song, Huahui Yi, Qingbo Kang, Jun Gao, Yiyue Li, Chenlin Du, and Qicheng Lao. Improving medical visual reinforce-ment fine-tuning via perception and reasoning augmentation. 
+
+arXiv preprint arXiv:2602.10619 , 2026. 2 [36] Yuguang Yang, Tongfei Chen, Haoyu Huang, Linlin Yang, Chunyu Xie, Dawei Leng, Xianbin Cao, and Baochang Zhang. Prompt as knowledge bank: Boost vision-language model via structural representation for zero-shot medical de-tection, 2025. 2 [37] Huahui Yi, Wei Xu, Ziyuan Qin, Xi Chen, Xiaohu Wu, Kang Li, and Qicheng Lao. idpa: Instance decoupled prompt at-tention for incremental medical object detection. In Inter-national Conference on Machine Learning , pages 72258– 72276. PMLR, 2025. 1 [38] Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xi-aochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gao-hong Liu, Lingjun Liu, et al. Dapo: An open-source llm reinforcement learning system at scale. arXiv preprint arXiv:2503.14476 , 2025. 2 [39] Ruifeng Yuan, Chenghao Xiao, Sicong Leng, Jianyu Wang, Long Li, Weiwen Xu, Hou Pong Chan, Deli Zhao, Tingyang Xu, Zhongyu Wei, et al. Vl-cogito: Progressive curriculum reinforcement learning for advanced multimodal reasoning. 
+
+arXiv preprint arXiv:2507.22607 , 2025. 2 [40] Xiuqi Zheng, Yuhang Zhang, Haoran Zhang, Hongrui Liang, Xueqi Bao, Zhuqing Jiang, and Qicheng Lao. Curriculum prompting foundation models for medical image segmenta-tion. In International conference on medical image com-puting and computer-assisted intervention , pages 487–497. Springer, 2024. 2 [41] Yaowei Zheng, Richong Zhang, Junhao Zhang, Yanhan Ye, Zheyan Luo, Zhangchi Feng, and Yongqiang Ma. Llamafac-tory: Unified efficient fine-tuning of 100+ language mod-els. In Proceedings of the 62nd Annual Meeting of the As-sociation for Computational Linguistics (Volume 3: System Demonstrations) , Bangkok, Thailand, 2024. Association for Computational Linguistics. 6 [42] Yaowei Zheng, Junting Lu, Shenzhi Wang, Zhangchi Feng, Dongdong Kuang, and Yuwen Xiong. Easyr1: An efficient, scalable, multi-modality rl training framework. https:// github.com/hiyouga/EasyR1 , 2025. 5 [43] Zongwei Zhou, Md Mahfuzur Rahman Siddiquee, Nima Tajbakhsh, and Jianming Liang. Unet++: A nested u-net ar-chitecture for medical image segmentation. In International workshop on deep learning in medical image analysis , pages 3–11. Springer, 2018. 1 
+
+10 MedLoc-R1: Performance-Aware Curriculum Reward Scheduling for GRPO-Based Medical Visual Grounding 
+
+# Supplementary Material 
+
+A. Datasets Details 
+
+We provide detailed statistics of the dataset splits for the three benchmarks used in our experiments: HAM10000 ,
+
+HEEL , and TN3K .• HAM10000 is a public dataset containing 10,015 dermo-scopic images released in 2018 by the Medical Univer-sity of Vienna. It is one of the most important bench-mark datasets in the field of automatic skin cancer de-tection and classification. It covers 7 common skin le-sion types: actinic keratoses (akiec), basal cell carcinoma (bcc), benign keratosis-like lesions (bkl), dermatofibroma (df), melanoma (mel), melanocytic nevi (nv), and vas-cular lesions (vasc). We derived bounding boxes from the provided lesion masks and randomly split them into training and test sets with 8,012 training and 2,003 test-ing samples across 7 skin lesion categories. • HEEL is a public dataset of 3,956 lateral foot X-ray images collected at Kirkuk General Hospital, compris-ing three diagnostic categories: Normal (1,842 images), 
+
+Heel Spur (1,316 images), and Sever’s disease 
+
+(798 images). All images are labeled by orthopedic spe-cialists and cross-validated by radiologists. Following the original protocol, we use 3,164 images for training and 792 for testing, while preserving the class distribution across the three categories. • TN3K is an open-access thyroid nodule ultrasound dataset comprising 3,493 B-mode images from 2,421 pa-tients, each annotated with pixel-wise nodule masks. The official split contains 2,879 training and 614 test images. In our experiments, we derive a binary classification sub-set with 2,655 training and 544 testing samples, labeled as malignant and benign cases. To offer a clearer overview of their composition, Table 5 summarizes the class-wise training and testing splits for all three datasets. 
+
+B. Experimental Configuration Details 
+
+We elaborate here on the configuration details of the thresh-old scheduling strategies evaluated in Table 3. All strategies manipulate three key scheduling parameters: the step size 
+
+δk, the performance percentile Pk, and the stability margin 
+
+Sk. These parameters govern how the threshold τk is up-dated during training. 
+
+Adaptive (Ours). The adaptive strategy dynamically ad-justs δk, Pk, and Sk according to the current threshold value                                  
+
+> Table 5. Class-wise number of training and test samples for the three benchmarks. Dataset Class Train Test HAM10000 nv 5367 1338 mel 900 213 bkl 868 231 bcc 418 96 akiec 253 74 vasc 118 24 df 88 27
+> Total 8012 2003 HEEL Normal 1473 369 Heel Spur 1053 263 Severe 638 160
+> Total 3164 792 TN3K malignant 932 219 benign 1723 331
+> Total 2655 544
+
+τk throughout training. It operates in three regimes: • When τk < 0.60 , a large step size δk = 0 .15 is used to encourage rapid threshold progression, with Pk = 0 .80 
+
+and Sk = 0 .20 .• When 0.60 ≤ τk < 0.75 , we moderate the update using 
+
+δk = 0 .10 , Pk = 0 .75 , and Sk = 0 .35 .• When τk ≥ 0.80 , updates become conservative with δk =0.05 , Pk = 0 .55 , and Sk = 0 .40 .This staged configuration allows the model to explore ag-gressively in early training while stabilizing and refining predictions in later stages, leading to more robust conver-gence behavior. 
+
+Fixed-Aggressive. This strategy uses fixed values across the entire training process, with a large step size δk = 0 .15 ,a relatively low performance percentile Pk = 0 .60 , and a small stability margin Sk = 0 .40 . The configuration en-courages fast threshold updates with minimal stability con-straints, favoring aggressive adaptation dynamics. 
+
+Fixed-Moderate. The moderate variant sets intermediate values: δk = 0 .10 , Pk = 0 .70 , and Sk = 0 .25 . It aims to balance adaptation speed and stability, representing a mid-dle ground between aggressive and conservative strategies. 1Table 6. Ablation of piecewise decay schedule parameters. Dataset δ1 δ2 β1 β2 A@0.5 HAM (0.3–0.8) 0.10 0.05 0.55 0.70 92.23 0.15 0.10 0.55 0.75 94.26 
+
+0.20 0.15 0.60 0.75 93.97 0.25 0.20 0.60 0.75 93.10 HEEL (0.3–0.8) 0.10 0.05 0.50 0.70 93.38 0.15 0.10 0.50 0.75 94.19 
+
+0.20 0.15 0.60 0.75 94.11 0.25 0.20 0.60 0.75 93.87 TN3K (0.3–0.8) 0.10 0.05 0.50 0.70 65.97 0.15 0.10 0.50 0.75 66.18 0.20 0.15 0.60 0.75 66.31 
+
+0.25 0.20 0.60 0.75 65.56 
+
+Fixed-Conservative. This configuration employs a small step size δk = 0 .05 , high performance requirement Pk =0.80 , and a tight stability margin Sk = 0 .15 . These con-straints slow down the threshold adaptation process, ensur-ing greater caution and smoother updates throughout train-ing. All fixed strategies retain constant values for all three parameters, while the adaptive strategy transitions between configurations in a stage-wise manner depending on τk.This dynamic scheduling is a key factor contributing to the superior performance of our method. 
+
+C. More results on Piecewise Decay Schedule 
+
+To assess how the hyperparameters of the piecewise decay schedule influence RL-based localization, we perform an ablation over the stage-wise step sizes (δ(1) , δ (2) , δ (3) ) and the boundary thresholds (β(1) , β (2) ). In all settings, the adaptive IoU threshold is initialized at τ0=0 .3 and driven toward τtarget =0 .8, while the schedule parameters control 
+
+how fast and in what shape this transition occurs. Our main results adopt the configuration δ(1) =0 .15 , δ(2) =0 .10 ,
+
+δ(3) =0 .05 and β(1) =0 .55 , β(2) =0 .75 ; Table 6 reports ad-ditional piecewise configurations evaluated on HAM10000, HEEL, and TN3K. The default choice consistently achieves the best or near-best A@0.5, whereas both more aggres-sive and flatter step-size patterns lead to noticeable drops in performance. These results indicate that the schedule is not overly sensitive within a reasonable range, but benefits from moderate early-stage increments followed by gentler late-stage refinement , which provides a stable progression of τk and alleviates reward sparsity during training. 
+
+D. Additional baseline results 
+
+To provide a stronger empirical comparison, we addition-ally included three external baselines from recent literature. 
+
+Table 7. Additional baseline results ( left ) and main ablation study on group size G ( right ).                     
+
+> Method HAM10000 HEEL TN3K GroundingDINO-L 84.27 83.61 32.70 BoxMed-RL 92.36 74.51 56.39 MedGround-R1 88.23 89.52 51.43 MedLoc-R1 (Ours) 94.46 94.19 66.18
+> Group size HAM10k 489.10 693.51 894.46
+> 10 94.36
+
+Table 8. Performance comparison on medical imaging datasets                               
+
+> Method HAM10000 HEEL A@0.5 A@0.8 mAP A@0.5 A@0.8 mAP Qwen-2.5-VL-3B 35.75 3.39 12.38 13.64 1.64 4.78 InternVL-2.5-4B 33.19 2.31 11.23 11.17 1.01 3.81 MedLoc-3B (Qwen) 93.96 72.79 70.71 93.31 47.67 57.42 MedLoc-4B (InternVL) 90.03 69.85 67.80 90.97 45.19 55.46
+
+GroundingDINO-L [14] is a state-of-the-art open-set ob-ject detector, which we fine-tuned on our training set and used the highest-confidence predicted box as the final pre-diction. BoxMed-RL [10], originally developed for radiol-ogy report generation, adopts GRPO-based Spatially Veri-fiable Reinforcement (SVR) to align medical findings with bounding boxes on sentence-box aligned datasets. Its IoU-based reward, defined as IoU when IoU  > 0 and 0 other-wise, is effectively equivalent to our Raw-IoU baseline. We therefore reproduced its SVR framework in our bbox-only setting using instruction prompts of the form ”Provide the bounding box for {target }.” MedGround-R1 [34] is a re-cent GRPO-based medical grounding method that combines spatial accuracy and semantic consistency in the reward de-sign, together with a Chain-of-Box reasoning template. As shown in Table 7 (left), MedLoc-R1 consistently outper-forms all three external baselines across the three datasets in terms of A@0.5, further validating the effectiveness of our performance-aware curriculum reward scheduling. In addition, Table 7 (right) reports a grid search over the key GRPO hyperparameter, namely the group size  G.
+
+E. Failure Case Visualizations 
+
+We present several representative failure cases of MedLoc-R1 in Figure 8. Although the predicted bounding boxes are not always perfectly aligned with the ground truth, they are generally centered on the correct target regions, indicating that the model captures the key visual and semantic cues required for medical grounding. On HEEL, MedLoc-R1 localizes the calcaneus region with good anatomical consistency. In failure cases, the pre-dicted boxes may slightly under-cover or over-cover the an-notated region, but they still focus on the correct bone struc-ture while excluding most irrelevant areas. On TN3K, some predictions extend beyond the nodule boundary or miss sub-tle margins, yet the boxes remain centered on the relevant thyroid nodule region, suggesting that the model effectively exploits both spatial and intensity cues despite the ambi-2Given task :Identify the X-ray image and provide 
+
+the bounding box for the calcaneus region. Ensure 
+
+the bounding box accurately covers the calcaneus 
+
+area and does not include too much unrelated areas. 
+
+Output the bounding box coordinate in the format 
+
+[xmin, ymin, xmax, ymax]. Also generate your 
+
+thinking process on how you determined the 
+
+bounding box. 
+
+Given task : Identify the thyroid ultrasound image 
+
+and provide the bounding box for any thyroid 
+
+nodule present. Ensure the bounding box accurately 
+
+covers the nodule area and does not include too 
+
+much unrelated tissue. Output the bounding box 
+
+coordinates in the format [x min , y min , x max , y max ]. 
+
+Generate your thinking process on how you 
+
+determined the bounding box. 
+
+Model Response: 
+
+To determine the bounding box for the calcaneus region in the X-ray image, I focused on identifying the anatomical structure that corresponds to the calcaneus. The calcaneus is the bone at the heel of the foot, which appears as a dense, vertically oriented structure in the X-ray. Here's the thought process: 1. Identify the Calcaneus : The calcaneus is the dense, vertical bone at the heel of the foot. 2. Locate the Bounding Box : I carefully examined the X-ray to find the calcaneus. 3. Ensure Accuracy : I made sure the bounding box included only the calcaneus and excluded any other parts of the foot or unrelated areas. The calcaneus is located near the bottom of the X-ray, spanning from the middle to the lower part of the image. Therefore, the bounding box coordinates for the calcaneus region are approximately: [370, 325, 470, 390]. This coordinates ensure the bounding box accurately covers the calcaneus area without including unnecessary parts of the foot. 
+
+Ground_truth : [ 421, 328, 471, 409] 
+
+Model Response ：
+
+To determine the bounding box for the thyroid nodule in the ultrasound image, I carefully examined the grayscale ultrasound image to identify the nodule's location. The nodule appears as an area of increased echogenicity (brighter region) within the thyroid gland. I ensured that the bounding box was centered around this bright area without including any surrounding tissue that might be unrelated to the nodule. The thyroid nodule is located centrally within the thyroid gland, appearing as a distinct, slightly elevated area with higher echogenicity compared to the surrounding tissue. To ensure accuracy, I focused on identifying the nodule's boundaries clearly. Here are the bounding box coordinates for the thyroid nodule:[148, 65, 237, 120].  This bounding box covers the central area where the nodule is visible, ensuring it includes only the relevant tissue and excludes unnecessary parts of the image. 
+
+Ground_truth : [ 200, 78, 239, 110] 
+
+Given task :Identify the X-ray image and provide 
+
+the bounding box for the calcaneus region. Ensure 
+
+the bounding box accurately covers the calcaneus 
+
+area and does not include too much unrelated areas. 
+
+Output the bounding box coordinate in the format 
+
+[xmin, ymin, xmax, ymax]. Also generate your 
+
+thinking process on how you determined the 
+
+bounding box. 
+
+Given task : Identify the thyroid ultrasound image 
+
+and provide the bounding box for any thyroid 
+
+nodule present. Ensure the bounding box accurately 
+
+covers the nodule area and does not include too 
+
+much unrelated tissue. Output the bounding box 
+
+coordinates in the format [x min , y min , x max , y max ]. 
+
+Generate your thinking process on how you 
+
+determined the bounding box. 
+
+Model Response ：
+
+To determine the bounding box for the calcaneus region in the X-ray image, I focused on identifying the anatomical structure that corresponds to the calcaneus. The calcaneus is the bone at the heel of the foot, which appears as a dense, vertically oriented structure in the X-ray.  Here's the thought process: 1. Identify the Bone : The calcaneus is the dense, vertical bone structure located at the heel. 2. Locate the Calcaneus : In the X-ray, the calcaneus is identifiable by its position and density. 3. Determine the Bounding Box : The bounding box should encompass the entire calcaneus, ensuring it includes all parts of the bone without including unnecessary areas like the surrounding soft tissues or other bones. Based on these steps, the bounding box coordinates for the calcaneus region are approximately:[200, 220, 400, 350]. This coordinate range captures the main body of the calcaneus while excluding any irrelevant areas such as the toes or adjacent bones. 
+
+Ground_truth : [ 210, 229, 311, 324] 
+
+Model Response: 
+
+To determine the bounding box for the thyroid nodule in the ultrasound image, I carefully examined the grayscale ultrasound image to identify the nodule's location. The nodule appears as an area of increased echogenicity (brighter region) within the thyroid gland. I ensured that the bounding box was centered around this bright area without including any surrounding tissue that might be unrelated to the nodule.After careful analysis, I identified the following bounding box coordinates for the thyroid nodule:[105, 68, 340, 270]. This bounding box covers the central area of the bright region, which is likely the thyroid nodule. It excludes the surrounding tissue to ensure accuracy. 
+
+Ground_truth : [ 299, 68, 342, 101] 
+
+Ours GT 
+
+Ours GT Ours GT Ours GT 
+
+Given task :Identify the image and provide the bounding box for the skin lesion area. Ensure the bounding box accurately covers the lesion area and does not include excessive healthy skin. The output should be four numbers representing the coordinates of the top-left and bottom-right corners of the lesion area, in the format  [x min , y min , x max , y max ]. Also, generate your thinking process on how you determined the bounding box. 
+
+Model Response ：
+
+To determine the bounding box for the skin lesion area, I carefully examined the image to identify the region that appears different from the surrounding skin. The lesion is characterized by its irregular shape and the presence of a central dark brown spot with lighter surrounding areas.  I identified the top-left corner of the lesion as the point where the darker color begins to appear. The bottom-right corner was determined by the edge of the lesion where it transitions into the surrounding skin. The coordinates for the bounding box were calculated based on these observations:- Top-left corner: The darkest part of the lesion. -Bottom-right corner: The transition between the lesion and the surrounding skin. Therefore, the bounding box coordinates for the skin lesion area are approximately [100, 150, 350, 300]. This approach ensures that the bounding box accurately captures the lesion while excluding any excessive healthy skin around it. 
+
+Ground_truth : [ 475, 283, 530, 355] 
+
+Model Response: 
+
+To determine the bounding box for the skin lesion area, I carefully examined the image to identify the most prominent and distinct part of the lesion. The lesion appears as a darker, irregularly shaped area with some lighter spots around it. I ensured that the bounding box captures this distinct feature without including any excessive healthy skin. The coordinates for the bounding box are as follows: - Top-left corner: [100, 50].- Bottom-right corner: [350, 280].Therefore, the bounding box coordinates for the skin lesion area are approximately [100, 50, 350, 280]. This bounding box accurately encompasses the lesion while excluding the surrounding healthy skin. 
+
+Ground_truth : [ 82, 18, 489, 446] 
+
+Given task :Identify the image and provide the bounding box for the skin lesion area. Ensure the bounding box accurately covers the lesion area and does not include excessive healthy skin. The output should be four numbers representing the coordinates of the top-left and bottom-right corners of the lesion area, in the format  [x min , y min , x max , y max ]. Also, generate your thinking process on how you determined the bounding box. 
+
+Ours GT Ours GT Figure 8. Visualization of representative failure cases from our method on the HEEL, TN3K, and HAM10000 datasets. Red boxes denote the predicted bounding boxes by our MedLoc-R1 method, while green boxes indicate the ground truth. 
+
+guity of ultrasound images. On HAM10000, although the predicted boxes may omit faint peripheral areas or include limited surrounding healthy skin, they generally cover the diagnostically important part of the lesion. Overall, these examples suggest that the primary failure mode of MedLoc-R1 lies in spatial imprecision rather than incorrect target identification. Even when the localization is not exact, the model usually attends to the appropriate anatomical or pathological region, further supporting its ef-fectiveness in medical visual grounding. 3
