@@ -1,0 +1,2981 @@
+Title: MOOZY: A Patient-First Foundation Model for Computational Pathology
+
+URL Source: https://arxiv.org/pdf/2603.27048v2
+
+Published Time: Thu, 02 Apr 2026 00:09:15 GMT
+
+Number of Pages: 55
+
+Markdown Content:
+## MOOZY: A Patient-First Foundation Model for Computational Pathology 
+
+Yousef Kotp 1,2 , Vincent Quoc-Huy Trinh 3,4, Christopher Pal 2,5,6, and Mahdi S. Hosseini 1,2,7 
+
+> 1
+
+CSSE, Concordia University, Montréal, Canada  
+
+> 2
+
+Mila – Québec AI Institute, Montréal, Canada  
+
+> 3
+
+CHUM, Université de Montréal, Montréal, Canada  
+
+> 4
+
+IRIC, Université de Montréal, Montréal, Canada  
+
+> 5
+
+Université de Montréal, Montréal, Canada  
+
+> 6
+
+Canada CIFAR Chair, Polytechnique Montréal, Montréal, Canada  
+
+> 7
+
+Dept. of Pathology, McGill University, Montréal, Canada 
+
+Code: github.com/AtlasAnalyticsLab/MOOZY 
+
+Abstract. Computational pathology needs whole-slide image (WSI) foun-dation models that transfer across diverse clinical tasks, yet current ap-proaches remain largely slide-centric, often depend on private data and expensive paired-report supervision, and do not explicitly model relation-ships among multiple slides from the same patient. We present MOOZY, a patient-first pathology foundation model in which the patient case, not the individual slide, is the core unit of representation. MOOZY ex-plicitly models dependencies across all slides from the same patient via a case transformer during pretraining, combining multi-stage open self-supervision with scaled low-cost task supervision. In Stage 1, we pretrain a vision-only slide encoder on 77,134 public slide feature grids using masked self-distillation. In Stage 2, we align these representations with clinical semantics using a case transformer and multi-task supervision over 333 tasks from 56 public datasets, including 205 classification and 128 survival tasks across four endpoints. Across eight held-out tasks with five-fold frozen-feature probe evaluation, MOOZY achieves best or tied-best performance on most metrics and improves macro averages over TITAN by +7.37%, +5.50%, and +7.83% and over PRISM by +8.83%, +10.70%, and +9.78% for weighted F1, weighted ROC-AUC, and bal-anced accuracy, respectively. MOOZY is also parameter efficient with 85.77M parameters, 14 × smaller than GigaPath. These results demon-strate that open, reproducible patient-level pretraining yields transfer-able embeddings, providing a practical path toward scalable patient-first histopathology foundation models. 
+
+Keywords: Computational Pathology · Whole-Slide Images · Founda-tion Models · Self-Supervised Learning · Slide Encoder 
+
+> arXiv:2603.27048v2 [cs.CV] 31 Mar 2026
+
+2 Kotp et al. RC Burden 
+
+> [0.43 0.56]
+> TP53
+> [0.76 0.87]
+> BAP1
+> [0.80 0.89]
+> ACVR2A
+> [0.80 0.91]
+> Histologic
+> Grade
+> [0.71 0.78]
+> KRAS
+> [0.72 0.85]
+> IDH Status
+> [0.91 0.97]
+> Treatment
+> Response
+> [0.49 0.58]
+> MOOZY (Ours)
+> CHIEF
+> GigaPath
+> PRISM
+> Madeleine
+> TITAN
+
+(a) 30M 100M 400M 1.2B  
+
+> Parameters (log scale)
+> 0.72
+> 0.74
+> 0.76
+> 0.78
+> 0.80
+> 0.82
+> Macro-averaged weighted F1
+> MOOZY (Ours)
+> CHIEF
+> GigaPath
+> PRISM
+> Madeleine
+> TITAN
+
+(b) Fig. 1: (a) Weighted F1 across eight held-out tasks. Brackets report [min – max] weighted F1 for each task, with the center corresponding to the minimum and the outer ring to the maximum observed value. (b) Macro-averaged weighted F1 versus total parameter count (log scale), showing that MOOZY remains highly accurate while being highly parameter-efficient. 
+
+1 Introduction 
+
+The fundamental challenge in computational pathology is learning whole-slide image (WSI) representations that transfer across cancer types, clinical endpoints, and patient populations without task-specific retraining. Much of the field has historically advanced through task- and cohort-specific supervised pipelines [3, 9, 17, 44, 80] that must be rebuilt whenever the organ, scanner domain, or clini-cal objective changes, limiting scalability and reuse. A generalizable alternative requires models capable of encoding diagnostically relevant structure from un-labeled data at two levels of scale that are critical in clinical workflows: the intra-slide level, where diagnostic meaning emerges from long-range interactions across tissue regions rather than isolated patch morphology, and the patient level, where multiple slides from the same patient must be jointly interpreted to form coherent predictions. Self-supervised learning in vision [12,15,16,27,30,31,66,103] has demonstrated that scaling data and compute can yield general-purpose en-coders with strong task-agnostic transferability [8,33,42,90], suggesting a similar paradigm shift is possible in pathology. However, applying these methods to WSIs is non-trivial: WSIs are gigapixel-scale, and clinically relevant semantics arise from interactions between cellu-lar detail and global tissue architecture. Consequently, early pathology foun-dation models emerged as tile-level encoders, with the field converging on the DINOv2 [66] pretraining recipe and scaling from ViT-Large [14, 25] to ViT-Giant backbones [59, 96] trained on up to millions of slides [87, 105]. In typical pipelines, tile features are extracted and a separate MIL aggregator [38, 55, 78] is trained for each downstream task, necessitating retraining whenever the clin-ical endpoint changes. More recently, the community has moved toward slide-level encoders that pretrain whole-slide representations, reducing reliance on task-specific MIL training. These can be broadly grouped into vision-only self-supervised methods [4,13,35,47,49,97], multimodal approaches that align slides MOOZY: A Patient-First Foundation Model for Computational Pathology 3
+
+with text [20, 76, 94], genomic profiles [39, 85, 98], or cross-stain views [36, 40], and supervised methods that learn from task labels [62, 89]. Despite this progress, structural limitations persist. Many top-performing models rely on proprietary data, and some do not release checkpoints [35, 85] or training recipes [20, 76, 85], limiting reproducibility. Current architectures concentrate capacity in heavyweight tile encoders [20, 40, 76, 85] while using lightweight slide aggregators, even though the key challenge in WSIs is long-range context rather than per-tile morphology. Finally, while some methods accommodate multiple slides per patient, they typically rely on simple fusion heuristics: early fusion by concatenating or unioning patch features into one enlarged bag, or late fusion by averaging slide-level embeddings or predictions across slides [49,76,85,85,98]. These strategies treat a case as an unordered pool rather than explicitly modeling slide-to-slide relationships, discarding cross-slide interactions that carry diagnostic signal in multifocal staging, heterogeneity as-sessment, and prognosis. To this end, we introduce MOOZY (Multi-stage Open self-supervised pre-training with lOw-cost supervision at siZe for patient-aware histopathologY), a 
+
+patient-first model in the sense that the patient case, not the individual slide, serves as the fundamental unit of representation. Rather than encoding slides independently and merging their embeddings post-hoc, MOOZY explicitly mod-els dependencies across all slides belonging to the same patient via a dedicated case transformer during pretraining. By design, MOOZY decouples represen-tation quality from task-specific adaptation: Stage 1 pretrains a slide encoder on unlabeled public whole-slide images via self-supervised learning, establish-ing general-purpose spatial representations without any label signal; Stage 2 then steers these representations toward clinical semantics through large-scale multi-task supervision, directly benefiting from the generalizable prior built in Stage 1. Critically, Stage 2 moves beyond per-slide encoding: a case-level aggre-gator explicitly models dependencies across all slides of the same patient, rather than collapsing multi-slide cases into a single bag or averaging independent pre-dictions. To the best of our knowledge, this is the first open and reproducible framework that jointly addresses slide-level representation learning and explicit patient-level inter-slide dependency modeling for transferable WSI foundation embeddings. Our contributions can be summarized as follows: 
+
+– We propose a two-stage framework that decouples vision-only slide SSL pre-training (masked self-distillation on 77,134 unlabeled public slides) from patient-aware semantic alignment, where a case-level aggregator explicitly models dependencies across all slides of the same patient, making MOOZY the first open and reproducible attempt to move pathology foundational models beyond naive early/late multi-slide fusion. 
+
+– We construct a large-scale multi-task supervision regime spanning 333 tasks from 56 public datasets, covering classification and four survival endpoints (OS, DSS, DFI, PFI) across 23 anatomical sites, requiring harmonization of heterogeneous annotation formats, clinical records, and cohort conventions, 4 Kotp et al. 
+
+entirely from public data without private slides, paired reports, or expert annotations. 
+
+– We provide comprehensive quantitative and qualitative evaluation by bench-marking MOOZY on eight held-out tasks against both slide encoders and MIL baselines, complemented by attention map analysis and embedding vi-sualization, demonstrating that open patient-level pretraining yields com-petitive, transferable, and parameter-efficient representations. 
+
+2 Related Work 
+
+Pathology Patch Encoders. Pathology-specific SSL on public tiles outper-forms ImageNet initialization [24, 41], leveraging vision SSL advances [11, 12, 15, 16, 27, 30, 31, 66, 79, 100, 103]. The field has converged on the DINOv2 recipe [66] combining self-distillation, masked image modeling, KoLeo regularization [46, 73], and KDE-based objectives [88], with vision–language alignment [20, 54] and knowledge distillation [23] as complementary directions. Architectures have scaled from ViT-Large [14, 25, 99] to ViT-Huge [14, 87, 105] and ViT-Giant [6, 59, 74, 96] on proprietary [14, 59, 87] and public data [22, 24, 25, 28, 58]. Yet scal-ing laws for tile encoders remain unclear: public-only models match much larger systems [43, 81], suggesting benchmark discriminability [92] and training-recipe effects dominate data volume. We hypothesize this saturation is fundamental: H&E tissue occupies a far more constrained visual space than natural images, with a narrow color palette and bounded set of morphological primitives ( e.g ., cell types, glandular architectures, stromal patterns), so tile-level representations approach a performance ceiling well before general-vision thresholds. The true bottleneck therefore lies in slide- and context-level modeling .
+
+Multi-Instance Learning. MIL treats a WSI as a bag of patch features with a single slide-level label, with approaches spanning permutation-invariant pooling [10], attention scoring [38, 55], transformer-based inter-patch model-ing [78, 86], dual-stream objectives [50], pseudo-bag augmentation [102], and efficient variants via low-rank approximations [95], knowledge graphs [51], and regional re-embedding [83]. All aggregators are trained from scratch per task, motivating universal pretrained slide representations. 
+
+Slide Encoders. Slide-level pretraining operates on unordered sets of thou-sands of heterogeneous tile embeddings. Vision-only methods apply self-distillation [12, 13], contrastive tile sampling [15, 47], view transformations [35], dilated atten-tion in masked autoencoders [19, 97], lightweight contextualizers [4], and state-space contrastive learning [29,49]. Multimodal methods align slides with clinical text [20, 53, 76, 94], genomic or transcriptomic profiles [39, 85, 98], or cross-stain sections [36, 40]. Supervised approaches train on slide-level labels [62, 63, 89]. Three gaps persist: reproducibility is limited by proprietary data and withheld recipes [20, 35, 76, 85], capacity concentrates in tile encoders over slide aggrega-tors [20, 40, 76, 85], and multi-slide fusion remains naive [49, 76, 85, 98], treating cases as unordered pools. MOOZY directly addresses all three: a two-stage design decouples vision-only SSL pretraining from patient-aware multi-task alignment, MOOZY: A Patient-First Foundation Model for Computational Pathology 5Patch Encoder 
+
+> Slide Encoder
+> EMA Teacher
+> Self-Distillation
+
+Stage 1: Self-Supervised Pretraining    
+
+> Token Masking
+> !!"#$%
+> "# $ % &×(×)
+> &*'& *
+> '( &ℓ'& ℓ
+> !,
+> ') !-
+> * + ,* -. / , 0 1 2 1 345 - 1 676
+> Slide Encoder Multi-Task Loss
+
+Stage 2: Patient-Aware Semantic Alignment             
+
+> [C]
+> h!,#
+> h!,$
+> h!,%
+> . .
+> Case Aggregator 89 .
+> :
+> . .. .
+> Case ;.
+> Classification
+> Survival
+> 0.5
+> <.= . >" .,0 ? @ ? " .,1 !A#.,2 $ % &!,# ×( !,# ×) 9.,2
+> ;BC9 .,0 BC@
+> !"# $ %& for each class
+> Risk Score D
+> ! " #
+> $% ! !!"# !,
+
+Fig. 2: Overview of the proposed two-stage framework. Stage 1 (up): A frozen patch encoder extracts per-patch features arranged into a spatial grid. Multi-scale crops are sampled with spatial augmentations and block-based masking. A student slide encoder and EMA teacher are jointly trained via CLS-level self-distillation ( Lcls ) and masked patch prediction ( Lmim ). Stage 2 (down): The pretrained slide encoder produces per-slide embeddings; a case transformer aggregates them into a unified case embedding 
+
+˜hi, routed to task-specific classification and survival heads. 
+
+replacing naive multi-slide fusion with explicit inter-slide dependency modeling at the case level, while training entirely on public data with a fully released recipe. 
+
+3 Methodology 
+
+Stage 1: Self-Supervised Slide Encoder Pretraining. We cast WSI repre-sentation learning as self-supervised pretraining on precomputed patch features (Figure 2, up). Given a WSI W, we partition tissue into non-overlapping 224-pixel patches and extract features with a frozen patch encoder fpatch :
+
+zi = fpatch (pi), zi ∈ Rdpatch . (1) We arrange patch features and coordinates into a 2-D grid G ∈ RH×W ×dpatch 
+
+with a binary validity mask for tissue positions (grid construction in Appendix C.1). If a slide is available at multiple magnifications, each level-specific grid is treated as an independent training sample. To capture global context and local detail, we sample G global crops of size Sg ×Sg and L local crops of size Sl ×Sl (Sg > S l)uniformly from valid grid locations, with each crop required to satisfy a min-imum valid-token ratio ρmin . Unlike [20], which draws global and local views 6 Kotp et al. 
+
+from the same fixed ROI, we sample crops independently over the full slide grid. This increases spatial diversity and lowers view mutual information, which ben-efits self-supervised WSI representation learning [35]. We apply DINOv3-style block masking [79] to global crops only. Because histopathology tissue is spatially continuous, contiguous masking encourages reasoning over broader morphology instead of reconstructing isolated tokens. In each batch, we select a fraction of global crops for masking, assign mask ratios uniformly over [γmin , γ max ], and shuffle them for uniform coverage of the masking range. We then iteratively place rectangular blocks with log-uniform aspect ratios until the target fraction of valid tokens is masked, restricting masking to tissue tokens. The full algorithm is in Appendix C.3. Our slide encoder (Figure 3A) is a Vision Transformer [21] adapted to pre-computed feature grids. Patch features are projected to dimension d with a linear layer and GELU [32]. We prepend a learnable [CLS] token and R register tokens [18], masked student positions are replaced by a learnable mask em-bedding. Each block uses pre-norm multi-head self-attention and an FFN with stochastic depth [37]. LayerScale [84] is disabled in our training runs. To encode spatial structure without learned positional embeddings, we use 2-D ALiBi [68] as adapted for WSIs in TITAN [20]. For each attention head h, we add: 
+
+b(h) 
+
+> i,j
+
+= −sh · ∥pi − pj ∥2
+
+∆ , (2) where pi are level-0 token coordinates, ∆ is patch spacing, and sh > 0 is a head-specific geometric slope. [CLS] and register tokens receive zero bias to remain spatially neutral. We also apply an additive attention mask that sets background-involving pairs to −∞ . The projection head maps encoder tokens to prototype logits with an MLP, an L2-normalized bottleneck, and a weight-normalized prototype layer [12, 103], shared for [CLS] and patch tokens (full formulation in Appendix C.6). We use an EMA teacher for self-distillation, updating teacher parameters as 
+
+ξ ← μξ + (1 − μ)θ with cosine momentum schedule from μ0 to μT . To avoid mode collapse, teacher outputs are centered with momentum-updated running averages [12]. The objective combines global CLS distillation and masked patch prediction. The teacher provides soft targets from global views, while the student predicts from all views: 
+
+Lcls = − 1
+
+G(G + L − 1) 
+
+> G
+
+X
+
+> j=1
+> G+L
+
+X
+
+> i=1
+> i̸=jK
+
+X
+
+> k=1
+
+P (j) 
+
+> k
+
+log Q(i) 
+
+> k
+
+, (3) where P (j) and Q(i) are teacher and student softmax distributions with temper-atures τt and τs. For masked positions in global crops, the student additionally predicts teacher patch-level distributions: 
+
+Lmim = − 1
+
+|M| 
+
+X
+
+> (j,r,c )∈M
+> K
+
+X
+
+> k=1
+
+P (j) 
+
+> r,c,k
+
+log Q(j)
+
+> r,c,k
+
+, (4) MOOZY: A Patient-First Foundation Model for Computational Pathology 7A) Slide Encoder Architecture                                          
+
+> Projection Head
+> Input Projection
+> [CLS ]𝑟 !𝑟 "z!mz#z$. . . .
+> 𝑊 !"#$ ∈𝑅 %×'!"#$%
+> LayerNorm
+> MHSA
+> LayerNorm
+> FFN
+> xD
+> ℎcls ∈ℝ!{ℎ"
+> #$%&' }"()
+> *
+> 𝑧 &+, ∈ℝ-𝑧 "
+> #$%&' ∈ℝ-
+> → CLS Distillation ℒ%&' → Masked Prediction ℒ()(
+> Stage 1: SSL Pretraining
+> x𝐷 %*'+
+> 𝑐 ;ℎ!,#;ℎ!,$;…;ℎ!,%!
+> ..
+
+B) Case Aggregator     
+
+> [C]
+> ℎ!
+> #
+> Case Embedding
+> Lin / FFN
+> r𝐢
+> 𝐭 ∈ℝ
+> Survival Head
+> Lin / FFN
+> 𝐳 𝐢
+> 𝐭 ∈ℝ&(
+> 𝑦 &'
+> (
+> softmax
+> Classification Head
+> Stage 2: Patient -Aware
+> Semantic Alignment
+> LayerNorm
+> MHSA
+> LayerNorm
+> FFN
+
+Fig. 3: Architecture of the slide encoder and case aggregator. (A) The slide encoder takes patch embeddings, a learnable [CLS] token, R register tokens, and mask tokens, processed through D transformer blocks. (B) The case aggregator prepends a learnable 
+
+[CASE] token to per-slide embeddings and produces a case embedding ˜hi, routed to heads for classification and survival prediction. 
+
+where M is the set of masked valid positions, and patch distributions use tem-perature τ patch 
+
+t . The total loss is L = Lcls + Lmim .
+
+Stage 2: Patient-Aware Semantic Alignment. A central design princi-ple of MOOZY is to decouple representation learning from semantic alignment: Stage 1 builds a general-purpose slide encoder on unlabeled data, and Stage 2 steers it toward clinical utility through multi-task supervision without re-learning spatial representations from task labels alone. This contrasts with task-specific MIL pipelines that learn both aggregation and task adaptation simultaneously from scratch, and with multimodal slide encoders that couple representation quality to the availability of paired text or genomic data. Concretely, we fine-tune the Stage 1 encoder with multi-task supervision across diverse clinical end-points (Figure 2, down). Let T = {T 1, . . . , TT } be T supervised tasks. Each case 
+
+ci contains one or more WSIs {W i, 1, . . . , Wi,S i }, and each task provides either a class label (classification) or a time-to-event label with event indicator (survival). Stage 2 uses full-slide grids without crop sampling. To handle gigapixel inputs under GPU memory limits, we apply a hardware-adaptive token cap Kmax (·):if valid tokens exceed Kmax , we perform stratified random sampling to preserve whole-slide spatial coverage (algorithm in Appendix C.4). Retained tokens are compacted and passed to the slide encoder: 
+
+hi,j = fθ (X⋆i,j , P⋆i,j , ∆ i,j ) ∈ Rd. (5) To form one case representation from slide embeddings Hi = {hi, 1, . . . , hi,S i },we use a lightweight transformer aggregator (Figure 3B). A learnable [CASE] 8 Kotp et al. 
+
+token is prepended and processed through Dcase pre-norm transformer blocks with LayerScale, while DropPath is disabled, yielding: 
+
+˜hi = LN( zi,D case )[0] ∈ Rd. (6) We apply this aggregator to all cases, including single-slide cases ( Si = 1 ), so that the learned embedding space is always patient-centric and consistent regardless of slide count at inference. Each task Tt has a prediction head gt : Rd → Rot ,either linear or MLP (formulations in Appendix C.7). For classification, we use weighted cross-entropy with label smoothing [82] coefficient ϵ:
+
+L(t) 
+
+> cls
+
+= CE w(t),ϵ 
+
+
+
+{z(t) 
+
+> i
+
+, y (t) 
+
+> i
+
+}i∈B t
+
+
+
+, (7) where class weights use inverse frequency: w(t) 
+
+> k
+
+= |D t|/(Kt ·|{ i ∈ D t : y(t) 
+
+> i
+
+= k}| ),and Bt is the valid labeled set. For survival prediction, we use a discrete-hazard objective: survival times are quantized into Bt bins with edges at training event-time quantiles, and Bt adapts to per-task event count. With predicted hazards 
+
+h(t) 
+
+> i,k
+
+= σ(a(t)
+
+> i,k
+
+), we minimize the negative log-likelihood over events and censored cases (full loss and bin-selection details in Appendix C.5). For ranking-based metrics, hazards are converted to scalar risk: 
+
+r(t) 
+
+> i
+
+= −
+
+> Bt
+
+X
+
+> k=1
+
+log(1 − h(t)
+
+> i,k
+
+). (8) Let Tactive ⊆ T be tasks with usable supervision in the current batch. We average losses over active tasks: 
+
+L = 1
+
+|T active |
+
+X
+
+> t∈T active
+
+L(t), (9) which naturally handles sparse multi-task labels by excluding unlabeled tasks for each case. At inference, the slide encoder and case transformer output ˜hi as the final case embedding, and task heads are discarded. 
+
+4 Experiment Setup 
+
+Dataset. We collect 56 different open-sourced datasets which include: REG Dataset [48], TCGA (all 32 cohorts) [58], CPTAC (all 10 cohorts) [22], BC-Therapy [75], BRACS [7], CAMELYON17 [2], DHMC Kidney [104], DHMC LUAD [91], EBRAINS [71, 72], IMP Colorectum [60, 61, 65], IMP Cervix [64], MBC [5, 26], MUT-HET-RCC [69], NADT Prostate [93], NAT-BRCA [67], and PANDA [9]. All collected slides are processed using AtlasPatch [1], which per-forms tissue segmentation using SAM2 [45, 70] model fine-tuned on histopathol-ogy data. The resulting tissue masks define the valid regions from which non-overlapping 224 × 224 patches are extracted at both 20 × and 40 × magnifica-tion levels, reaching ∼1.6 billion extracted patches. We extract features for each MOOZY: A Patient-First Foundation Model for Computational Pathology 9
+
+patch using a pretrained lightweight patch encoder from [41], which has 21.67 million parameters and the architecture of ViT-S [21] trained using DINOv2 [66] on 40 million patches. The resulting per-patch feature vectors and their spatial coordinates are assembled into 2D feature grids, forming the shared input repre-sentation for both training stages. Detailed patch counts at each magnification are reported in Appendix A. For Stage 1 self-supervised pretraining, the preprocessing yields 77 ,134 slide feature grids: 53 ,286 at 20 × and 23 ,848 at 40 × magnification, sourced from 
+
+∼31.8 TB of raw WSI data. The two corresponding feature grids from those two magnification levels are treated as independent training samples and sampled uniformly. Together, these slides span 23 distinct anatomical sites: adrenal gland, bladder, brain, breast, cervix, colon and rectum, esophagus, eye, head and neck, kidney, liver and bile ducts, lung, lymph node, ovary, pancreas, prostate, skin, soft tissue, stomach, testis, thymus, thyroid, and uterus. For Stage 2 supervised fine-tuning, we construct 333 tasks ( 205 classification and 128 survival) across all 56 datasets, averaging 6 tasks per dataset. Survival supervision covers overall survival (OS), disease-specific survival (DSS), disease-free interval (DFI), and progression-free interval (PFI), depending on endpoint availability. Of these, 56 are slide-level and 277 are case-level ( i.e ., predictions aggregated over all slides of a patient). After merging task-specific supervision lists and deduplicating under the Stage 2 case-construction rule, the labelled Stage 2 subset comprises 41 ,089 supervised cases and 45 ,179 unique whole-slide images, a strict subset of the 53 ,286 Stage 1 slides, since unlabeled slides are ex-cluded. The mean per-task slide-to-patient ratio is 1.330 8. For datasets without patient-level identifiers, each slide is treated as a singleton case. Per-organ statis-tics, class counts, and task-construction details are provided in Appendices B and B.1 and Tab. 5. A small subset of tasks was drawn from prior work [85,101]. For a broader landscape overview of computational pathology tasks, see [34]. A consolidated scale overview is shown in Figure 4. 
+
+SSL Pretraining. We train the slide encoder using the Stage 1 self-supervised framework (Sec. 3) on all 77 ,134 slide feature grids, treating 20 × and 40 × grids as independent samples. Training uses 8 GPUs with an effective batch of 1,024 slides (micro batch 64 , 2 accumulation steps) for 200 epochs ( 14 ,400 optimizer steps, 
+
+≈436 GPU-hours). Full hyperparameters are listed in Appendix E. The encoder is a 6-layer transformer ( d=768 , 12 heads, 4 register tokens [18]). Multi-crop sampling uses G=2 global crops of 20 ×20 tokens and L=4 local crops of 12 ×12 
+
+tokens, with block masking applied to global crops at mask ratio γ ∼ U [0 .1, 0.5] .Optimization uses AdamW [52] with a cosine learning rate schedule and an EMA teacher whose momentum follows a cosine schedule from μ0=0 .996 to μT =1 .0.
+
+Patient-Aware Semantic Alignment. We fine-tune the SSL-pretrained teacher encoder end-to-end alongside task-specific MLP heads, following the Stage 2 framework (Sec. 3). Both 20 × and 40 × grids are used as independent in-puts. Training uses 8 GPUs with an effective batch of 1,024 cases (micro batch 1,  
+
+> 8Computed over tasks with valid patient identifiers as the mean of each task’s unique-slide / unique-patient ratio, not as the global union ratio 45 ,179 /41 ,089 .
+
+10 Kotp et al. Patches 
+
+> feature grid
+> 20x grids
+> 40x grids
+> Prostate
+> Colon
+> Breast
+> Brain
+> Kidney
+> Lung
+> Stomach
+> Cervix
+> Bladder
+> Uterus
+> Head & Neck Soft Tissue
+> Thyroid
+> Skin
+> Pancreas
+> Adrenal
+> Gland
+> Liver
+> Testis
+> Ovary
+> Thymus
+> Esophagus
+> Eye
+> Lymph Node
+> Mutation
+> Prediction
+> Overall
+> survival
+> Disease-specific
+> survival
+> Progression-free
+> interval
+> Grading
+> Disease-free
+> interval
+> Subtype
+> Classification
+> Immune
+> Classification
+> Invasion
+> Detection
+> Malignancy
+> Detection
+> Cancer /
+> Organ Class.
+> Procedure
+> Classification
+> Lesion
+> Detection
+> Biomarker
+> Status
+> Tumor
+> Detection Others
+> Case-level
+> tasks
+> Slide-level
+> tasks
+> Classification
+> tasks
+> Survival
+> tasks
+
+Fig. 4: Radial hierarchy of MOOZY data scale across four dimensions: pretraining scale, anatomical coverage, task taxonomy, and supervision structure. 
+
+128 accumulation steps) for 12 epochs ( 600 optimizer steps, ≈307 GPU-hours). Complete hyperparameters are provided in Appendix F. For case-level aggre-gation, a case transformer ( Dcase =3 layers, 12 heads, learnable [CASE] token) pools all slides assigned to a supervised case into a single embedding. We jointly train on 205 classification and 128 survival tasks ( 333 total) spanning all 56 
+
+datasets. Labels form a sparse matrix where each supervised case is labeled only for its active tasks, and loss is computed accordingly. Classification tasks use cross-entropy with label smoothing ( ϵ=0 .03 ) and inverse-frequency class weight-ing. Survival tasks spanning OS, DSS, DFI, and PFI use a discrete-time hazard model with adaptive per-task binning (target 8 bins, minimum 2, maximum 16) and NLL loss. Optimization uses AdamW [52] with base learning rate 5 × 10 −5,cosine schedule, and gradient clipping at 0.3. A stratified 5% (task-wise) vali-dation holdout is used to monitor overfitting. A summary of stage-specific aug-mentation strategies is provided in Appendix Table 10, and visual examples are provided in Appendix Figure 10. 
+
+5 Results 
+
+We evaluate on eight held-out tasks spanning diverse clinical settings: Residual Cancer Burden (BC Therapy), TP53 mutation (CPTAC-BRCA), BAP1 muta-MOOZY: A Patient-First Foundation Model for Computational Pathology 11 
+
+tion (CPTAC-CCRCC), ACVR2A mutation (CPTAC-COAD), Histologic Grade (CPTAC-LSCC), KRAS mutation (CPTAC-LUAD), IDH Status (EBRAINS), and Treatment Response (MBC). These tasks are excluded from all training stages. Seven are case-level and IDH Status is slide-level. All models are as-sessed under a unified frozen-feature MLP probe with five-fold evaluation and patient-level fold grouping. We report mean ± standard deviation for weighted F1, weighted ROC-AUC, and balanced accuracy. Full protocol details are in Appendix G. Linear probe results are in Appendix H and Tabs. 20 and 21. 
+
+Comparison with Slide Encoders. We compare MOOZY against five slide encoders: CHIEF, GigaPath, PRISM, Madeleine, and TITAN. For case-level tasks, baseline encoders produce patient representations by averaging per-slide embeddings before probing, while MOOZY uses its native case-level embedding from the case transformer, requiring no post-hoc fusion. For the slide-level IDH Status task, all methods are evaluated per slide. Results are in Table 1. MOOZY achieves best or tied-best weighted F1 on all eight tasks and best or second-best AUC and balanced accuracy on seven of eight tasks. The largest margins are on Residual Cancer Burden (+0.05 F1, +0.11 AUC over Madeleine). On mutation tasks, MOOZY is strongest on ACVR2A across all three metrics and improves F1 on BAP1 and KRAS, while TITAN remains stronger on BAP1 AUC and KRAS balanced accuracy, suggesting complementary strengths between cross-slide ag-gregation and multimodal pretraining. TITAN is the closest overall competitor, also leading on TP53 AUC. Treatment Response is the main exception, where high variance ( ±0.17 ) limits firm conclusions. 
+
+Parameter Efficiency. MOOZY totals 85.77M parameters (64.10M slide and patient encoder + 21.67M patch encoder), making it 4–14 × smaller than competing encoders (GigaPath 1.22B, PRISM 742M, Madeleine 400M, TITAN 355M). CHIEF is smaller in absolute size but delivers substantially weaker per-formance. This efficiency stems from concentrating capacity at the slide level and reusing a lightweight public patch encoder. A detailed breakdown is in Table 22. 
+
+Comparison with MILs. We compare MOOZY against five patch encoders in the MIL setting. Each encoder is paired with five MIL architectures (Mean-MIL, ABMIL, CLAM, DSMIL, and TransMIL) following [77], and each entry is the arithmetic mean over the five architectures. Macro-average results across all eight tasks are in Table 2. Task-wise and per-method breakdowns are in Appendix J. 
+
+Multi-stage Ablation. Table 3 reports macro-average results for four con-figurations. Stage 2 only (task supervision without SSL) slightly underperforms Stage 1 alone on weighted F1 (0.748 vs. 0.760) and AUC (0.725 vs. 0.753), confirming that SSL provides a foundation that task supervision alone cannot recover. Combining both stages with the case aggregator yields the strongest re-sults, validating the two-stage design: SSL provides a generalizable spatial prior, and patient-aware alignment provides clinical grounding that SSL alone cannot achieve. Task-wise breakdowns are in Appendix K and Tab. 29 and Appendix L and Tab. 30. 12 Kotp et al. 
+
+Table 1: Frozen-feature MLP probe comparison against slide encoder baselines on eight held-out tasks. Bold : best; underline: second best. 
+
+Task Metric CHIEF Giga-Path PRISM Made-leine TITAN MOOZY (Ours) Residual Cancer Burden F1 0.46 ±0.03 0.45 ±0.05 0.46 ±0.07 0.51 ±0.03 0.43 ±0.07 0.56 ±0.05 
+
+AUC 0.60 ±0.05 0.55 ±0.08 0.58 ±0.06 0.63 ±0.03 0.58 ±0.07 0.74 ±0.04 
+
+Bal. Acc 0.44 ±0.05 0.40 ±0.05 0.43 ±0.04 0.48 ±0.03 0.38 ±0.11 0.51 ±0.06 
+
+TP53 Mut. F1 0.82 ±0.05 0.76 ±0.03 0.85 ±0.03 0.84 ±0.06 0.87 ±0.04 0.87 ±0.04 
+
+AUC 0.81 ±0.09 0.76 ±0.06 0.85 ±0.05 0.85 ±0.08 0.91 ±0.04 0.86 ±0.06 
+
+Bal. Acc 0.83 ±0.04 0.76 ±0.04 0.84 ±0.04 0.84 ±0.05 0.88 ±0.04 0.86 ±0.05 
+
+BAP1 Mut. F1 0.86 ±0.04 0.84 ±0.06 0.80 ±0.07 0.85 ±0.08 0.84 ±0.06 0.89 ±0.06 
+
+AUC 0.75 ±0.09 0.63 ±0.17 0.71 ±0.09 0.78 ±0.11 0.82 ±0.06 0.79 ±0.12 
+
+Bal. Acc 0.75 ±0.12 0.66 ±0.14 0.66 ±0.10 0.75 ±0.12 0.75 ±0.11 0.78 ±0.11 
+
+ACVR2A Mut. F1 0.89 ±0.07 0.80 ±0.10 0.85 ±0.03 0.89 ±0.09 0.87 ±0.05 0.91 ±0.05 
+
+AUC 0.80 ±0.13 0.74 ±0.11 0.83 ±0.08 0.76 ±0.19 0.79 ±0.10 0.91 ±0.09 
+
+Bal. Acc 0.80 ±0.12 0.65 ±0.10 0.81 ±0.08 0.81 ±0.16 0.76 ±0.15 0.90 ±0.10 
+
+Histologic Grade F1 0.71 ±0.07 0.77 ±0.03 0.73 ±0.11 0.75 ±0.06 0.73 ±0.06 0.78 ±0.08 
+
+AUC 0.71 ±0.09 0.77 ±0.04 0.67 ±0.11 0.74 ±0.08 0.71 ±0.04 0.75 ±0.15 
+
+Bal. Acc 0.73 ±0.06 0.77 ±0.03 0.73 ±0.12 0.74 ±0.06 0.73 ±0.06 0.77 ±0.08 
+
+KRAS Mut. F1 0.77 ±0.08 0.77 ±0.08 0.72 ±0.07 0.81 ±0.06 0.80 ±0.05 0.85 ±0.04 
+
+AUC 0.76 ±0.14 0.72 ±0.09 0.61 ±0.12 0.70 ±0.05 0.80 ±0.05 0.80 ±0.06 
+
+Bal. Acc 0.74 ±0.13 0.76 ±0.08 0.63 ±0.13 0.77 ±0.07 0.81 ±0.05 0.79 ±0.10 
+
+IDH Status F1 0.92 ±0.01 0.94 ±0.02 0.91 ±0.02 0.92 ±0.02 0.94 ±0.02 0.97 ±0.02 
+
+AUC 0.96 ±0.01 0.97 ±0.02 0.95 ±0.01 0.96 ±0.01 0.97 ±0.01 0.99 ±0.01 
+
+Bal. Acc 0.92 ±0.01 0.94 ±0.02 0.91 ±0.02 0.91 ±0.02 0.94 ±0.02 0.97 ±0.02 
+
+Treatment Response F1 0.53 ±0.07 0.51 ±0.07 0.57 ±0.08 0.49 ±0.05 0.49 ±0.02 0.58 ±0.14 
+
+AUC 0.70 ±0.06 0.68 ±0.10 0.69 ±0.07 0.59 ±0.05 0.60 ±0.06 0.68 ±0.07 
+
+Bal. Acc 0.48 ±0.10 0.40 ±0.08 0.51 ±0.11 0.35 ±0.09 0.37 ±0.06 0.48 ±0.17 
+
+Case Aggregator Ablation. We ablate the patient-level case aggregator by comparing MOOZY without the case aggregator (Stage 2 slide encoder with mean slide pooling) against full MOOZY in the same unified ablation summary (Table 3). Full task-wise results are provided in Appendix M and Tab. 31. The consistent gains on case-level tasks confirm that explicit inter-slide modeling captures information that per-slide embeddings do not encode individually. The near-parity on the slide-level IDH Status task is expected and confirms that the aggregator does not degrade transferability when case-level context is uninfor-mative. 
+
+Attention Map Analysis. To examine where each encoder concentrates on the slide, a board-certified pathologist reviewed attention maps for 20 repre-sentative WSIs across all eight held-out datasets and five encoders. Two scores were assigned per image: the shift score (1–5, where 1 is cancer-focused, 3 is balanced, and 5 is non-cancer-focused) and the semantic-gap score (1–3, where 1 indicates rare and 3 indicates frequent gaps in diagnostically relevant tissue). MOOZY achieved the lowest mean gap score (1.00), followed by TITAN (1.38), PRISM (1.75), CHIEF (1.88), and Madeleine (2.50). On shift, MOOZY was near MOOZY: A Patient-First Foundation Model for Computational Pathology 13                                                        
+
+> Table 2: Macro-average MIL comparison across eight held-out tasks. Each entry av-erages over five MIL architectures (MeanMIL, ABMIL, CLAM, DSMIL, TransMIL). Metric Backbone UNI v2 Phikon v2 CONCH v1.5 MUSK MOOZY (Ours) F1 (weighted) 0.733 0.716 0.715 0.746 0.729 0.801
+> ROC-AUC (weighted) 0.735 0.719 0.724 0.751 0.725 0.815
+> Balanced Acc 0.686 0.660 0.654 0.696 0.679 0.758 Table 3: Unified macro-average ablation across eight held-out tasks. The table includes Stage 1 only, Stage 2 only, MOOZY without the case aggregator (mean slide pooling), and full MOOZY.
+> Setting Stage 1 Stage 2 Case Agg. F1 AUC Bal. Acc Stage 1 only ✓✗✗0.760 0.753 0.701 Stage 2 only ✗✓✓0.748 0.725 0.701 MOOZY w/o case agg. ✓✓✗0.771 0.789 0.729 MOOZY ✓✓✓0.801 0.815 0.758
+
+balanced (2.63) and TITAN closest to exact balance (3.13), while PRISM (2.38), CHIEF (2.13), and Madeleine (2.00) were more cancer-biased. Together, these two scores suggest that MOOZY attends broadly while main-taining balanced focus between tumor and surrounding tissue. A plausible expla-nation comes from the two-stage objective. In Stage 1, masked-region prediction and agreement across global and local views encourage the model to use dis-tributed contextual evidence instead of relying on a few high-response hotspots. In Stage 2, supervision across diverse endpoints and cohorts favors features that stay informative in both malignant and non-malignant tissue contexts. A repre-sentative example is shown in Figure 5. Heatmap generation details and addi-tional examples are provided in Appendix N. 
+
+Qualitative Analysis. To complement quantitative results, we visualize UMAP [57] embeddings for three representative tasks (CPTAC cancer type, pan-dataset anatomical site, and TCGA cancer type) across four slide encoders (Figure 6). MOOZY shows the clearest separation on CPTAC and TCGA cancer type, TITAN is close behind, and Madeleine/PRISM show more overlap. On anatomical site, TITAN is strongest, with MOOZY and Madeleine comparable and PRISM weaker. t-SNE [56] and PCA stability diagnostics confirm the same pattern (Appendices O and P and Figure 16). 
+
+6 Conclusion 
+
+We presented MOOZY, a two-stage patient-first framework that introduces a principled decoupling of vision-only SSL pretraining from patient-aware multi-task alignment, and replaces the naive early/late multi-slide fusion of prior slide encoders with explicit case-level inter-slide dependency modeling. Together, these design choices establish that open, public-data patient-level pretraining 14 Kotp et al. Thumbnail CHIEF Madeleine PRISM TITAN MOOZY (Ours) 
+
+C3N-02149-23 | KRAS_mutation=negative 
+
+Fig. 5: Attention-map comparison on a lung adenocarcinoma slide. MOOZY and TI-TAN: balanced, comprehensive coverage (shift 3, gap 1). PRISM: balanced shift with moderate gaps (shift 3, gap 2). CHIEF and Madeleine: cancer-biased with frequent semantic gaps (shift 2, gap 3). 
+
+MOOZY TITAN Madeleine PRISM CPTAC cancer type 0 5 10 15 20 
+
+UMAP 1 
+
+−10 
+
+−5 
+
+0
+
+5
+
+10 
+
+15 
+
+20 
+
+> UMAP 2
+
+CPTAC Pan-Cancer Type Classification 
+
+Cancer type 
+
+BRCA 
+
+CCRCC 
+
+COAD 
+
+GBM 
+
+HNSC 
+
+LSCC 
+
+LUAD 
+
+PDA 
+
+OV 
+
+UCEC −5 0 5 10 15 20 
+
+UMAP 1 
+
+−10 
+
+−5 
+
+0
+
+5
+
+10 
+
+15 
+
+> UMAP 2
+
+CPTAC Pan-Cancer Type Classification 
+
+Cancer type 
+
+BRCA 
+
+CCRCC 
+
+COAD 
+
+GBM 
+
+HNSC 
+
+LSCC 
+
+LUAD 
+
+PDA 
+
+OV 
+
+UCEC 0 2 4 6 8 10 12 
+
+UMAP 1 
+
+−2 
+
+0
+
+2
+
+4
+
+6
+
+> UMAP 2
+
+CPTAC Pan-Cancer Type Classification 
+
+Cancer type 
+
+BRCA 
+
+CCRCC 
+
+COAD 
+
+GBM 
+
+HNSC 
+
+LSCC 
+
+LUAD 
+
+PDA 
+
+OV 
+
+UCEC 0 2 4 6 8
+
+UMAP 1 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+> UMAP 2
+
+CPTAC Pan-Cancer Type Classification 
+
+Cancer type 
+
+BRCA 
+
+CCRCC 
+
+COAD 
+
+GBM 
+
+HNSC 
+
+LSCC 
+
+LUAD 
+
+PDA 
+
+OV 
+
+UCEC 
+
+Anatomical site 2 4 6 8 10 
+
+UMAP 1 
+
+7
+
+8
+
+9
+
+10 
+
+11 
+
+12 
+
+13 
+
+14 
+
+> UMAP 2
+
+Pan-Dataset Anatomical Site Embeddings 
+
+Anatomical site 
+
+Brain 
+
+Cervix 
+
+Esophagus 
+
+Prostate 
+
+Soft Tissue 
+
+Testis 
+
+Thymus −5 0 5 10 15 
+
+UMAP 1 
+
+−2 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 
+
+> UMAP 2
+
+Pan-Dataset Anatomical Site Embeddings 
+
+Anatomical site 
+
+Brain 
+
+Cervix 
+
+Esophagus 
+
+Prostate 
+
+Soft Tissue 
+
+Testis 
+
+Thymus 2 4 6 8 10 12 
+
+UMAP 1 
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+> UMAP 2
+
+Pan-Dataset Anatomical Site Embeddings 
+
+Anatomical site 
+
+Brain 
+
+Cervix 
+
+Esophagus 
+
+Prostate 
+
+Soft Tissue 
+
+Testis 
+
+Thymus 0 1 2 3 4 5 6 7
+
+UMAP 1 
+
+−6 
+
+−4 
+
+−2 
+
+0
+
+2
+
+> UMAP 2
+
+Pan-Dataset Anatomical Site Embeddings 
+
+Anatomical site 
+
+Brain 
+
+Cervix 
+
+Esophagus 
+
+Prostate 
+
+Soft Tissue 
+
+Testis 
+
+Thymus 
+
+TCGA cancer type −10 −5 0 5 10 15 20 
+
+UMAP 1 
+
+−20 
+
+−15 
+
+−10 
+
+−5 
+
+0
+
+5
+
+10 
+
+15 
+
+20 
+
+> UMAP 2
+
+TCGA Pan-Cancer Fine-Grained Classification 
+
+Cancer type 
+
+GBM 
+
+CCRCC 
+
+PRCC 
+
+COAD 
+
+LUAD 
+
+LUSC 
+
+IDC 
+
+HNSC 
+
+CESC 
+
+UEC 
+
+PRAD 
+
+THPA 
+
+MEL 
+
+HCC 
+
+ACC 
+
+BLCA −5 0 5 10 15 20 25 
+
+UMAP 1 
+
+−10 
+
+−5 
+
+0
+
+5
+
+10 
+
+> UMAP 2
+
+TCGA Pan-Cancer Fine-Grained Classification 
+
+Cancer type 
+
+GBM 
+
+CCRCC 
+
+PRCC 
+
+COAD 
+
+LUAD 
+
+LUSC 
+
+IDC 
+
+HNSC 
+
+CESC 
+
+UEC 
+
+PRAD 
+
+THPA 
+
+MEL 
+
+HCC 
+
+ACC 
+
+BLCA −2 0 2 4 6 8 10 
+
+UMAP 1 
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10 
+
+11 
+
+12 
+
+> UMAP 2
+
+TCGA Pan-Cancer Fine-Grained Classification 
+
+Cancer type 
+
+GBM 
+
+CCRCC 
+
+PRCC 
+
+COAD 
+
+LUAD 
+
+LUSC 
+
+IDC 
+
+HNSC 
+
+CESC 
+
+UEC 
+
+PRAD 
+
+THPA 
+
+MEL 
+
+HCC 
+
+ACC 
+
+BLCA 0 2 4 6 8
+
+UMAP 1 
+
+−2 
+
+−1 
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+> UMAP 2
+
+TCGA Pan-Cancer Fine-Grained Classification 
+
+Cancer type 
+
+GBM 
+
+CCRCC 
+
+PRCC 
+
+COAD 
+
+LUAD 
+
+LUSC 
+
+IDC 
+
+HNSC 
+
+CESC 
+
+UEC 
+
+PRAD 
+
+THPA 
+
+MEL 
+
+HCC 
+
+ACC 
+
+BLCA 
+
+Fig. 6: UMAP qualitative comparison across four slide encoders (columns) and three tasks (rows), using matched class-balanced sampling and identical reduction settings. 
+
+is sufficient to produce competitive representations without proprietary slides, paired clinical reports, or billion-parameter architectures. MOOZY achieves best or tied-best performance on the majority of the eight held-out tasks against both slide encoders and MIL baselines using fewer parameters than existing slide en-coders, supporting the view that the performance bottleneck in WSI analysis lies in aggregating heterogeneous patches into coherent slide representations rather than in patch encoding capacity. The benefit of explicit cross-slide aggregation re-mains to be quantified on tasks specifically designed to require deeper multi-slide reasoning, alongside natural extensions toward case-level retrieval, slide-report co-training, and genomic fusion. MOOZY: A Patient-First Foundation Model for Computational Pathology 15 
+
+Acknowledgements 
+
+This work was supported by NSERC-DG RGPIN-2022-05378 [M.S.H], Ama-zon Research Award [M.S.H], and Gina Cody RIF [M.S.H], FRQNT scholar-ship [Y.K]. Computational resources were provided in part by Calcul Québec (www.calculquebec.ca ) and the Digital Research Alliance of Canada ( www. alliancecan.ca ). 16 Kotp et al. 
+
+References 
+
+1. Alagha, A., Leclerc, C., Kotp, Y., Metwally, O., Moras, C., Rentopoulos, P., Rostami, G., Nguyen, B.N., Baig, J., Khellaf, A., Trinh, V.Q.H., Mizouni, R., Otrok, H., Bentahar, J., Hosseini, M.S.: Atlaspatch: An efficient and scalable tool for whole slide image preprocessing in computational pathology. arXiv preprint arXiv:2602.03998 (2026) 2. Bandi, P., Geessink, O., Manson, Q., Van Dijk, M., Balkenhol, M., Hermsen, M., Bejnordi, B.E., Lee, B., Paeng, K., Zhong, A., et al.: From detection of indi-vidual metastases to classification of lymph node status at the patient level: the CAMELYON17 challenge. IEEE Transactions on Medical Imaging 38 (2), 550–560 (2019). https://doi.org/10.1109/TMI.2018.2867350 
+
+3. Bejnordi, B.E., Veta, M., Van Diest, P.J., Van Ginneken, B., Karssemeijer, N., Litjens, G., Van Der Laak, J.A., Hermsen, M., Manson, Q.F., Balkenhol, M., et al.: Diagnostic assessment of deep learning algorithms for detection of lymph node metastases in women with breast cancer. Jama 318 (22), 2199–2210 (2017) 4. Belagali, V., Kapse, S., Marza, P., Das, S., Li, Z., Boutaj, S., Pati, P., Yellapra-gada, S., Nandi, T.N., Madduri, R.K., Saltz, J., Prasanna, P., Christodoulidis, S., Vakalopoulou, M., Samaras, D.: Ticon: A slide-level tile contextualizer for histopathology representation learning. arXiv preprint arXiv:2512.21331 (2025) 5. Bergstrom, E.N., Abbasi, A., Díaz-Gay, M., Galland, L., Ladoire, S., Lippman, S.M., Alexandrov, L.B.: Deep learning artificial intelligence predicts homologous recombination deficiency and platinum response from histologic slides. Journal of Clinical Oncology 42 (30), 3550–3560 (oct 2024). https://doi.org/10.1200/ JCO.23.02641 , https://doi.org/10.1200/JCO.23.02641 
+
+6. Bioptimus: H-optimus-1 (2025), https : / / huggingface . co / bioptimus / H -optimus-1 
+
+7. Brancati, N., Anniciello, A.M., Pati, P., Riccio, D., Scognamiglio, G., Jaume, G., De Pietro, G., Di Bonito, M., Foncubierta, A., Botti, G., Gabrani, M., Feroce, F., Frucci, M.: Bracs: A dataset for breast carcinoma subtyping in h&e histology im-ages. Database 2022 (jan 2022). https://doi.org/10.1093/database/baac093 ,
+
+https://doi.org/10.1093/database/baac093 
+
+8. Brown, T., Mann, B., Ryder, N., Subbiah, M., Kaplan, J.D., Dhariwal, P., Nee-lakantan, A., Shyam, P., Sastry, G., Askell, A., et al.: Language models are few-shot learners. Advances in neural information processing systems 33 , 1877–1901 (2020) 9. Bulten, W., Kartasalo, K., Chen, P.H.C., Ström, P., Pinckaers, H., Nagpal, K., Cai, Y., Steiner, D.F., Van Boven, H., Vink, R., et al.: Artificial intelligence for diagnosis and gleason grading of prostate cancer: the panda challenge. Nature medicine 28 (1), 154–163 (2022). https://doi.org/10.1038/s41591-021-01620-2
+
+10. Campanella, G., Hanna, M.G., Geneslaw, L., Miraflor, A., Werneck Krauss Silva, V., Busam, K.J., Brogi, E., Reuter, V.E., Klimstra, D.S., Fuchs, T.J.: Clinical-grade computational pathology using weakly supervised deep learning on whole slide images. Nature medicine 25 (8), 1301–1309 (2019) 11. Caron, M., Misra, I., Mairal, J., Goyal, P., Bojanowski, P., Joulin, A.: Unsuper-vised learning of visual features by contrasting cluster assignments. Advances in neural information processing systems 33 , 9912–9924 (2020) 12. Caron, M., Touvron, H., Misra, I., Jégou, H., Mairal, J., Bojanowski, P., Joulin, A.: Emerging properties in self-supervised vision transformers. In: Proceedings MOOZY: A Patient-First Foundation Model for Computational Pathology 17 of the IEEE/CVF international conference on computer vision. pp. 9650–9660 (2021) 13. Chen, R.J., Chen, C., Li, Y., Chen, T.Y., Trister, A.D., Krishnan, R.G., Mah-mood, F.: Scaling vision transformers to gigapixel images via hierarchical self-supervised learning. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 16144–16155 (2022) 14. Chen, R.J., Ding, T., Lu, M.Y., Williamson, D.F., Jaume, G., Song, A.H., Chen, B., Zhang, A., Shao, D., Shaban, M., et al.: Towards a general-purpose foundation model for computational pathology. Nature medicine 30 (3), 850–862 (2024) 15. Chen, T., Kornblith, S., Norouzi, M., Hinton, G.: A simple framework for con-trastive learning of visual representations. In: International conference on machine learning. pp. 1597–1607. PmLR (2020) 16. Chen, X., He, K.: Exploring simple siamese representation learning. In: Proceed-ings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 15750–15758 (2021) 17. Courtiol, P., Maussion, C., Moarii, M., Pronier, E., Pilcer, S., Sefta, M., Manceron, P., Toldo, S., Zaslavskiy, M., Le Stang, N., et al.: Deep learning-based classification of mesothelioma improves prediction of patient outcome. Nature medicine 25 (10), 1519–1525 (2019) 18. Darcet, T., Oquab, M., Mairal, J., Bojanowski, P.: Vision transformers need registers. In: The Twelfth International Conference on Learning Representations (2024), https://openreview.net/forum?id=2dnO3LLiJ1 
+
+19. Ding, J., Ma, S., Dong, L., Zhang, X., Huang, S., Wang, W., Zheng, N., Wei, F.: Longnet: Scaling transformers to 1,000,000,000 tokens. arXiv preprint arXiv:2307.02486 (2023) 20. Ding, T., Wagner, S.J., Song, A.H., Chen, R.J., Lu, M.Y., Zhang, A., Vaidya, A.J., Jaume, G., Shaban, M., Kim, A., et al.: Multimodal whole slide foundation model for pathology. arXiv preprint arXiv:2411.19666 (2024) 21. Dosovitskiy, A., Beyer, L., Kolesnikov, A., Weissenborn, D., Zhai, X., Unterthiner, T., Dehghani, M., Minderer, M., Heigold, G., Gelly, S., Uszkoreit, J., Houlsby, N.: An image is worth 16x16 words: Transformers for image recognition at scale. arXiv preprint arXiv:2010.11929 (2020) 22. Edwards, N.J., Oberti, M., Thangudu, R.R., Cai, S., McGarvey, P.B., Jacob, S., Madhavan, S., Ketchum, K.A.: The CPTAC data portal: a resource for cancer proteomics research. Journal of Proteome Research 14 (6), 2707–2713 (2015) 23. Filiot, A., Dop, N., Tchita, O., Riou, A., Dubois, R., Peeters, T., Valter, D., Scalbert, M., Saillard, C., Robin, G., Olivier, A.: Distilling foundation models for robust and efficient models in digital pathology. arXiv preprint arXiv:2501.16239 (2025) 24. Filiot, A., Ghermi, R., Olivier, A., Jacob, P., Fidon, L., Camara, A., Mac Kain, A., Saillard, C., Schiratti, J.B.: Scaling self-supervised learning for histopathology with masked image modeling. medRxiv (2023) 25. Filiot, A., Jacob, P., Mac Kain, A., Saillard, C.: Phikon-v2, a large and pub-lic feature extractor for biomarker prediction. arXiv preprint arXiv:2409.09173 (2024) 26. Galland, L., Ballot, E., Mananet, H., Boidot, R., Lecuelle, J., Albuisson, J., Arnould, L., Desmoulins, I., Mayeur, D., Kaderbhai, C., Ilie, S., Hennequin, A., Bergeron, A., Derangère, V., Ghiringhelli, F., Truntzer, C., Ladoire, S.: Efficacy of platinum-based chemotherapy in metastatic breast cancer and hrd biomark-ers: utility of exome sequencing. npj Breast Cancer 8(1), 28 (mar 2022). https: 18 Kotp et al. 
+
+//doi.org/10.1038/s41523-022-00395-0 , https://doi.org/10.1038/s41523-022-00395-0 
+
+27. Grill, J.B., Strub, F., Altché, F., Tallec, C., Richemond, P., Buchatskaya, E., Doersch, C., Avila Pires, B., Guo, Z., Gheshlaghi Azar, M., et al.: Bootstrap your own latent-a new approach to self-supervised learning. Advances in neural information processing systems 33 , 21271–21284 (2020) 28. GTEx Consortium: The Genotype-Tissue Expression (GTEx) project. Nature Genetics 45 (6), 580–585 (2013) 29. Gu, A., Dao, T.: Mamba: Linear-time sequence modeling with selective state spaces. arXiv preprint arXiv:2312.00752 (2023) 30. He, K., Chen, X., Xie, S., Li, Y., Dollár, P., Girshick, R.: Masked autoencoders are scalable vision learners. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 16000–16009 (2022) 31. He, K., Fan, H., Wu, Y., Xie, S., Girshick, R.: Momentum contrast for unsuper-vised visual representation learning. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 9729–9738 (2020) 32. Hendrycks, D., Gimpel, K.: Gaussian error linear units (gelus). arXiv preprint arXiv:1606.08415 (2016) 33. Hoffmann, J., Borgeaud, S., Mensch, A., Buchatskaya, E., Cai, T., Rutherford, E., Casas, D.d.L., Hendricks, L.A., Welbl, J., Clark, A., et al.: Training compute-optimal large language models. arXiv preprint arXiv:2203.15556 (2022) 34. Hosseini, M.S., Bejnordi, B.E., Trinh, V.Q.H., Chan, L., Hasan, D., Li, X., Yang, S., Kim, T., Zhang, H., Wu, T., et al.: Computational pathology: a survey review and the way forward. Journal of Pathology Informatics 15 , 100357 (2024) 35. Hou, X., Jiang, C., Kondepudi, A., Lyu, Y., Chowdury, A., Lee, H., Hollon, T.C.: A self-supervised framework for learning whole slide representations. arXiv preprint arXiv:2402.06188 (2024) 36. Hua, S., Yan, F., Shen, T., Ma, L., Zhang, X.: Pathoduet: Foundation models for pathological slide analysis of h&e and ihc stains. Medical Image Analysis 97 ,103289 (2024) 37. Huang, G., Sun, Y., Liu, Z., Sedra, D., Weinberger, K.Q.: Deep Networks with Stochastic Depth, pp. 646–661. Springer International Publishing (2016). https: //doi.org/10.1007/978- 3- 319- 46493- 0_39 , http://dx.doi.org/10.1007/ 978-3-319-46493-0_39 
+
+38. Ilse, M., Tomczak, J., Welling, M.: Attention-based deep multiple instance learn-ing. In: International conference on machine learning. pp. 2127–2136. PMLR (2018) 39. Jaume, G., Oldenburg, L., Vaidya, A., Chen, R.J., Williamson, D.F., Peeters, T., Song, A.H., Mahmood, F.: Transcriptomics-guided slide representation learning in computational pathology. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (2024) 40. Jaume, G., Vaidya, A., Zhang, A., H. Song, A., J. Chen, R., Sahai, S., Mo, D., Madrigal, E., Phi Le, L., Mahmood, F.: Multistain pretraining for slide represen-tation learning in pathology. In: European Conference on Computer Vision. pp. 19–37. Springer (2024) 41. Kang, M., Song, H., Park, S., Yoo, D., Pereira, S.: Benchmarking self-supervised learning on diverse pathology datasets. In: Proceedings of the IEEE/CVF Con-ference on Computer Vision and Pattern Recognition. pp. 3344–3354 (2023) 42. Kaplan, J., McCandlish, S., Henighan, T., Brown, T.B., Chess, B., Child, R., Gray, S., Radford, A., Wu, J., Amodei, D.: Scaling laws for neural language mod-els. arXiv preprint arXiv:2001.08361 (2020) MOOZY: A Patient-First Foundation Model for Computational Pathology 19 43. Karasikov, M., van Doorn, J., Känzig, N., Cesur, M.E., Horlings, H.M., Berke, R., Tang, F., Otálora, S.: Training state-of-the-art pathology foundation models with orders of magnitude less data (2025), https://arxiv.org/abs/2504.05186 
+
+44. Kather, J.N., Heij, L.R., Grabsch, H.I., Loeffler, C., Echle, A., Muti, H.S., Krause, J., Niehues, J.M., Sommer, K.A., Bankhead, P., et al.: Pan-cancer image-based detection of clinically actionable genetic alterations. Nature cancer 1(8), 789–799 (2020) 45. Kirillov, A., Mintun, E., Ravi, N., Mao, H., Rolland, C., Gustafson, L., Xiao, T., Whitehead, S., Berg, A.C., Lo, W.Y., et al.: Segment anything. In: Proceedings of the IEEE/CVF international conference on computer vision. pp. 4015–4026 (2023) 46. Kozachenko, L.F., Leonenko, N.N.: Sample estimate of the entropy of a random vector. Problemy Peredachi Informatsii 23 (2), 9–16 (1987) 47. Lazard, T., Lerousseau, M., Decencière, E., Walter, T.: Giga-ssl: Self-supervised learning for gigapixel images. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops. pp. 4812–4822 (2023) 48. Lee, Y., Oh, H.R., Bychlov, A., Fukuoka, J., Kaushal, R.K., Sahay, A., Yadav, R., Sarioglu, S., Balci, S., Türkmen, İ., Tolkach, Y., Harder, C., Choi, J.H., Ahn, S.: Report generation of pathology using pan-asia giga-pixel wsis (2025) (2025). https://doi.org/10.5281/zenodo.15081614 , https://doi.org/10. 5281/zenodo.15081614 
+
+49. Lenz, T., Neidlinger, P., Ligero, M., Wölflein, G., van Treeck, M., Kather, J.N.: Unsupervised foundation model-agnostic slide-level representation learning. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (2025) 50. Li, B., Li, Y., Eliceiri, K.W.: Dual-stream multiple instance learning network for whole slide image classification with self-supervised contrastive learning. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recog-nition. pp. 14318–14328 (2021) 51. Li, J., Chen, Y., Chu, H., Sun, Q., Guan, T., Han, A., He, Y.: Dynamic graph representation with knowledge-aware attention for histopathology whole slide im-age analysis. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 11323–11332 (2024) 52. Loshchilov, I., Hutter, F.: Decoupled weight decay regularization. In: International Conference on Learning Representations (2019) 53. Lu, M.Y., Chen, B., Williamson, D.F., Chen, R.J., Ikamura, K., Gerber, G., Liang, I., Le, L.P., Ding, T., Parwani, A.V., et al.: A foundational multimodal vision language ai assistant for human pathology. arXiv preprint arXiv:2312.07814 (2023) 54. Lu, M.Y., Chen, B., Williamson, D.F., Chen, R.J., Liang, I., Ding, T., Jaume, G., Odintsov, I., Le, L.P., Gerber, G., et al.: A visual-language foundation model for computational pathology. Nature medicine 30 (3), 863–874 (2024) 55. Lu, M.Y., Williamson, D.F., Chen, T.Y., Chen, R.J., Barbieri, M., Mahmood, F.: Data-efficient and weakly supervised computational pathology on whole-slide images. Nature biomedical engineering 5(6), 555–570 (2021) 56. van der Maaten, L., Hinton, G.: Visualizing data using t-SNE. Journal of Machine Learning Research 9(86), 2579–2605 (2008) 57. McInnes, L., Healy, J., Melville, J.: UMAP: Uniform manifold approximation and projection for dimension reduction. arXiv preprint arXiv:1802.03426 (2018). 
+
+https://doi.org/10.48550/arXiv.1802.03426 20 Kotp et al. 58. National Cancer Institute: The cancer genome atlas program (tcga). https: / / www . cancer . gov / about - nci / organization / ccg / research / structural -genomics/tcga , accessed: 2025-10-19 59. Nechaev, D., Pchelnikov, A., Ivanova, E.: Hibou: A family of foundational vision transformers for pathology. arXiv preprint arXiv:2406.05074 (2024) 60. Neto, P.C., Montezuma, D., Oliveira, S.P., Oliveira, D., Fraga, J., Monteiro, A., Monteiro, J., Ribeiro, L., Gonçalves, S., Reinhard, S., et al.: An interpretable machine learning system for colorectal cancer diagnosis from pathology slides. npj Precision Oncology 8(1), 56 (2024). https://doi.org/10.1038/s41698-024-00539-4 , https://doi.org/10.1038/s41698-024-00539-4 
+
+61. Neto, P.C., Oliveira, S.P., Montezuma, D., Fraga, J., Monteiro, A., Ribeiro, L., Gonçalves, S., Pinto, I.M., Cardoso, J.S.: imil4path: A semi-supervised in-terpretable approach for colorectal whole-slide images. Cancers 14 (10), 2489 (2022). https://doi.org/10.3390/cancers14102489 , https://doi.org/10. 3390/cancers14102489 
+
+62. Nicke, T., Schacherer, D., Schäfer, J.R., Artysh, N., Prasse, A., Homeyer, A., Schenk, A., Höfener, H., Lotz, J.: Tissue concepts v2: A supervised foundation model for whole slide images. arXiv preprint arXiv:2507.05742 (2025) 63. Nicke, T., Schaefer, J.R., Hoefener, H., Feuerhake, F., Merhof, D., Kiessling, F., Lotz, J.: Tissue concepts: Supervised foundation models in computational pathol-ogy. Computers in Biology and Medicine 186 , 109621 (2025) 64. Oliveira, S.P., Montezuma, D., Moreira, A., Oliveira, D., Neto, P.C., Monteiro, A., Monteiro, J., Ribeiro, L., Gonçalves, S., Pinto, I.M., Cardoso, J.S.: A cad system for automatic dysplasia grading on h&e cervical whole-slide images. Scientific Re-ports 13 (1), 3970 (mar 2023). https://doi.org/10.1038/s41598-023-30497-z 
+
+65. Oliveira, S.P., Neto, P.C., Fraga, J., Montezuma, D., Monteiro, A., Monteiro, J., Ribeiro, L., Gonçalves, S., Pinto, I.M., Cardoso, J.S.: Cad systems for colorectal cancer from wsi are still not ready for clinical acceptance. Scientific Reports 11 (1), 1–15 (2021). https://doi.org/10.1038/s41598-021-93746-z , https://doi. org/10.1038/s41598-021-93746-z 
+
+66. Oquab, M., Darcet, T., Moutakanni, T., Vo, H., Szafraniec, M., Khalidov, V., Fernandez, P., Haziza, D., Massa, F., El-Nouby, A., et al.: Dinov2: Learning robust visual features without supervision. arXiv preprint arXiv:2304.07193 (2023) 67. Peikari, M., Salama, S., Nofech-Mozes, S., Martel, A.L.: Automatic cellular-ity assessment from post-treated breast surgical specimens. Cytometry Part A 91 (11), 1078–1087 (oct 2017). https://doi.org/10.1002/cyto.a.23244 ,
+
+https://doi.org/10.1002/cyto.a.23244 
+
+68. Press, O., Smith, N.A., Lewis, M.: Train short, test long: Attention with linear bi-ases enables input length extrapolation. In: International Conference on Learning Representations (2022) 69. Rajaram, S., Acosta, P., Panwar, V., Jarmale, V., Christie, A., Jasti, J., Margulis, V., Rakheja, D., Cheville, J., Leibovich, B.C., Parker, A., Brugarolas, J., Kapur, P.: Prediction of driver mutation heterogeneity in renal cancer from histopathol-ogy slides using deep learning (2022). https://doi.org/10.25452/figshare. plus.c.5983795.v1 , https://doi.org/10.25452/figshare.plus.c.5983795. v1 
+
+70. Ravi, N., Gabeur, V., Hu, Y.T., Hu, R., Ryali, C., Ma, T., Khedr, H., Rädle, R., Rolland, C., Gustafson, L., et al.: Sam 2: Segment anything in images and videos. arXiv preprint arXiv:2408.00714 (2024) MOOZY: A Patient-First Foundation Model for Computational Pathology 21 71. Roetzer-Pejrimovsky, T., Moser, A.C., Atli, B., Vogel, C.C., Mercea, P.A., Pri-hoda, R., Gelpi, E., Haberler, C., Höftberger, R., Hainfellner, J.A., Baumann, B., Langs, G., Woehrer, A.: The digital brain tumour atlas, an open histopathology resource. Scientific Data 9(1), 55 (2022). https://doi.org/10.1038/s41597-022-01157-0 , https://doi.org/10.1038/s41597-022-01157-0 
+
+72. Roetzer-Pejrimovsky, T., Moser, A.C., Atli, B., Vogel, C.C., Mercea, P.A., Pri-hoda, R., Gelpi, E., Haberler, C., Höftberger, R., Hainfellner, J.A., Baumann, B., Langs, G., Woehrer, A.: The digital brain tumour atlas, an open histopathol-ogy resource [data set] (2022). https://doi.org/10.25493/WQ48-ZGX , https: //doi.org/10.25493/WQ48-ZGX 
+
+73. Sablayrolles, A., Douze, M., Schmid, C., Jégou, H.: Spreading vectors for similar-ity search. In: International Conference on Learning Representations (2019) 74. Saillard, C., Jenatton, R., Llinares-López, F., Mariet, Z., Cahané, D., Durand, E., Vert, J.P.: H-optimus-0 (2024), https://github.com/bioptimus/releases/ tree/main/models/h-optimus/v0 
+
+75. Sammut, S.J.: Multi-omic machine learning predictor of breast cancer therapy re-sponse (2022). https://doi.org/10.5281/zenodo.6337925 , https://doi.org/ 10.5281/zenodo.6337925 
+
+76. Shaikovski, G., Casson, A., Severson, K., Zimmermann, E., Wang, Y.K., Kunz, J.D., Retamero, J.A., Oakley, G., Klimstra, D., Kanan, C., et al.: Prism: A multi-modal generative foundation model for slide-level histopathology. arXiv preprint arXiv:2405.10254 (2024) 77. Shao, D., Chen, R.J., Song, A.H., Runevic, J., Lu, M.Y., Ding, T., Mahmood, F.: Do multiple instance learning models transfer? In: Proceedings of the 42nd International Conference on Machine Learning. Proceedings of Machine Learning Research, vol. 267, pp. 54219–54238. PMLR (2025), https://proceedings.mlr. press/v267/shao25a.html 
+
+78. Shao, Z., Bian, H., Chen, Y., Wang, Y., Zhang, J., Ji, X., et al.: Transmil: Trans-former based correlated multiple instance learning for whole slide image classifi-cation. Advances in neural information processing systems 34 , 2136–2147 (2021) 79. Siméoni, O., Vo, H.V., Seitzer, M., Baldassarre, F., Oquab, M., Jose, C., Khali-dov, V., Szafraniec, M., Yi, S., Ramamonjisoa, M., et al.: Dinov3. arXiv preprint arXiv:2508.10104 (2025) 80. Skrede, O.J., De Raedt, S., Kleppe, A., Hveem, T.S., Liestøl, K., Maddison, J., Askautrud, H.A., Pradhan, M., Nesheim, J.A., Albregtsen, F., et al.: Deep learn-ing for prediction of colorectal cancer outcome: a discovery and validation study. The Lancet 395 (10221), 350–360 (2020) 81. Sophont AI, MedARC: How to train a state-of-the-art pathology foundation model with $1.6k. https://sophontai.com/blog/openmidnight (2025) 82. Szegedy, C., Vanhoucke, V., Ioffe, S., Shlens, J., Wojna, Z.: Rethinking the in-ception architecture for computer vision. In: 2016 IEEE Conference on Com-puter Vision and Pattern Recognition (CVPR). pp. 2818–2826. IEEE (Jun 2016). 
+
+https://doi.org/10.1109/cvpr.2016.308 , http://dx.doi.org/10.1109/ CVPR.2016.308 
+
+83. Tang, W., Zhou, F., Huang, S., Zhu, X., Zhang, Y., Liu, B.: Feature re-embedding: Towards foundation model-level performance in computational pathology. In: Pro-ceedings of the IEEE/CVF conference on computer vision and pattern recogni-tion. pp. 11343–11352 (2024) 84. Touvron, H., Cord, M., Sablayrolles, A., Synnaeve, G., Jegou, H.: Going deeper with image transformers. In: 2021 IEEE/CVF International Conference on Com-22 Kotp et al. puter Vision (ICCV). pp. 32–42. IEEE (Oct 2021). https://doi.org/10.1109/ iccv48922.2021.00010 , http://dx.doi.org/10.1109/ICCV48922.2021.00010 
+
+85. Vaidya, A., Zhang, A., Jaume, G., Song, A.H., Ding, T., Wagner, S.J., Lu, M.Y., Doucet, P., Robertson, H., Almagro-Perez, C., Chen, R.J., ElHarouni, D., Ayoub, G., Bossi, C., Ligon, K.L., Gerber, G., Le, L.P., Mahmood, F.: Molecular-driven foundation model for oncologic pathology. arXiv preprint arXiv:2501.16652 (2025) 86. Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A.N., Kaiser, Ł., Polosukhin, I.: Attention is all you need. In: Advances in neural infor-mation processing systems. vol. 30 (2017) 87. Vorontsov, E., Bozkurt, A., Casson, A., Shaikovski, G., Zelechowski, M., Liu, S., Severson, K., Zimmermann, E., Hall, J., Tenenholtz, N., et al.: Virchow: A million-slide digital pathology foundation model. arXiv preprint arXiv:2309.07778 (2023) 88. Wang, T., Isola, P.: Understanding contrastive representation learning through alignment and uniformity on the hypersphere. In: International Conference on Machine Learning. pp. 9929–9939. PMLR (2020) 89. Wang, X., Zhao, J., Marostica, E., Yuan, W., Jin, J., Zhang, J., Li, R., Tang, H., Wang, K., Li, Y., et al.: A pathology foundation model for cancer diagnosis and prognosis prediction. Nature 634 (8035), 970–978 (2024) 90. Wei, J., Tay, Y., Bommasani, R., Raffel, C., Zoph, B., Borgeaud, S., Yogatama, D., Bosma, M., Zhou, D., Metzler, D., et al.: Emergent abilities of large language models. arXiv preprint arXiv:2206.07682 (2022) 91. Wei, J.W., Tafe, L.J., Linnik, Y.A., Vaickus, L.J., Tomita, N., Hassanpour, S.: Pathologist-level classification of histologic patterns on resected lung adenocarci-noma slides with deep neural networks. Scientific reports 9(1), 1–8 (2019) 92. Wei, J., Suriawinata, A., Ren, B., Liu, X., Lisovsky, M., Vaickus, L., Brown, C., Baker, M., Tomita, N., Torresani, L., Wei, J., Hassanpour, S.: A petri dish for histopathology image analysis. In: International Conference on Artificial Intelli-gence in Medicine. pp. 11–24. Springer (2021) 93. Wilkinson, S., Ye, H., Karzai, F., Harmon, S.A., Terrigino, N.T., VanderWeele, D.J., Bright, J.R., Atway, R., Trostel, S.Y., Carrabba, N.V., Whitlock, N.C., Walker, S.M., Lis, R.T., Sater, H.A., Capaldo, B.J., Madan, R.A., Gulley, J.L., Chun, G., Merino, M.J., Pinto, P.A., Salles, D.C., Kaur, H.B., Lotan, T.L., Ven-zon, D.J., Choyke, P.L., Turkbey, B., Dahut, W.L., Sowalsky, A.G.: Nascent prostate cancer heterogeneity drives evolution and resistance to intense hormonal therapy. medRxiv (2020). https://doi.org/10.1101/2020.09.29.20199711 ,
+
+https://www.medrxiv.org/content/10.1101/2020.09.29.20199711v1 
+
+94. Xiang, J., Wang, X., Zhang, X., Xi, Y., Eweje, F., Chen, Y., Li, Y., Bergstrom, C., Gopaulchan, M., Kim, T., Yu, K.H., Willens, S., Olguin, F.M., Nirschl, J.J., Neal, J., Diehn, M., Yang, S., Li, R.: A vision–language foundation model for precision oncology. Nature (2025) 95. Xiang, J., Zhang, J.: Exploring low-rank property in multiple instance learning for whole slide image classification. In: International Conference on Learning Rep-resentations (2023) 96. Xu, H., Usuyama, N., Bagga, J., Zhang, S., Rao, R., Naumann, T., Wong, C., Gero, Z., González, J., Gu, Y., et al.: A whole-slide foundation model for digital pathology from real-world data. Nature 630 (8015), 181–188 (2024) 97. Xu, H., Usuyama, N., Bagga, J., Zhang, S., Rao, R., Naumann, T., Wong, C., Gero, Z., González, J., Gu, Y., Xu, Y., Wei, M., Wang, W., Ma, S., Wei, F., Yang, J., Li, C., Gao, J., Rosemon, J., Bower, T., Lee, S., Weerasinghe, R., Wright, B.J., Robicsek, A., Piening, B., Bifulco, C., Wang, S., Poon, H.: A whole-slide foundation model for digital pathology from real-world data. Nature (2024) MOOZY: A Patient-First Foundation Model for Computational Pathology 23 98. Xu, Y., Wang, Y., Zhou, F., Ma, J., Jin, C., Yang, S., Li, J., Zhang, Z., Zhao, C., Zhou, H., Li, Z., Lin, H., Wang, X., Wang, J., Han, A., Chan, R.C.K., Liang, L., Zhang, X., Chen, H.: A multimodal knowledge-enhanced whole-slide pathology foundation model. Nature Communications 16 , 11406 (2025) 99. Yan, F., Wu, J., Li, J., Wang, W., Lu, J., Chen, W., Gao, Z., Li, J., Yan, H., Ma, J., et al.: Pathorchestra: A comprehensive foundation model for com-putational pathology with over 100 diverse clinical-grade tasks. arXiv preprint arXiv:2503.24345 (2025) 100. Zbontar, J., Jing, L., Misra, I., LeCun, Y., Deny, S.: Barlow twins: Self-supervised learning via redundancy reduction. In: International Conference on Machine Learning. pp. 12310–12320. PMLR (2021) 101. Zhang, A., Jaume, G., Vaidya, A., Ding, T., Mahmood, F.: Accelerating data processing and benchmarking of ai models for pathology. arXiv preprint arXiv:2502.06750 (2025) 102. Zhang, H., Meng, Y., Zhao, Y., Qiao, Y., Yang, X., Coupland, S.E., Zheng, Y.: DTFD-MIL: Double-tier feature distillation multiple instance learning for histopathology whole slide image classification. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 18802–18812 (2022) 103. Zhou, J., Wei, C., Wang, H., Shen, W., Xie, C., Yuille, A., Kong, T.: ibot: Image bert pre-training with online tokenizer. arXiv preprint arXiv:2111.07832 (2021) 104. Zhu, M., Ren, B., Richards, R., Suriawinata, M., Tomita, N., Hassanpour, S.: Development and evaluation of a deep neural network for histologic classification of renal cell carcinoma on biopsy and surgical resection slides. Scientific reports 
+
+11 (1), 1–9 (2021) 105. Zimmermann, E., Vorontsov, E., Viret, J., Casson, A., Zelechowski, M., Shaikovski, G., Tenenholtz, N., Hall, J., Klimstra, D., Yousfi, R., et al.: Virchow2: Scaling self-supervised mixed magnification models in pathology. arXiv preprint arXiv:2408.00738 (2024) 24 Kotp et al.                                     
+
+> Table 4: Total number of patches extracted from the full dataset at each magnification level using non-overlapping 224 ×224 tiling. Magnification Level Number of Slides Number of Patches 20X 53,286 449,943,195 40X 23,848 1,224,330,326 Total 77,134 1,674,273,521
+> Table 5: Distribution of the number of classes ( e.g ., labels) per classification task.
+> Number of Classes 2345678910 12 30 46
+> Number of Tasks 148 36 5512122111
+
+A Dataset Statistics 
+
+Table 4 reports slide counts and extracted patch totals at 20 × and 40 × mag-nifications after segmenting tissues from the collected slides. Table 5 reports class-cardinality across classification tasks, where most tasks are low-cardinality and a smaller subset has higher-cardinality label spaces. 
+
+B Task Preparation 
+
+B.1 Training Task Distribution by Anatomical Site and Category 
+
+Table 6 reports the full distribution of training tasks across anatomical sites and associated task categories. 
+
+B.2 Stage 2 Sparse Supervision Structure 
+
+Stage 2 supervision is inherently sparse because each supervised case is only labeled for the subset of tasks available in its source cohort. Let M ∈ { 0, 1}N ×T
+
+denote the case-task supervision matrix, where Mi,t = 1 if supervised case ci has a valid label for task Tt and Mi,t = 0 otherwise. For slide-level datasets without patient identifiers, the corresponding supervised case contains a single slide. For each task during training, loss is computed only on labeled cases, and per-batch optimization averages only over active tasks with usable labels (as defined in Section 3). 
+
+B.3 TCGA Task Preparation 
+
+WSIs were collected from The Cancer Genome Atlas (TCGA) through the Ge-nomic Data Commons (GDC) portal [58]. We first linked every TCGA slide to its case identifier, then harmonized case-level clinical and molecular attributes. MOOZY: A Patient-First Foundation Model for Computational Pathology 25 
+
+Table 6: Distribution of training tasks across anatomical sites and task categories. 
+
+Anatomical Site Datasets Tasks Slides Supervised Cases Task Categories 
+
+Multi-organ 3 5 21,832 18,702 Cancer/Organ Classification, Malignancy Detec-tion, Procedure Classification Prostate 4 11 13,282 12,823 Grading, Survival Prediction, Treatment Re-sponse, Tumor Detection Colon 5 35 6,990 6,977 Grading, Immune Classification, MSI Status, Ma-lignancy Detection, Mutation Prediction, Sub-type Classification, Survival Prediction Breast 8 27 4,524 4,062 Biomarker Status, Grading, Immune Classifi-cation, Invasion Detection, Lesion Detection, Metastasis Detection, Mutation Prediction, Pro-cedure Classification, Subtype Classification, Sur-vival Prediction, Tumor Classification Brain 4 19 4,266 3,126 Grading, Immune Classification, Mutation Pre-diction, Subtype Classification, Survival Predic-tion Kidney 6 27 3,037 2,853 Grading, Immune Classification, Mutation Pre-diction, Subtype Classification, Survival Predic-tion Lung 8 33 2,801 2,280 Histologic Pattern, Immune Classification, Malig-nancy Detection, Mutation Prediction, Subtype Classification, Survival Prediction Stomach 2 20 1,912 1,886 Grading, Lesion Detection, Malignancy Detec-tion, Mutation Prediction, Subtype Classifica-tion, Survival Prediction Cervix 3 10 1,500 1,490 Grading, Invasion Detection, Procedure Classifi-cation, Survival Prediction Bladder 2 17 1,325 1,254 Grading, Invasion Detection, Mutation Predic-tion, Subtype Classification, Survival Prediction, Tumor Detection Uterus 3 35 751 656 Grading, Immune Classification, Mutation Pre-diction, Subtype Classification, Survival Predic-tion Head & Neck 2 11 731 558 Grading, Immune Classification, Mutation Pre-diction, Survival Prediction Soft Tissue 1 6 600 254 Mutation Prediction, Subtype Classification, Sur-vival Prediction Thyroid 1 5 519 506 Mutation Prediction, Survival Prediction Skin 1 14 475 433 Mutation Prediction, Survival Prediction Pancreas 2 10 451 288 Grading, Immune Classification, Mutation Pre-diction, Survival Prediction Adrenal Gland 2 8 423 232 Survival Prediction Liver 2 12 418 404 Grading, Mutation Prediction, Survival Predic-tion Testis 1 5 303 225 Subtype Classification, Survival Prediction Ovary 2 5 266 156 Immune Classification, Survival Prediction Thymus 1 4 181 121 Subtype Classification, Survival Prediction Esophagus 1 6 158 156 Grading, Subtype Classification, Survival Predic-tion Eye 1 4 80 80 Mutation Prediction, Survival Prediction Lymph Node 1 4 44 44 Survival Prediction 
+
+We include 240 TCGA tasks (117 classification, 123 survival), corresponding to 72.1% of all Stage 2 tasks and 96.1% of all survival tasks. TCGA supervision spans 32 TCGA projects plus one pan-cancer pooled task, with 8 slide-level tasks and 232 case-level tasks. Across all TCGA tasks, the labeled union covers 9,732 unique cases and 11,857 unique slides. Survival endpoints include overall survival (OS), disease-specific survival (DSS), disease-free interval (DFI), and progression-free interval (PFI). Table 7 summarizes task families and cohort coverage. 
+
+Pan-cancer cancer-type classification (slide-level). We built a pooled TCGA benchmark with 11,185 slides and got 46 cancer subtypes labels from [20]. Labels are defined at slide level and retain cohort-specific subtype granularity. 
+
+Primary diagnosis classification (slide-level). We derived cohort-specific primary-diagnosis tasks from diagnosis records marked as primary disease, ex-cluding missing and non-informative values. We required at least two classes 26 Kotp et al. Case 𝒯 ! 𝒯 " 𝒯 # 𝒯 $
+
+c!
+
+c"
+
+c#
+
+. . . 
+
+> . . .
+
+. . . 
+
+. . . 
+
+. . . 
+
+Fig. 7: Schematic of sparse case-task supervision in Stage 2. Rows denote cases and columns denote tasks. A check mark indicates an available supervision target for that case-task pair; a cross indicates missing supervision. 
+
+Table 7: TCGA task families used in the supervised training run. Unique case/slide counts are union counts within each family and are not additive across rows.                                           
+
+> Task Family Tasks Level Cohorts Label Space Unique Cases Unique Slides
+> Pan-cancer cancer type 1Slide Pooled TCGA 46 classes 9,148 11,185 Primary diagnosis 7Slide 7 cohorts 2 to 3 classes 2,284 2,284 Tumor grade 10 Case 10 cohorts G1 to G4 (2 to 4 observed classes) 3,274 3,790 Mutation status 99 Case 20 cohorts Binary (wildtype vs mutant) 7,955 9,619 Survival endpoints 123 Case 32 cohorts (DFI in 27) Adaptive discrete-hazard bins (2 to 16 bins) 9,578 11,675 TCGA union (all families) 240 Mixed 32 + pooled Mixed 9,732 11,857
+
+with at least 25 cases per class. Seven cohorts satisfied these criteria and are detailed in Table 8. 
+
+Tumor grade classification (case-level). We extracted cohort-specific tumor-grade labels from TCGA diagnosis metadata after harmonizing grade strings into canonical G1 to G4 categories. A task was retained only when at least two classes remained after cleaning and each class had sufficient support (minimum 10 cases per class). 
+
+Survival prediction (case-level). We used four TCGA-CDR endpoints: overall survival (OS), disease-specific survival (DSS), disease-free interval (DFI), and progression-free interval (PFI). For each cohort-endpoint pair, event indi-cators and follow-up times were filtered to valid entries, then modeled with a discrete-hazard objective using task-specific quantile time bins. The bin count was adaptive with target 8 bins and bounds of 2 to 16 bins. OS, DSS, and PFI were available in all 32 cohorts, while DFI was available in 27 cohorts (missing in TCGA-GBM, TCGA-MESO, TCGA-SKCM, TCGA-THYM, and TCGA-UVM). 
+
+Mutation status prediction (case-level). We constructed binary wild-type/mutant tasks for 25 driver genes (ALK, APC, ARID1A, ATRX, BAP1, BRAF, CDKN2A, CTNNB1, EGFR, ERBB2, FBXW7, IDH1, IDH2, KRAS, MET, NF1, PBRM1, PIK3CA, PTEN, RB1, SETD2, SMAD4, TERT, TP53, VHL). Cohort-gene tasks were retained only when both classes met minimum support (10 cases per class), yielding 99 mutation tasks across 20 cohorts. MOOZY: A Patient-First Foundation Model for Computational Pathology 27                   
+
+> Table 8: Included TCGA cohorts and retained primary-diagnosis classes.
+> Cohort Organ Primary diagnosis classes (count) Samples
+> TCGA-BRCA Breast Infiltrating duct carcinoma (710), Lobular carcinoma (182) 892 TCGA-COAD Colorectal Adenocarcinoma (378), Mucinous adenocarcinoma (59) 437 TCGA-ESCA Esophagus Squamous cell carcinoma (82), Adenocarcinoma (65) 147 TCGA-SARC Soft tissue Leiomyosarcoma (76), Dedifferentiated liposarcoma (41), Undifferentiated sarcoma (15) 132 TCGA-TGCT Testis Seminoma (130), Mixed germ cell tumor (25), Embryonal carcinoma (15) 170 TCGA-THYM Thymus Thymoma type AB (29), Thymoma type B2 (23) 52 TCGA-UCEC Uterus Endometrioid adenocarcinoma (350), Serous cystadenocarcinoma (104) 454
+
+For case-level tasks (tumor grade, survival, mutation), labels are defined at patient level and linked to all slides from that patient. 
+
+B.4 REG task preparation 
+
+REG dataset pairs whole-slide image identifiers with short, templated pathol-ogy report text. Each report follows a consistent schema of the form “organ, procedure; histologic diagnosis[, grade]” , which enables a deterministic decompo-sition into organ , procedure , and diagnostic content . The corpus contains 8,494 report–slide pairs spanning breast, prostate, stomach, lung, bladder, colorectal, and cervix specimens. After validation by checking if all of them follow the same structure, 8,493 records were retained, a single malformed entry lacking the re-quired delimiter was excluded. This standardized structure permits rule-based la-bel extraction, avoiding variability and potential bias introduced by LLM-based parsing, and yielding stable label definitions anchored to the original clinical phrasing. 
+
+Normalization and parsing. Before extracting labels, we unified organ names to a single vocabulary (e.g., urinary bladder →bladder , uterine cervix →cervix ,
+
+nipple →breast ). For tasks spanning multiple organs, colon and rectum were merged into a single colorectal category, as they share the same diagnostic crite-ria. Each report was then split into its three fields using the fixed delimiters, and all labels were derived solely from explicit wording in those fields, never inferred. 
+
+Labeling principle. Label assignment was deliberately conservative: a la-bel was assigned only when the report contained clear, unambiguous textual evidence, and the sample was excluded from that task otherwise. For yes/no at-tributes, “Present” required an explicit positive statement, and “Absent” required 28 Kotp et al. 
+
+either an explicit negation or a diagnosis that logically rules out the attribute. This conservative policy means each task has its own subset of samples. Slides whose reports lack sufficient evidence for a given task simply do not appear in that task’s dataset. Figure 8 summarizes the resulting 36 tasks by class count, task type, and label structure. Below we describe the tasks constructed for each organ. 
+
+Breast (7 tasks). We extracted seven tasks from breast reports. Histologic type identifies the specific category of breast tissue abnormality (e.g., invasive carcinoma of no special type, invasive lobular carcinoma, ductal carcinoma in situ (DCIS), fibroadenoma, phyllodes tumor). When both an invasive component and an in-situ component are mentioned, the invasive component takes precedence. 
+
+DCIS presence indicates whether a pre-invasive lesion confined to the milk ducts is mentioned. It is only marked Absent for cases where invasive carcinoma is confirmed with no DCIS mentioned. Overall histologic grade , tubule formation ,
+
+nuclear grade , and mitotic score are the four components of the Nottingham grading system, a standardized scoring scheme that quantifies how abnormal the cancer cells look and how fast they are dividing. Each is labeled only when explicitly stated in the report. Procedure type records the biopsy method (core-needle, sono-guided core, mammotome, or biopsy NOS) from the report header. 
+
+Prostate (5 tasks). We extracted five tasks from prostate reports. Glea-son score is the sum of the two most prevalent cancer growth patterns in the sample, each rated 1–5 by the pathologist, where higher scores indicate more aggressive cancer. Primary and secondary Gleason pattern are the individual pattern scores that make up the total. ISUP grade group is a simplified 1–5 scale derived from the Gleason score and used internationally to communicate prostate cancer severity. Tumor presence is marked Present when cancer termi-nology (carcinoma/adenocarcinoma) appears and Absent only when the report explicitly states no tumor was found. All four grading labels are assigned only when the report explicitly provides the values. 
+
+Stomach (5 tasks). We extracted five tasks from stomach reports. Histo-logic type classifies the tissue finding (e.g., adenocarcinoma, tubular adenoma, chronic gastritis, MALT lymphoma, gastrointestinal stromal tumor). Differen-tiation grade captures how closely cancer cells resemble normal stomach cells (well / moderately / poorly differentiated). It is assigned only for adenocarci-noma cases where the report explicitly states the grade. Adenoma dysplasia grade 
+
+rates how abnormal the cells in a benign polyp look (low vs. high grade), as-signed only for explicitly stated adenomas. Intestinal metaplasia flags a specific pre-cancerous change in the stomach lining, labeled Present only when explicitly mentioned and Absent only when gastritis is stated without it. Malignancy status 
+
+uses a three-way scheme where malignant is assigned for carcinoma/lymphoma, 
+
+pre-malignant for adenoma or high-grade dysplasia, and benign for gastritis or polyp, all based on explicit wording. Cases without clear cues are excluded. 
+
+Lung (3 tasks). We extracted three tasks from lung reports. Histologic type 
+
+distinguishes the three most common lung cancer subtypes (adenocarcinoma, squamous cell carcinoma, small-cell carcinoma) when explicitly named. Small-MOOZY: A Patient-First Foundation Model for Computational Pathology 29 
+
+cell vs. non-small-cell separates small-cell lung cancer, a fast-growing subtype requiring different treatment, from all other types, based on explicit terminology. 
+
+Malignancy status is labeled only from explicit malignant or benign cues. 
+
+Bladder (5 tasks). We extracted five tasks from bladder reports. Tumor presence is labeled Present when carcinoma terminology appears and Absent 
+
+when the report explicitly states no tumor. Invasiveness distinguishes whether tumor cells are confined to the inner lining (non-invasive or in situ) versus having grown into deeper tissue layers (invasive). Invasion depth adds finer granularity: no invasion, invasion into the connective tissue just below the lining (subepithe-lial), or invasion into the muscle wall (muscularis propria), a critical distinction for treatment decisions. Papillary grade classifies non-invasive papillary tumors (finger-like growths from the bladder wall) as low or high grade based on explicit wording. Consolidated tumor type integrates all of the above into a single label, with an explicit “no tumor” statement taking precedence. 
+
+Colorectal (4 tasks). We extracted four tasks from colon and rectum re-ports. Histologic type identifies the tissue finding (e.g., adenocarcinoma, tubular adenoma, sessile serrated lesion, hyperplastic polyp, chronic colitis). Differen-tiation grade and adenoma dysplasia grade follow the same rules as stomach: assigned only for the relevant tissue type and only when explicitly stated. Malig-nancy status uses the same malignant/pre-malignant/benign scheme as stomach. 
+
+Cervix (4 tasks). We extracted four tasks from cervix reports. CIN grade 
+
+(cervical intraepithelial neoplasia, stages 1–3) and SIL grade (squamous intraep-ithelial lesion, low or high) are two overlapping grading systems for pre-cancerous changes in the cervix. Both are assigned only in non-invasive contexts and are suppressed if invasive cancer is mentioned. Invasive vs. pre-invasive distinguishes cancer that has breached the cervical lining from changes still confined within it. Procedure type records the biopsy method (e.g., colposcopic or punch biopsy) from the report header. 
+
+Cross-organ tasks (3 tasks). Beyond the organ-specific tasks, we con-structed three tasks that pool samples across all organs. Organ classification 
+
+predicts which of the seven tissue sites a slide comes from, using the normalized organ vocabulary (with colon and rectum merged into colorectal). Procedure classification predicts the biopsy method using a unified taxonomy spanning all organs (endoscopic, transurethral resection, colposcopic, colonoscopic, sono-guided, core, punch, mammotome, biopsy NOS). A label is assigned only when the procedure is explicitly named in the report header. Global malignancy de-tection applies the three-way malignant/pre-malignant/benign scheme across all organs: malignant for carcinoma, adenocarcinoma, or lymphoma, pre-malignant 
+
+for adenoma or carcinoma in situ (unless invasion is explicitly mentioned), and 
+
+benign for explicit benign or no-tumor statements and non-malignant findings such as inflammation or hyperplasia. As with all other tasks, samples without unambiguous textual evidence are excluded. Figure 9 shows the class distribu-tions for these three tasks. 30 Kotp et al. Binary 
+
+> (12 tasks)
+> 33.3%
+> Multi-class
+> (24 tasks)
+> 66.7%
+
+(a) Binary vs Multi-class         
+
+> 2345678910
+
+Number of Classes  
+
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> Number of Tasks
+> 12
+> 15
+> 1
+> 3
+> 11
+> 2
+> 1
+
+(b) Distribution of Class Counts 
+
+> Ordinal
+> (13 tasks)
+> 36.1%
+> Nominal
+> (23 tasks)
+> 63.9%
+
+(c) Ordinal vs Nominal 
+
+Fig. 8: Characterization of REG classification tasks. (a) Proportion of binary (33.3%, 12 tasks) versus multi-class (66.7%, 24 tasks) tasks. (b) Distribution of class counts per task, with the majority having 2 or 3 classes. (c) Proportion of ordinal tasks (36.1%, 13 tasks, e.g ., grading) versus nominal tasks (63.9%, 23 tasks, e.g ., subtype classification). 10.2%   
+
+> 22.6%
+> 7.3%
+> 11.1% 10.6%
+> 20.8%
+> 17.4%
+> Organ Classification
+> (N=8,491)
+> Bladder (868)
+> Breast (1,918)
+> Cervix (621)
+> Colorectal (939)
+> Lung (898)
+> Prostate (1,770)
+> Stomach (1,477)
+> 23.2%
+> 71.5%
+> 5.2%
+> Malignancy Detection
+> (N=7,430)
+> Benign (1,724)
+> Malignant (5,316)
+> Pre-malignant (390)
+> 36.7%
+> 11.1% 5.6%
+> 5.7%
+> 17.4%
+> 11.3%
+> 10.2%
+> Procedure Classification
+> (N=8,489)
+> Biopsy NOS (3,116)
+> Colonoscopic biopsy (940)
+> Colposcopic biopsy (472)
+> Core biopsy (486)
+> Endoscopic biopsy (1,476)
+> Mammotome biopsy (29)
+> Punch biopsy (144)
+> Sono-guided biopsy (958)
+> Transurethral resection (868)
+
+Multi-Organ Task Distributions 
+
+Fig. 9: Class distributions for the three cross-organ REG tasks. Organ Classification 
+
+(N =8 ,491 ) spans seven organs, with breast (22.6%) and prostate (20.8%) as the largest groups. Malignancy Detection (N =7 ,430 ) exhibits a strong class imbalance, with 71.5% malignant cases. Procedure Classification (N =8 ,489 ) covers nine biopsy types, with biopsy NOS (36.7%) being the most common. 
+
+C Implementation Details 
+
+C.1 Spatial Grid Construction 
+
+For patches at level-0 coordinates (xi, y i), let (xmin , y min ) be the minimum co-ordinates and ∆ the uniform patch spacing. The grid position (r, c ) for patch i
+
+is: 
+
+r =
+
+ yi − ymin 
+
+∆ + 0 .5
+
+
+
+, c =
+
+ xi − xmin 
+
+∆ + 0 .5
+
+
+
+. (10) Grid positions without tissue are filled with zero vectors, and a binary validity mask V ∈ { 0, 1}H×W tracks tissue presence. MOOZY: A Patient-First Foundation Model for Computational Pathology 31 
+
+C.2 Multi-Scale Window Validity Constraint 
+
+For a crop C of size S × S with corresponding validity mask VC, the minimum valid-token constraint is:  P 
+
+> r,c
+
+VC,r,c 
+
+S2 ≥ ρmin . (11) Crops failing this criterion are resampled up to a fixed maximum number of attempts. 
+
+C.3 Block Masking Algorithm 
+
+Within each batch, a fraction pmask of global crops are selected for masking. Their mask ratios are distributed as γ1, . . . , γ n = linspace( γmin , γ max , n ) and randomly shuffled across the selected crops, ensuring uniform coverage of the masking spectrum within each batch. For each selected global crop Cgj with assigned ratio γj , a binary mask Mj ∈{0, 1}Sg ×Sg is constructed by iteratively placing rectangular blocks with aspect ratios drawn log-uniformly from [αmin , α max ] at random spatial positions, until the target count of masked valid tokens is reached: 
+
+|{ (r, c ) : Mj,r,c = 1 ∧ Vj,r,c = 1 }| = ⌊γj · |{ (r, c ) : Vj,r,c = 1 }|⌋ . (12) Any remaining budget after block placement is filled by randomly selecting in-dividual valid tokens. 
+
+C.4 Adaptive Token Capping (Stage 2) 
+
+When the number of remaining valid tokens Vi,j (after dropout) exceeds Kmax ,we apply stratified random sampling to cap the token count while preserving whole-slide spatial coverage. Let K = Kmax and partition the valid-rank indices 
+
+{0, . . . , V i,j − 1} (in flattened raster order) into K equal-width bins, where sb
+
+and eb denote the start and end rank of bin b, respectively: 
+
+sb =
+
+ b V i,j 
+
+K
+
+
+
+, eb =
+
+ (b + 1) Vi,j 
+
+K
+
+
+
+− 1, b = 0 , . . . , K − 1. (13) For each bin b, one offset is drawn uniformly: 
+
+ub ∼ Unif {0, . . . , max(1 , e b − sb + 1) − 1} , (14) and rank rb = sb + ub is retained. The final retained set {rb}K−1 
+
+> b=0
+
+is mapped back to original valid-token indices, yielding exactly one sampled token per bin. 32 Kotp et al. 
+
+C.5 Survival Bin Selection and Loss 
+
+For each survival task t, let Et denote the number of observed (uncensored) events in the training set. The provisional number of discrete time bins is chosen adaptively from Et using the configured bounds (Bmin , B target , B max ):
+
+ˆBt =
+
+
+
+max( Bmin , max(1 , E t)) , Et < B target ,
+
+min 
+
+
+
+Bmax , B target +
+
+ Et − Btarget 
+
+3 Btarget 
+
+ 
+
+, Et ≥ Btarget . (15) This rule limits the number of bins when few events are available and allows the discretization to grow gradually as the event count increases. To construct the time discretization, we place ˆBt − 1 equally-spaced quantile cut-points of the observed event-time distribution in the training set, partitioning the time axis into ˆBt candidate intervals. When event times are tied, multiple cut-points may coincide and are merged, so the effective bin count Bt ≤ ˆBt
+
+reflects the number of distinct intervals that remain. For sample i, let τ (t) 
+
+> i
+
+denote the observed survival time and let δ(t) 
+
+> i
+
+∈ { 0, 1}
+
+indicate whether the event was observed ( δ(t) 
+
+> i
+
+= 1 ) or censored ( δ(t) 
+
+> i
+
+= 0 ). Let 
+
+j(t) 
+
+> i
+
+∈ { 1, . . . , B t} denote the index of the time bin containing τ (t) 
+
+> i
+
+. The model outputs one logit a(t) 
+
+> i,k
+
+per bin, which is converted to a discrete hazard 
+
+h(t) 
+
+> i,k
+
+= σ(a(t)
+
+> i,k
+
+), k = 1 , . . . , B t. (16) Here, h(t) 
+
+> i,k
+
+represents the conditional probability of experiencing the event in bin k, given survival through all preceding bins. The per-sample negative log-likelihood is then 
+
+ℓ(t) 
+
+> i
+
+=
+
+
+
+−
+
+X
+
+> k<j (t)
+> i
+
+log(1 − h(t)
+
+> i,k
+
+) + log h(t)
+
+> i,j (t)
+> i
+
+ , δ(t) 
+
+> i
+
+= 1 ,
+
+− X
+
+> k≤j(t)
+> i
+
+log(1 − h(t)
+
+> i,k
+
+), δ(t) 
+
+> i
+
+= 0 ,
+
+(17) where the first case corresponds to an observed event in bin j(t) 
+
+> i
+
+, and the second corresponds to right censoring at bin j(t) 
+
+> i
+
+.MOOZY: A Patient-First Foundation Model for Computational Pathology 33 
+
+C.6 Projection Head Formulation 
+
+We provide the exact Stage-1 projection-head parameterization used in Sec. 3. For an input token embedding h ∈ Rd, the head computes: 
+
+u1 = GELU (Wproj  
+
+> 1
+
+h + bproj  
+
+> 1
+
+), (18) 
+
+u2 = GELU (Wproj  
+
+> 2
+
+u1 + bproj  
+
+> 2
+
+), (19) 
+
+u3 = Wproj  
+
+> 3
+
+u2 + bproj 
+
+> 3
+
+∥Wproj  
+
+> 3
+
+u2 + bproj  
+
+> 3
+
+∥2
+
+, (20) 
+
+z = Wproj  
+
+> 4
+
+u3. (21) Here Wproj  
+
+> 1
+
+, Wproj  
+
+> 2
+
+∈ Rdh×d project to hidden dimension dh, Wproj  
+
+> 3
+
+∈ Rdb×dh
+
+maps to bottleneck dimension db before L2 normalization, and Wproj  
+
+> 4
+
+∈ RK×db
+
+is the weight-normalized prototype layer. 
+
+C.7 Task Head Formulations 
+
+For a case embedding ˜h ∈ Rd, task heads use one of two parameterizations. 
+
+Linear head. The linear head applies feature dropout with rate phead before projection: 
+
+gt(˜h) = Wt Dropout phead (˜h) + bt. (22) 
+
+MLP head. The MLP head uses LayerNorm, two hidden linear layers with GELU, and fixed internal dropout: 
+
+gt(˜h) = W3ϕ
+
+
+
+W2ϕ
+
+
+
+W1LN( ˜h)
+
+ 
+
+, ϕ(u) = Dropout 0.25 (GELU( u)) . (23) 
+
+D Augmentation Strategy Visualizations 
+
+The augmentation strategies summarized in Table 10 are visualized in Figure 10. Spatial augmentation improves orientation robustness while preserving morphol-ogy, token dropout regularizes full-slide inputs during Stage 2, and block-based masking defines the masked prediction signal during Stage 1. 
+
+E SSL Pretraining Hyperparameters 
+
+Tables 11 to 15 provide the complete set of hyperparameters used for self-supervised slide encoder pretraining (Stage 1). 
+
+F Semantic Alignment Hyperparameters 
+
+Tables 16 to 19 provide the complete set of hyperparameters used for patient-aware semantic alginment (Stage 2). 34 Kotp et al. 𝜃  ∈ {90 ∘, 180 ∘, 270 ∘}                         
+
+> Horizontal Flip
+> Vertical Flip
+> (a) Spatial Augmentation N!"#$% =22
+> 𝜌 ∼𝒰 0,𝜌 !"#
+> N!"#$% =18 (b) Token Dropout Sample ratio 𝛾 ∼𝒰 𝛾 !"# ,𝛾 !$%
+> target =𝛾 ⋅𝑁 valid
+> Block 1: 2x3
+> Block 2: 3x1
+> +random fill (c) Block-based Masking
+
+Fig. 10: Visual examples of augmentation strategies across training stages. 
+
+G MLP Probe Evaluation Protocol 
+
+Both the slide encoder and MIL comparisons share the same five-fold evalu-ation protocol. Folds are constructed with label stratification. Each fold ap-plies an 80%/20% train-validation split. Model selection is based on best valida-tion weighted F1 score. We report mean ± standard deviation across folds for weighted F1, weighted ROC-AUC, and balanced accuracy. For MLP probe setup in slide encoders comparison (Table 1), we use a three-layer MLP classifier on frozen slide representations: 
+
+LayerNorm(D) → Linear(D, h1) → GELU → Dropout →
+
+Linear(h1, h2) → GELU → Dropout → Linear(h2, C) ,with adaptive hidden sizes h1 = max(4 , round(0 .66 D)) and h2 = max(2 , round(0 .5h1)) .Optimization uses AdamW with learning rate 1×10 −3 and weight decay 1×10 −2.Training runs for 200 epochs with batch size 64, cross-entropy loss, and dropout 0.25 in both hidden blocks. Class-balanced sampling is applied during training. The MLP prob setup in the MIL comparison (Table 2) uses the same MLP head used in slide encoder comparison, and follows the MIL-Lab implementa-tion [77] for different MILs. Each patch encoder is paired with five MIL archi-tectures (MeanMIL, ABMIL, CLAM, DSMIL, and TransMIL). Each reported encoder entry is the arithmetic mean over the five architectures in table Ta-ble 23. Optimization uses AdamW with learning rate 1 × 10 −3 and weight decay 
+
+1 × 10 −2 for 100 epochs with one bag per iteration and class-balanced sampling. For multi-slide patients, patient-level predictions are obtained by averaging per-slide logits (late fusion). 
+
+H Linear Probe Setup and Results 
+
+For completeness, we additionally evaluate different slide encoders and MILs with a multinomial logistic-regression classifier. We use the same five-fold splits as the MLP comparison, with label stratification and case-level grouping and an 80% to 20% train validation split in each fold. The classifier uses L2 regu-larization and selects regularization strength by minimizing validation loss over MOOZY: A Patient-First Foundation Model for Computational Pathology 35 
+
+45 logarithmically spaced values from 10 −6 to 10 5. Optimization uses LBFGS with a maximum of 500 iterations and class-balanced weighting. Performance is reported as mean and standard deviation across folds for weighted F1, weighted ROC-AUC, and balanced accuracy. Task-level linear-probe results across slide encoders and MIL baselines are shown in Tables 20 and 21. For the MIL table, each encoder entry is averaged over MeanMIL, ABMIL, CLAM, DSMIL, and TransMIL. 
+
+I Encoder Parameter Comparison 
+
+Table 22 reports the parameter counts for all compared slide encoders, split into slide-encoder parameters, patch-encoder parameters, and total parameters. This breakdown makes the capacity allocation explicit: most baselines place the majority of parameters in the patch encoder, while MOOZY uses a compar-atively lightweight patch encoder and a compact patient-level slide stack. In absolute model size, MOOZY (85.77M total) is substantially smaller than Giga-Path (1.22B), PRISM (742.06M), Madeleine (400.23M), and TITAN (354.65M). CHIEF has fewer total parameters, but as shown in Table 1, MOOZY provides stronger performance across the held-out tasks. 
+
+J MIL-Specific Task-wise Comparison 
+
+Table 2 in the main paper reports macro-average results over eight held-out tasks. Table 23 provides the full per-task breakdown averaged over all five MIL architec-tures. Tables 24 to 28 provide the full per-method per-task breakdown. Relative to the macro-average, the per-method breakdown shows expected method-level variance, especially on TP53 mutation, BAP1 mutation, and Treatment Re-sponse. MOOZY remains strongest on most task-metric pairs, with limited ex-ceptions (Treatment Response under DSMIL/TransMIL, Histologic Grade ROC-AUC under CLAM). Cross-method differences are smaller for the slide-level IDH Status task than for case-level tasks. 
+
+K Stage 1 Only and MOOZY Task-wise Comparison 
+
+Table 29 provides the complete task-level breakdown for the multi-stage ab-lation discussed in Section 5. The table reports five-fold mean and standard deviation for Stage 1 and MOOZY, together with relative gains for weighted F1, weighted ROC-AUC, and balanced accuracy. MOOZY improves most tasks, with the largest gains on ACVR2A mutation and BAP1 mutation. KRAS mutation remains close between stages, with near-parity in weighted F1 and small de-creases in weighted ROC-AUC and balanced accuracy. Despite this task-specific variation, macro averages remain consistently positive across all three metrics. 36 Kotp et al. 
+
+L Stage 2 Only and MOOZY Task-wise Comparison 
+
+Table 30 provides the complete task-level breakdown for the Stage 2 only versus MOOZY comparison discussed in Section 5. Stage 2 only trains the slide en-coder with multi-task supervision from scratch, without Stage 1 SSL pretraining, and serves as an ablation of the self-supervised initialisation. The table reports five-fold mean and standard deviation for Stage 2 only and MOOZY, together with relative gains for weighted F1, weighted ROC-AUC, and balanced accuracy. MOOZY improves over Stage 2 only on every task-metric pair, confirming that Stage 1 pretraining provides a representation foundation that facilitates down-stream semantic alignment. The largest gains appear on KRAS mutation AUC (+29.03%), Treatment Response (+18.37% F1, +17.07% balanced accuracy), and Residual Cancer Burden (+12.00% F1). IDH Status and Histologic Grade show smaller but consistently positive improvements. 
+
+M Case Aggregator Ablation: Mean Slide Pooling vs MOOZY 
+
+Table 31 provides the complete task-level breakdown for the case-aggregator ab-lation under the MLP probe protocol. The table reports five-fold mean and stan-dard deviation for MOOZY without the case aggregator (slide encoder alone with mean slide pooling) and full MOOZY, together with relative gains for weighted F1, weighted ROC-AUC, and balanced accuracy. Adding the case aggregator improves most tasks, with the largest gains on Residual Cancer Burden. KRAS mutation remains close between settings, with a small decrease in balanced ac-curacy, while IDH Status is near-parity in weighted ROC-AUC. This behavior is expected because IDH Status is a slide-level task, so case-level aggregation has limited opportunity to improve performance. 
+
+N Attention Map Generation and Additional Examples 
+
+Heatmaps are generated from WSIs randomly sampled across the held-out eval-uation datasets. For each selected slide, we produce matched visualizations for all compared encoders using the same attribution objective, so all models are compared on a common relevance scale. Let X = {xi}Ni=1 denote patch tokens for one slide, and let z(m)(X) be the corresponding slide embedding from encoder 
+
+m, where 
+
+m ∈ { CHIEF , Madeleine , PRISM , TITAN , MOOZY }. (24) As the attribution target we use the squared ℓ2 norm of the slide embedding, 
+
+ϕ(m)(X) = 12 z(m)(X) 22
+
+, (25) MOOZY: A Patient-First Foundation Model for Computational Pathology 37 Thumbnail CHIEF Madeleine PRISM TITAN MOOZY (Ours)   
+
+> A19657B0-357F-11EB-AF77-001A7DDA7111 |idh_status=wildtype
+
+Fig. 11: Additional attention map comparison across MOOZY and benchmarked mod-els (example 2). 
+
+which is an encoder-intrinsic scalar that requires no downstream task head, making comparisons across models fair. We assign each patch the Grad ×Input relevance 
+
+s(m) 
+
+> i
+
+= xi ⊙ ∂ϕ (m)
+
+∂x i 1
+
+. (26) Intuitively, s(m) 
+
+> i
+
+measures how much a small perturbation of patch xi shifts 
+
+ϕ(m), so high-score regions are those most influential to the encoder’s slide-level representation. The relevance vector {s(m) 
+
+> i
+
+}Ni=1 is then converted into a display map. We first apply rank normalization 
+
+˜s(m) 
+
+> i
+
+= rank( s(m) 
+
+> i
+
+)
+
+N , (27) then project normalized patch scores to level-0 patch boxes on the thumbnail and average them per pixel where boxes overlap. The resulting maps are displayed as matched slide-level overlays. Further cross-model attention-map comparisons are shown in Figures 11 to 15. Together, these examples illustrate the same qualitative patterns discussed in Section 5 across different slides and cohorts. 
+
+O Embedding Visualization Settings and t-SNE Results 
+
+For all qualitative plots (Figures 6 and 16), t-SNE uses perplexity 25 and 1000 optimization iterations, while UMAP uses neighborhood size 120, minimum dis-38 Kotp et al. Thumbnail CHIEF Madeleine PRISM TITAN MOOZY (Ours)   
+
+> 11CO036-21CAB01C-E968-42CC-9651-1E53C0 |ACVR2A_mutation=positive
+
+Fig. 12: Additional attention map comparison across MOOZY and benchmarked mod-els (example 3). 
+
+tance 0.3, and cosine metric. Effective sample counts are N =2152 for CPTAC cancer type, N =1172 for anatomical site, and N =1280 for TCGA cancer type. The t-SNE layouts below exhibit patterns consistent with the UMAP results in Figure 6: MOOZY shows the clearest cluster separation on CPTAC and TCGA cancer type, TITAN is the strongest on anatomical site, and Madeleine and PRISM show comparatively weaker boundaries. 
+
+P Unsupervised Embedding Geometry Analysis 
+
+We analyze embedding geometry on 3,300 unique slides using two unsupervised diagnostics shown in Figure 17: PCA compactness and bootstrap neighborhood stability. Let X ∈ RN ×D denote the embedding matrix (one row per slide). PCA compactness measures how many orthogonal directions are needed to explain embedding variance. We first center features: 
+
+˜X = X − 1μ⊤, μ = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+xi, (28) then compute covariance: 
+
+C = ˜X⊤ ˜XN − 1 . (29) MOOZY: A Patient-First Foundation Model for Computational Pathology 39 Thumbnail CHIEF Madeleine PRISM TITAN MOOZY (Ours)   
+
+> C3N-03092-22 |Histologic_Grade=Well differentiated
+
+Fig. 13: Additional attention map comparison across MOOZY and benchmarked mod-els (example 4). 
+
+If λ1 ≥ λ2 ≥ · · · ≥ λD are eigenvalues of C, we clamp 
+
+λj ← max( λj , 0)  (30) to avoid numerical negatives, and compute cumulative explained variance: 
+
+V (r) = 
+
+Prj=1 λj
+
+PDj=1 λj
+
+. (31) For each threshold τ ∈ { 0.80 , 0.90 , 0.95 }, compactness is the smallest rank rτ
+
+such that V (rτ ) ≥ τ . Lower rτ indicates less redundancy and more information-efficient embeddings. MOOZY is the most compact encoder, requiring 9/12/17 components at 80%/90%/95% variance, versus TITAN (17/31/56), CHIEF (19/ 38/67), Madeleine (17/37/72), PRISM (22/45/81), and GigaPath (58/123/205). To quantify robustness of local neighborhood structure under sampling per-turbations, we first L2-normalize each embedding: 
+
+ˆxi = xi
+
+max( ∥xi∥2, 10 −12 ) . (32) Using cosine distance, let N full  
+
+> k
+
+(i) be the k nearest neighbors of slide i on the full set (excluding self). For bootstrap repeat b, sample a subset Sb ⊂ { 1, . . . , N }
+
+uniformly without replacement: 
+
+|Sb| = m = round( ρN ), ρ = 0 .8. (33) 40 Kotp et al. Thumbnail CHIEF Madeleine PRISM TITAN MOOZY (Ours)   
+
+> C3N-02149-23 |KRAS_mutation=negative
+
+Fig. 14: Additional attention map comparison across MOOZY and benchmarked mod-els (example 5). 
+
+Recompute neighbors on the subset to obtain N sub  
+
+> k,b
+
+(i) for i ∈ Sb, and define per-slide overlap: 
+
+oi,k,b =
+
+N full  
+
+> k
+
+(i) ∩ N sub  
+
+> k,b
+
+(i)
+
+k , (34) repeat-level overlap: 
+
+¯ok,b = 1
+
+|Sb|
+
+X
+
+> i∈Sb
+
+oi,k,b , (35) and the final stability curve over B repeats: 
+
+μk = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+¯ok,b . (36) Higher μk indicates more stable local structure. In practice, encoders are near-tied on this metric: at k=30 , scores span 0.7998 to 0.8032, and the mean spread across k is only 0.0029 (0.8002 to 0.8031). These unsupervised tests show that MOOZY has the strongest compactness while maintaining stability comparable to all baselines, indicating better representation efficiency without a meaningful robustness tradeoff. MOOZY: A Patient-First Foundation Model for Computational Pathology 41 Thumbnail CHIEF Madeleine PRISM TITAN MOOZY (Ours) 
+
+C3N-01025-22 | Histologic_Grade=Moderately differentiated 
+
+Fig. 15: Additional attention map comparison across MOOZY and benchmarked mod-els (example 6). 
+
+MOOZY TITAN Madeleine PRISM CPTAC cancer type −60 −40 −20 0 20 40 60 
+
+t-SNE 1 
+
+−60 
+
+−40 
+
+−20 
+
+0
+
+20 
+
+40 
+
+60 
+
+> t-SNE 2
+
+CPTAC Pan-Cancer Type Classification 
+
+Cancer type 
+
+BRCA 
+
+CCRCC 
+
+COAD 
+
+GBM 
+
+HNSC 
+
+LSCC 
+
+LUAD 
+
+PDA 
+
+OV 
+
+UCEC −60 −40 −20 0 20 40 60 
+
+t-SNE 1 
+
+−40 
+
+−20 
+
+0
+
+20 
+
+40 
+
+60 
+
+> t-SNE 2
+
+CPTAC Pan-Cancer Type Classification 
+
+Cancer type 
+
+BRCA 
+
+CCRCC 
+
+COAD 
+
+GBM 
+
+HNSC 
+
+LSCC 
+
+LUAD 
+
+PDA 
+
+OV 
+
+UCEC −60 −40 −20 0 20 40 60 
+
+t-SNE 1 
+
+−40 
+
+−20 
+
+0
+
+20 
+
+40 
+
+60 
+
+> t-SNE 2
+
+CPTAC Pan-Cancer Type Classification 
+
+Cancer type 
+
+BRCA 
+
+CCRCC 
+
+COAD 
+
+GBM 
+
+HNSC 
+
+LSCC 
+
+LUAD 
+
+PDA 
+
+OV 
+
+UCEC −40 −20 0 20 40 
+
+t-SNE 1 
+
+−40 
+
+−20 
+
+0
+
+20 
+
+40 
+
+> t-SNE 2
+
+CPTAC Pan-Cancer Type Classification 
+
+Cancer type 
+
+BRCA 
+
+CCRCC 
+
+COAD 
+
+GBM 
+
+HNSC 
+
+LSCC 
+
+LUAD 
+
+PDA 
+
+OV 
+
+UCEC 
+
+Anatomical site −20 −10 0 10 20 
+
+t-SNE 1 
+
+−20 
+
+−10 
+
+0
+
+10 
+
+20 
+
+> t-SNE 2
+
+Pan-Dataset Anatomical Site Embeddings 
+
+Anatomical site 
+
+Brain 
+
+Cervix 
+
+Esophagus 
+
+Prostate 
+
+Soft Tissue 
+
+Testis 
+
+Thymus −30 −20 −10 0 10 20 30 
+
+t-SNE 1 
+
+−30 
+
+−20 
+
+−10 
+
+0
+
+10 
+
+20 
+
+30 
+
+> t-SNE 2
+
+Pan-Dataset Anatomical Site Embeddings 
+
+Anatomical site 
+
+Brain 
+
+Cervix 
+
+Esophagus 
+
+Prostate 
+
+Soft Tissue 
+
+Testis 
+
+Thymus −20 −10 0 10 20 
+
+t-SNE 1 
+
+−30 
+
+−20 
+
+−10 
+
+0
+
+10 
+
+20 
+
+> t-SNE 2
+
+Pan-Dataset Anatomical Site Embeddings 
+
+Anatomical site 
+
+Brain 
+
+Cervix 
+
+Esophagus 
+
+Prostate 
+
+Soft Tissue 
+
+Testis 
+
+Thymus −40 −30 −20 −10 0 10 20 30 40 
+
+t-SNE 1 
+
+−15 
+
+−10 
+
+−5 
+
+0
+
+5
+
+10 
+
+15 
+
+20 
+
+> t-SNE 2
+
+Pan-Dataset Anatomical Site Embeddings 
+
+Anatomical site 
+
+Brain 
+
+Cervix 
+
+Esophagus 
+
+Prostate 
+
+Soft Tissue 
+
+Testis 
+
+Thymus 
+
+TCGA cancer type −40 −20 0 20 40 
+
+t-SNE 1 
+
+−40 
+
+−20 
+
+0
+
+20 
+
+40 
+
+> t-SNE 2
+
+TCGA Pan-Cancer Fine-Grained Classification 
+
+Cancer type 
+
+GBM 
+
+CCRCC 
+
+PRCC 
+
+COAD 
+
+LUAD 
+
+LUSC 
+
+IDC 
+
+HNSC 
+
+CESC 
+
+UEC 
+
+PRAD 
+
+THPA 
+
+MEL 
+
+HCC 
+
+ACC 
+
+BLCA −40 −20 0 20 40 
+
+t-SNE 1 
+
+−40 
+
+−30 
+
+−20 
+
+−10 
+
+0
+
+10 
+
+20 
+
+30 
+
+> t-SNE 2
+
+TCGA Pan-Cancer Fine-Grained Classification 
+
+Cancer type 
+
+GBM 
+
+CCRCC 
+
+PRCC 
+
+COAD 
+
+LUAD 
+
+LUSC 
+
+IDC 
+
+HNSC 
+
+CESC 
+
+UEC 
+
+PRAD 
+
+THPA 
+
+MEL 
+
+HCC 
+
+ACC 
+
+BLCA −40 −20 0 20 40 
+
+t-SNE 1 
+
+−40 
+
+−20 
+
+0
+
+20 
+
+> t-SNE 2
+
+TCGA Pan-Cancer Fine-Grained Classification 
+
+Cancer type 
+
+GBM 
+
+CCRCC 
+
+PRCC 
+
+COAD 
+
+LUAD 
+
+LUSC 
+
+IDC 
+
+HNSC 
+
+CESC 
+
+UEC 
+
+PRAD 
+
+THPA 
+
+MEL 
+
+HCC 
+
+ACC 
+
+BLCA −40 −30 −20 −10 0 10 20 30 
+
+t-SNE 1 
+
+−30 
+
+−20 
+
+−10 
+
+0
+
+10 
+
+20 
+
+30 
+
+> t-SNE 2
+
+TCGA Pan-Cancer Fine-Grained Classification 
+
+Cancer type 
+
+GBM 
+
+CCRCC 
+
+PRCC 
+
+COAD 
+
+LUAD 
+
+LUSC 
+
+IDC 
+
+HNSC 
+
+CESC 
+
+UEC 
+
+PRAD 
+
+THPA 
+
+MEL 
+
+HCC 
+
+ACC 
+
+BLCA 
+
+Fig. 16: t-SNE qualitative comparison across four slide encoders (columns) and three tasks (rows). 42 Kotp et al.  
+
+> Table 9: Cohort-level coverage of TCGA tasks used in training. Columns report the number of tasks per family and the union of labeled cases/slides within each cohort across all included TCGA tasks.
+
+Cohort Surv. Mut. Grade Prim. Dx Total Cases Slides 
+
+TCGA-ACC 4 0 0 0 4 56 227 TCGA-BLCA 4 8 0 0 12 386 457 TCGA-BRCA 4 5 0 1 10 1,062 1,133 TCGA-CESC 4 0 1 0 5 269 279 TCGA-CHOL 4 0 1 0 5 39 39 TCGA-COAD 4 11 0 1 16 451 459 TCGA-DLBC 4 0 0 0 4 44 44 TCGA-ESCA 4 0 1 1 6 156 158 TCGA-GBM 3 1 0 0 4 389 860 TCGA-HNSC 4 2 1 0 7 450 472 TCGA-KICH 4 0 0 0 4 108 120 TCGA-KIRC 4 4 1 0 9 513 519 TCGA-KIRP 4 2 0 0 6 275 299 TCGA-LGG 4 5 1 0 10 491 844 TCGA-LIHC 4 2 1 0 7 365 379 TCGA-LUAD 4 6 0 0 10 478 541 TCGA-LUSC 4 2 0 0 6 478 512 TCGA-MESO 3 1 0 0 4 75 87 TCGA-OV 4 0 0 0 4 105 106 TCGA-PAAD 4 2 1 0 7 183 209 TCGA-PCPG 4 0 0 0 4 176 196 TCGA-PRAD 4 0 0 0 4 403 449 TCGA-READ 4 2 0 0 6 165 166 TCGA-SARC 4 1 0 1 6 254 600 TCGA-SKCM 3 11 0 0 14 433 475 TCGA-STAD 4 10 1 0 15 416 442 TCGA-TGCT 4 0 0 1 5 225 303 TCGA-THCA 4 1 0 0 5 506 519 TCGA-THYM 3 0 0 1 4 121 181 TCGA-UCEC 4 22 1 1 28 505 566 TCGA-UCS 4 0 0 0 4 57 91 TCGA-UVM 3 1 0 0 4 80 80 MOOZY: A Patient-First Foundation Model for Computational Pathology 43 
+
+Table 10: Augmentation strategies used in each training stage. 
+
+Strategy Stage 1 
+
+(SSL) 
+
+Stage 2 
+
+(Alignment) 
+
+Applied to 
+
+Spatial Aug. (Flip, Rotation) ✓ ✓ All crops / full grids Block Masking ✓ ✗ Global crops only Token Dropout ✗ ✓ Full slide grids 
+
+Table 11: Encoder architecture hyperparameters. 
+
+Hyperparameter Value 
+
+Input feature dimension ( dpatch ) 384 Model dimension ( d) 768 Number of attention heads ( H) 12 Number of transformer layers ( D) 6Feed-forward dimension 3072 Number of register tokens ( R) 4MLP dropout rate 0.1 Attention dropout rate 0.0 Stochastic depth max rate 0.1 LayerScale initialization Disabled QK normalization Disabled Learnable ALiBi slopes No (fixed) 
+
+Projection Head 
+
+Hidden dimension 2048 Bottleneck dimension 256 Output dimension ( K) 8192 Weight normalization Enabled (frozen gain) 
+
+Table 12: Multi-crop sampling hyperparameters. 
+
+Hyperparameter Value 
+
+Number of global crops ( G) 2Global crop size ( Sg × Sg ) 20 × 20 tokens Number of local crops ( L) 4Local crop size ( Sl × Sl) 12 × 12 tokens Minimum valid token ratio ( ρmin ) 0.25 Maximum resampling attempts 3
+
+Spatial Augmentations 
+
+Horizontal flip probability ( ph) 0.5 Vertical flip probability ( pv ) 0.5 Rotation probability ( pr ) 0.5 Rotation angles {90 ◦, 180 ◦, 270 ◦}44 Kotp et al. 
+
+Table 13: Block masking hyperparameters. 
+
+Hyperparameter Value 
+
+Masking strategy Block Mask ratio minimum ( γmin ) 0.1 Mask ratio maximum ( γmax ) 0.5 Minimum patches per block 4Maximum patches per block Unlimited Minimum aspect ratio ( αmin ) 0.3 Maximum aspect ratio ( αmax ) 1/0.3 ≈ 3.33 
+
+Per-crop masking probability 0.5 Masking applied to Global crops only 
+
+Table 14: Optimization hyperparameters. 
+
+Hyperparameter Value 
+
+Optimizer AdamW Base learning rate 5 × 10 −4
+
+Reference batch size for LR scaling 256 Minimum learning rate 2 × 10 −6
+
+Learning rate schedule Cosine decay Learning rate warmup epochs 5Weight decay (start) 0.04 Weight decay (end) 0.4 Weight decay schedule Cosine Gradient clipping (max norm) 0.3 Mixed precision BFloat16 
+
+Training Scale 
+
+Micro batch size per GPU 64 Number of GPUs 8Gradient accumulation steps 2Effective batch size 1024 Number of epochs 200 Total optimizer steps 14,400 Training time (GPU-hours) ≈436 MOOZY: A Patient-First Foundation Model for Computational Pathology 45 
+
+Table 15: Self-distillation hyperparameters. 
+
+Hyperparameter Value 
+
+EMA Teacher 
+
+Initial momentum ( μ0) 0.996 Final momentum ( μT ) 1.0 Momentum schedule Cosine 
+
+Temperature 
+
+Student temperature ( τs) 0.1 Teacher CLS temperature (start) 0.04 Teacher CLS temperature (end, τt) 0.07 Teacher patch temperature (start) 0.04 Teacher patch temperature (end, τ patch  
+
+> t
+
+) 0.07 Temperature warmup epochs 30 
+
+Centering 
+
+Center momentum ( λ) 0.9 
+
+Stabilization 
+
+Freeze final projection layer (epochs) 3
+
+Table 16: Architecture hyperparameters for semantic alignment. The slide encoder uses the same architecture as SSL pretraining (Tab. 11), initialized from the pretrained teacher weights. 
+
+Hyperparameter Value 
+
+Case Transformer 
+
+Number of layers ( Dcase ) 3Number of attention heads 12 Feed-forward dimension 3072 
+
+Dropout rate 0.1 LayerScale initialization 10 −5
+
+DropPath max rate Disabled 
+
+[CASE] token initialization std 0.02 
+
+Task Heads 
+
+Head type MLP Head dropout rate 0.1 46 Kotp et al. 
+
+Table 17: Optimization hyperparameters for semantic alignment. 
+
+Hyperparameter Value 
+
+Optimizer AdamW Base learning rate 5 × 10 −5
+
+Minimum learning rate 2 × 10 −7
+
+Learning rate schedule Cosine annealing Warmup steps 0Weight decay 0.4 Gradient clipping (max norm) 0.3 Mixed precision BFloat16 
+
+Training Scale 
+
+Micro batch size per GPU 1 case Number of GPUs 8Gradient accumulation steps 128 Effective batch size 1024 cases Number of epochs 12 Total optimizer steps 600 Training time (GPU-hours) ≈307 
+
+Table 18: Data augmentation hyperparameters for semantic alignment. 
+
+Hyperparameter Value 
+
+Spatial Augmentations 
+
+Horizontal flip probability ( ph) 0.5 Vertical flip probability ( pv ) 0.5 Rotation probability ( pr ) 0.5 Rotation angles {90 ◦, 180 ◦, 270 ◦}
+
+Token Dropout 
+
+Maximum dropout ratio ( ρmax ) 0.1 MOOZY: A Patient-First Foundation Model for Computational Pathology 47 
+
+Table 19: Loss function hyperparameters for semantic alignment. 
+
+Hyperparameter Value 
+
+Classification Tasks 
+
+Label smoothing ( ϵ) 0.03 Class weighting Inverse frequency 
+
+Survival Tasks 
+
+Loss function Discrete-time NLL (hazard) Time bins (min / target / max) 2 / 8 / 16 Class weighting None 
+
+Multi-Task Aggregation 
+
+Task loss weighting Equal (average) 
+
+Validation 
+
+Validation split ratio 0.05 (5%) Stratification By task (class/event) 
+
+Table 20: Linear-probe slide encoder comparison across tasks. 
+
+Task Metric CHIEF Giga-Path PRISM Made-leine TITAN MOOZY (Ours) Residual Cancer Burden F1 0.34 ±0.06 0.32 ±0.05 0.33 ±0.09 0.36 ±0.07 0.34 ±0.09 0.38 ±0.11 
+
+AUC 0.58 ±0.05 0.57 ±0.07 0.61 ±0.03 0.62 ±0.03 0.57 ±0.06 0.66 ±0.05 
+
+Bal. Acc 0.39 ±0.04 0.30 ±0.06 0.32 ±0.02 0.40 ±0.05 0.38 ±0.08 0.44 ±0.07 
+
+TP53 Mut. F1 0.70 ±0.08 0.69 ±0.09 0.77 ±0.07 0.77 ±0.06 0.84 ±0.04 0.80 ±0.06 
+
+AUC 0.80 ±0.09 0.75 ±0.06 0.85 ±0.06 0.85 ±0.06 0.88 ±0.04 0.87 ±0.03 
+
+Bal. Acc 0.70 ±0.07 0.71 ±0.08 0.78 ±0.08 0.78 ±0.05 0.84 ±0.03 0.81 ±0.05 
+
+BAP1 Mut. F1 0.75 ±0.06 0.75 ±0.10 0.71 ±0.11 0.73 ±0.09 0.75 ±0.10 0.78 ±0.05 
+
+AUC 0.67 ±0.14 0.66 ±0.15 0.63 ±0.16 0.69 ±0.14 0.68 ±0.09 0.74 ±0.11 
+
+Bal. Acc 0.60 ±0.19 0.56 ±0.15 0.54 ±0.18 0.60 ±0.19 0.59 ±0.16 0.64 ±0.12 
+
+ACVR2A Mut. F1 0.86 ±0.03 0.69 ±0.13 0.77 ±0.06 0.78 ±0.09 0.81 ±0.06 0.83 ±0.04 
+
+AUC 0.79 ±0.09 0.69 ±0.15 0.81 ±0.11 0.76 ±0.16 0.82 ±0.04 0.89 ±0.07 
+
+Bal. Acc 0.76 ±0.07 0.52 ±0.14 0.68 ±0.15 0.66 ±0.14 0.69 ±0.13 0.78 ±0.10 
+
+Histologic Grade F1 0.63 ±0.03 0.68 ±0.04 0.56 ±0.14 0.62 ±0.07 0.62 ±0.06 0.66 ±0.08 
+
+AUC 0.65 ±0.05 0.77 ±0.06 0.60 ±0.18 0.71 ±0.12 0.64 ±0.06 0.74 ±0.11 
+
+Bal. Acc 0.64 ±0.04 0.69 ±0.04 0.56 ±0.14 0.62 ±0.09 0.63 ±0.07 0.68 ±0.08 
+
+KRAS Mut. F1 0.59 ±0.09 0.71 ±0.07 0.59 ±0.07 0.66 ±0.15 0.72 ±0.08 0.71 ±0.08 
+
+AUC 0.63 ±0.10 0.69 ±0.10 0.59 ±0.07 0.62 ±0.15 0.77 ±0.06 0.73 ±0.07 
+
+Bal. Acc 0.55 ±0.10 0.73 ±0.07 0.58 ±0.06 0.63 ±0.18 0.73 ±0.09 0.71 ±0.09 
+
+IDH Status F1 0.92 ±0.02 0.93 ±0.01 0.89 ±0.02 0.90 ±0.01 0.93 ±0.02 0.95 ±0.02 
+
+AUC 0.96 ±0.01 0.97 ±0.01 0.96 ±0.01 0.96 ±0.01 0.98 ±0.01 0.99 ±0.01 
+
+Bal. Acc 0.91 ±0.02 0.93 ±0.02 0.89 ±0.02 0.90 ±0.02 0.93 ±0.02 0.95 ±0.02 
+
+Treatment Response F1 0.39 ±0.06 0.39 ±0.10 0.39 ±0.12 0.36 ±0.11 0.34 ±0.04 0.47 ±0.11 
+
+AUC 0.64 ±0.06 0.64 ±0.08 0.69 ±0.10 0.61 ±0.05 0.64 ±0.04 0.60 ±0.08 
+
+Bal. Acc 0.37 ±0.09 0.29 ±0.10 0.33 ±0.10 0.34 ±0.16 0.30 ±0.02 0.38 ±0.10 48 Kotp et al. 
+
+Table 21: Linear-probe MIL comparison across tasks, averaged over MeanMIL, AB-MIL, CLAM, DSMIL, and TransMIL. 
+
+Task Metric Backbone UNI v2 Phikon v2 CONCH v1.5 MUSK MOOZY (Ours) Residual Cancer Burden F1 (weighted) 0.46 ±0.05 0.44 ±0.05 0.42 ±0.06 0.47 ±0.05 0.44 ±0.05 0.38 ±0.11 
+
+ROC-AUC (weighted) 0.60 ±0.06 0.60 ±0.06 0.59 ±0.06 0.61 ±0.06 0.59 ±0.07 0.66 ±0.05 
+
+Balanced Acc 0.44 ±0.06 0.40 ±0.06 0.39 ±0.06 0.42 ±0.06 0.40 ±0.06 0.44 ±0.07 
+
+TP53 mutation F1 (weighted) 0.77 ±0.06 0.77 ±0.07 0.78 ±0.07 0.80 ±0.06 0.79 ±0.06 0.80 ±0.06 
+
+ROC-AUC (weighted) 0.79 ±0.07 0.75 ±0.09 0.78 ±0.08 0.81 ±0.08 0.80 ±0.06 0.87 ±0.03 
+
+Balanced Acc 0.76 ±0.05 0.77 ±0.07 0.77 ±0.07 0.79 ±0.07 0.79 ±0.04 0.81 ±0.05 
+
+BAP1 mutation F1 (weighted) 0.84 ±0.04 0.82 ±0.05 0.83 ±0.05 0.85 ±0.05 0.86 ±0.06 0.78 ±0.05 
+
+ROC-AUC (weighted) 0.66 ±0.19 0.65 ±0.16 0.67 ±0.12 0.75 ±0.13 0.73 ±0.13 0.74 ±0.11 
+
+Balanced Acc 0.67 ±0.10 0.64 ±0.10 0.68 ±0.10 0.74 ±0.09 0.73 ±0.10 0.64 ±0.12 
+
+ACVR2A mutation F1 (weighted) 0.83 ±0.09 0.84 ±0.07 0.81 ±0.11 0.82 ±0.07 0.79 ±0.09 0.83 ±0.04 
+
+ROC-AUC (weighted) 0.74 ±0.10 0.72 ±0.16 0.73 ±0.13 0.70 ±0.14 0.60 ±0.19 0.89 ±0.07 
+
+Balanced Acc 0.73 ±0.09 0.73 ±0.11 0.68 ±0.13 0.70 ±0.10 0.65 ±0.12 0.78 ±0.10 
+
+Histologic Grade F1 (weighted) 0.74 ±0.05 0.74 ±0.05 0.72 ±0.05 0.76 ±0.05 0.75 ±0.08 0.66 ±0.08 
+
+ROC-AUC (weighted) 0.73 ±0.09 0.73 ±0.05 0.72 ±0.06 0.76 ±0.08 0.74 ±0.08 0.74 ±0.11 
+
+Balanced Acc 0.74 ±0.05 0.75 ±0.06 0.72 ±0.05 0.75 ±0.05 0.75 ±0.07 0.68 ±0.08 
+
+KRAS mutation F1 (weighted) 0.78 ±0.07 0.74 ±0.05 0.74 ±0.05 0.80 ±0.08 0.76 ±0.07 0.71 ±0.08 
+
+ROC-AUC (weighted) 0.74 ±0.10 0.71 ±0.09 0.68 ±0.07 0.74 ±0.12 0.70 ±0.10 0.73 ±0.07 
+
+Balanced Acc 0.76 ±0.09 0.69 ±0.08 0.68 ±0.06 0.77 ±0.09 0.72 ±0.08 0.71 ±0.09 
+
+IDH Status F1 (weighted) 0.93 ±0.02 0.93 ±0.02 0.93 ±0.02 0.94 ±0.02 0.92 ±0.02 0.95 ±0.02 
+
+ROC-AUC (weighted) 0.96 ±0.01 0.97 ±0.01 0.97 ±0.01 0.97 ±0.01 0.96 ±0.01 0.99 ±0.01 
+
+Balanced Acc 0.93 ±0.02 0.93 ±0.02 0.93 ±0.02 0.93 ±0.02 0.92 ±0.02 0.95 ±0.02 
+
+Treatment Response F1 (weighted) 0.51 ±0.08 0.45 ±0.04 0.49 ±0.08 0.53 ±0.06 0.52 ±0.08 0.47 ±0.11 
+
+ROC-AUC (weighted) 0.66 ±0.10 0.62 ±0.04 0.65 ±0.08 0.67 ±0.08 0.68 ±0.07 0.60 ±0.08 
+
+Balanced Acc 0.46 ±0.12 0.37 ±0.07 0.38 ±0.08 0.47 ±0.11 0.47 ±0.09 0.38 ±0.10 
+
+Table 22: Parameter count comparison across slide encoders. MOOZY (85.77M total) is the most parameter-efficient slide-level encoder while achieving best or tied-best performance on most held-out tasks (Table 1). 
+
+Encoder Slide Encoder Parameters Patch Encoder Parameters Total Parameters CHIEF 1.19M 27.52M 28.71M GigaPath 85.15M 1.13B 1.22B PRISM 110.83M 631.23M 742.06M Madeleine 5.00M 395.23M 400.23M TITAN 48.54M 306.11M 354.65M MOOZY (Ours) 42.8M (slide) + 21.3M (case) 21.67M 85.77M MOOZY: A Patient-First Foundation Model for Computational Pathology 49 
+
+Table 23: Comparison of MOOZY against patch encoder baselines with trained MIL aggregators on eight held-out tasks. MIL baselines train a task-specific aggregator from scratch on frozen patch features; MOOZY is entirely frozen and evaluated with an MLP probe. Each patch encoder entry is the arithmetic mean over five MIL architectures (MeanMIL, ABMIL, CLAM, DSMIL, TransMIL). Bold : best; underline: second best. 
+
+Task Metric Backbone UNI v2 Phikon v2 CONCH v1.5 MUSK MOOZY (Ours) Residual Cancer Burden F1 (weighted) 0.46 ±0.05 0.44 ±0.05 0.42 ±0.06 0.47 ±0.05 0.44 ±0.05 0.56 ±0.05 
+
+ROC-AUC (weighted) 0.60 ±0.06 0.60 ±0.06 0.59 ±0.06 0.61 ±0.06 0.59 ±0.07 0.74 ±0.04 
+
+Balanced Acc 0.44 ±0.06 0.40 ±0.06 0.39 ±0.06 0.42 ±0.06 0.40 ±0.06 0.51 ±0.06 
+
+TP53 mutation F1 (weighted) 0.77 ±0.06 0.77 ±0.07 0.78 ±0.07 0.80 ±0.06 0.79 ±0.06 0.87 ±0.04 
+
+ROC-AUC (weighted) 0.79 ±0.07 0.75 ±0.09 0.78 ±0.08 0.81 ±0.08 0.80 ±0.06 0.86 ±0.06 
+
+Balanced Acc 0.76 ±0.05 0.77 ±0.07 0.77 ±0.07 0.79 ±0.07 0.79 ±0.04 0.86 ±0.05 
+
+BAP1 mutation F1 (weighted) 0.84 ±0.04 0.82 ±0.05 0.83 ±0.05 0.85 ±0.05 0.86 ±0.06 0.89 ±0.06 
+
+ROC-AUC (weighted) 0.66 ±0.19 0.65 ±0.16 0.67 ±0.12 0.75 ±0.13 0.73 ±0.13 0.79 ±0.12 
+
+Balanced Acc 0.67 ±0.10 0.64 ±0.10 0.68 ±0.10 0.74 ±0.09 0.73 ±0.10 0.78 ±0.11 
+
+ACVR2A mutation F1 (weighted) 0.83 ±0.09 0.84 ±0.07 0.81 ±0.11 0.82 ±0.07 0.79 ±0.09 0.91 ±0.05 
+
+ROC-AUC (weighted) 0.74 ±0.10 0.72 ±0.16 0.73 ±0.13 0.70 ±0.14 0.60 ±0.19 0.91 ±0.09 
+
+Balanced Acc 0.73 ±0.09 0.73 ±0.11 0.68 ±0.13 0.70 ±0.10 0.65 ±0.12 0.90 ±0.10 
+
+Histologic Grade F1 (weighted) 0.74 ±0.05 0.74 ±0.05 0.72 ±0.05 0.76 ±0.05 0.75 ±0.08 0.78 ±0.08 
+
+ROC-AUC (weighted) 0.73 ±0.09 0.73 ±0.05 0.72 ±0.06 0.76 ±0.08 0.74 ±0.08 0.75 ±0.15 
+
+Balanced Acc 0.74 ±0.05 0.75 ±0.06 0.72 ±0.05 0.75 ±0.05 0.75 ±0.07 0.77 ±0.08 
+
+KRAS mutation F1 (weighted) 0.78 ±0.07 0.74 ±0.05 0.74 ±0.05 0.80 ±0.08 0.76 ±0.07 0.85 ±0.04 
+
+ROC-AUC (weighted) 0.74 ±0.10 0.71 ±0.09 0.68 ±0.07 0.74 ±0.12 0.70 ±0.10 0.80 ±0.06 
+
+Balanced Acc 0.76 ±0.09 0.69 ±0.08 0.68 ±0.06 0.77 ±0.09 0.72 ±0.08 0.79 ±0.10 
+
+IDH Status F1 (weighted) 0.93 ±0.02 0.93 ±0.02 0.93 ±0.02 0.94 ±0.02 0.92 ±0.02 0.97 ±0.02 
+
+ROC-AUC (weighted) 0.96 ±0.01 0.97 ±0.01 0.97 ±0.01 0.97 ±0.01 0.96 ±0.01 0.99 ±0.01 
+
+Balanced Acc 0.93 ±0.02 0.93 ±0.02 0.93 ±0.02 0.93 ±0.02 0.92 ±0.02 0.97 ±0.02 
+
+Treatment Response F1 (weighted) 0.51 ±0.08 0.45 ±0.04 0.49 ±0.08 0.53 ±0.06 0.52 ±0.08 0.58 ±0.14 
+
+ROC-AUC (weighted) 0.66 ±0.10 0.62 ±0.04 0.65 ±0.08 0.67 ±0.08 0.68 ±0.07 0.68 ±0.07 
+
+Balanced Acc 0.46 ±0.12 0.37 ±0.07 0.38 ±0.08 0.47 ±0.11 0.47 ±0.09 0.48 ±0.17 80% 90% 95%          
+
+> Explained Variance Target
+> 0
+> 25
+> 50
+> 75
+> 100
+> 125
+> 150
+> 175
+> 200
+> Number of PCA Components
+> PCA Components Needed
+> 13510 20 30 40 50 75 100
+> k
+> 0.78
+> 0.79
+> 0.80
+> 0.81
+> 0.82
+> Bootstrap Overlap@k
+> Neighborhood Stability
+> CHIEF
+> GigaPath
+> PRISM
+> Madeleine
+> TITAN
+> MOOZY
+
+Fig. 17: Encoder geometry comparison on 3,300 different slides. Left: PCA compact-ness, measured as the number of components needed to explain 80%, 90%, and 95% variance (lower is more compact). Right: bootstrap neighborhood stability measured by overlap@k, where each repeat randomly subsamples 80% of slides (higher is more stable). 50 Kotp et al. 
+
+Table 24: Comparison of MOOZY against patch encoder baselines using MeanMIL on eight held-out tasks. MIL baselines train a task-specific MeanMIL aggregator from scratch on frozen patch features; MOOZY is entirely frozen and evaluated with an MLP probe. Values are mean ± standard deviation across five folds. Bold : best; underline: second best. 
+
+Task Metric Backbone UNI v2 Phikon v2 CONCH v1.5 MUSK MOOZY (Ours) Residual Cancer Burden F1 (weighted) 0.46 ±0.04 0.45 ±0.07 0.42 ±0.06 0.45 ±0.06 0.46 ±0.08 0.56 ±0.05 
+
+ROC-AUC (weighted) 0.58 ±0.07 0.58 ±0.09 0.59 ±0.08 0.60 ±0.06 0.60 ±0.08 0.74 ±0.04 
+
+Balanced Acc 0.44 ±0.04 0.39 ±0.09 0.38 ±0.07 0.39 ±0.04 0.42 ±0.09 0.51 ±0.06 
+
+TP53 mutation F1 (weighted) 0.80 ±0.06 0.80 ±0.05 0.82 ±0.06 0.84 ±0.03 0.79 ±0.04 0.87 ±0.04 
+
+ROC-AUC (weighted) 0.80 ±0.07 0.78 ±0.07 0.82 ±0.04 0.85 ±0.03 0.80 ±0.02 0.86 ±0.06 
+
+Balanced Acc 0.80 ±0.04 0.80 ±0.04 0.81 ±0.06 0.83 ±0.03 0.78 ±0.02 0.86 ±0.05 
+
+BAP1 mutation F1 (weighted) 0.87 ±0.06 0.84 ±0.06 0.84 ±0.06 0.83 ±0.07 0.89 ±0.04 0.89 ±0.06 
+
+ROC-AUC (weighted) 0.70 ±0.14 0.71 ±0.16 0.74 ±0.11 0.74 ±0.14 0.73 ±0.13 0.79 ±0.12 
+
+Balanced Acc 0.73 ±0.15 0.72 ±0.12 0.72 ±0.07 0.72 ±0.11 0.77 ±0.11 0.78 ±0.11 
+
+ACVR2A mutation F1 (weighted) 0.85 ±0.07 0.84 ±0.07 0.83 ±0.09 0.85 ±0.05 0.85 ±0.08 0.91 ±0.05 
+
+ROC-AUC (weighted) 0.72 ±0.13 0.80 ±0.13 0.68 ±0.15 0.70 ±0.15 0.61 ±0.29 0.91 ±0.09 
+
+Balanced Acc 0.74 ±0.10 0.68 ±0.14 0.72 ±0.11 0.73 ±0.09 0.70 ±0.18 0.90 ±0.10 
+
+Histologic Grade F1 (weighted) 0.75 ±0.03 0.79 ±0.05 0.71 ±0.05 0.78 ±0.04 0.75 ±0.03 0.78 ±0.08 
+
+ROC-AUC (weighted) 0.74 ±0.05 0.79 ±0.03 0.72 ±0.06 0.79 ±0.07 0.74 ±0.03 0.75 ±0.15 
+
+Balanced Acc 0.75 ±0.03 0.79 ±0.06 0.71 ±0.05 0.78 ±0.03 0.76 ±0.03 0.77 ±0.08 
+
+KRAS mutation F1 (weighted) 0.81 ±0.05 0.76 ±0.06 0.75 ±0.03 0.81 ±0.07 0.76 ±0.06 0.85 ±0.04 
+
+ROC-AUC (weighted) 0.80 ±0.07 0.75 ±0.09 0.70 ±0.04 0.76 ±0.15 0.70 ±0.09 0.80 ±0.06 
+
+Balanced Acc 0.83 ±0.05 0.77 ±0.06 0.71 ±0.04 0.80 ±0.08 0.70 ±0.08 0.79 ±0.10 
+
+IDH Status F1 (weighted) 0.92 ±0.02 0.93 ±0.02 0.93 ±0.02 0.93 ±0.02 0.92 ±0.02 0.97 ±0.02 
+
+ROC-AUC (weighted) 0.96 ±0.01 0.96 ±0.01 0.97 ±0.01 0.96 ±0.02 0.96 ±0.01 0.99 ±0.01 
+
+Balanced Acc 0.92 ±0.01 0.93 ±0.02 0.93 ±0.02 0.93 ±0.02 0.91 ±0.02 0.97 ±0.02 
+
+Treatment Response F1 (weighted) 0.51 ±0.13 0.47 ±0.04 0.49 ±0.09 0.55 ±0.06 0.54 ±0.10 0.58 ±0.14 
+
+ROC-AUC (weighted) 0.68 ±0.12 0.62 ±0.06 0.64 ±0.08 0.69 ±0.08 0.70 ±0.05 0.68 ±0.07 
+
+Balanced Acc 0.39 ±0.14 0.33 ±0.03 0.39 ±0.10 0.46 ±0.14 0.48 ±0.09 0.48 ±0.17 MOOZY: A Patient-First Foundation Model for Computational Pathology 51 
+
+Table 25: Comparison of MOOZY against patch encoder baselines using ABMIL on eight held-out tasks. MIL baselines train a task-specific ABMIL aggregator from scratch on frozen patch features; MOOZY is entirely frozen and evaluated with an MLP probe. Values are mean ± standard deviation across five folds. Bold : best; underline: second best. 
+
+Task Metric Backbone UNI v2 Phikon v2 CONCH v1.5 MUSK MOOZY (Ours) Residual Cancer Burden F1 (weighted) 0.47 ±0.05 0.49 ±0.05 0.42 ±0.09 0.49 ±0.03 0.47 ±0.03 0.56 ±0.05 
+
+ROC-AUC (weighted) 0.65 ±0.04 0.65 ±0.03 0.60 ±0.07 0.62 ±0.05 0.65 ±0.06 0.74 ±0.04 
+
+Balanced Acc 0.47 ±0.05 0.45 ±0.05 0.39 ±0.06 0.42 ±0.06 0.44 ±0.04 0.51 ±0.06 
+
+TP53 mutation F1 (weighted) 0.80 ±0.08 0.82 ±0.08 0.79 ±0.04 0.80 ±0.11 0.82 ±0.04 0.87 ±0.04 
+
+ROC-AUC (weighted) 0.80 ±0.05 0.81 ±0.09 0.82 ±0.06 0.82 ±0.12 0.82 ±0.03 0.86 ±0.06 
+
+Balanced Acc 0.80 ±0.06 0.83 ±0.09 0.79 ±0.04 0.79 ±0.11 0.81 ±0.04 0.86 ±0.05 
+
+BAP1 mutation F1 (weighted) 0.84 ±0.03 0.82 ±0.05 0.82 ±0.03 0.88 ±0.04 0.87 ±0.05 0.89 ±0.06 
+
+ROC-AUC (weighted) 0.67 ±0.16 0.65 ±0.18 0.71 ±0.12 0.81 ±0.17 0.81 ±0.12 0.79 ±0.12 
+
+Balanced Acc 0.67 ±0.06 0.66 ±0.07 0.69 ±0.14 0.78 ±0.09 0.73 ±0.08 0.78 ±0.11 
+
+ACVR2A mutation F1 (weighted) 0.85 ±0.07 0.85 ±0.07 0.78 ±0.12 0.86 ±0.04 0.79 ±0.07 0.91 ±0.05 
+
+ROC-AUC (weighted) 0.84 ±0.04 0.79 ±0.12 0.69 ±0.13 0.79 ±0.09 0.53 ±0.24 0.91 ±0.09 
+
+Balanced Acc 0.75 ±0.08 0.76 ±0.07 0.62 ±0.12 0.75 ±0.05 0.66 ±0.08 0.90 ±0.10 
+
+Histologic Grade F1 (weighted) 0.75 ±0.03 0.73 ±0.05 0.72 ±0.04 0.75 ±0.04 0.74 ±0.09 0.78 ±0.08 
+
+ROC-AUC (weighted) 0.74 ±0.08 0.73 ±0.06 0.70 ±0.03 0.75 ±0.07 0.76 ±0.09 0.75 ±0.15 
+
+Balanced Acc 0.74 ±0.03 0.73 ±0.05 0.73 ±0.04 0.75 ±0.05 0.75 ±0.09 0.77 ±0.08 
+
+KRAS mutation F1 (weighted) 0.80 ±0.05 0.73 ±0.04 0.71 ±0.03 0.82 ±0.10 0.77 ±0.07 0.85 ±0.04 
+
+ROC-AUC (weighted) 0.77 ±0.12 0.70 ±0.12 0.65 ±0.04 0.74 ±0.13 0.72 ±0.10 0.80 ±0.06 
+
+Balanced Acc 0.74 ±0.09 0.66 ±0.14 0.67 ±0.03 0.79 ±0.09 0.75 ±0.10 0.79 ±0.10 
+
+IDH Status F1 (weighted) 0.93 ±0.02 0.94 ±0.02 0.94 ±0.02 0.94 ±0.01 0.93 ±0.02 0.97 ±0.02 
+
+ROC-AUC (weighted) 0.96 ±0.01 0.97 ±0.01 0.97 ±0.01 0.97 ±0.02 0.97 ±0.01 0.99 ±0.01 
+
+Balanced Acc 0.93 ±0.02 0.93 ±0.02 0.94 ±0.01 0.94 ±0.01 0.92 ±0.02 0.97 ±0.02 
+
+Treatment Response F1 (weighted) 0.45 ±0.03 0.47 ±0.02 0.51 ±0.07 0.53 ±0.07 0.56 ±0.11 0.58 ±0.14 
+
+ROC-AUC (weighted) 0.60 ±0.08 0.66 ±0.04 0.65 ±0.08 0.65 ±0.10 0.72 ±0.08 0.68 ±0.07 
+
+Balanced Acc 0.43 ±0.15 0.38 ±0.07 0.37 ±0.09 0.48 ±0.14 0.53 ±0.08 0.48 ±0.17 52 Kotp et al. 
+
+Table 26: Comparison of MOOZY against patch encoder baselines using CLAM on eight held-out tasks. MIL baselines train a task-specific CLAM aggregator from scratch on frozen patch features; MOOZY is entirely frozen and evaluated with an MLP probe. Values are mean ± standard deviation across five folds. Bold : best; underline: second best. 
+
+Task Metric Backbone UNI v2 Phikon v2 CONCH v1.5 MUSK MOOZY (Ours) Residual Cancer Burden F1 (weighted) 0.45 ±0.04 0.48 ±0.05 0.43 ±0.08 0.45 ±0.05 0.45 ±0.04 0.56 ±0.05 
+
+ROC-AUC (weighted) 0.60 ±0.09 0.66 ±0.06 0.59 ±0.05 0.60 ±0.06 0.60 ±0.05 0.74 ±0.04 
+
+Balanced Acc 0.43 ±0.08 0.42 ±0.04 0.43 ±0.07 0.41 ±0.08 0.43 ±0.06 0.51 ±0.06 
+
+TP53 mutation F1 (weighted) 0.83 ±0.07 0.81 ±0.07 0.82 ±0.06 0.85 ±0.06 0.84 ±0.05 0.87 ±0.04 
+
+ROC-AUC (weighted) 0.83 ±0.07 0.79 ±0.10 0.85 ±0.05 0.88 ±0.06 0.83 ±0.02 0.86 ±0.06 
+
+Balanced Acc 0.83 ±0.07 0.81 ±0.07 0.82 ±0.05 0.86 ±0.07 0.84 ±0.04 0.86 ±0.05 
+
+BAP1 mutation F1 (weighted) 0.86 ±0.05 0.83 ±0.07 0.85 ±0.05 0.85 ±0.05 0.88 ±0.08 0.89 ±0.06 
+
+ROC-AUC (weighted) 0.64 ±0.22 0.63 ±0.18 0.66 ±0.09 0.75 ±0.11 0.88 ±0.11 0.79 ±0.12 
+
+Balanced Acc 0.67 ±0.11 0.64 ±0.10 0.68 ±0.12 0.75 ±0.12 0.82 ±0.14 0.78 ±0.11 
+
+ACVR2A mutation F1 (weighted) 0.86 ±0.08 0.90 ±0.04 0.83 ±0.08 0.80 ±0.09 0.79 ±0.12 0.91 ±0.05 
+
+ROC-AUC (weighted) 0.74 ±0.09 0.83 ±0.17 0.73 ±0.13 0.57 ±0.19 0.56 ±0.19 0.91 ±0.09 
+
+Balanced Acc 0.75 ±0.11 0.83 ±0.09 0.70 ±0.10 0.67 ±0.12 0.63 ±0.11 0.90 ±0.10 
+
+Histologic Grade F1 (weighted) 0.75 ±0.06 0.74 ±0.03 0.73 ±0.02 0.78 ±0.03 0.74 ±0.08 0.78 ±0.08 
+
+ROC-AUC (weighted) 0.74 ±0.08 0.75 ±0.03 0.72 ±0.03 0.77 ±0.06 0.75 ±0.10 0.75 ±0.15 
+
+Balanced Acc 0.75 ±0.05 0.75 ±0.05 0.74 ±0.04 0.78 ±0.02 0.74 ±0.08 0.77 ±0.08 
+
+KRAS mutation F1 (weighted) 0.80 ±0.05 0.77 ±0.02 0.72 ±0.05 0.82 ±0.10 0.78 ±0.06 0.85 ±0.04 
+
+ROC-AUC (weighted) 0.76 ±0.07 0.76 ±0.09 0.67 ±0.04 0.78 ±0.09 0.76 ±0.11 0.80 ±0.06 
+
+Balanced Acc 0.77 ±0.05 0.76 ±0.03 0.65 ±0.09 0.79 ±0.08 0.76 ±0.05 0.79 ±0.10 
+
+IDH Status F1 (weighted) 0.94 ±0.02 0.95 ±0.02 0.94 ±0.02 0.94 ±0.01 0.93 ±0.02 0.97 ±0.02 
+
+ROC-AUC (weighted) 0.97 ±0.02 0.97 ±0.01 0.98 ±0.01 0.97 ±0.01 0.96 ±0.01 0.99 ±0.01 
+
+Balanced Acc 0.93 ±0.02 0.95 ±0.01 0.94 ±0.02 0.94 ±0.02 0.92 ±0.02 0.97 ±0.02 
+
+Treatment Response F1 (weighted) 0.50 ±0.07 0.45 ±0.09 0.43 ±0.07 0.51 ±0.05 0.48 ±0.06 0.58 ±0.14 
+
+ROC-AUC (weighted) 0.63 ±0.07 0.64 ±0.05 0.60 ±0.09 0.62 ±0.09 0.67 ±0.04 0.68 ±0.07 
+
+Balanced Acc 0.46 ±0.08 0.43 ±0.11 0.34 ±0.08 0.43 ±0.08 0.47 ±0.10 0.48 ±0.17 MOOZY: A Patient-First Foundation Model for Computational Pathology 53 
+
+Table 27: Comparison of MOOZY against patch encoder baselines using DSMIL on eight held-out tasks. MIL baselines train a task-specific DSMIL aggregator from scratch on frozen patch features; MOOZY is entirely frozen and evaluated with an MLP probe. Values are mean ± standard deviation across five folds. Bold : best; underline: second best. 
+
+Task Metric Backbone UNI v2 Phikon v2 CONCH v1.5 MUSK MOOZY (Ours) Residual Cancer Burden F1 (weighted) 0.46 ±0.06 0.45 ±0.02 0.45 ±0.05 0.47 ±0.04 0.45 ±0.04 0.56 ±0.05 
+
+ROC-AUC (weighted) 0.61 ±0.06 0.63 ±0.04 0.59 ±0.06 0.60 ±0.07 0.58 ±0.09 0.74 ±0.04 
+
+Balanced Acc 0.46 ±0.05 0.45 ±0.06 0.42 ±0.04 0.43 ±0.05 0.37 ±0.10 0.51 ±0.06 
+
+TP53 mutation F1 (weighted) 0.58 ±0.04 0.70 ±0.06 0.79 ±0.10 0.78 ±0.02 0.79 ±0.07 0.87 ±0.04 
+
+ROC-AUC (weighted) 0.67 ±0.08 0.66 ±0.06 0.78 ±0.14 0.78 ±0.08 0.84 ±0.08 0.86 ±0.06 
+
+Balanced Acc 0.56 ±0.05 0.70 ±0.06 0.78 ±0.10 0.77 ±0.02 0.78 ±0.06 0.86 ±0.05 
+
+BAP1 mutation F1 (weighted) 0.82 ±0.03 0.78 ±0.02 0.80 ±0.06 0.83 ±0.05 0.85 ±0.03 0.89 ±0.06 
+
+ROC-AUC (weighted) 0.55 ±0.32 0.56 ±0.16 0.59 ±0.20 0.66 ±0.13 0.67 ±0.13 0.79 ±0.12 
+
+Balanced Acc 0.61 ±0.10 0.52 ±0.04 0.61 ±0.10 0.69 ±0.07 0.71 ±0.08 0.78 ±0.11 
+
+ACVR2A mutation F1 (weighted) 0.79 ±0.11 0.83 ±0.10 0.80 ±0.13 0.81 ±0.06 0.78 ±0.05 0.91 ±0.05 
+
+ROC-AUC (weighted) 0.72 ±0.12 0.73 ±0.13 0.75 ±0.18 0.70 ±0.08 0.66 ±0.13 0.91 ±0.09 
+
+Balanced Acc 0.71 ±0.12 0.75 ±0.12 0.68 ±0.18 0.65 ±0.09 0.62 ±0.10 0.90 ±0.10 
+
+Histologic Grade F1 (weighted) 0.73 ±0.10 0.76 ±0.03 0.73 ±0.04 0.71 ±0.07 0.74 ±0.10 0.78 ±0.08 
+
+ROC-AUC (weighted) 0.74 ±0.09 0.72 ±0.04 0.73 ±0.08 0.73 ±0.09 0.70 ±0.12 0.75 ±0.15 
+
+Balanced Acc 0.74 ±0.10 0.77 ±0.05 0.71 ±0.03 0.71 ±0.07 0.76 ±0.09 0.77 ±0.08 
+
+KRAS mutation F1 (weighted) 0.78 ±0.10 0.73 ±0.06 0.76 ±0.05 0.77 ±0.05 0.78 ±0.06 0.85 ±0.04 
+
+ROC-AUC (weighted) 0.74 ±0.13 0.70 ±0.08 0.69 ±0.09 0.67 ±0.11 0.61 ±0.12 0.80 ±0.06 
+
+Balanced Acc 0.75 ±0.13 0.66 ±0.09 0.69 ±0.08 0.71 ±0.06 0.68 ±0.13 0.79 ±0.10 
+
+IDH Status F1 (weighted) 0.93 ±0.02 0.92 ±0.01 0.93 ±0.02 0.94 ±0.01 0.93 ±0.01 0.97 ±0.02 
+
+ROC-AUC (weighted) 0.96 ±0.02 0.96 ±0.01 0.97 ±0.01 0.97 ±0.01 0.97 ±0.01 0.99 ±0.01 
+
+Balanced Acc 0.92 ±0.02 0.91 ±0.01 0.92 ±0.02 0.93 ±0.01 0.93 ±0.01 0.97 ±0.02 
+
+Treatment Response F1 (weighted) 0.58 ±0.09 0.42 ±0.05 0.48 ±0.08 0.51 ±0.05 0.46 ±0.04 0.58 ±0.14 
+
+ROC-AUC (weighted) 0.73 ±0.12 0.59 ±0.03 0.67 ±0.10 0.65 ±0.03 0.62 ±0.12 0.68 ±0.07 
+
+Balanced Acc 0.57 ±0.14 0.35 ±0.08 0.36 ±0.07 0.49 ±0.07 0.42 ±0.06 0.48 ±0.17 54 Kotp et al. 
+
+Table 28: Comparison of MOOZY against patch encoder baselines using TransMIL on eight held-out tasks. MIL baselines train a task-specific TransMIL aggregator from scratch on frozen patch features; MOOZY is entirely frozen and evaluated with an MLP probe. Values are mean ± standard deviation across five folds. Bold : best; underline: second best. 
+
+Task Metric Backbone UNI v2 Phikon v2 CONCH v1.5 MUSK MOOZY (Ours) Residual Cancer Burden F1 (weighted) 0.45 ±0.04 0.36 ±0.04 0.38 ±0.05 0.49 ±0.05 0.36 ±0.08 0.56 ±0.05 
+
+ROC-AUC (weighted) 0.57 ±0.05 0.47 ±0.07 0.57 ±0.05 0.62 ±0.05 0.53 ±0.06 0.74 ±0.04 
+
+Balanced Acc 0.41 ±0.09 0.30 ±0.05 0.35 ±0.04 0.46 ±0.09 0.33 ±0.03 0.51 ±0.06 
+
+TP53 mutation F1 (weighted) 0.84 ±0.04 0.74 ±0.09 0.70 ±0.09 0.74 ±0.08 0.73 ±0.09 0.87 ±0.04 
+
+ROC-AUC (weighted) 0.83 ±0.07 0.74 ±0.15 0.65 ±0.13 0.73 ±0.12 0.72 ±0.13 0.86 ±0.06 
+
+Balanced Acc 0.82 ±0.05 0.72 ±0.07 0.67 ±0.09 0.72 ±0.10 0.72 ±0.06 0.86 ±0.05 
+
+BAP1 mutation F1 (weighted) 0.84 ±0.04 0.83 ±0.07 0.86 ±0.06 0.86 ±0.04 0.83 ±0.07 0.89 ±0.06 
+
+ROC-AUC (weighted) 0.75 ±0.13 0.70 ±0.11 0.67 ±0.11 0.77 ±0.12 0.58 ±0.18 0.79 ±0.12 
+
+Balanced Acc 0.68 ±0.10 0.66 ±0.15 0.71 ±0.08 0.78 ±0.08 0.64 ±0.10 0.78 ±0.11 
+
+ACVR2A mutation F1 (weighted) 0.82 ±0.12 0.80 ±0.06 0.82 ±0.11 0.78 ±0.13 0.75 ±0.12 0.91 ±0.05 
+
+ROC-AUC (weighted) 0.69 ±0.11 0.46 ±0.24 0.80 ±0.07 0.71 ±0.18 0.63 ±0.13 0.91 ±0.09 
+
+Balanced Acc 0.68 ±0.07 0.61 ±0.11 0.69 ±0.13 0.69 ±0.14 0.66 ±0.14 0.90 ±0.10 
+
+Histologic Grade F1 (weighted) 0.72 ±0.04 0.70 ±0.09 0.72 ±0.10 0.76 ±0.08 0.75 ±0.09 0.78 ±0.08 
+
+ROC-AUC (weighted) 0.69 ±0.13 0.68 ±0.10 0.71 ±0.10 0.77 ±0.09 0.75 ±0.07 0.75 ±0.15 
+
+Balanced Acc 0.73 ±0.04 0.70 ±0.08 0.73 ±0.11 0.76 ±0.08 0.74 ±0.08 0.77 ±0.08 
+
+KRAS mutation F1 (weighted) 0.71 ±0.10 0.68 ±0.07 0.75 ±0.09 0.77 ±0.10 0.74 ±0.08 0.85 ±0.04 
+
+ROC-AUC (weighted) 0.61 ±0.12 0.63 ±0.07 0.68 ±0.15 0.74 ±0.11 0.71 ±0.07 0.80 ±0.06 
+
+Balanced Acc 0.70 ±0.12 0.60 ±0.07 0.70 ±0.06 0.78 ±0.12 0.70 ±0.06 0.79 ±0.10 
+
+IDH Status F1 (weighted) 0.92 ±0.01 0.92 ±0.01 0.91 ±0.01 0.93 ±0.02 0.92 ±0.02 0.97 ±0.02 
+
+ROC-AUC (weighted) 0.96 ±0.01 0.96 ±0.01 0.95 ±0.01 0.96 ±0.01 0.96 ±0.01 0.99 ±0.01 
+
+Balanced Acc 0.91 ±0.01 0.91 ±0.02 0.91 ±0.01 0.92 ±0.02 0.91 ±0.01 0.97 ±0.02 
+
+Treatment Response F1 (weighted) 0.53 ±0.09 0.45 ±0.02 0.55 ±0.07 0.58 ±0.10 0.54 ±0.08 0.58 ±0.14 
+
+ROC-AUC (weighted) 0.67 ±0.10 0.58 ±0.03 0.69 ±0.06 0.73 ±0.08 0.67 ±0.07 0.68 ±0.07 
+
+Balanced Acc 0.44 ±0.08 0.34 ±0.04 0.43 ±0.05 0.49 ±0.11 0.43 ±0.11 0.48 ±0.17 
+
+Table 29: Task-wise comparison between Stage 1 and MOOZY (Ours) across the eight slide-encoder evaluation tasks. Values are mean ± standard deviation across five folds. Relative improvement is computed as (MOOZY − Stage 1 )/Stage 1 × 100 using fold means. Task F1 (S1) F1 (MOOZY) ∆F1 (%) AUC (S1) AUC (MOOZY) ∆AUC (%) Bal. Acc (S1) Bal. Acc (MOOZY) ∆Bal. Acc (%) Residual Cancer Burden 0.51 ±0.05 0.56 ±0.05 +9.80 0.63 ±0.06 0.74 ±0.04 +17.46 0.48 ±0.06 0.51 ±0.06 +6.25 TP53 mutation 0.81 ±0.07 0.87 ±0.04 +7.41 0.79 ±0.07 0.86 ±0.06 +8.86 0.80 ±0.06 0.86 ±0.05 +7.50 BAP1 mutation 0.83 ±0.07 0.89 ±0.06 +7.23 0.66 ±0.23 0.79 ±0.12 +19.70 0.66 ±0.12 0.78 ±0.11 +18.18 ACVR2A mutation 0.84 ±0.08 0.91 ±0.05 +8.33 0.77 ±0.12 0.91 ±0.09 +18.18 0.69 ±0.13 0.90 ±0.10 +30.43 Histologic Grade 0.76 ±0.05 0.78 ±0.08 +2.63 0.73 ±0.05 0.75 ±0.15 +2.74 0.76 ±0.06 0.77 ±0.08 +1.32 KRAS mutation 0.85 ±0.08 0.85 ±0.04 +0.00 0.82 ±0.10 0.80 ±0.06 -2.44 0.83 ±0.07 0.79 ±0.10 -4.82 IDH Status 0.93 ±0.01 0.97 ±0.02 +4.30 0.96 ±0.01 0.99 ±0.01 +3.13 0.92 ±0.01 0.97 ±0.02 +5.43 Treatment Response 0.55 ±0.09 0.58 ±0.14 +5.45 0.66 ±0.09 0.68 ±0.07 +3.03 0.47 ±0.14 0.48 ±0.17 +2.13 Macro average 0.760 0.801 +5.43 0.753 0.815 +8.31 0.701 0.758 +8.02 MOOZY: A Patient-First Foundation Model for Computational Pathology 55 
+
+Table 30: Task-wise comparison between Stage 2 only and MOOZY (Ours) across the eight slide-encoder evaluation tasks. Stage 2 only trains the slide encoder with multi-task supervision but without Stage 1 SSL pretraining. Values are mean ± stan-dard deviation across five folds. Relative improvement is computed as (MOOZY −
+
+Stage 2 only )/Stage 2 only × 100 using fold means. Task F1 (S2) F1 (MOOZY) ∆F1 (%) AUC (S2) AUC (MOOZY) ∆AUC (%) Bal. Acc (S2) Bal. Acc (MOOZY) ∆Bal. Acc (%) Residual Cancer Burden 0.50 ±0.02 0.56 ±0.05 +12.00 0.65 ±0.02 0.74 ±0.04 +13.85 0.47 ±0.05 0.51 ±0.06 +8.51 TP53 mutation 0.77 ±0.07 0.87 ±0.04 +12.99 0.75 ±0.08 0.86 ±0.06 +14.67 0.76 ±0.07 0.86 ±0.05 +13.16 BAP1 mutation 0.85 ±0.04 0.89 ±0.06 +4.71 0.72 ±0.17 0.79 ±0.12 +9.72 0.74 ±0.13 0.78 ±0.11 +5.41 ACVR2A mutation 0.89 ±0.04 0.91 ±0.05 +2.25 0.79 ±0.12 0.91 ±0.09 +15.19 0.81 ±0.16 0.90 ±0.10 +11.11 Histologic Grade 0.76 ±0.05 0.78 ±0.08 +2.63 0.71 ±0.09 0.75 ±0.15 +5.63 0.75 ±0.05 0.77 ±0.08 +2.67 KRAS mutation 0.77 ±0.08 0.85 ±0.04 +10.39 0.62 ±0.07 0.80 ±0.06 +29.03 0.72 ±0.07 0.79 ±0.10 +9.72 IDH Status 0.95 ±0.01 0.97 ±0.02 +2.11 0.97 ±0.01 0.99 ±0.01 +2.06 0.95 ±0.01 0.97 ±0.02 +2.11 Treatment Response 0.49 ±0.07 0.58 ±0.14 +18.37 0.59 ±0.06 0.68 ±0.07 +15.25 0.41 ±0.11 0.48 ±0.17 +17.07 Macro average 0.748 0.801 +7.09 0.725 0.815 +12.41 0.701 0.758 +8.13 
+
+Table 31: Task-wise comparison between MOOZY w/o case aggregator (Stage 2 slide encoder alone with mean slide pooling) and MOOZY (Ours) across the eight slide-encoder evaluation tasks. Values are mean ± standard de-viation across five folds. Relative improvement is computed as (MOOZY −
+
+MOOZY w/o case aggregator )/MOOZY w/o case aggregator × 100 using fold means. Task F1 (w/o Case Agg.) F1 (MOOZY) ∆F1 (%) AUC (w/o Case Agg.) AUC (MOOZY) ∆AUC (%) Bal. Acc (w/o Case Agg.) Bal. Acc (MOOZY) ∆Bal. Acc (%) Residual Cancer Burden 0.49 ±0.04 0.56 ±0.05 +14.29 0.64 ±0.08 0.74 ±0.04 +15.62 0.45 ±0.06 0.51 ±0.06 +13.33 TP53 mutation 0.84 ±0.04 0.87 ±0.04 +3.57 0.84 ±0.06 0.86 ±0.06 +2.38 0.85 ±0.05 0.86 ±0.05 +1.18 BAP1 mutation 0.87 ±0.05 0.89 ±0.06 +2.30 0.76 ±0.14 0.79 ±0.12 +3.95 0.76 ±0.12 0.78 ±0.11 +2.63 ACVR2A mutation 0.88 ±0.05 0.91 ±0.05 +3.41 0.89 ±0.10 0.91 ±0.09 +2.25 0.80 ±0.12 0.90 ±0.10 +12.50 Histologic Grade 0.76 ±0.06 0.78 ±0.08 +2.63 0.74 ±0.10 0.75 ±0.15 +1.35 0.76 ±0.06 0.77 ±0.08 +1.32 KRAS mutation 0.84 ±0.05 0.85 ±0.04 +1.19 0.79 ±0.08 0.80 ±0.06 +1.27 0.81 ±0.06 0.79 ±0.10 -2.47 IDH Status 0.96 ±0.01 0.97 ±0.02 +1.04 0.99 ±0.01 0.99 ±0.01 +0.00 0.96 ±0.01 0.97 ±0.02 +1.04 Treatment Response 0.53 ±0.06 0.58 ±0.14 +9.43 0.66 ±0.04 0.68 ±0.07 +3.03 0.44 ±0.05 0.48 ±0.17 +9.09 Macro average 0.771 0.801 +3.89 0.789 0.815 +3.33 0.729 0.758 +3.95
