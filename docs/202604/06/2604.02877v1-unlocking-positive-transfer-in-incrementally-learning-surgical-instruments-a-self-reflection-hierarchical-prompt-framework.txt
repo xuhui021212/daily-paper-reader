@@ -1,0 +1,836 @@
+Title: Unlocking Positive Transfer in Incrementally Learning Surgical Instruments: A Self-reflection Hierarchical Prompt Framework
+
+URL Source: https://arxiv.org/pdf/2604.02877v1
+
+Published Time: Mon, 06 Apr 2026 00:36:21 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# Unlocking Positive Transfer in Incrementally Learning Surgical Instruments: A Self-reflection Hierarchical Prompt Framework 
+
+## Yu Zhu 1 Kang Li 2B Zheng Li 1 Pheng-Ann Heng 1
+
+1The Chinese University of Hong Kong 2University of Electronic Science and Technology of China 
+
+{yzhu, pheng }@cse.cuhk.edu.hk, kangli@uestc.edu.cn B, lizheng@cuhk.edu.hk 
+
+## Abstract 
+
+To continuously enhance model adaptability in surgical video scene parsing, recent studies incrementally update it to progressively learn to segment an increasing number of surgical instruments over time. However, prior works con-stantly overlooked the potential of positive forward knowl-edge transfer , i.e., how past knowledge could help learn new classes, and positive backward knowledge transfer ,i.e., how learning new classes could help refine past knowl-edge. In this paper, we propose a self-reflection hierarchi-cal prompt framework that unlocks the power of positive forward and backward knowledge transfer in class incre-mental segmentation, aiming to proficiently learn new in-struments, improve existing skills of regular instruments, and avoid catastrophic forgetting of old instruments. Our framework is built on a frozen, pre-trained model that adap-tively appends instrument-aware prompts for new classes throughout training episodes. To enable positive forward knowledge transfer, we organize instrument prompts into a hierarchical prompt parsing tree with the instrument-shared prompt partition as the root node, n-part-shared prompt partitions as intermediate nodes and instrument-distinct prompt partitions as leaf nodes, to expose the reusable his-torical knowledge for new classes to simplify their learn-ing. Conversely, to encourage positive backward knowl-edge transfer, we conduct self-reflection refining on exist-ing knowledge by directed-weighted graph propagation, ex-amining the knowledge associations recorded in the tree to improve its representativeness without causing catastrophic forgetting. Our framework is applicable to both CNN-based models and advanced transformer-based foundation mod-els, yielding more than 5% and 11% improvements over the competing methods on two public benchmarks respectively. 
+
+## 1. Introduction 
+
+In minimally invasive surgeries ( e.g. , cholecystectomy), surgeons normally utilize different and unfixed sets of sur-(d) Hierarchical Prompt Parsing Tree                   
+
+> 𝑶𝑶𝑶𝑶𝑶𝑶 𝑾𝑾𝑾𝑾 𝑶𝑶 𝑾𝑾
+> (a) Independent Prompt Pool
+> (b) 𝒘𝒘 /𝑾𝑾 Positive Forward Transfer
+> (e) 𝒘𝒘 /Positive Forward Transfer
+> (c) 𝒘𝒘 /𝑾𝑾 Positive Backward Transfer
+> (f) 𝒘𝒘 /Positive Backward Transfer
+> Prompt Pool
+> (𝒕𝒕 )
+> Instrument-shared Partition
+> 2-part-shared Partition
+> 3-part-shared Partition
+> 𝒋𝒋 -th
+> Instrument
+> -distinct Partition
+> 𝒒𝒒 -th Instrument -distinct Partition
+> 𝑾𝑾 -th Instrument -distinct Partition
+> 𝒊𝒊 -th
+> Instrument
+> -distinct Partition
+> Prompt Pool
+> (𝒕𝒕 )
+> Prompt Pool
+> (𝒕𝒕 )
+> Prompt Pool
+> (𝒕𝒕 )
+> Prompt Pool
+> (𝒕𝒕 − 𝟏𝟏 )
+> Prompt Pool
+> (𝒕𝒕 − 𝟏𝟏 )
+> Instrument-shared Partition
+> 2-part-shared Partition
+> 3-part-shared Partition
+> 𝒋𝒋 -th
+> Instrument
+> -distinct Partition
+> 𝒒𝒒 -th Instrument -distinct Partition
+> 𝑾𝑾 -th Instrument -distinct Partition
+> 𝒊𝒊 -th
+> Instrument
+> -distinct Partition
+> Instrument-shared Partition
+> 2-part-shared Partition
+> 3-part-shared Partition
+> 𝒋𝒋 -th
+> Instrument
+> -distinct Partition
+> 𝒒𝒒 -th Instrument -distinct Partition
+> 𝑾𝑾 -th Instrument -distinct Partition
+> 𝑷𝑷 𝑶𝑶𝒊𝒊𝑾𝑾𝑶𝑶 𝑾𝑾𝑾𝑾 𝑶𝑶 𝑾𝑾𝑾𝑾
+
+Figure 1. (a) Prior works learn each instrument prompt in-dependently. (b,c) They overlook the power of positive for-ward and backward transfer between early-acquired and newly-acquired knowledge. (d) In contrast, our work organizes instru-ment prompts from general to specific as a hierarchical prompt parsing tree. (e) It supports positive forward transfer by helping new instrument prompts inherit profitable knowledge from the past to assist new-class learning. (f) It further enables positive back-ward transfer by letting the newly-acquired knowledge wisely re-fine early-acquired knowledge to improve old-class segmentation. 
+
+gical instruments depending on patient variability, intra-operative findings, potential complications, etc , to ensure the operation is performed safely and effectively [30]. When developing an automatic instrument segmentation model for surgical video scene parsing, it would be ex-tremely time-consuming and expensive to gather training data that covers all existing instrument categories to date. Compared to the static model training paradigm, i.e. , trig-gering the training until all indispensable data are gathered, the dynamic model training paradigm, i.e. , class incremen-
+
+> arXiv:2604.02877v1 [cs.CV] 3 Apr 2026
+
+tal learning [29] that iteratively exploits the available data sequentially gathered over time, to progressively cultivate the model competence for a growing number of surgical in-struments, would be more practical to maintain an up-to-date understanding in less development time and upfront data acquisition costs. In the general setting of class-incremental learning (CIL), the training data will arrive in a sequence over time, where each delivered dataset will bring annotations for new classes that were completely unknown in historical data. An ideal CIL model will incrementally learn the sequentially arrived datasets to acquire all classes it has seen. Particularly for the class-incremental segmentation of surgical instruments, the instrument categories contained in two adjacent datasets are less likely to be completely non-overlapping. Some classes of surgical instruments ( e.g. ,needle driver) are regularly used in routine operational ac-tions and would appear in almost every surgical video, re-gardless of when it was collected (referred to as the reg-ular class). However, there are also certain classes of in-struments that are occasionally used in special cases ( e.g. ,clip applier), including those that used to appear in the past but will not reappear in subsequent training episodes (i.e. , the old class), as well as those that have never ap-peared in the past but are newly collected to learn in cur-rent training episode ( i.e. , the new class). In each train-ing episode, frames with irregular instruments ( e.g. , the new and old classes) are interspersed throughout the surgi-cal video, blending with frames having regular instruments. Hence, in a typical training episode of class-incremental in-strument segmentation, the regular, old, and new classes concurrently exist, and a desirable CIL model should effec-tively acquire the ability for new instruments, advance ex-isting abilities in regular instruments, while not catastroph-ically forgetting early-learned instruments, gradually grow-ing model competence for more and more instruments. Recent advances in continual learning increasingly em-phasize the integration of foundation models by prompt tun-ing methods to effectively tackle various applications [18, 32, 34]. To elaborate, they attach the prompt parameters specific to each class into frozen foundation models, inde-pendently train prompts from scratch, and isolate them in a bank without further changes to prevent catastrophic forget-ting of old classes. However, most works underestimate the power of positive forward knowledge transfer (PFKT) ,
+
+i.e. , how past knowledge could help learn new classes, and positive backward knowledge transfer (PBKT) , i.e. ,how learning new classes could help refine past knowledge [8, 27, 31]. Undoubtedly, yielding positive forward and backward transfer would be substantially helpful to any class-incremental learning model, including the one in our case. When incrementally learning fine-grained instrument classes, for each new instrument, one could reuse exist-ing knowledge, such as the instrument-shared knowledge (e.g. , similar long and slim shape) and n-part-shared knowl-edge ( e.g. , same number of compositional parts), as de-fault prior, and only focus on acquiring the distinct fea-tures in this new instrument ( e.g. , special tip shapes), eas-ing the difficulties in learning fresh classes with positive forward knowledge transfer. Conversely, the discovery of new instrument-distinct features would trigger a whole self-introspection movement for all existing knowledge. It ex-amines the uniqueness of the early instrument-distinct fea-tures ( e.g. , black handle, L-shaped tip) and regroups those that become less distinct into common ones ( e.g. , black han-dle), refining past knowledge from self-reflection among the seen classes via positive backward knowledge transfer. To achieve this, we propose a self-reflection hierarchical prompt framework that unlocks the power of positive for-ward and backward knowledge transfer in class incremen-tal learning to substantially assist the segmentation model in learning increasing surgical instruments over time. Our framework gradually appends instrument-aware prompts on top of a frozen pre-trained model during training lifes-pan, which instantiates new prompts for new classes and maintains existing prompts for regular and old classes to strengthen model competence. Importantly, to encourage positive forward transfer when learning new classes, we construct a hierarchical prompt parsing tree that orga-nizes all instrument-aware prompts in a three-layer tree structure, following a general-to-specific knowledge hierar-chy, to help identify reusable historical knowledge for each new class. In specific, each instrument prompt consists of (a) an instrument-shared partition ( i.e. , root node at the top); (b) an n-part-shared partition ( i.e. , intermediate node in the middle); and (c) an instrument-distinct partition ( i.e. , leaf node at the bottom). For any new class, simply learning one instrument-distinct prompt partition would be sufficient. By attaching this partition as a leaf node of the intermediate node with matching compositional parts, new-class learn-ing can inherit instrument-shared knowledge and pertinent 
+
+n-part-shared knowledge from the past to facilitate this pro-cess. Based on the newly learned partition, we encourage positive backward transfer by the self-reflection refining strategy to seek necessary refinement for early-acquired knowledge. It triggers self-reflection for each existing par-tition by examining the associated knowledge in the hierar-chical prompt parsing tree, to discover redundancy and re-fine its representativeness within the context of seen classes. Notably, we propagate self-reflection updates by a directed-weighted graph to let it affect more for nearby nodes (with larger similarity) and fewer for distant nodes (with lesser similarity), wisely refining past knowledge without causing catastrophic forgetting. We validated our framework on two surgical public benchmarks, which greatly outperform the competing methods in a great margin. Our main contribu-tions could be summarized as follows: • We propose a self-reflection hierarchical prompt frame-work to leverage positive forward and backward transfer to improve class-incremental instrument segmentation. • We propose a hierarchical prompt parsing tree to expose inheritable past knowledge for new classes during posi-tive forward transfer. • We propose a self-reflection refining strategy to wisely improve past knowledge upon new-class prompts without catastrophic forgetting in positive backward transfer. • We validated our framework on two public surgical seg-mentation benchmarks in both CNN-based backbones and foundation models, where we outperformed the state-of-the-art approaches with significant gains. 
+
+## 2. Related Work 
+
+2.1. Class Incremental Segmentation 
+
+Most existing continual semantic segmentation works fo-cused on the domain incremental setting [11, 16, 17]. While the class incremental setting (CIS) is more practical yet challenging in medical areas, it aims to progressively learn to segment new classes without forgetting previously learned ones. Current CIS approaches still focus on cus-tomizing effective continual learning techniques on stan-dard convolutional neural network (CNN) based models or simple transformer-based models [35, 36]. Despite their effectiveness, their limited exploitation of powerful foun-dation models ( e.g. , SAM [15]) constrains their potential for further performance improvements. To the best of our knowledge, we are the first work that harnesses the gener-alization capability of SAM to promote class-incremental segmentation performance on surgical video parsing. 
+
+2.2. Prompt Learning 
+
+Prompt learning has been widely applied to various com-puter vision tasks [10, 13, 40], and has gained increasing at-tention as a key strategy for incorporating foundation mod-els into continual learning [18, 26, 33, 34]. However, how to leverage positive forward knowledge transfer (PFKT) and positive backward knowledge transfer (PBKT) to essen-tially promote class incremental segmentation model per-formance remains under-explored. In this paper, our work proposes a self-reflection hierarchical prompt framework to encourage previously learned knowledge to assist the learn-ing of new classes, and encourage the newly learned knowl-edge to help refine previously learned knowledge in return. Importantly, our proposed strategy is compatible with di-verse backbone architectures, including CNN-based ( e.g. ,DeepLabv3+ [7]) and transformer-based foundation mod-els ( e.g. , SAM [15]), yielding significant improvements on both architectures. 
+
+## 3. Methodology 
+
+In class-incremental segmentation, the model learns from a sequential data stream {D 1, D2, . . . , DT }. Each dataset contains the number of Nt pairs of surgical video and in-strument segmentation masks as Dt = {xj , y j }Nt
+
+> j=1
+
+, where 
+
+xj ∈ RNv ×3×H×W denotes the j-th video of Nv image frames in the height of H and width of W , and yj ∈
+
+RNv ×H×W denotes the corresponding segmentation masks. Let Ct = {c1, c 2, . . . , c n} denote the instrument label space of Dt, and Ct−1 = St−1 
+
+> i=1
+
+Ci denote the set of all instruments seen up to the t − 1 step. Then, at the t-th training episode, it coexists a set of new instrument Cnew t = {c | c ∈ C t, c / ∈
+
+Ct−1} that are newly encountered in current episode, a set of regular instruments Creg t = Tti=1 Ci that regularly ap-peared in historical datasets, as well as a set of old instru-ments Cold t = Ct − C reg t − C new t which were previously learned but become absent in the current episode. Due to strict privacy constraints in medical fields, only the current dataset Dt is accessible for training at the t-th episode. An ideal CIL model aims to effectively learn new instruments, enhance the existing skills of regular instruments, and miti-gate catastrophic forgetting of old instruments. Fig. 2 illustrates the overview of our framework. We gradually integrate instrument-aware prompts into a pre-trained model during incremental training episodes. For each new instrument, we first construct a hierarchical prompt parsing tree to help identify valuable knowledge that can be inherited from previous instruments, easing the dif-ficulties of learning new classes through positive forward knowledge transfer. Meanwhile, we leverage positive back-ward knowledge transfer by performing self-reflection re-fining on existing knowledge via directed-weighted graph propagation, examining the knowledge association within the tree to improve representativeness without causing catastrophic forgetting. 
+
+3.1. Framework Architecture 
+
+During incremental learning, we gradually learn a set of trainable parameters ( i.e. , prompt) for seen instruments, enabling instrument-aware prompt tuning upon a well-trained backbone to accurately delineate instrument con-tours. For the segmentation backbone, both CNN-based and Transformer-based encoders are applicable. Here, we take the well-known foundation model SAM [15] as an exam-ple. We freeze the SAM encoder θEnc and incorporate an adapter θa [6] for surgical scenario adaptation. Instrument-aware prompts Pc are attached to different depths of the mask decoder θDec from shallow to deep, and the original class-agnostic segmentation head is replaced by multiple instrument-aware segmentation heads θc
+
+> Seg
+
+. θa and θDec are trained only at the first step and frozen thereafter, while Pc
+
+and θc 
+
+> Seg
+
+are incrementally appended and updated. For new New  
+
+> 2-Parts Instrument
+
+𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷  𝑭𝑭 𝑷𝑷 𝑭𝑭𝑭𝑭𝑭𝑭𝑭𝑭𝑭𝑭 
+
+𝑻𝑻 𝑭𝑭𝑭𝑭 𝑻𝑻 𝑷𝑷 𝑻𝑻 𝑷𝑷𝑭𝑭 
+
+𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷  𝑩𝑩 𝑭𝑭 𝑩𝑩𝑩𝑩 𝑭𝑭𝑭𝑭𝑭𝑭𝑭𝑭 
+
+𝑻𝑻 𝑭𝑭𝑭𝑭 𝑻𝑻 𝑷𝑷 𝑻𝑻 𝑷𝑷𝑭𝑭   
+
+> Weighting Orienting
+> IS Partition
+> 2-part-shared Partition
+> 𝑖𝑖 -th ID Partition
+> 3-part-shared Partition
+> 𝑗𝑗 -th ID Partition 𝑞𝑞 -th ID Partition
+> 𝑘𝑘 -th ID Partition
+> Past Hierarchical Prompt Parsing Tree
+
+𝓣𝓣 𝑷𝑷 −𝟏𝟏                
+
+> IS Partition
+> 2-part-shared Partition
+> 𝑖𝑖 -th ID Partition
+> 3-part-shared Partition
+> 𝑗𝑗 -th ID Partition 𝑞𝑞 -th ID Partition
+> 𝑘𝑘 -th ID Partition
+> 𝛄𝛄
+> 𝜸𝜸 𝟐𝟐
+> 𝜸𝜸 𝟑𝟑
+> 𝜸𝜸 𝟒𝟒 𝜸𝜸 𝟒𝟒
+> 𝜸𝜸 𝟐𝟐
+> Newly added
+> New Instrument Prompt
+> 𝒒𝒒 𝑷𝑷 𝒕𝒕 Instrument Prompt
+> 𝑩𝑩 𝑷𝑷 𝒕𝒕 Instrument Prompt
+> 𝒋𝒋 𝑷𝑷 𝒕𝒕 Instrument Prompt
+> 𝑷𝑷 𝑭𝑭 𝑷𝑷𝑷𝑷 𝑷𝑷 𝑭𝑭 𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷 𝑩𝑩 𝑭𝑭𝑻𝑻 𝑩𝑩
+
+……        
+
+> 𝒒𝒒 𝑷𝑷 𝒕𝒕 Instrument Prompt
+> 𝑩𝑩 𝑷𝑷 𝒕𝒕 Instrument Prompt
+> 𝒋𝒋 𝑷𝑷 𝒕𝒕 Instrument Prompt
+> 𝑼𝑼 𝑷𝑷𝑭𝑭𝑭𝑭𝑷𝑷𝑷𝑷𝑭𝑭 𝑷𝑷 𝑭𝑭 𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷 𝑩𝑩 𝑭𝑭𝑻𝑻 𝑩𝑩
+
+……
+
+> Directed-weighted Graph
+> Self-reflection
+> refining
+
+SAM 
+
+𝑬𝑬 𝑻𝑻𝑩𝑩𝑷𝑷𝑭𝑭𝑷𝑷𝑭𝑭  𝑺𝑺 𝑷𝑷 𝑺𝑺 
+
+𝑯𝑯 𝑷𝑷𝑭𝑭𝑭𝑭            
+
+> 𝑵𝑵 𝑷𝑷𝑭𝑭 𝑪𝑪𝑪𝑪 𝑭𝑭𝑷𝑷𝑷𝑷
+> 𝑷𝑷 𝑭𝑭 𝑷𝑷 𝑭𝑭 𝑷𝑷 𝑩𝑩 𝑷𝑷𝑷𝑷𝑷𝑷 𝑻𝑻
+> �𝒚𝒚
+> ………
+> ………
+> MSA Layer MSA Layer MSA Layer
+> IS Partition
+> 2-part-shared Partition
+> 𝑖𝑖 -th ID Partition
+> 3-part-shared Partition
+> 𝑗𝑗 -th ID Partition 𝑞𝑞 -th ID Partition
+> 𝑘𝑘 -th ID Partition
+> IS Partition
+> 𝑖𝑖 -th ID Partition
+> 3-part-shared Partition
+> 𝑗𝑗 -th ID Partition 𝑞𝑞 -th ID Partition
+> 2-part-shared Partition
+> 𝑘𝑘 -th ID Partition
+> IS Partition
+> 𝑖𝑖 -th ID Partition
+> 3-part-shared Partition
+> 𝑗𝑗 -th ID Partition 𝑞𝑞 -th ID Partition
+> 2-part-shared Partition
+> 𝑘𝑘 -th ID Partition
+> Current Hierarchical Prompt
+> Parsing Tree
+
+𝓣𝓣 𝑷𝑷 
+
+> Self-reflection
+> refining
+> Instrument-distinct (ID) Prompt Partition
+
+𝑻𝑻 -part-shared Prompt Partition 
+
+> Instrument-shared (IS) Prompt Partition
+
+Figure 2. Overview of our self-reflection hierarchical prompt framework. We progressively append instrument-aware prompts into a pre-trained model during the training lifespan. For each new class, before diving into learning its specific prompts, we first build a hierarchical prompt parsing tree to discover the profitable knowledge it could inherit from the past, i.e. , the instrument-shared (IS) and n-part-shared knowledge, promoting new-class learning by positive forward knowledge transfer. Simply learning one instrument-distinct (ID) prompt partition would be sufficient to delineate its contour. Based on the newly acquired ID partition, we trigger self-reflection on existing knowledge to support positive backward knowledge transfer, wisely refining their representativeness within the context of all seen classes without causing catastrophic forgetting. 
+
+classes, we initialize new corresponding instrument-aware prompts and segmentation heads, while for old and regu-lar classes, the segmentation heads are frozen and only the prompts are updated. 
+
+3.2. Hierarchical Prompt Parsing Tree 
+
+Instead of letting these instrument prompts be independent of each other as prior works did [33, 34], we organize instrument-aware prompts as a hierarchical prompt parsing tree to explore the relation among instrument prompts. The prompt parsing tree has three layers: the root node is the instrument-shared partition P IS ; it branches into intermedi-ate nodes {Pi
+
+n-p }ni=1 , each would be shared across instru-ments with n parts; each intermediate node further con-nects to leaf nodes {Pc
+
+ID }c∈Ct , where each P c
+
+ID is distinc-tive to the c-th instrument. In this regard, when new instru-ments appear, we can effectively identify reusable knowl-edge from previously learned knowledge, thereby facilitat-ing positive knowledge transfer and promoting the learning of new classes. In the initial step t = 1 , for c-th instrument with i-parts, its prompt Pc would consist of three prompt parsing tree nodes: (1) root node P IS ; (2) intermediate node Pi
+
+n-p ; and (3) leaf node P c
+
+ID . Prompt partitions are inserted into different decoder layers, from shallow ( e.g. , the l1-th layer) to deep ( e.g. , the l3-th layer). In the l-th decoder layer, given the input feature F l, prompt tuning is applied during the cross-attention mechanism. The prompt parti-tion P ∈ Ru×b serves as the query, where u represents the number of prompt tokens and b denotes the embedding di-mension. The position-embedded input feature fpe (F l) is used as the key, and F l as the value, computed as: 
+
+h(l)
+
+atten (F l, P) = fatten (P, f pe (F l), F l). (1) Accordingly, the hierarchical prompt tuning process fhpt 
+
+with all three prompt partitions in Pc could be denoted as 
+
+fhpt (F l, [PIS ; Pn
+
+n-p ; Pc
+
+ID ]) = h(l3)
+
+atten (h(l2)
+
+atten (h(l1)
+
+atten (F l, PIS ), Pn
+
+n-p ), Pc
+
+ID ). (2) We then feed the output of the final decoder layer into the segmentation head θc
+
+Seg for producing the final segmentation mask. The objective function in the first training episode could be further elaborated as: 
+
+min  
+
+> θa,θ c
+> Seg ,θ Dec ,
+> [PIS ;Pn
+> n-p ;Pc
+> ID ]
+
+Lce 
+
+ θc
+
+> Seg
+
+ θDec 
+
+ fEnc (x, θ a) , [PIS ; Pn
+
+> n-p
+
+; Pc
+
+> ID
+
+] , y c ,
+
+(3) where (x, y c) ∈ D1 and yc is the mask for instrument c. P IS 
+
+is optimized for all instruments, P n 
+
+> n-p
+
+is updated only when the instrument consists of n parts, and P c 
+
+> ID
+
+is specifically optimized for instrument c, ensuring that each prompt par-tition learns relevant knowledge under proper supervision. After optimization, the trained prompt partition is orga-nized into a hierarchical prompt parsing tree, represented as an undirected graph T 1 = ( V1, E1), and forwarded to the next training episode. We denote its vertex set as V1 =
+
+{PIS }∪{ Pi
+
+> n-p
+
+}ni=1 ∪{ Pc
+
+> ID
+
+}N1
+
+> c=1
+
+, where N1 = |C1| and n is the maximum number of composition parts (set to 3 following common practice in surgical videos). We further denote its edge set as E1 = {(PIS , Pi
+
+> n-p
+
+)| i ∈ [1 , n ]} ∪ { (Pi
+
+> n-p
+
+, Pj
+
+> ID
+
+)| i ∈
+
+[1 , n ], j ∈ [1 , N 1]} , where each element (v, u ) indicates an edge connecting the node v and the node u in T 1.In subsequent training steps t ≥ 2, once a newly-seen class c composed of k parts is encountered, rele-vant prior knowledge can be efficiently retrieved from the previous hierarchical prompt parsing tree T t−1. Specifi-cally, the retrieved knowledge includes the root node P IS ,which is shared across all instruments, and the intermediate node P k
+
+> n-p
+
+, which captures shared semantics among instru-ments composed of k parts. By simply inserting a newly initialized instrument-specific prompt P c 
+
+> ID
+
+under P k
+
+> n-p
+
+, the prior knowledge can be effectively inherited. The hierar-chical prompt parsing tree then became T t = {V t−1 ∪{Pc
+
+> ID
+
+}, Et−1 ∪ { (Pk
+
+> n-p
+
+, Pc
+
+> ID
+
+)}. We then optimize the newly introduced prompt partition P c 
+
+> ID
+
+as well as the related seg-mentation head θc 
+
+> Seg
+
+by the following objective: 
+
+min 
+
+> θc
+> Seg ,Pc
+> ID
+
+Lce 
+
+ θc
+
+> Seg
+
+ θDec 
+
+ fEnc (x, θ a) , [PIS ; Pn
+
+> n-p
+
+; Pc
+
+> ID
+
+] , y c .
+
+(4) Consequently, the model enables positive forward transfer and acquires the distinct knowledge P c 
+
+> ID
+
+of class c.
+
+3.3. Self-reflection Refining Strategy 
+
+Based on the current hierarchical prompt parsing tree T t
+
+with the newly appended instrument-distinct partition P c
+
+> ID
+
+,we then perform positive backward transfer to refine the early-acquired knowledge by wisely adjusting existing par-titions in T t. To achieve that, we construct a directed and weighted graph Gtc with the same vertex set Vt as T t, but as-signing direction and weights to its edge set into ˜Etc . Specif-ically, we set P c 
+
+> ID
+
+as the root node and all edges in Et follow an outward flow from the root node P c
+
+> ID
+
+, connecting nodes in order of increasing distance from P c 
+
+> ID
+
+and represented as: 
+
+˜Etc = [ 
+
+> vi,v j∈V t
+
+{[vi, v j ] | d ( vi, Pc
+
+> ID
+
+) < d ( vj , Pc
+
+> ID
+
+)} , (5) 
+
+Algorithm 1: Training Procedures 
+
+Output: θa, θDec , {θc
+
+> Seg
+
+}c∈Ct , and {Pc}c∈Ct .
+
+while incrementally learning from t = 1 to T do if t == 1 then 
+
+Load and freeze pre-trained encoder as θEnc .Optimize {θc
+
+> Seg
+
+}c∈C1 , {Pc}c∈C1 , θDec , and 
+
+θa with D1 by Eq. 3 and construct T 1.
+
+else for c ∈ C new t do 
+
+Initialize new-class node P c
+
+> ID
+
+. Insert P c
+
+> ID
+
+into T t−1 to obtain T t.Freeze θEnc , θDec , θa, and {θc
+
+> Seg
+
+}c∈C old t ,and train P c 
+
+> ID
+
+and θc 
+
+> Seg
+
+with Dt by Eq. 4. Obtain Gtc = ( Vtc , ˜Etc ) by orienting and weighting the current T t.Conducting self-reflection via Eq. 8 to derive the refined ˜Gtc = ( ˜Vtc , ˜Etc ).Update T t by ˜Vtc .
+
+end end 
+
+Pass θEnc , θa, θDec , {θc
+
+> Seg
+
+}c∈Ct , {Pc}c∈Ct , and 
+
+T t to the t + 1 step. 
+
+end Return θa, θDec , {θc
+
+> Seg
+
+}c∈Ct , {Pc}c∈Ct .where d( ·) denotes the length of the unique path connect-ing them in the current graph Gtc (i.e. , the number of edges along that path). [·, ·] represents a directed edge where 
+
+[vi, v j ]̸ ≡ [vj , v i]. We further assign a weight W[vi,v j ] =
+
+γd( vj ,Pc 
+
+> ID )
+
+to each edge in Gtc, where γ ∈ (0 , 1) is a decay factor. The decay factor ensures that self-reflection primar-ily focuses on relevant and recent available classes, thereby avoiding catastrophic forgetting by maintaining the stability of knowledge related to old classes or less relevant classes. Accordingly, the adjacency matrix Atc ∈ R|V t|×|V t| of Gtc
+
+is defined as Atc|i,j = I[vi,v j ]∈ ˜Etc
+
+· W[vi,v j ], where I is the indicator function. We further employ a directed graph net-work fdign [28] to achieve self-reflection between the new prompt partition and the existing prompt partitions by di-rected graph convolution. Specifically, we first calculate the transition matrix Tc by: 
+
+Tc = (1 − α) D−1Atc + αn 1|V t|×|V t|, (6) where D(i, i ) = P 
+
+> j
+
+Atc(i, j ) is the degree matrix, and α ∈
+
+(0 , 1) is a hyperparameter known as the teleport probability. The term αn 1n×n is a teleportation matrix [25] that ensures 
+
+Tc is irreducible and aperiodic and thereby guarantees the existence of a unique left eigenvector πc with eigenvalue GR (Old)  CA (New) BF (Regular) VS (Old)  PF (Regular)  MCS (Regular)  LND (Regular)  UP (Regular)            
+
+> Seq -FPLOP Mib RASD RCIL EWF LISM CoinSeg CAT -SD Ours GT Image
+> SI (New)
+
+Figure 3. Visual comparisons of our approaches and highly competitive approaches. More comparison results are in the supplementary. Table 1. Porcine robot-assisted nephrectomy instrument segmentation results for the last episode evaluated by IoU and all episodes assessed by BWT and FWT. For all metrics, the higher the better. We highlight the best and second-best results in bold and underline, respectively. 
+
+Method Old Class Regular Class New Class Old Class Regular Class New Class All BWT FWT VS GR PF BF UP LND MCS SI CA Ind-T ( t = 1 ) 75.12 62.50 68.27 66.22 64.65 71.89 70.91 - - 68.81 68.39 - 68.51 - -Ind-T ( t = 2 ) - - 69.67 67.67 66.44 70.63 70.80 32.98 9.18 - 69.04 21.08 55.34 - -Joint-T 83.46 70.91 79.79 71.45 71.88 71.08 75.04 35.94 8.90 77.18 73.85 22.42 63.16 - -Seq-F 4.90 2.97 48.73 52.23 44.81 46.73 37.47 9.45 1.29 3.93 45.99 5.37 27.62 -8.92 0.14 SI 6.51 2.65 50.26 58.91 29.58 51.29 42.02 11.48 1.82 4.58 46.41 6.65 28.28 -8.44 1.42 LWF 7.64 3.99 49.86 49.48 36.97 59.13 23.81 4.97 0.36 5.82 43.85 2.67 26.25 -9.92 -2.56 ILT 7.61 1.71 33.57 55.31 30.44 59.02 51.86 0.61 1.67 4.66 46.04 1.14 26.87 -8.68 -4.09 PLOP 11.14 3.42 37.50 57.63 31.89 61.91 49.57 5.39 0.27 7.28 47.70 2.83 28.75 -6.75 -2.40 MiB 13.01 10.85 38.76 55.01 36.48 36.21 45.07 8.98 2.91 11.93 42.30 5.95 27.47 -9.28 0.72 RASD 8.27 3.23 52.11 63.46 45.74 63.78 42.36 11.60 3.74 5.75 53.49 7.67 32.70 -3.05 2.44 RCIL 12.19 2.70 54.89 61.51 53.98 64.93 35.06 4.11 2.74 7.45 54.07 3.42 32.46 -2.15 -1.80 EWF 14.03 13.58 53.39 52.96 54.66 54.33 50.12 11.24 1.83 13.81 53.09 6.54 34.02 -1.03 1.31 LISM 22.24 5.83 46.66 56.42 51.16 51.97 55.21 15.51 5.50 14.03 52.28 10.50 34.50 -1.55 5.27 CoinSeg 12.78 9.43 44.81 64.72 49.68 68.03 51.88 4.75 1.11 11.10 55.82 2.93 34.13 0.14 -2.30 CAT-SD 22.88 16.65 43.95 64.50 36.69 57.86 51.61 15.91 5.80 19.76 50.92 10.85 35.09 -0.88 5.62 Ours (DeepLabv3+) 27.28 17.64 54.81 63.98 55.13 68.41 56.63 16.43 7.96 22.46 59.79 12.19 40.92 6.22 6.96 
+
+Ours (SAM) 75.46 61.58 73.48 65.67 69.97 72.03 72.19 35.28 9.32 68.52 70.67 22.30 59.44 1.55 1.22 
+
+1 [4]. The output of the directed graph convolution is: 
+
+˜Gtc =( ˜Vtc , ˜Etc ) = fdign (Vt, ˜Etc )= 12
+
+
+
+Π 12 TcΠ− 12 + Π − 12 Tc⊤Π 12
+
+
+
+F  Vt Θ, (7) where Π = 1 
+
+> ∥πc∥1
+
+Diag( πc), F(·) is the flatten operation, and Θ is the learnable parameter. We optimize fdign to produce ˜Gtc that performs well across all currently available classes as follows: 
+
+min 
+
+> fdign
+
+Lce 
+
+ θc
+
+> Seg
+
+ θDec 
+
+ fEnc (x, θ a) ; fdign 
+
+ Gtc
+
+ , y c . (8) After optimization, the refined prompt partition tree is de-rived from ˜Gtc by discarding edge weights and directions. The overall training scheme is presented in Algorithm 1. 
+
+## 4. Experiments 
+
+4.1. Dataset and Experiment Settings 
+
+Porcine Robot-assisted Nephrectomy We utilize two datasets, EndoVis 2017 ( t = 1) [1] and EndoVis 2018 (t = 2 ) [2, 12], to construct a continuous data stream in or-der for our experiments. The vessel sealer (VS) and grasp-ing retractor (GR) appear only in EndoVis 2017 and are therefore considered old classes in our setup. The prograsp forceps (PF), bipolar forceps (BF), ultrasound probe (UP), large needle driver (LND), and monopolar curved scissors (MCS) are regular classes, as they are present in both En-doVis 2017 and EndoVis 2018. The suction instrument (SI) and clip applier (CA) appear only in EndoVis 2018, which are treated as new classes. 
+
+Laparoscopic Cholecystectomy A continuous data stream is built by sequentially combining two datasets, CholecSeg8k ( t=1) [14] and M2CAI-Seg ( t=2) [22]. The L-hook electrocautery (LH) from CholecSeg8k is an old class, while the grasping retractor (GR) is the regular class. The Clipper (Cl), Scissors (Sc), Irrigator (Ir), Specimen bag (SB), and Bipolar (Bi) are new classes. 
+
+Implementation Details We adopt the SAM ViT-H [15] version as our encoder θEnc . To better evaluate model performance in class-incremental learning (CIL), we Table 2. Laparoscopic cholecystectomy instrument segmentation results for the last episode evaluated by IoU and all episodes assessed by BWT and FWT. For all metrics, the higher the better. We highlight the best and second-best results in bold and underline, respectively.                                                                                                                                                                                                           
+
+> Method Old Class Regular Class New Class New Class All BWT FWT LH Gr Cl Sc Ir SB Bi Ind-T ( t= 1 )76.04 74.11 ------75.08 --Ind-T ( t= 2 )-79.40 69.34 47.02 39.05 63.91 59.56 55.78 59.71 --Joint-T 79.54 80.88 71.07 49.03 39.64 67.65 57.87 57.05 63.67 --Seq-F 39.07 53.67 62.59 49.61 32.18 47.14 43.50 47.01 46.82 -12.52 -1.00 SI 41.65 54.30 63.15 49.70 31.86 50.75 47.60 48.61 48.43 -10.92 0.60 LWF 36.29 54.70 65.46 42.98 35.16 45.23 51.94 48.15 47.39 -13.40 0.14 ILT 39.43 52.52 55.51 48.77 30.32 54.39 52.29 48.25 47.60 -12.92 0.24 PLOP 46.29 58.98 65.34 33.41 33.12 50.80 54.78 47.49 48.96 -6.26 -0.52 MiB 42.29 47.79 65.31 38.48 33.25 55.48 50.48 48.60 47.58 -13.85 0.59 RASD 55.53 51.54 50.40 44.93 32.29 51.04 52.23 46.18 48.28 -5.36 -1.83 RCIL 43.97 55.89 61.68 42.53 29.10 55.39 52.61 48.26 48.74 -8.96 0.25 EWF 43.38 53.96 65.89 44.70 31.96 58.27 50.73 50.31 49.84 -10.23 2.30 LISM 45.80 51.06 61.06 45.20 29.27 50.72 50.47 47.34 47.65 -10.47 -0.67 CoinSeg 54.45 48.30 57.09 42.27 35.65 53.34 54.72 48.61 49.40 -7.52 0.60 CAT-SD 55.14 62.39 66.05 43.98 34.66 47.35 52.63 48.93 51.74 -0.13 0.92 Ours (DeepLabv3+) 58.08 66.18 65.73 50.17 35.88 61.38 55.41 53.71 56.12 3.24 5.70
+> Ours (SAM) 74.90 80.85 71.04 50.29 38.93 64.98 57.10 56.47 62.58 2.80 0.69
+
+Table 3. Ablation study of our key components.                               
+
+> DLv3+ SAM HPPT SRS Old Classes Regular Classes New Classes All
+> ✓21.42 69.11 22.24 48.15
+> ✓✓65.29 69.23 22.16 57.89
+> ✓✓✓68.52 70.67 22.30 59.44
+> ✓3.93 45.99 5.37 27.62
+> ✓✓✓22.46 59.79 12.19 40.92
+
+adopt the metrics of Backward Transfer (BWT) and For-ward Transfer (FWT) [3, 8, 21]. In the CIL setting, BWT measures how learning new classes affects performance on old and regular classes. FWT shows how prior learning sup-ports new classes. Their detailed equations and further im-plementation details are provided in the supplementary. 
+
+4.2. Compared Methods 
+
+The straightforward approach is to sequentially fine-tune the previous model on each episode (Seq-F). We also com-pare our method with other state-of-the-art methods, in-cluding SI [37], LWF [19], ILT [23], PLOP [9], MiB [5], RASD [24], RCIL [38], EWF [35], LISM [20], Coin-Seg [39] and CAT-SD [36]. Additionally, we train a model individually for each incremental step (Ind-T), as well as jointly train a model (Joint-T) where all classes are avail-able from all incremental steps. For fair and efficient com-parison, both Ind-T and Joint-T are trained using the pow-erful SAM [15] as the backbone. Joint-T represents the up-per bound since it is trained with all classes at once. For fair comparison with other state-of-the-art CIL methods, we also implement our approach using DeepLabv3+ [7] as the backbone. 
+
+4.3. Experiment Results 
+
+We report the performance of the instrument segmentation in porcine robot-assisted nephrectomy in Table 1. At the last learning episode, our method significantly outperforms all state-of-the-art methods with average improvements of 
+
+48 .76% , 14 .85% , and 11 .45% over the second-best method on old, regular, and new classes, respectively, and yields re-sults comparable to the upper bound, i.e. , the jointly trained model (Joint-T). Throughout the whole incremental learn-ing episodes, our approach not only achieves the least for-getting, but also yields the largest positive backward knowl-edge transfer (see the BWT column). In most prior works, their BWT values are negative, indicating that learning new instruments only makes those previously learned ones be forgotten, rather than benefiting them. In contrast, equipped with the hierarchical prompt parsing tree, our approach not only yields the positive BWT score, but also the highest one, demonstrating its great capability in alleviating catastrophic forgetting and refining past knowledge. Meanwhile, with the help of the proposed self-reflection refining strategy, our approach achieves the highest FWT score ( i.e. , 6.96) with the DeepLabv3+ backbone. It greatly outperforms other comparison approaches that adopt the same backbone as ours, indicating the superior performance of our approach in promoting new-instrument learning. Similar improvements could also be found in laparo-scopic cholecystectomy experiments in Table 2. Our model achieves the best performance across all metrics, includ-ing FWT and BWT, surpassing the state-of-the-art approach by 19.76%, 18.46%, and 6.16% on old, regular, and new classes of surgical instruments, respectively. We visualize the segmentation results of the proposed Figure 4. Effects of the decay factor γ and the teleport probability  
+
+> αon model performance.
+
+method in comparison with other SOTA methods, as shown in Fig. 3. Our method effectively learns new classes ( i.e. ,the suction instrument in the third row), while maintaining strong performance on old ( i.e. , vessel sealer and grasping retractor in first row) and regular classes ( i.e. , prograsp for-ceps in the second row). Additionally, we validate that our method remains robust and effective even when part-wise information is unavailable due to special circumstances. The detailed strategy and experimental results are provided in the supplementary, along with additional discussions. 
+
+4.4. Ablation Study 
+
+4.4.1. Analysis of the Key Components 
+
+The effectiveness of each component in our framework is evaluated on the EndoVis 2017 and 2018 datasets (Ta-ble 3). We consider the following settings, (a) using only the SAM backbone (1st-row), (b) introducing hierarchical prompt parsing tree (HPPT) upon the SAM backbone (2nd-row), (c) using hierarchical prompt parsing tree as well as the proposed self-reflection refining strategy (SRS) with the SAM backbone (3rd-row), (d) using only the DeepLabV3+ backbone (4th-row), and (e) applying the entire proposed method upon DeepLabV3+ backbone (last row). Compared to using SAM alone, introducing HPPT improves average performance by 9.74%. Further incorporating the proposed SRS brings an overall performance gain of 1.55%. Our method is also compatible with other backbones. When ap-plied to DeepLabV3+, it achieves a notable performance improvement of 13.30%. 
+
+4.4.2. Hyperparameter Studies 
+
+We investigate how the performance of the model is affected by different values of the decay factor γ, as shown in Fig-ure 4 (a). A large decay factor may cause new knowledge to influence distant, irrelevant nodes, degrading performance. In contrast, a small decay factor overly restricts the spread of new information, preventing it from reaching other nodes and hindering positive backward knowledge transfer. The model achieves the best performance when γ = 0 .05 . In addition, we also explore the impact of teleport probabil-ity α on model performance, as shown in Figure 4 (b). To maximally preserve the structural information of the hier-                
+
+> Table 4. Computational cost analysis.
+> Metric SAM Ours ∆vs. SAM
+> Parameters (M) 636 639 +0.47% FLOPs (G) 2733 2751 +0.65% Train. time (s per iteration) 0.901 0.915 +1.55% Infer. time (s per slice) 0.464 0.466 +0.43%
+
+archical prompt parsing tree, we restrict α to small values approaching 0. The performance peaks when α = 0 .001 .
+
+4.4.3. Computational Cost Analysis 
+
+We evaluate the computational efficiency of our method from multiple aspects, including the model size (Param-eters), FLOPs, training time (Train. time), and inference time (Infer. time), as reported in Table 4. The second col-umn (SAM) reports the results of using SAM alone for seg-mentation. The third column (Ours) reports results of our method built upon SAM as the backbone. The final column (∆ vs. SAM) quantifies the additional computational over-head introduced by our method compared to using SAM alone, showing that the overhead of our model is negligible. 
+
+## 5. Conclusion 
+
+We present a self-reflection hierarchical prompting framework that enables positive forward and backward knowledge transfer to improve the performance of class-incremental surgical instrument segmentation. To promote positive forward knowledge transfer, we propose to struc-ture instrument-aware prompts into a hierarchical prompt parsing tree that follows a general-to-specific knowledge hierarchy, to expose the reusable knowledge for new classes to facilitate their learning process. Meanwhile, we realize positive backward knowledge transfer by proposing a self-reflection refining strategy to examine the knowledge association among early-acquired prompt partitions according to the topology structure of the tree, wisely refining historical knowledge without causing catastrophic forgetting. Our framework is applicable to both CNN-based models and advanced transformer-based foundation models. Experiments on two public surgical segmentation benchmarks have validated the effectiveness of our approach, yielding significant improvements over the state-of-the-art approaches. 
+
+Acknowledgements: The work described in this pa-per was supported in part by the Research Grants Council of the Hong Kong Special Administrative Region, China, under Project T45-401/22-N. This work is also supported by the Hong Kong Research Grant Council under the Collaborative Research Fund C4042-23GF and Gen-eral Research Fund 14214322, 14200623, 14203424, 14206325, and CUHK Strategic Seed Funding for Col-laborative Research Scheme. The authors would also like to thank the support from Multi-scale Medical Robotics Center, AIR@InnoHK. References 
+
+[1] Max Allan, Alex Shvets, Thomas Kurmann, Zichen Zhang, Rahul Duggal, Yun-Hsuan Su, Nicola Rieke, Iro Laina, Niveditha Kalavakonda, Sebastian Bodenstedt, et al. 2017 robotic instrument segmentation challenge. arXiv preprint arXiv:1902.06426 , 2019. 6, 1 [2] Max Allan, Satoshi Kondo, Sebastian Bodenstedt, Stefan Leger, Rahim Kadkhodamohammadi, Imanol Luengo, Fe-lix Fuentes, Evangello Flouty, Ahmed Mohammed, Marius Pedersen, et al. 2018 robotic scene segmentation challenge. 
+
+arXiv preprint arXiv:2001.11190 , 2020. 6, 1 [3] Marco PE Apolinario, Sakshi Choudhary, and Kaushik Roy. Code-cl: Conceptor-based gradient projection for deep con-tinual learning. In Proceedings of the IEEE/CVF Inter-national Conference on Computer Vision , pages 775–784, 2025. 7, 1 [4] GP Barker and Hans Schneider. Algebraic perron-frobenius theory. Linear Algebra and its Applications , 11(3):219–233, 1975. 6 [5] Fabio Cermelli, Massimiliano Mancini, Samuel Rota Bulo, Elisa Ricci, and Barbara Caputo. Modeling the background for incremental learning in semantic segmentation. In Pro-ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 9233–9242, 2020. 7 [6] Cheng Chen, Juzheng Miao, Dufan Wu, Aoxiao Zhong, Zhiling Yan, Sekeun Kim, Jiang Hu, Zhengliang Liu, Lichao Sun, Xiang Li, et al. Ma-sam: Modality-agnostic sam adap-tation for 3d medical image segmentation. Medical Image Analysis , 98:103310, 2024. 3, 1 [7] Liang-Chieh Chen, George Papandreou, Florian Schroff, and Hartwig Adam. Rethinking atrous convolution for seman-tic image segmentation. arXiv preprint arXiv:1706.05587 ,2017. 3, 7 [8] Natalia D´ ıaz-Rodr´ ıguez, Vincenzo Lomonaco, David Filliat, and Davide Maltoni. Don’t forget, there is more than for-getting: new metrics for continual learning. arXiv preprint arXiv:1810.13166 , 2018. 2, 7, 1 [9] Arthur Douillard, Yifu Chen, Arnaud Dapogny, and Matthieu Cord. Plop: Learning without forgetting for contin-ual semantic segmentation. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition ,pages 4040–4050, 2021. 7 [10] Marc Fischer, Alexander Bartler, and Bin Yang. Prompt tuning for parameter-efficient medical image segmentation. 
+
+Medical Image Analysis , 91:103024, 2024. 3 [11] Prachi Garg, Rohit Saluja, Vineeth N Balasubramanian, Chetan Arora, Anbumani Subramanian, and CV Jawahar. Multi-domain incremental learning for semantic segmenta-tion. In Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision , pages 761–771, 2022. 3 [12] Cristina Gonz´ alez, Laura Bravo-S´ anchez, and Pablo Arbe-laez. Isinet: an instance-based approach for surgical instru-ment segmentation. In International conference on medical image computing and computer-assisted intervention , pages 595–605. Springer, 2020. 6 [13] Miaotian Guo, Huahui Yi, Ziyuan Qin, Haiying Wang, Aidong Men, and Qicheng Lao. Multiple prompt fusion for zero-shot lesion detection using vision-language models. In 
+
+International Conference on Medical Image Computing and Computer-Assisted Intervention , pages 283–292. Springer, 2023. 3 [14] W-Y Hong, C-L Kao, Y-H Kuo, J-R Wang, W-L Chang, and C-S Shih. Cholecseg8k: a semantic segmentation dataset for laparoscopic cholecystectomy based on cholec80. arXiv preprint arXiv:2012.12453 , 2020. 6 [15] Alexander Kirillov, Eric Mintun, Nikhila Ravi, Hanzi Mao, Chloe Rolland, Laura Gustafson, Tete Xiao, Spencer White-head, Alexander C Berg, Wan-Yen Lo, et al. Segment any-thing. In Proceedings of the IEEE/CVF international con-ference on computer vision , pages 4015–4026, 2023. 3, 6, 7, 1[16] Kang Li, Lequan Yu, and Pheng-Ann Heng. Domain-incremental cardiac image segmentation with style-oriented replay and domain-sensitive feature whitening. IEEE Trans-actions on Medical Imaging , 42(3):570–581, 2022. 3 [17] Kang Li, Yu Zhu, Lequan Yu, and Pheng-Ann Heng. A dual enrichment synergistic strategy to handle data heterogeneity for domain incremental cardiac segmentation. IEEE Trans-actions on Medical Imaging , 43(6):2279–2290, 2024. 3 [18] Qiwei Li and Jiahuan Zhou. Caprompt: Cyclic prompt aggregation for pre-trained model based class incremental learning. In Proceedings of the AAAI Conference on Arti-ficial Intelligence , pages 18421–18429, 2025. 2, 3 [19] Zhizhong Li and Derek Hoiem. Learning without forgetting. 
+
+IEEE transactions on pattern analysis and machine intelli-gence , 40(12):2935–2947, 2017. 7 [20] Pengbo Liu, Xia Wang, Mengsi Fan, Hongli Pan, Minmin Yin, Xiaohong Zhu, Dandan Du, Xiaoying Zhao, Li Xiao, Lian Ding, et al. Learning incrementally to segment mul-tiple organs in a ct image. In International Conference on Medical Image Computing and Computer-Assisted Interven-tion , pages 714–724. Springer, 2022. 7 [21] David Lopez-Paz and Marc’Aurelio Ranzato. Gradient episodic memory for continual learning. Advances in neu-ral information processing systems , 30, 2017. 7, 1 [22] Salman Maqbool, Aqsa Riaz, Hasan Sajid, and Osman Hasan. m2caiseg: Semantic segmentation of laparoscopic images using convolutional neural networks. arXiv preprint arXiv:2008.10134 , 2020. 6 [23] Umberto Michieli and Pietro Zanuttigh. Incremental learn-ing techniques for semantic segmentation. In Proceedings of the IEEE/CVF international conference on computer vision workshops , pages 0–0, 2019. 7 [24] Umberto Michieli and Pietro Zanuttigh. Continual semantic segmentation via repulsion-attraction of sparse and disentan-gled latent representations. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition ,pages 1114–1124, 2021. 7 [25] Lawrence Page, Sergey Brin, Rajeev Motwani, and Terry Winograd. The pagerank citation ranking: Bringing order to the web. Technical report, Stanford infolab, 1999. 5 [26] Yongchun Qin, Pengfei Fang, and Hui Xue. Pearl: Input-agnostic prompt enhancement with negative feedback regu-lation for class-incremental learning. In Proceedings of the AAAI Conference on Artificial Intelligence , pages 20051– 20059, 2025. 3 [27] Anh Thai, Stefan Stojanov, Zixuan Huang, and James M Rehg. The surprising positive knowledge transfer in contin-ual 3d object shape reconstruction. In 2022 International Conference on 3D Vision (3DV) , pages 209–218. IEEE, 2022. 2 [28] Zekun Tong, Yuxuan Liang, Changsheng Sun, Xinke Li, David Rosenblum, and Andrew Lim. Digraph inception con-volutional networks. Advances in neural information pro-cessing systems , 33:17907–17918, 2020. 5, 1 [29] Gido M Van de Ven, Tinne Tuytelaars, and Andreas S To-lias. Three types of incremental learning. Nature Machine Intelligence , 4(12):1185–1197, 2022. 2 [30] Valentina Vitiello, Su-Lin Lee, Thomas P Cundy, and Guang-Zhong Yang. Emerging robotic platforms for min-imally invasive surgery. IEEE reviews in biomedical engi-neering , 6:111–126, 2012. 1 [31] Liyuan Wang, Mingtian Zhang, Zhongfan Jia, Qian Li, Chenglong Bao, Kaisheng Ma, Jun Zhu, and Yi Zhong. Afec: Active forgetting of negative transfer in continual learning. 
+
+Advances in Neural Information Processing Systems , 34: 22379–22391, 2021. 2 [32] Yabin Wang, Zhiwu Huang, and Xiaopeng Hong. S-prompts learning with pre-trained transformers: An occam’s razor for domain incremental learning. Advances in Neural Informa-tion Processing Systems , 35:5682–5695, 2022. 2 [33] Zifeng Wang, Zizhao Zhang, Sayna Ebrahimi, Ruoxi Sun, Han Zhang, Chen-Yu Lee, Xiaoqi Ren, Guolong Su, Vin-cent Perot, Jennifer Dy, et al. Dualprompt: Complementary prompting for rehearsal-free continual learning. In European conference on computer vision , pages 631–648. Springer, 2022. 3, 4 [34] Zifeng Wang, Zizhao Zhang, Chen-Yu Lee, Han Zhang, Ruoxi Sun, Xiaoqi Ren, Guolong Su, Vincent Perot, Jen-nifer Dy, and Tomas Pfister. Learning to prompt for con-tinual learning. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 139–149, 2022. 2, 3, 4 [35] Jia-Wen Xiao, Chang-Bin Zhang, Jiekang Feng, Xialei Liu, Joost van de Weijer, and Ming-Ming Cheng. Endpoints weight fusion for class incremental semantic segmentation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 7204–7213, 2023. 3, 7[36] Mengya Xu, Mobarakol Islam, Long Bai, and Hongliang Ren. Privacy-preserving synthetic continual semantic seg-mentation for robotic surgery. IEEE transactions on medical imaging , 2024. 3, 7 [37] Friedemann Zenke, Ben Poole, and Surya Ganguli. Contin-ual learning through synaptic intelligence. In International conference on machine learning , pages 3987–3995. PMLR, 2017. 7 [38] Chang-Bin Zhang, Jia-Wen Xiao, Xialei Liu, Ying-Cong Chen, and Ming-Ming Cheng. Representation compensation networks for continual semantic segmentation. In Proceed-ings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 7053–7064, 2022. 7 [39] Zekang Zhang, Guangyu Gao, Jianbo Jiao, Chi Harold Liu, and Yunchao Wei. Coinseg: Contrast inter-and intra-class representations for incremental segmentation. In Proceed-ings of the IEEE/CVF International Conference on Com-puter Vision , pages 843–853, 2023. 7 [40] Yu Zhu, Kang Li, Lequan Yu, and Pheng Ann Heng. Memory-efficient prompt tuning for incremental histopathol-ogy classification. In Proceedings of the AAAI Conference on Artificial Intelligence , pages 7802–7810, 2024. 3 Supplementary 
+
+In the supplementary, we additionally provide implementa-tion details, training scheme descriptions, complete visual-ization comparisons, additional ablation studies, and further discussion regarding the limitations and future work. 
+
+## 1. MLLM-based Part Count Estimation 
+
+In most surgical video datasets, instrument annotations are provided in a part-wise manner, i.e., each part of the instru-ment is labeled as a different category. Consequently, the number of parts for each instrument class can be directly obtained as a prior (all four datasets used in our paper fol-low this convention). However, in real-world deployments, part-wise annotations may be unavailable, making it unclear how many parts an instrument consists of. To address this, we design a strategy that leverages an MLLM to automat-ically infer the number of parts when such annotations are missing (see Fig. 3). Concretely, we rely only on class-wise labels. Taking the Vessel Sealer as an example, we first per-form a cutout based on the class label to isolate the instru-ment from all frames containing it, and feed these cropped instrument images into the MLLM with the prompt: “How many parts does this instrument consist of?” We then collect the answers derived by MLLM across samples. Finally, we apply majority voting to the responses and use the most fre-quent value as the estimated number of parts for each instru-ment. We validated the proposed strategy on both the En-doVis2017 [1] and EndoVis2018 [2] datasets. As shown in Table 1 and Table 2, the results demonstrate that our method successfully assigns the correct part count to all instruments across both datasets. 
+
+## 2. Implementation details 
+
+We follow the preprocessing procedure described in [6] to preprocess the dataset. Based on the supplementary ma-terials, along with the provided code and the open-source implementations of [6] and [28], our project can be fully reproduced. When using SAM, we adopt the SAM ViT-H [15] version as our encoder θEnc . In our practical imple-mentation, for the prompt partition P ∈ Ru×b, the number of tokens u is treated as a tunable hyperparameter. Based on our grid search results, the best performance is achieved when u is set to 12. We employ the Adam optimizer with a learning rate of 1e−4 for the optimization. We use the Py-Torch framework, and the model is trained with an NVIDIA A6000 GPU. 
+
+## 3. Metrics for Class-Incremental Learning 
+
+To provide a deeper understanding of model performance in the class-incremental learning (CIL) setting, we adopt two widely-used evaluation metrics: Backward Transfer (BWT) 
+
+Figure 1. Illustration of HPPT construction. UP  CA MCS  PF  LND  BF  GR SI  VS                    
+
+> 1-part 2-part 3-part
+> 1-part-shared Partition
+> 2-part-shared Partition
+> 3-part-shared Partition
+> SI ID
+> Partition
+> MCS ID
+> Partition
+> PF ID
+> Partition
+> LND ID
+> Partition
+> BF ID
+> Partition
+> GR ID
+> Partition
+> VS ID
+> Partition
+> UP ID
+> Partition
+> 𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯𝑯  𝑷𝑷 𝑯𝑯 𝑷𝑷𝑷𝑷𝑷𝑷𝑷𝑷  𝑷𝑷 𝑯𝑯𝑯𝑯 𝑷𝑷 𝑯𝑯 𝑷𝑷𝑷𝑷  𝑻𝑻 𝑯𝑯𝑯𝑯𝑯𝑯
+> (𝑯𝑯 𝑷𝑷𝑷𝑷𝑻𝑻 )
+> CA ID
+> Partition
+> IS Partition
+> 1-part shared
+> No Wrist
+> No Jaw
+> 1-part shared
+> No Wrist
+> No Jaw
+> 1-part shared
+> No Wrist
+> No Jaw 2-part shared
+> No Wrist
+> Has Jaw
+> 2-part shared
+> No Wrist
+> Has Jaw
+> 3-part shared
+> Has Wrist
+> Has Jaw
+> Instrument Distinctive Embedding (e.g., jaw)
+> (e.g., slim
+> All Instrum
+> (e.g., slim shape/shaft)
+> All Instrument Shared
+> 1-part shared
+> No Wrist
+> No Jaw
+> 3-part shared
+> Has Wrist
+> Has Jaw
+
+and Forward Transfer (FWT) [3, 8, 21]. These metrics quantify how knowledge is transferred across tasks during the incremental learning process. Due to the fundamental differences between class-incremental learning and other continual learning scenarios, we adopt specific BWT and FWT metrics to align with this setting. 
+
+Backward Transfer (BWT) BWT evaluates the influ-ence of learning new data on the performance of previously learned (old and regular) classes. Specifically, for training episode t, we define BWT as the degradation (or improve-ment) in performance on old and regular classes compared to the previous episode (t−1) :BWT = 1
+
+|C old  
+
+> t
+
+∪ C reg  
+
+> t
+
+|
+
+X 
+
+> c∈C old
+> t∪C reg
+> t
+
+ IoU t(c) − IoU t−1( c)
+
+ ,
+
+(9) where IoU t(c) denotes the intersection over union (IoU) score for class c after training at episode t, and IoU t−1( c)
+
+is the corresponding IoU score from the previous episode. 
+
+Interpretation: 
+
+• BWT < 0: indicates forgetting , meaning that the perfor-mance on previously learned (old and regular) classes has decreased after learning the current episode. • BWT > 0: indicates positive backward transfer , sug-gesting that learning new classes leads to improved per-formance on past classes. This may happen when the new data provides beneficial features that reinforce ear-lier knowledge. • BWT = 0 : indicates no change in past performance. 
+
+Forward Transfer (FWT) FWT measures how prior learning benefits the model in learning new classes. For episode t, we define FWT as the difference between the IoU score of the model on newly introduced classes and the average IoU score obtained when training those classes in isolation (i.e., individual training): Image  Seq-F  SI  LWF  ILT  PLOP  Mib  RASD       
+
+> RCIL EWF LISM CoinSeg CAT-SD Ours GT Image
+> Bipolar Forceps
+> Vessel Sealer
+> Grasping Retractor
+> Prograsp Forceps
+> Curved Scissors
+> Suction Instrument
+> Large Needle Driver
+> Ultrasound Probe
+> Clip Applier
+
+Figure 2. Visualization comparison of segmentation results across all methods. Rows 1–2, 4-5 : previous datasets. Row 3, 6 : current dataset. Cutout 
+
+> How many parts does this instrument consist of?
+> : Three
+> Vessel Sealer
+> Part count statistics derived from MLLM
+> Vessel Sealer
+> 3-part instrument
+> Adopt the statistically
+> dominant result
+> Label for Vessel Sealer
+
+Figure 3. Automatic estimation of instrument part count. 
+
+FWT = 1
+
+|C new  
+
+> t
+
+|
+
+X
+
+> c∈C new
+> t
+
+ IoU t(c) − IndIoU (c)
+
+ (10) where IoU t(c) denotes the intersection over union score (IoU) for class c after training at episode t, and IndIoU (c)
+
+refers to the IoU score obtained when class c is trained by individual training. 
+
+Interpretation: 
+
+• FWT < 0: indicates negative forward transfer , suggest-ing that prior knowledge interferes with the learning of new classes. • FWT > 0: indicates positive forward transfer , meaning that knowledge from previous episodes facilitates learn-ing of new classes. • FWT = 0 : indicates no forward transfer. 
+
+## 4. Training and Inference Scheme 
+
+In the first episode, we freeze the encoder of SAM and jointly train the decoder, segmentation head, adapter, and the prompt parsing tree. Since each image in the dataset typically contains more than one class of surgical instru-ment, we activate all instrument-aware prompts during the forward propagation, allowing each pixel to receive predic-tion scores for all current classes. As a result, the model generates a set of binary segmentation masks, one for each class. To fuse these predictions {ˆyc}c∈C into a final segmen-tation result ˆy ∈ C H×W , we apply an argmax-based fusion. For each pixel location (i, j ), the final predicted class is de-termined as: 
+
+ˆy(i, j ) = 
+
+(arg max  
+
+> c∈C
+
+ˆyc(i, j ), if max  
+
+> c∈C
+
+ˆyc(i, j ) > τ 
+
+background , otherwise , (11) Table 1. Part Count Inference Results on EndoVis2017 Dataset 
+
+Instrument Total Cutout Part Count Inferred by MLLM GT 1 2 3 Result 
+
+Large Needle Driver 1197 156 213 828 3 3Prograsp Forceps 1051 55 232 764 3 3Bipolar Forceps 657 189 132 336 3 3Ultrasound Probe 449 294 103 52 1 1Curved Scissors 351 54 205 92 2 2Vessel Sealer 386 122 53 211 3 3Grasping Retractor 193 46 20 127 3 3
+
+> Table 2. Part Count Inference Results on EndoVis2018 Dataset
+
+Instrument Total Cutout Part Count Inferred by MLLM GT 1 2 3 Result 
+
+Large Needle Driver 278 58 96 124 3 3Prograsp Forceps 972 167 232 573 3 3Bipolar Forceps 1757 395 132 1230 3 3Ultrasound Probe 156 103 34 52 1 1Curved Scissors 1554 205 1257 92 2 2Suction Instrument 272 159 31 82 1 1Clip Applier 44 6 26 12 2 2where τ denotes a confidence threshold used to ignore low-confidence predictions, and it is set to 0.5 based on our grid search. We then apply the following objective function for optimization: 
+
+min  
+
+> Tt,θ a,
+> {θc
+> seg }c∈C,
+> {θn
+> Dec }Nn=1
+
+X
+
+> c∈C
+
+Lce 
+
+ θc
+
+> seg
+
+ θDec (fEnc (x, θ a)) , T t , y c .
+
+(12) This design ensures that, during backpropagation, the loss computed from the prediction and ground truth of a specific class is only propagated to the corresponding components. As a result, each module learns knowledge that is specific and relevant to its associated class. In the subsequent train-ing process, each episode consists of two stages. First, we enable the positive forward transfer. During this stage, the attention layers in the decoder, the segmentation heads for previously learned and regular classes, the adapter, and the prompt parsing tree are all frozen. Only the prompt parti-tion corresponding to the new class is updated. Once the new class has been trained, its prompt partition is inserted into the current prompt parsing tree. Next, we conduct iterative self-reflection, where all modules—including the decoder, segmentation heads, adapter, and prompt parsing tree are frozen. In this stage, we train the fdign as intro-duced in the manuscript. The output from the optimized 
+
+fdign is then used as the updated prompt parsing tree for the next episode. During inference, all instrument-aware prompts are retrieved and fused according to the aforemen-tioned strategy to produce the final segmentation mask. 
+
+## 5. Discussion 
+
+Although prompt-based approaches and foundation mod-els have recently emerged in surgical instrument segmen-tation, none have addressed the Class-Incremental Learning (CIL) setting. To the best of our knowledge, this work is the first to integrate prompt tuning with the Segment Anything Model (SAM) specifically for surgical instrument class in-cremental segmentation, thereby bridging a significant gap in the field. The complexity of this task stems from the fine-grained nature of surgical scenes. Unlike natural domains that typically involve coarse-grained class shifts (e.g., dis-tinguishing a bird from a tree), surgical CIL requires dis-criminating between instruments with highly similar metal-lic textures and slim structures, such as differentiating an L-hook from a J-hook. Our method has been extensively val-idated on two prevalent surgeries, Nephrectomy (EndoVis 2017/2018) and Cholecystectomy (CholecSeg8k/M2CAI-Seg). In future work, we will extend our framework to ad-ditional procedures, such as prostatectomy.
