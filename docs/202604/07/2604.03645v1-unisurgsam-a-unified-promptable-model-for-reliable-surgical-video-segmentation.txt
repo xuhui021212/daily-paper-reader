@@ -1,0 +1,457 @@
+Title: UniSurgSAM: A Unified Promptable Model for Reliable Surgical Video Segmentation
+
+URL Source: https://arxiv.org/pdf/2604.03645v1
+
+Published Time: Tue, 07 Apr 2026 00:32:11 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# UniSurgSAM: A Unified Promptable Model for Reliable Surgical Video Segmentation 
+
+## Haofeng Liu a, Ziyue Wang b, Alex Y. W. Kong a, Guanyi Qin a, Yunqiu Xu a, Chang Han Low a,Mingqi Gao c, Lap Yan Lennon Chan d and Yueming Jin a,b ,∗
+
+> a
+
+Department of Biomedical Engineering, National University of Singapore, Singapore, Singapore 
+
+> b
+
+Department of Electrical and Computer Engineering, National University of Singapore, Singapore, Singapore 
+
+> c
+
+School of Computer Science, The University of Sheffield, Sheffield, UK 
+
+> d
+
+Department of Computer Science and Engineering, The Chinese University of Hong Kong, Hong Kong, China 
+
+A R T I C L E I N F O 
+
+Keywords :surgical data science segment anything video object segmentation interactive segmentation 
+
+A B S T R A C T 
+
+Surgical video segmentation is fundamental to computer-assisted surgery. In practice, surgeons need to dynamically specify targets throughout extended procedures, using heterogeneous cues such as visual selections, textual expressions, or audio instructions. However, existing Promptable Video Object Segmentation (PVOS) methods are typically restricted to a single prompt modality and rely on coupled frameworks that cause optimization interference between target initialization and tracking. Moreover, these methods produce hallucinated predictions when the target is absent and suffer from accumulated mask drift without failure recovery. To address these challenges, we present UniSurgSAM, a unified PVOS model enabling reliable surgical video segmentation through visual, textual, or audio prompts. Specifically, UniSurgSAM employs a decoupled two-stage framework that independently optimizes initialization and tracking to resolve the optimization interference. Within this framework, we introduce three key designs for reliability: presence-aware decoding that models target absence to suppress hallucinations; boundary-aware long-term tracking that prevents mask drift over extended sequences; and adaptive state transition that closes the loop between stages for failure recovery. Furthermore, we establish a multi-modal and multi-granular benchmark from four public surgical datasets with precise instance-level masklets. Extensive experiments demonstrate that UniSurgSAM achieves state-of-the-art performance in real time across all prompt modalities and granularities, providing a practical foundation for computer-assisted surgery. Code and datasets will be available at https://jinlab-imvr.github.io/UniSurgSAM. 
+
+## 1. Introduction 
+
+Precise surgical video segmentation is a fundamental task in computer-assisted surgery (Moglia et al., 2021; Madani et al., 2022). By providing real-time localization and boundary delineation of instruments and anatomical structures, it enables critical downstream tasks such as surgical education, intraoperative decision-making support, surgical skill assessment, and the next generation of au-tonomous robots (Jin et al., 2022; Ahmed et al., 2024; Long et al., 2025; Pei et al., 2025, 2026). As surgical AI shifts toward human-AI collaboration, where AI serves as a cognitive copilot (Schmidgall et al., 2025), flexible interaction becomes essential: surgeons need to dynamically specify targets to segment throughout extended procedures, using heterogeneous cues such as visual selections, textual expressions, or audio instructions. However, traditional sur-gical video segmentation methods are typically trained on a fixed set of predefined categories without flexible interaction ability (Allan et al., 2019, 2020), which limits their ability to follow user-specified targets during dynamic and complex procedures. 
+
+This work was supported by the Ministry of Education, Singapore, under the Tier 2 grant (T2EP20224-0028) and the Tier 1 grant (23-0651-P0001). 
+
+> ∗
+
+Corresponding author.  
+
+> haofeng.liu@u.nus.edu
+
+(H. Liu); ymjin@nus.edu.sg (Y. Jin) 
+
+To address this limitation, the Promptable Video Ob-ject Segmentation (PVOS) paradigm has emerged, where user-provided prompts specify the target to segment and track (Zou et al., 2023). However, existing surgical adapta-tions address only one prompt modality in isolation, failing to meet the diverse demands of clinical practice: visual PVOS methods (Liu et al., 2024; Yin et al., 2025; Ma et al., 2025) enable precise spatial localization via points or boxes but lack linguistic interaction, while linguistic PVOS methods (Wang et al., 2024; Wei et al., 2026; Liu et al., 2025a) support natural language specification but remain confined to textual input without audio support for hands-free interaction. Consequently, there is a critical need for a unified model that supports visual, textual, and audio prompts, accommodating diverse clinical scenarios while maintaining high-precision surgical video segmentation. Beyond unifying prompt modalities, designing such a model raises a fundamental architectural challenge. Since real-time surgical assistance demands online processing that handles each frame sequentially, this naturally leads to a two-stage formulation: a target initialization stage that converts the given prompt into an initial mask, and a tracking stage that propagates the mask for temporal segmentation (Ravi et al., 2025; Cuttano et al., 2025; Liu et al., 2025a). How-ever, these two stages inherently exhibit optimization in-terference : the initialization stage requires understanding 
+
+H. Liu et al.: Preprint submitted to Elsevier Page 1 of 13             
+
+> arXiv:2604.03645v1 [eess.IV] 4 Apr 2026 Single-modality (A) Limitations of Existing Methods
+> t+50 t+150 t+300
+> (B) Our UniSurgSAM
+> t+50 t+150 t+300
+> Hallucination Mask drift Boundary-aware tracking
+> Presence-aware decoding
+> tt
+> Visual only Text only
+> Decoupled optimization
+> ………………
+> Optimization interference
+> No mask False positive Severe mask drift Mask drift detected
+> Stage I: Initialization Stage II: Tracking Stage I Stage II Monopolar curved scissors Stage I Large needle driver
+> Visual
+> Audio
+> Text
+> Multi-modality Open-loop (No fallback) Adaptive state transition
+> Tracker Detector Coupled decoder
+> Fallback to Stage I Mask drift Mask drift AST
+
+Figure 1: Motivation. (A) Existing single-modal PVOS meth-ods rely on a coupled decoder that causes optimization inter-ference, with fragile open-loop pipelines prone to hallucinations and mask drift. (B) UniSurgSAM achieves unified PVOS through the decoupled two-stage framework for stable opti-mization, presence-aware decoding to suppress hallucinations, boundary-aware tracking to prevent mask drift, and adaptive state transition for closed-loop failure recovery. Textual prompt for the example: “large needle driver is manipulating tool on the right.” In (A) at time 𝑡 , the model hallucinates a mask on the wrong object when the target is absent. 
+
+what to segment from the given prompt, demanding high-level semantic interpretation, whereas the tracking stage emphasizes where the target moves, requiring spatial co-herence under motion, occlusion, and appearance changes. Existing coupled two-stage frameworks (Ravi et al., 2025; Cuttano et al., 2025; Liu et al., 2025a) overlook this interfer-ence by entangling both objectives within a single decoder, compromising both initialization accuracy and long-term tracking stability. Therefore, we propose a decoupled two-stage framework with independently optimized decoders for each stage, resolving this interference and providing a stable foundation for unified surgical PVOS. While this decoupled framework provides a stable opti-mization foundation, achieving reliable surgical PVOS fur-ther requires addressing the challenges within each stage and across stages. For Stage I initialization , surgical instruments frequently enter and exit the field of view. Visual prompts inherently confirm target existence through spatial interac-tion, but linguistic prompts lack such confirmation, making them vulnerable to hallucinations that predict false-positive masks when the target is absent. Yet existing methods rarely model target absence (Li et al., 2023; Wu et al., 2024), leaving such hallucinations potentially misleading surgical decision-making. For Stage II tracking , blood, smoke, and rapid view shifts obscure object boundaries, causing gradual mask drift that progressively deviates from the true target. Moreover, standard memory strategies fail to retain critical historical information over the extended duration of surgical procedures (Yin et al., 2025). For coordination , linguistic PVOS is particularly fragile to cascading failures, as lin-guistic prompts lack the explicit spatial anchoring of visual interactions, making initialization credibility uncertain and tracking drift unrecoverable. Yet the persistent semantic descriptions provide a natural anchor for both verifying ini-tialization credibility and correcting tracking drift, forming a closed-loop system that existing methods fail to exploit. To address these challenges, we introduce three key designs within the decoupled two-stage framework to en-sure reliability. For initialization , Reliable Presence-Aware Decoding (RPAD) explicitly models target absence to sup-press hallucinations. For tracking , Boundary-Aware Long-Term Tracking (BLT) prevents mask drift through geometric constraints and diversity-driven memory. For coordination ,Adaptive State Transition (AST) closes the loop between stages, validating initialization credibility before activating tracking and triggering re-initialization upon detecting drift. Our main contributions are summarized as follows: 1. We propose UniSurgSAM, a unified PVOS model that supports visual, textual, and audio prompts for flexible and reliable surgical video segmentation. 2. We introduce a decoupled two-stage framework that resolves the optimization interference between target initialization and tracking through independently op-timized decoders. 3. We design three complementary mechanisms to en-sure reliability: presence-aware decoding for halluci-nation suppression, boundary-aware long-term track-ing for geometric precision and temporal consistency, and adaptive state transition for closed-loop failure recovery. 4. We establish a comprehensive multi-modal and multi-granular benchmark across four surgical datasets with spatio-temporal masks, diverse prompts, and part-level annotations, on which UniSurgSAM achieves state-of-the-art performance in real time. This work substantially extends our preliminary ver-sion presented at MICCAI 2025 (Liu et al., 2025a), gen-eralizing from text-only referring segmentation to unified multi-modal and multi-granular surgical PVOS. The key extensions are as follows: (1) We upgrade the two-stage design from a coupled to a decoupled framework , resolving the optimization interference unaddressed in ReSurgSAM2. (2) We enhance both stages and their coordination with 
+
+presence-aware decoding , boundary-aware long-term tracking , and consensus-based fallback for reliable long-term segmentation. (3) We expand the benchmark from two to four datasets, adding Uni-RARP50 for long-duration tracking and Uni-SurgAI3.8K for anatomical tissue defor-mation, with all datasets unified into a consistent masklet format enriched with diverse prompt modalities and fine-grained part-level annotations. (4) Extensive experiments, ablation studies, and in-depth analyses validate each pro-posed component and demonstrate that UniSurgSAM achieves state-of-the-art performance across all four datasets, prompt modalities, and granularities. 
+
+H. Liu et al.: Preprint submitted to Elsevier Page 2 of 13 2. Related Work 
+
+2.1. Promptable Video Object Segmentation 
+
+Video Object Segmentation (VOS) aims to track and segment specific objects across video sequences (Oh et al., 2019; Zhou et al., 2022). To alleviate the labor-intensive re-quirement of first-frame masks in traditional semi-supervised VOS, interactive segmentation paradigms have emerged as flexible alternatives (Zou et al., 2023). In this work, we collectively refer to these as Promptable Video Ob-ject Segmentation (PVOS), broadly categorized into two branches. The first branch, Interactive VOS (iVOS) or visual PVOS, utilizes visual prompts (e.g., points or boxes), with SAM2 (Ravi et al., 2025) as a representative memory-based framework. The second branch, Referring VOS (RVOS) or textual PVOS, employs linguistic expressions to specify targets in the video (Wu et al., 2022; Cuttano et al., 2025). Despite their shared objective, these branches are often studied in isolation. Their synergistic integration and the extension to audio prompts for truly hands-free interaction remain largely unexplored. 
+
+2.2. Surgical Video Segmentation 
+
+In the surgical domain, video segmentation has evolved from static semantic segmentation to dynamic interactive segmentation. Early efforts focused on semantic segmen-tation, from binary instrument segmentation to multi-class type and part segmentation on datasets such as EndoVis17 (Al-lan et al., 2019) and EndoVis18 (Allan et al., 2020). These tasks were addressed by CNN architectures such as U-Net and Mask R-CNN (González et al., 2020), followed by Transformer models such as Mask2Former with enhanced global context modeling (Cerón et al., 2022; Ayobi et al., 2023; Wang et al., 2025; Zhao et al., 2025). While the adaptation of foundation models like SurgicalSAM (Yue et al., 2024), TPSIS (Zhou et al., 2023), Med-SA (Wu et al., 2025), and MA-SAM (Chen et al., 2024) improved semantic precision, these methods remained constrained by predefined categories or frame-level analysis. With the emergence of PVOS, research has shifted to interactive surgical segmentation. Recent adaptations have branched into visual PVOS (Liu et al., 2024; Yin et al., 2025; Ma et al., 2025; Liu et al., 2025b) and linguistic PVOS (Wang et al., 2024; Liu et al., 2025a; Wei et al., 2026). However, these methods focus on single-modality interactions and lack a unified model that supports diverse prompt modalities for extended surgical procedures. 
+
+2.3. Memory Mechanisms for Long-term Tracking 
+
+A key challenge for these PVOS methods is maintaining temporal consistency in long-term tracking. To this end, existing VOS frameworks utilize memory banks to store his-torical frame information (Cheng and Schwing, 2022; Ravi et al., 2025). For extended surgical procedures that may last for hours, efficient memory management is crucial. While recent adaptations such as SAM2Long (Ding et al., 2025), DAM4SAM (Videnovic et al., 2025), and MA-SAM2 (Yin et al., 2025) improve memory utilization through dynamic frame selection, and our previous work ReSurgSAM2 (Liu et al., 2025a) further introduced diversity-driven memory for surgical scenarios, none of these methods explicitly model geometric boundary constraints, leading to mask drift and error propagation in long-term surgical tracking. 
+
+## 3. Methodology 
+
+Given a surgical video sequence  = {𝑓 𝑡 }𝑇 𝑡 =1 and a user prompt , our goal is to predict a sequence of binary segmentation masks ̂  = { ̂ 𝑀 𝑡 }𝑇 𝑡 =1 for the intended target. The prompt  can be either a visual prompt (𝑣𝑖𝑠 ) such as points or box on the initial frame 𝑓 1, or a linguistic prompt 
+
+(𝑡𝑒𝑥𝑡 or 𝑎𝑢𝑑𝑖𝑜 ) in the form of a textual expression or audio instruction, where audio is first transcribed via ASR (Rad-ford et al., 2023). Regardless of the prompt modality, the task naturally decomposes into a two-stage process: target initialization from the given prompt and tracking of the resulting mask. 
+
+3.1. Decoupled Two-Stage Framework 
+
+As shown in Fig. 2, UniSurgSAM adopts a decoupled two-stage framework comprising a multi-modal detector for target initialization and a tracker for long-term tracking. Both stages share an image encoder, as visual feature ex-traction remains largely task-agnostic (Vandenhende et al., 2021). The detector integrates cross-modal fusion with a detection decoder for semantic discrimination, while the tracker combines memory attention with a tracking decoder for tracking. Unlike existing coupled frameworks that en-tangle both objectives within a single decoder, our two decoders are independently optimized, allowing each stage to specialize without mutual interference. A selector routes the image features to the detector or tracker depending on the current system state, enabling seamless switching between initialization and tracking. Built upon this architecture, the framework comprises two stages coordinated by a transition mechanism: Stage I 
+
+(Sec. 3.2), where the detector produces reliable initial masks from diverse prompts through presence-aware decoding; 
+
+Stage II (Sec. 3.3), where the tracker propagates the ini-tial masks through boundary-aware long-term tracking; and 
+
+Adaptive State Transition (Sec. 3.4), which governs the selector for bidirectional switching between stages, enabling credible activation and closed-loop failure recovery. As both decoders perform mask prediction, presence estimation, and boundary decoding, they share the same loss function: 
+
+𝑡𝑜𝑡𝑎𝑙 = 𝜆 𝑚 𝑚𝑎𝑠𝑘 + 𝑑𝑖𝑐𝑒 + 𝑖𝑜𝑢 + 𝑝𝑟𝑒 + 𝜆 𝑏 𝑏𝑜𝑢𝑛𝑑𝑎𝑟𝑦 , (1) where 𝑚𝑎𝑠𝑘 , 𝑑𝑖𝑐𝑒 , and 𝑖𝑜𝑢 follow SAM2 for mask predic-tion and quality estimation, with 𝜆 𝑚 = 20 consistent with SAM2. The boundary loss 𝑏𝑜𝑢𝑛𝑑𝑎𝑟𝑦 (𝜆 𝑏 = 10 ) enforces geometric fidelity (Sec. 3.3), and the presence loss 𝑝𝑟𝑒 
+
+supervises explicit presence prediction (Sec. 3.2.2). Despite sharing the same supervision, each decoder emphasizes different aspects: the detection decoder primarily leverages presence modeling to suppress hallucinations during ini-tialization, whereas the tracking decoder primarily benefits    
+
+> H. Liu et al.: Preprint submitted to Elsevier Page 3 of 13 Image Encoder Text Encoder
+
+## Detector Tracker points box mask  
+
+>  
+> image stream   
+
+Selector Boundary-Aware Memory 
+
+DLM Short-Term Memory Audio Recognition text audio         
+
+> Credible Activation
+>                            
+> Init Memory Detection Sliding Window  
+> verify and select boundary    
+
+AST 
+
+Stage I Initialization Stage II Tracking 
+
+>            
+> I oU Stage II Stage I
+
+Multi-Modal Detector       
+
+> CSTMamba image features text features Prompt Encoder points box mask mask boundary IoU score presence score
+> The large needle driver is manipulating tool on the right
+> Consensus-Based Fallback
+> Init Init
+>     =                
+> mask    
+> Detection Decoder (RPAD)
+
+Entry Exit   
+
+> sensory features
+> [        ,         ]
+
+AST Boundary-Aware Memory Integration Figure 2: Overview of UniSurgSAM. The model adopts a decoupled two-stage framework that independently supports visual, textual, or audio prompts: Stage I performs promptable initialization from the given prompt, while Stage II conducts boundary-aware long-term tracking. For linguistic prompts, AST acts as a central controller that routes data to the detector or tracker via a selector, coordinating bidirectional switching through credible activation (Entry) and consensus-based fallback (Exit). 
+
+from boundary decoding to prevent mask drift during long-term tracking. 
+
+3.2. Stage I: Unified Promptable Initialization 
+
+Stage I accommodates both visual and linguistic prompts through the detector, with distinct processing pipelines that converge at the detection decoder for mask prediction. For visual prompts (𝑣𝑖𝑠 ), interactive inputs such as points or boxes directly specify the target on the initial frame. The prompt is encoded by the standard SAM2 prompt encoder and decoded into an initial mask. Since visual prompts provide explicit spatial constraints that inherently confirm target existence, they bypass the presence modeling and directly activate Stage II tracking. For linguistic prompts (𝑡𝑒𝑥𝑡 or 𝑎𝑢𝑑𝑖𝑜 ), textual expres-sions are used directly, while audio instructions are first transcribed via ASR and normalized to correct potential transcription errors. The resulting expression 𝑒 is then en-coded by a frozen CLIP text encoder and a trainable MLP layer to extract text features 𝐹 text . Due to the absence of explicit spatial constraints, linguistic prompts require addi-tional vision-language fusion and presence-aware decoding to produce reliable initial masks. 
+
+3.2.1. Vision-Language Fusion via CSTMamba 
+
+For linguistic prompts, we adopt Cross-Modal Spatial-Temporal Mamba (CSTMamba) (Liu et al., 2025a) to fuse text features 𝐹 text with current frame features 𝐸 (𝑓 𝑡 ) and sensory features [𝐸 (𝑓 𝑡 −2 ), 𝐸 (𝑓 𝑡 −1 )] , where 𝐸 (⋅) denotes the image encoder. We stack three CSTMamba blocks, each integrating STMamba (Yang et al., 2025) with bidirectional cross-modal attention, where STMamba leverages the selec-tive scan mechanism to capture long-range spatio-temporal dependencies with linear complexity, and the cross-modal attention enables vision-language interaction for semantic alignment. This produces fused image features 𝐸 ′(𝑓 𝑡 ) se-mantically aligned with the query, enabling the detection decoder to accurately localize and segment the target. 
+
+3.2.2. Reliable Presence-Aware Decoding (RPAD) 
+
+To ensure clinical reliability, we equip the detection decoder with explicit target presence modeling to suppress hallucinations, and multi-granularity decoding to accommo-date targets at different hierarchical levels, from complete instruments to specific components. 
+
+Presence Modeling. To handle target disappearance in surgical videos, we extend SAM2’s occlusion prediction mechanism to the initialization stage. Specifically, we em-ploy a presence head (a lightweight MLP) that predicts a presence score 𝑠 𝑝 ∈ [0 , 1] . While SAM2 uses this head only during tracking to detect occlusions, we equip both decoders with this head and further leverage it in Stage I to explicitly determine whether the query target exists in the current frame, suppressing hallucinated detections before activating the tracking stage. To further enforce robust presence discrimination, we introduce a Negative Sampling Strategy during training by constructing: (1) category-level negatives , created by query-ing objects that are absent in the current clip, with random-ized spatial attributes; (2) spatial hard negatives , created by inverting directional descriptors for categories with a 
+
+H. Liu et al.: Preprint submitted to Elsevier Page 4 of 13 single instance (e.g., querying “left" when that instrument only appears on the “right"). For these negative samples, the presence score is supervised toward zero (indicating absence) via binary cross-entropy 𝑝𝑟𝑒 , thereby suppressing false-positive hallucinations. 
+
+Granularity-Aware Decoding. Beyond presence mod-eling, surgical procedures often require tracking objects at different granularities, from complete instruments to spe-cific components. To accommodate this, we extend SAM2’s multi-output design to linguistic prompts, where the decoder predicts three candidate masks at hierarchical levels (whole, part, subpart) consistent with SAM2’s visual prompting interface, while enabling users to track either complete in-struments (e.g., a “grasper”) or specific components (e.g., its “tip”). During training, an IoU head estimates the quality score 𝑠 𝑖𝑜𝑢 for each candidate following a “winner-takes-all” strategy, optimizing only the mask with the minimum loss. To maintain estimator calibration, gradients for the IoU head are suppressed when the target is absent. During inference, the mask with the highest 𝑠 𝑖𝑜𝑢 is selected. Both 𝑠 𝑖𝑜𝑢 and 𝑠 𝑝 are then used to determine object presence and enable tracking activation (Sec. 3.4.1). 
+
+3.3. Stage II: Boundary-Aware Long-Term Tracking 
+
+Upon activation via visual interaction or credible ac-tivation, the system transitions to the tracking stage. The tracker builds on SAM2 (Ravi et al., 2025), retrieving rel-evant features from a memory bank via memory attention. However, in surgical scenarios, boundaries are frequently obscured by blood, smoke, and rapid view shifts, causing gradual mask drift where predicted contours progressively deviate from the true target. Moreover, standard memory strategies lack long-term diversity for extended surgical videos. To address this, we enhance the tracker with three complementary designs: boundary decoding and boundary-aware memory integration to prevent mask drift through ge-ometric constraints, and diversity-driven long-term memory for robust tracking. 
+
+Boundary Decoding. The tracking decoder employs a dedicated boundary head to predict a binary boundary map ̂𝐵 𝑡 in parallel with the mask prediction ̂ 𝑀 𝑡 , supervised by a boundary-aware loss 𝑏𝑜𝑢𝑛𝑑𝑎𝑟𝑦 via binary cross-entropy. The ground truth boundary 𝐵 𝑡 is generated by applying morphological gradient operations to the mask annotation 
+
+𝑀 𝑡 . This explicit boundary supervision compels the model to prioritize fine-grained edge gradients, improving con-tour delineation for both rigid instruments and deformable anatomy in complex environments. Moreover, by jointly optimizing boundary and mask predictions, the boundary head acts as an auxiliary regularizer that enforces geometric consistency in the mask output, thereby maintaining precise object delineation and improving tracking stability. 
+
+Boundary-Aware Memory Integration. Standard mem-ory representations rely solely on mask and appearance DLM                 
+
+>            ℎ 
+> Long–term memory bank   ℎ 
+> ……
+> Candidate pool  ℎ 
+> Most similar with    
+> Most dissimilar with ℎ Insertion    
+> Eviction ℎ∗
+> Figure 3: Illustration of Diversity-Driven Long-Term Memory.
+
+features, which are insufficient to distinguish targets from visually similar distractors, especially under surgical condi-tions where blood, smoke, and tissue deformation obscure discriminative cues. To address this, we explicitly integrate geometric structures into the memory bank. For each frame, the predicted boundary map ̂ 𝐵 𝑡 and mask ̂ 𝑀 𝑡 are concate-nated, downsampled, and fused with image features 𝐸 (𝑓 𝑡 )
+
+to generate a boundary-aware memory representation: 
+
+𝐻 𝑡 = Conv (Conv ([ ̂𝑀 𝑡 ,̂ 𝐵 𝑡 ]) + 𝐸 (𝑓 𝑡 )) , (2) where [⋅] denotes concatenation and Conv (⋅) represents con-volutional layers. By incorporating boundary cues, the mem-ory representation captures both semantic and geometric information, enabling more discriminative retrieval that sup-presses mask drift toward adjacent structures. 
+
+Diversity-Driven Long-Term Memory (DLM). To sus-tain tracking over long durations, we enhance memory man-agement beyond SAM2’s FIFO strategy, which only retains recent context via a short-term memory bank, discarding critical historical information. Our preliminary work (Liu et al., 2025a) introduced an additional long-term memory bank 𝐿 with bounded capacity 𝑁 𝐿 and diversity-driven insertion. However, its eviction still discards the oldest frames regardless of informativeness, limiting representa-tional breadth. We adopt the insertion strategy from Liu et al. (2025a) and further improve eviction. As illustrated in Fig. 3, we maintain a candidate pool 𝑃 ← 𝑃 ∪ { 𝑓 𝑡 ∣ 𝑠 𝑖𝑜𝑢 𝑡 > 𝛾 𝑖𝑜𝑢 }
+
+of high-confidence frames, where each candidate is indexed as 𝑝 𝑖 . Following Liu et al. (2025a), when |𝑃 | reaches 𝑁 𝑝 
+
+frames, the candidate 𝑝 𝑖𝑛 most dissimilar to the most recently inserted frame ℎ𝑘 in 𝐿 is selected for insertion by cosine similarity in the image feature space, and 𝑃 is cleared. To improve eviction, when 𝐿 reaches capacity, we replace the frame ℎ∗ most similar to 𝑝 𝑖𝑛 by cosine similarity, rather than the oldest frame, to maximize representational diversity: 
+
+ℎ∗ = arg max  
+
+> ℎ𝑗 ∈𝐿
+
+𝐸 (𝑝 𝑖𝑛 ) ⋅ 𝐸 (ℎ𝑗 )
+
+‖𝐸 (𝑝 𝑖𝑛 )‖‖ 𝐸 (ℎ𝑗 )‖ . (3) By prioritizing diversity over recency, this strategy retains informative frames across viewpoints and deformations. During tracking, the tracker retrieves features from the short-term memory, the long-term memory, and the initial frame memory, which together form the boundary-aware memory in Fig. 2, to suppress drift in extended sequences.   
+
+> H. Liu et al.: Preprint submitted to Elsevier Page 5 of 13
+
+3.4. Adaptive State Transition (AST) 
+
+Unlike visual PVOS where targets are explicitly an-chored by user clicks, linguistic PVOS lacks spatial anchor-ing for reliable initialization and requires mechanisms to detect tracking failures. AST addresses this by acting as a central controller that regulates a selector to route data between the detector and tracker through two logical gates: 
+
+Entry for credible activation and Exit for automated fallback. 
+
+3.4.1. Entry: Credible Activation via Temporal Verification 
+
+Directly activating the tracker based on a single-frame detection is unreliable, as it may be triggered by tran-sient false positives or momentary occlusions. Following ReSurgSAM2’s temporal verification protocol, we buffer Stage I outputs in a sliding window of size 𝑁 𝑤 and acti-vate tracking only when all frames consistently meet high-confidence criteria: 
+
+𝑊 = { 𝑓 𝑗 ∣ 𝑗 ∈ [ 𝑡 −𝑁 𝑤 +1 , 𝑡 ]∧ 𝑠 𝑖𝑜𝑢 𝑗 > 𝛿 𝑖𝑜𝑢 ∧𝑠 𝑝 𝑗 > 𝛿 𝑝 }, (4) where 𝑠 𝑖𝑜𝑢 𝑗 and 𝑠 𝑝 𝑗 denote the IoU quality and presence scores, with 𝛿 𝑖𝑜𝑢 and 𝛿 𝑝 as their respective thresholds, which also serve as the detection criteria in Stage I to determine whether the queried object is present in the frame. Upon full veri-fication ( |𝑊 | = 𝑁 𝑤 ), unlike ReSurgSAM2’s single-frame approach, we initialize Stage II using the Top-𝐾 frames with the highest IoU scores from 𝑊 , providing the tracker with richer spatio-temporal context for more robust tracking. 
+
+3.4.2. Exit: Consensus-Based Fallback 
+
+For linguistic PVOS, once the system enters the tracking stage, tracking reliability inevitably degrades over time due to occlusions or error accumulation, causing drift toward visually similar distractors. Since linguistic prompts persist throughout the video as semantic anchors, they can verify whether the tracked object still matches the query. Leveraging this, we implement consensus-based fall-back that periodically validates tracking correctness via se-mantic constraints to form a closed-loop system. Every 𝑁 𝑐 
+
+frames, the detector is queried with the linguistic prompt to generate a semantic reference 𝑀 𝑑𝑒𝑡 . We compute the IoU between the tracker’s prediction 𝑀 𝑡𝑟𝑎𝑐𝑘 and 𝑀 𝑑𝑒𝑡 for spatial consistency, and store the result 𝑣 𝑖 in a queue of size 𝐿 :
+
+𝑣 𝑖 =
+
+{
+
++1 , if IoU (𝑀 𝑡𝑟𝑎𝑐𝑘 , 𝑀 𝑑𝑒𝑡 ) ≥ 𝛿 𝑐 
+
+−1 , otherwise (5) where 𝛿 𝑐 is the spatial consistency threshold. Once the queue is full, a fallback is triggered if the cumulative consensus score 𝑆 𝑐 = ∑𝐿 −1  
+
+> 𝑗 =0
+
+𝑣 𝑖 −𝑗 is negative ( 𝑆 𝑐 < 0), reverting the system to Stage I for re-initialization. This closed-loop design enables target re-anchoring via semantic cues, pre-venting the irreversible error accumulation inherent in open-loop tracking. 
+
+Table 1 
+
+Dataset Statistics. Avg. Dur. denotes average duration                                                                        
+
+> Dataset Video Frame Masklet (whole) Mask (whole) Masklet (part) Mask (part) Avg. Dur. (s)
+> Training Set
+> Uni-EndoVis17 72100 20 4873 55 11696 300 Uni-EndoVis18-I 11 1639 34 3787 78 7086 149 Uni-EndoVis18-T 11 1639 25 2995 --149 Uni-RARP50 44 13043 367 42554 482 63749 296 Uni-SurgAI3.8K 36 2033 36 2033 --56
+> Testing Set
+> Uni-EndoVis17 3900 10 2265 26 4825 300 Uni-EndoVis18-I 4596 15 1384 33 2783 149 Uni-EndoVis18-T 4596 7807 --149 Uni-RARP50 10 3252 81 10656 115 15501 325 Uni-SurgAI3.8K 15 1784 15 1784 --119
+
+## 4. Experiments 
+
+4.1. Datasets and Implementation Details 
+
+4.1.1. Dataset Construction 
+
+Building upon our preliminary work (Liu et al., 2025a), we construct a unified PVOS benchmark comprising four surgical video datasets: Uni-EndoVis17, Uni-EndoVis18, Uni-RARP50, and Uni-SurgAI3.8K (Table 1), all converted into the masklet (i.e., spatio-temporal segmentation mask) format for PVOS evaluation. (1) Uni-EndoVis17/18: We directly adopted the refined datasets from Liu et al. (2025a), where the original EndoVis17 (Allan et al., 2019) and En-doVis18 (Allan et al., 2020) semantic labels were con-verted into instance-level masklets paired with textual de-scriptions. Notably, Uni-EndoVis18 was categorized into instrument (-I) and tissue (-T) subsets to evaluate distinct surgical targets. (2) Uni-RARP50: Following the protocol in Liu et al. (2025a), we processed 16,295 frames from RARP50 (Psychogyios et al., 2023) by aggregating semantic part masks into whole-instrument masks, assigning instru-ment type labels according to the da Vinci system guide-lines (Intuitive Surgical, I., 2024). These masks were then linked across frames to form instance-level masklets. (3) Uni-SurgAI3.8K: We leveraged the inherent temporal con-tinuity of SurgAI3.8K (Zadeh et al., 2023) to reconstitute video clips from sequential frames, forming masklets for anatomical tissue tracking. We further enriched these datasets with diverse prompt modalities and multi-granular annotations to support uni-fied PVOS interaction. First, to facilitate diverse prompt modality interaction, we provided a comprehensive prompt suite for all sequences: (1) visual prompts, providing ini-tial masks where interactive points or boxes can be simu-lated; (2) textual prompts, comprising expressions for both whole-instance and part-level targets; and (3) audio prompts, recorded from native speakers following the textual instruc-tions (e.g., “segment the bipolar forceps”) to simulate hands-free control. Second, for multi-granular evaluation, we extended the instrument-related datasets (Uni-EndoVis17, Uni-EndoVis18-I, and Uni-RARP50) with fine-grained part-level masklets (e.g., “wrist of bipolar forceps”), enabling 
+
+H. Liu et al.: Preprint submitted to Elsevier Page 6 of 13 Table 2 
+
+Quantitative comparison with Visual PVOS methods using 3-point prompts. Bold and underline denote best and second best.                                                                                                                                          
+
+> Method Uni-EndoVis17 Uni-EndoVis18-I Uni-RARP50 Uni-EndoVis18-T Uni-SurgAI3.8K FPS
+> &&&&&
+> SAM2 (2025) 75.9 76.0 75.8 76.7 76.5 76.9 80.2 79.0 81.3 74.4 79.3 69.5 86.9 92.5 81.2 69 SAM2Long (2025) 72.1 72.1 72.1 75.4 75.2 75.6 79.7 78.5 80.9 74.5 79.3 69.6 86.8 92.5 81.0 22 DAM4SAM (2025) 76.2 76.1 76.2 73.1 72.8 73.3 77.5 76.3 78.6 74.5 79.4 69.5 86.8 92.5 81.1 63 SAMURAI (2024) 75.3 75.3 75.3 74.5 74.2 74.8 77.9 77.9 77.8 72.9 77.5 68.3 86.6 92.4 80.7 22 MA-SAM2 (2025) 75.5 75.5 75.4 78.6 78.3 78.9 82.5 81.3 83.7 74.7 79.6 69.8 86.7 92.4 81.0 65 SurgicalSAM2 (2024) 76.3 76.3 76.3 79.0 78.6 79.3 82.7 81.5 83.8 74.5 79.4 69.6 87.1 92.6 81.5 71
+> UniSurgSAM 82.6 82.6 82.6 83.2 83.2 83.1 84.5 83.2 85.8 78.3 84.8 71.8 88.2 92.7 83.6 68
+
+Table 3 
+
+Quantitative analysis of Linguistic PVOS (Textual and Audio). Bold and underline denote best and second best in Textual PVOS.                                                                                                                                                                                                     
+
+> Method Setting Uni-EndoVis17 Uni-EndoVis18-I Uni-RARP50 Uni-EndoVis18-T Uni-SurgAI3.8K FPS
+> &&&&&
+> ReferFormer (2022) Offline 62.5 62.3 62.6 71.1 71.0 71.2 81.7 80.6 82.8 61.9 69.9 53.8 82.5 90.1 74.8 42 MUTR (2024) Offline 61.0 60.8 61.2 67.6 67.8 67.3 74.5 73.3 75.6 63.6 71.5 55.6 81.4 89.5 73.2 32 SurgRef (2026) Offline 62.3 62.0 62.5 70.3 70.4 70.2 76.2 75.3 77.1 65.3 71.5 59.1 81.6 89.3 73.9 40 RSVIS (2024) Semi-online 61.3 61.4 61.1 68.4 68.6 68.2 72.4 71.7 73.0 65.7 72.9 58.5 75.7 83.2 68.2 28 SAMWISE (2025) Semi-online 60.1 59.5 60.6 70.6 69.8 71.4 82.5 81.7 83.2 64.5 71.9 57.0 79.3 88.0 70.6 12 OnlineRefer (2023) Online 60.3 60.3 60.3 72.2 71.9 72.5 73.9 72.3 75.4 70.6 77.6 63.6 83.0 90.6 75.4 26 RefSAM (2025) Online 63.6 63.8 63.4 72.9 73.4 72.3 78.4 78.3 78.4 71.9 77.7 66.1 85.1 91.3 78.9 25 ResurgSAM2 (2025a) Online 78.1 78.2 78.0 81.1 81.5 80.7 84.9 83.8 86.0 75.4 81.4 69.4 87.1 92.1 82.1 58
+> UniSurgSAM (Textual) Online 82.4 82.3 82.4 85.1 85.3 84.9 90.5 89.4 91.6 79.8 86.2 73.4 88.2 92.7 83.7 55 UniSurgSAM (Audio) Online 79.1 79.0 79.2 83.2 83.4 82.9 89.8 88.7 90.8 79.7 86.0 73.3 88.2 92.7 83.7 53
+
+precise component tracking beyond whole-instrument seg-mentation. Notably, Uni-EndoVis17 and Uni-RARP50 fea-tured long-duration test sequences (average ≥300s), en-abling robust assessment of long-term tracking stability. 
+
+4.1.2. Implementation 
+
+UniSurgSAM utilizes a pretrained SAM2 (Ravi et al., 2025) with a Hiera-base+ backbone at 512 × 512 resolution to balance efficiency and performance. We train on each dataset individually with a two-step paradigm: joint training of the detector and tracker, followed by tracker fine-tuning. Training uses the AdamW optimizer with a learning rate of 5e-5, batch size of 28, and 60 epochs on four A6000 GPUs. 
+
+Step I: Joint Training. The detector and tracker are jointly trained to learn initialization and tracking in an end-to-end manner. For visual PVOS, 1 frame is used for initialization, followed by 7-frame temporal propagation. For linguistic PVOS, 3 frames are used for initialization, followed by 7 frames for tracking. All modules are trainable except the CLIP text encoder, and negative prompts are introduced with a 1:2 positive-to-negative ratio for presence modeling. 
+
+Step II: Tracker Fine-tuning. We freeze all components except the tracker and fine-tune it with the temporal sequence configurations as Step I to enhance tracking capability. Inference is conducted on a single NVIDIA A6000 GPU. For visual prompts, we follow the SAM2 protocol (Ravi et al., 2025) with a 3-point configuration at the target’s first appearance. For linguistic prompts, unlike RSVIS (Wang et al., 2024) providing text prompts only for frames where the target is present, we follow ReSurgSAM2 (Liu et al., 2025a) to adopt one-time global referring expressions that remain valid throughout the video, enabling consistent seg-mentation despite target disappearance or reappearance. For system hyperparameters, we adopt the configurations from our preliminary work (Liu et al., 2025a) for credible acti-vation and memory management. For the consensus-based fallback, we set the check interval 𝑁 𝑐 = 5 , sliding window length 𝐿 = 5 , and confidence threshold 𝛿 𝑐 = 0 .5 to ensure efficient drift detection. 
+
+4.1.3. Evaluation Metrics 
+
+Following VOS protocols (Cuttano et al., 2025; Ravi et al., 2025), we adopt region similarity (  ) (i.e., IoU), boundary accuracy (  ) (i.e., boundary F-score), and their mean (  & ) as primary metrics. For visual PVOS , we follow SurgicalSAM2 (Liu et al., 2024) to compute metrics from the frame where the prompt is given. For linguistic PVOS , evaluation is conducted from the first frame of the video regardless of object presence, following Liu et al. (2025a). To assess presence-aware decoding, we addition-ally report Precision and False Positive Rate (FPR), which evaluate the model’s ability to avoid hallucinations when the target is absent. Inference speed is reported in Frames Per Second (FPS). 
+
+4.2. Comparison with State-of-the-Arts 
+
+We conduct comprehensive experiments to validate UniSurgSAM’s effectiveness across visual, textual, and 
+
+H. Liu et al.: Preprint submitted to Elsevier Page 7 of 13 GT  Ours  SAMWISE ReSurgSAM2                  
+
+> “Bipolar forceps are grasping tissue” “Kidney-parenchyma”
+> 40 65 90 115
+> Large needle driver
+> 140 150 200 400 630
+> FP FP FP FP FP FP FN FP FP FP FN FP FP FP FN FP FP
+> “Covered-kidney” “Small-intestine” “Large needle driver is manipulating tool on the right” “Maryland bipolar forceps are manipulating tool”
+> (a) (b) (c) (d) (f) (g) (h) (i) (j) (e)
+
+Figure 4: Qualitative comparison in Uni-EndoVis18 (left) and Uni-RARP50 (right) for Textual PVOS. FP and FN denote false positive and false negative predictions, respectively. Numbers in images denote time in seconds. Ground truth  Ours  DAM4SAM      
+
+> 300s 230s 150s Init 100s
+> SurgicalSAM2 (a) (b) (c) (d) (e)
+> FP FP FN
+> FN FP FN FP
+
+Figure 5: Qualitative comparison in Uni-EndoVis17 for Visual PVOS under three-point initialization. 
+
+audio prompts, as well as its capability for fine-grained part segmentation. In all comparisons, we report instrument datasets (Uni-EndoVis17, Uni-EndoVis18-I, Uni-RARP50) followed by tissue datasets (Uni-EndoVis18-T, Uni-Surg AI3.8K). All baselines use the official implementations and are trained on the same datasets for fair comparison .
+
+4.2.1. Visual PVOS 
+
+Table 2 presents comparisons with visual PVOS meth-ods fine-tuned on surgical data, including SAM2 (Ravi et al., 2025), SAM2Long (Ding et al., 2025), DAM4SAM (Viden-ovic et al., 2025), SAMURAI (Yang et al., 2024), MA-SAM2 (Yin et al., 2025), and SurgicalSAM2 (Liu et al., 2024), all using the Hiera-base+ backbone for fair comparison. Among these, MA-SAM2 and SurgicalSAM2 are surgical-specific adaptations. Among baselines, SurgicalSAM2 and MA-SAM2 achieve the strongest overall performance through surgical-specific adaptations, while memory-augmented methods (SAM2Long, DAM4SAM, SAMURAI) show limited gains or even degra-dation compared to SAM2, suggesting that generic mem-ory strategies do not transfer well to surgical scenarios. UniSurgSAM achieves consistent improvements over the strongest baselines: +6.3  & on Uni-EndoVis17, +4.2 on Uni-EndoVis18-I, +1.8 on Uni-RARP50, +3.6 on Uni-EndoVis18-T, and +1.1 on Uni-SurgAI3.8K, validating the effectiveness of the decoupled framework and boundary-aware long-term tracking. UniSurgSAM also shows signifi-cant improvement on tissue segmentation in Uni-EndoVis18-T (+3.6), where boundary-aware tracking is critical for delineating deformable anatomy. Fig. 5 provides a qualitative comparison. DAM4SAM introduces distractor-aware memory but lacks boundary awareness, causing frequent tracking drift between visually similar instruments, marked as FP (false positive) and FN (false negative) in Fig. 5(b, c, e). SurgicalSAM2 improves robustness under occlusions but still struggles during large camera movements due to limited memory capacity, as in Fig. 5(b, c). In contrast, UniSurgSAM maintains robust tracking by leveraging boundary-aware memory for geomet-ric precision and diversity-driven memory across varying viewpoints, preventing both boundary drift and target loss. 
+
+4.2.2. Textual PVOS 
+
+We compare UniSurgSAM with state-of-the-art textual PVOS methods across three inference paradigms: offline methods (ReferFormer (Wu et al., 2022), MUTR (Yan et al., 2024), SurgRef (Wei et al., 2026)) that process all frames simultaneously, semi-online methods (RSVIS (Wang et al., 2024), SAMWISE (Cuttano et al., 2025)) that use clip-level processing, and online methods (OnlineRefer (Wu et al., 2023), RefSAM (Li et al., 2025), ReSurgSAM2 (Liu et al., 2025a) with Hiera-base+ backbone) that perform frame-by-frame inference. Among these, SurgRef, RSVIS, and ReSurgSAM2 are surgical-specific adaptations, SAMWISE extends SAM2 for textual PVOS, while the others originate from the general vision domain. 
+
+H. Liu et al.: Preprint submitted to Elsevier Page 8 of 13 As shown in Table 3, offline methods achieve stable performance by processing 64 frames concurrently but sac-rifice real-time capability, and without negative sampling these models struggle to discriminate between different ob-ject categories, leading to hallucinations and performance degradation when the target is absent. Semi-online methods face limitations: RSVIS struggles with long-term tracking due to reliance on short-term information, while SAMWISE underperforms significantly (22.3  & lower than ours on Uni-EndoVis17) due to inadequate surgical adaptation and suboptimal state management that causes error propa-gation. Among online methods, OnlineRefer and RefSAM benefit from frame-by-frame inference but lack surgical-specific adaptations, leading to degraded performance on long-duration datasets such as Uni-EndoVis17 and Uni-RARP50. While ReSurgSAM2 delivers the strongest base-line performance overall, it remains limited by hallucination issues and open-loop fragility. In contrast, UniSurgSAM achieves state-of-the-art per-formance at 55 FPS, demonstrating exceptional long-term tracking capabilities: +4.3  & on Uni-EndoVis17 (avg. 300s), +5.6 on Uni-RARP50 (avg. 325s), and +4.4 for tissue and +4.0 for instrument on Uni-EndoVis18, compared to ReSurgSAM2. These improvements validate our key de-signs: presence-aware decoding for hallucination suppres-sion, boundary-aware memory for consistent tracking, and adaptive state transition for resilient recovery. Fig. 4 shows qualitative comparisons. Both SAMWISE and ReSurgSAM2 exhibit boundary drift, particularly on deformable tissues where masks gradually leak into adja-cent regions, as shown in Fig. 4(a–e). Both methods also lack robust presence modeling, causing hallucinations that misidentify absent instruments as present, as shown by the FP predictions in Uni-RARP50 (Fig. 4(f–j)). ReSurgSAM2 further suffers from irreversible tracking drift once errors occur due to the lack of fallback mechanisms, as shown in Fig. 4(h–j). In comparison, UniSurgSAM maintains pre-cise contours through boundary-aware long-term tracking, suppresses hallucinations through presence-aware decoding, and recovers from drift via consensus-based fallback. 
+
+4.2.3. Audio PVOS 
+
+To validate UniSurgSAM’s versatility across input modal-ities, we evaluate audio PVOS performance in Table 3. Audio prompts were recorded by native speakers following the textual instructions (e.g., “Segment the large needle driver on the left”) and processed through the same pipeline as textual prompts after ASR transcription. As no prior methods support audio prompting, we report UniSurgSAM’s results for reference. Results show comparable performance between audio and textual PVOS across all datasets, with minor degradation on certain datasets (e.g., 3.3  & lower on Uni-EndoVis17). This gap arises because audio prompts are transcribed via ASR into simplified expressions that lack the action descriptors present in the curated textual prompts, introducing slight discrepancies at the model input. Despite this, the overall performance demonstrates robustness to                                                         
+
+> Table 4
+> Instrument part segmentation under Textual PVOS.
+> Method Uni-EndoVis17 Uni-EndoVis18-I Uni-RARP50
+> &&&
+> ReferFormer 60.2 57.5 62.8 64.3 63.0 65.6 72.7 72.0 73.3 SAMWISE 63.7 60.1 67.2 67.6 65.4 63.2 77.9 77.5 78.3 RefSAM 66.0 64.6 67.4 69.3 67.8 66.2 74.7 74.2 75.1 ReSurgSAM2 69.1 67.1 71.0 71.7 69.5 73.8 78.7 77.4 79.9 UniSurgSAM 77.7 75.1 80.3 77.3 75.3 79.3 88.4 87.6 89.1
+
+prompt modality variations and potential for hands-free sur-gical interaction where direct text input may be impractical. 
+
+4.2.4. Part-Level Segmentation 
+
+Beyond whole-object segmentation, we evaluate fine-grained part segmentation under textual PVOS, where part-level queries specify both the instrument and its component (e.g., “wrist of bipolar forceps”). Representative baselines are trained on datasets with multi-granular annotations covering whole instruments and constituent parts. As shown in Table 4, UniSurgSAM achieves substantial improvements over all baselines across all datasets: +8.6  & over ReSurgSAM2 on Uni-EndoVis17, +5.6 on Uni-EndoVis18-I, and +9.7 on Uni-RARP50. These gains confirm that UniSurgSAM seamlessly handles multi-granular segmen-tation without architectural modifications, benefiting from reliable presence-aware decoding that suppresses halluci-nations under target absence and hierarchical granularity selection. 
+
+4.2.5. Inference Efficiency 
+
+UniSurgSAM achieves real-time inference across all modalities on a single NVIDIA A6000 GPU: 68 FPS for visual PVOS, 55 FPS for textual PVOS, and 53 FPS for audio PVOS, all exceeding real-time requirements. The difference in speed stems from the additional computational overhead of CSTMamba fusion and ASR transcription in the lin-guistic pipeline. These speeds outperform most comparison methods while delivering superior accuracy, demonstrating a balance between efficiency and performance for practical surgical applications. 
+
+4.3. Ablation Study 
+
+We conduct comprehensive ablation studies to validate the effectiveness of each proposed component. All ablations are performed on Uni-EndoVis17, Uni-EndoVis18-I, and Uni-EndoVis18-T under the textual PVOS setting. 
+
+4.3.1. Main Components 
+
+Table 5 presents ablation results for the main com-ponents of UniSurgSAM: decoupled decoders, Reliable Presence-Aware Decoding (RPAD), Boundary-Aware Long-Term Tracking (BLT), and Adaptive State Transition (AST). The baseline adopts a coupled two-stage framework with CSTMamba for cross-modal feature fusion and a shared decoder for both initialization and tracking, where tracking   
+
+> H. Liu et al.: Preprint submitted to Elsevier Page 9 of 13
+
+Table 5 
+
+Ablation study of the main components (  & ).                            
+
+> Decoupled Decoders RPAD BLT AST Uni-EndoVis17 Uni-EndoVis18-I Uni-EndoVis18-T 68.8 74.5 72.2 √71.3 76.8 73.5 √√74.5 78.7 74.6 √√√77.4 81.5 76.7 √√√78.5 82.1 75.5 √√√√82.4 85.1 79.8
+
+Table 6 
+
+Ablation on boundary-aware tracking components (  & ). Baseline: decoupled decoders + RPAD + AST.                 
+
+> Model Configuration Uni-EndoVis17 Uni-EndoVis18-I Uni-EndoVis18-T Baseline 78.5 82.1 75.5 + Boundary Decoding 79.7 83.5 78.2 + Memory Integration 80.9 84.0 79.2 + DLM (FIFO eviction) 81.6 84.5 79.4 + DLM (full) 82.4 85.1 79.8
+
+is activated upon the first high-confidence detection. Decou-pled decoders bring consistent improvements (+2.5  &
+
+on Uni-EndoVis17) by separating optimization on initial-ization from tracking. Incorporating RPAD with negative sampling yields further gains (+3.2 on Uni-EndoVis17, +1.9 on Uni-EndoVis18-I) by learning to reject absent targets and reduce false positives. To isolate the contributions of BLT and AST, we evaluate them separately on top of the RPAD baseline. BLT improves tracking consistency through boundary-aware memory, with notable gains (+2.1 on Uni-EndoVis18-T) on deformable tissues where boundary super-vision is critical. However, without AST, the tracker may be activated by unreliable initializations, limiting overall gains. Conversely, AST ensures credible tracking activation and enables automatic recovery from tracking failures (+4.0 on Uni-EndoVis17), but without boundary-aware memory, tracking precision degrades over long sequences. Their combination achieves the best performance (+7.9 over the RPAD baseline on Uni-EndoVis17), effectively synergizing geometric preservation with resilient failure recovery for reliable long-term tracking. 
+
+4.3.2. Boundary-Aware Tracking Components 
+
+To validate the architectural designs for boundary-aware long-term tracking (Stage II), we conduct a progressive ab-lation study starting from the baseline equipped with decou-pled decoders, RPAD, and AST. Table 6 details the improve-ments yielded by three key configurations: (1) Boundary De-coding: Adding the parallel boundary head brings significant improvements, especially on the tissue dataset (+2.7  &
+
+on Uni-EndoVis18-T). This confirms that explicit boundary supervision is critical for delineating deformable tissues where boundaries are often obscured by blood or defor-mation. (2) Memory Integration: Encoding these boundary features into the memory bank yields additional gains on 
+
+Table 7 
+
+Ablation on AST components under Textual PVOS (  & ).                  
+
+> Model Configuration Uni-EndoVis17 Uni-EndoVis18-I Uni-EndoVis18-T Baseline 77.4 81.5 76.7 + Credible Activation 79.8 83.2 78.1 + Consensus Fallback 82.4 85.1 79.8 “Monopolar curved scissors are idle”
+> Ground truth  w/ fallback
+> 300s 150s 135s 1s 125s
+> w/o fallback
+> (a) (b) (c) (d) (e)
+> FP FP FP FP TN TN Fallback
+
+Figure 6: Qualitative analysis of consensus-based fallback in AST. The system successfully detects tracking drift and triggers re-initialization. 
+
+instrument datasets (+1.2 on Uni-EndoVis17) and tissues (+1.0 on Uni-EndoVis18-T). This geometric integration en-ables the tracker to distinguish targets from visually similar structures during retrieval, effectively preventing drift for both instruments and tissues. (3) DLM: Adopting the long-term memory bank with diversity-driven insertion from our preliminary work (Liu et al., 2025a) already yields gains with FIFO eviction (+0.7 on Uni-EndoVis17), confirming the value of retaining diverse historical context. Further replacing FIFO with the proposed diversity-driven eviction brings additional improvements (+0.8 on Uni-EndoVis17, +0.6 on Uni-EndoVis18-I), demonstrating that diversity-driven eviction complements the insertion for more effective memory management in long-duration sequences. 
+
+4.3.3. Adaptive State Transition Components 
+
+To evaluate the contribution of the AST mechanism, we conduct a quantitative ablation on its two logic gates, as detailed in Table 7. Starting from a baseline equipped with decoupled decoders, RPAD, and BLT, integrating the Entry gate for credible activation yields consistent improve-ments (+2.4  & on Uni-EndoVis17 and +1.7 on Uni-EndoVis18-I) by rejecting transient false positives to en-sure reliable tracking initialization. Further incorporating the Exit gate for consensus-based fallback provides sub-stantial additional gains (+2.6 on Uni-EndoVis17), which is particularly pronounced on long-duration sequences where tracking drift is more likely to accumulate over time. These quantitative results underscore the necessity of a closed-loop system for long-term sequences. Fig. 6 illustrates the effect of consensus-based fallback on a representative case in Uni-EndoVis17. The detector first localizes the target and activates the tracker through credible 
+
+H. Liu et al.: Preprint submitted to Elsevier Page 10 of 13 Table 8 
+
+Comparison across backbone scales under Textual PVOS.                       
+
+> Backbone Uni-EndoVis17 Uni-EndoVis18-I Uni-EndoVis18-T FPS
+> &&&
+> Small 80.6 80.6 80.5 82.5 82.8 82.1 77.6 82.9 72.3 58
+> Base+ 82.4 82.3 82.4 85.1 85.3 84.9 79.8 86.2 73.4 55
+
+activation (Fig. 6(a,b)). The tracker successfully propagates the mask in subsequent frames, but drifts toward a visually similar distractor as the procedure progresses (Fig. 6(c)). Without a fallback mechanism, this error propagates irre-versibly until the end of the video. In contrast, with the Exit gate enabled, the system periodically validates tracking correctness via semantic consensus. Upon detecting incon-sistency between the tracker’s prediction and the detector’s semantic reference, a fallback to Stage I is triggered, re-initializing detection and quickly recovering from the drift. Together with credible activation, this fallback mechanism forms a closed-loop system that prevents irreversible error accumulation, particularly critical for extended surgical pro-cedures where drift compounds over time. 
+
+4.3.4. Backbone Architecture 
+
+As shown in Table 8, UniSurgSAM maintains strong performance across backbone scales while achieving real-time inference speeds. Scaling from Hiera-small to Hiera-base+ yields consistent improvements across all datasets (+1.8  & on Uni-EndoVis17, +2.6 on Uni-EndoVis18-I, +2.2 on Uni-EndoVis18-T), indicating that the framework effectively benefits from increased model capacity. The per-formance gain comes at a negligible efficiency cost (58 →55 FPS), and we therefore adopt Hiera-base+ as the default backbone to balance performance and efficiency. 
+
+4.4. Component Analysis 
+
+4.4.1. Analysis of Optimization Interference 
+
+To empirically validate the optimization interference in the coupled decoder, we analyze gradient dynamics and loss convergence behavior on Uni-EndoVis17 under the textual PVOS setting with joint training. 
+
+Gradient Dynamics. As shown in Fig. 7(a), we analyze the gradient dynamics of a coupled decoder, where the first few frames are used for initialization and the subsequent frames for tracking. At each iteration, we sequentially com-pute the gradients of the losses on the target initialization frame and the subsequent tracking frames with respect to the coupled decoder parameters, and then measure their co-sine similarity. The cosine similarity fluctuates considerably throughout training, with a near-zero mean (0.0246) and frequent sign changes, indicating that the two objectives intermittently impose conflicting optimization directions on the shared decoder parameters. 
+
+Loss Convergence. Fig. 7(b) compares the total loss curves under coupled and decoupled frameworks, both (a) Training cosine similarity for coupled framework (b) Training loss between coupled and decoupled framework 
+
+Figure 7: Analysis of optimization interference. 86.5 90.1 88.3 94.0 98.1 97.9 80 82 84 86 88 90 92 94 96 98 100 Uni-EndoVis17 Uni-EndoVis18-I Ref-EndoVis18-T Precision ↑   
+
+> 45.6 19.2 23.3 18.0 3.1 5.1 0510 15 20 25 30 35 40 45 50 Uni-EndoVis17 Uni-EndoVis18-I Uni-EndoVis18-T FPR ↓
+> ReSurgSAM2 Ours
+
+Figure 8: Analysis of presence-aware decoding with negative sampling. 
+
+starting from the same model parameters where the detection decoder and tracking decoder share the same pretrained weights. With a coupled decoder, the total loss exhibits instability and slower convergence throughout training. In contrast, decoupled decoders allow each stage to optimize independently, yielding smoother and faster convergence. These results further explain the quantitative gains reported in Table 5, where decoupled decoders consistently improve performance across instrument and tissue segmentation. 
+
+4.4.2. Analysis of Presence-Aware Decoding 
+
+Beyond the  & improvements reported in Sec. 4.2.2, we further analyze the effectiveness of presence-aware de-coding, focusing on hallucination suppression on sequences where the referred object intermittently appears and dis-appears. Fig. 8 presents a detailed comparison between ReSurgSAM2 and UniSurgSAM on Uni-EndoVis17 and Uni-EndoVis18. UniSurgSAM achieves superior hallucina-tion suppression with substantially lower FPR and higher precision. On Uni-EndoVis17, FPR reduces from 45.6 to 18.0 while precision improves from 86.5 to 94.0. Similar improvements are observed on Uni-EndoVis18, where FPR drops from 19.2 to 3.1 for instruments and from 23.3 to 5.1 for tissues, with precision reaching 98.1 and 97.9, respec-tively. These results validate that presence-aware decoding with negative sampling enables UniSurgSAM to accurately detect target absence, a capability essential for reliable sur-gical video segmentation. 
+
+H. Liu et al.: Preprint submitted to Elsevier Page 11 of 13 5. Discussion 
+
+UniSurgSAM achieves state-of-the-art performance with real-time inference across all datasets, with notable gains on long-duration tracking for both instruments and tissues. We attribute these gains to the synergy of the decoupled framework and the three reliability designs. Each decoder is dedicated to a single objective: the detector focuses on semantic discrimination with reliable presence modeling, while the tracker maintains geometric and temporal con-sistency over extended sequences through boundary-aware and diversity-driven memory. Additionally, adaptive state transition closes the loop between stages, enabling resilient failure recovery for linguistic interaction. Compared to our preliminary work, ReSurgSAM2 (Liu et al., 2025a), our framework yields substantial improvements on long-duration datasets while extending support to visual and audio prompts. Clinically, the real-time capability (53+ FPS across all prompt modalities) and flexible multi-modal interaction offer practical value for intraoperative assistance. General foundation models such as SAM3 (Carion et al., 2025) offer broad segmentation capabilities, yet they address a fundamentally different task from surgical PVOS in terms of both formulation and efficiency. SAM3 is designed for Promptable Concept Segmentation (PCS), detecting and segmenting all instances of a concept. However, surgical scenarios primarily involve single-instance tracking where surgeons monitor one specific instrument or tissue region. The multi-instance capability introduces unnecessary over-head, as most surgical targets appear as one or two instances that can be easily specified through simple expressions. Computational constraints further limit clinical applicabil-ity. Our benchmark shows that SAM3 achieves only 9 FPS 
+
+on an A6000 GPU, falling short of real-time requirements, whereas UniSurgSAM maintains 53+ FPS . A direct quan-titative comparison is therefore infeasible due to the fun-damental difference in task formulation and the substantial domain-specific fine-tuning that SAM3 would require to operate under the surgical PVOS setting. These limitations underscore the necessity of domain-specific frameworks tailored to the task requirements and real-time demands of surgical applications. Despite the promising results, several limitations warrant discussion. First, vision-language generalization is con-strained to the trained surgical procedures. Training on more diverse procedure types would be needed to broaden applicability. Second, the ASR module is not optimized for noisy operating room environments. Incorporating domain-adapted speech recognition with noise reduction would improve audio prompt robustness. Beyond these improve-ments, we will explore integration with robotic control systems to close the loop from perception to action in surgical automation. 
+
+## 6. Conclusion 
+
+This paper presents UniSurgSAM, a unified promptable model for reliable surgical video segmentation that sup-ports visual, textual, and audio interactions. Its decoupled two-stage framework resolves the optimization interference between initialization and tracking, enabling each stage to specialize independently. Within this framework, presence-aware decoding suppresses hallucinations, boundary-aware long-term tracking prevents mask drift, and adaptive state transition closes the loop between stages for resilient fail-ure recovery. Extensive validation demonstrates state-of-the-art performance in real time across all prompt modalities and granularities, establishing a practical foundation for computer-assisted surgery. 
+
+## References        
+
+> Ahmed, F.A., Yousef, M., Ahmed, M.A., Ali, H.O., Mahboob, A., Ali, H., Shah, Z., Aboumarzouk, O., Al Ansari, A., Balakrishnan, S., 2024. Deep learning for surgical instrument recognition and segmentation in robotic-assisted surgeries: a systematic review. Artif. Intell. Rev. 58, 1. Allan, M., Kondo, S., Bodenstedt, S., Leger, S., Kadkhodamohammadi, R., Luengo, I., Fuentes, F., Flouty, E., Mohammed, A., Pedersen, M., et al., 2020. 2018 robotic scene segmentation challenge. arXiv preprint arXiv:2001.11190 . Allan, M., Shvets, A., Kurmann, T., Zhang, Z., Duggal, R., Su, Y.H., Rieke, N., Laina, I., Kalavakonda, N., Bodenstedt, S., et al., 2019. 2017 robotic instrument segmentation challenge. arXiv preprint arXiv:1902.06426 . Ayobi, N., Pérez-Rondón, A., Rodríguez, S., Arbeláez, P., 2023. Matis: Masked-attention transformers for surgical instrument segmentation, in: Proc. IEEE Int. Symp. Biomed. Imag., pp. 1–5. Carion, N., Gustafson, L., Hu, Y.T., Debnath, S., Hu, R., Suris, D., Ryali, C., Alwala, K.V., Khedr, H., Huang, A., et al., 2025. Sam 3: Segment anything with concepts. arXiv preprint arXiv:2511.16719 . Cerón, J.C.Á., Ruiz, G.O., Chang, L., Ali, S., 2022. Real-time instance segmentation of surgical instruments using attention and multi-scale feature fusion. Med. Image Anal. 81, 102569. Chen, C., Miao, J., Wu, D., Zhong, A., Yan, Z., Kim, S., Hu, J., Liu, Z., Sun, L., Li, X., et al., 2024. Ma-sam: Modality-agnostic sam adaptation for 3d medical image segmentation. Med. Image Anal. 98, 103310. Cheng, H.K., Schwing, A.G., 2022. Xmem: Long-term video object segmentation with an atkinson-shiffrin memory model, in: Proc. Eur. Conf. Comput. Vis., Springer. pp. 640–658. Cuttano, C., Trivigno, G., Rosi, G., Masone, C., Averta, G., 2025. Samwise: Infusing wisdom in sam2 for text-driven video segmentation, in: Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recog., pp. 3395–3405. Ding, S., Qian, R., Dong, X., Zhang, P., Zang, Y., Cao, Y., Guo, Y., Lin, D., Wang, J., 2025. Sam2long: Enhancing sam 2 for long video segmentation with a training-free memory tree, in: Proc. IEEE/CVF Int. Conf. Comput. Vis., pp. 13614–13624. González, C., Bravo-Sánchez, L., Arbelaez, P., 2020. Isinet: an instance-based approach for surgical instrument segmentation, in: Proc. Int. Conf. Med. Image Comput. Comput.-Assist. Intervent., pp. 595–605. Intuitive Surgical, I., 2024. Da Vinci instruments. https://www.intuitive. com/en-us/products-and-services/da-vinci/instruments . Accessed: 27-Feb-2025. Jin, Y., Yu, Y., Chen, C., Zhao, Z., Heng, P.A., Stoyanov, D., 2022. Exploring intra-and inter-video relation for surgical semantic scene segmentation. IEEE Trans. Med. Imag. 41, 2991–3002. Li, X., Wang, J., Xu, X., Li, X., Raj, B., Lu, Y., 2023. Robust referring video object segmentation with cyclic structural consensus, in: Proc. IEEE/CVF Int. Conf. Comput. Vis., pp. 22236–22245. Li, Y., Zhang, J., Teng, X., Zhang, H., Liu, X., Lan, L., 2025. Refsam: Efficiently adapting segmenting anything model for referring video object segmentation. Neural Netw. , 108000.
+
+H. Liu et al.: Preprint submitted to Elsevier Page 12 of 13 Liu, H., Gao, M., Luo, X., Wang, Z., Qin, G., Wu, J., Jin, Y., 2025a. Resurgsam2: Referring segment anything in surgical video via credible long-term tracking, in: Proc. Int. Conf. Med. Image Comput. Comput.-Assist. Intervent., Springer. pp. 435–445. Liu, H., Wang, Z., Mishra, S., Gao, M., Qin, G., Low, C.H., Kong, A.Y., Jin, Y., 2025b. Sam2s: Segment anything in surgical videos via semantic long-term tracking. arXiv preprint arXiv:2511.16618 . Liu, H., Zhang, E., Wu, J., Hong, M., Jin, Y., 2024. Surgical SAM 2: Real-time segment anything in surgical video by efficient frame pruning, in: Neural Information Processing Systems Workshop on Advancements In Medical Foundation Models. Long, Y., Lin, A., Kwok, D.H.C., Zhang, L., Yang, Z., Shi, K., Song, L., Fu, J., Lin, H., Wei, W., et al., 2025. Surgical embodied intelligence for generalized task autonomy in laparoscopic robot-assisted surgery. Sci. Robot. 10, eadt3093. Ma, J., Yang, Z., Kim, S., Chen, B., Baharoon, M., Fallahpour, A., Asak-ereh, R., Lyu, H., Wang, B., 2025. Medsam2: Segment anything in 3d medical images and videos. arXiv preprint arXiv:2504.03600 . Madani, A., Namazi, B., Altieri, M.S., Hashimoto, D.A., Rivera, A.M., Pucher, P.H., Navarrete-Welton, A., Sankaranarayanan, G., Brunt, L.M., Okrainec, A., et al., 2022. Artificial intelligence for intraoperative guidance: using semantic segmentation to identify surgical anatomy during laparoscopic cholecystectomy. Ann. Surg. 276, 363–369. Moglia, A., Georgiou, K., Georgiou, E., Satava, R.M., Cuschieri, A., 2021. A systematic review on artificial intelligence in robot-assisted surgery. Int. J. Surg. 95, 106151. Oh, S.W., Lee, J.Y., Xu, N., Kim, S.J., 2019. Video object segmentation using space-time memory networks, in: Proc. IEEE/CVF Int. Conf. Comput. Vis., pp. 9226–9235. Pei, J., Zhang, J., Qin, G., Wang, K., Jin, Y., Heng, P.A., 2025. Instrument-tissue-guided surgical action triplet detection via textual-temporal trail exploration. IEEE Trans. Image Process. . Pei, J., Zhou, Z., Guo, D., Li, Z., Qin, J., Du, B., Heng, P.A., 2026. Synergistic bleeding region and point detection in laparoscopic surgical videos, in: Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recog. Psychogyios, D., Colleoni, E., Van Amsterdam, B., Li, C.Y., Huang, S.Y., Li, Y., Jia, F., Zou, B., Wang, G., Liu, Y., et al., 2023. Sar-rarp50: Segmentation of surgical instrumentation and action recogni-tion on robot-assisted radical prostatectomy challenge. arXiv preprint arXiv:2401.00496 . Radford, A., Kim, J.W., Xu, T., Brockman, G., McLeavey, C., Sutskever, I., 2023. Robust speech recognition via large-scale weak supervision, in: Proc. Int. Conf. Mach. Learn., pp. 28492–28518. Ravi, N., Gabeur, V., Hu, Y.T., Hu, R., Ryali, C., Ma, T., Khedr, H., Rädle, R., Rolland, C., Gustafson, L., et al., 2025. SAM 2: Segment anything in images and videos, in: Proc. Int. Conf. Learn. Represent. Schmidgall, S., Opfermann, J.D., Kim, J.W., Krieger, A., 2025. Will your next surgeon be a robot? autonomy and ai in robotic surgery. Sci. Robot. 10, eadt0187. Vandenhende, S., Georgoulis, S., Van Gansbeke, W., Proesmans, M., Dai, D., Van Gool, L., 2021. Multi-task learning for dense prediction tasks: A survey. IEEE Trans. Pattern Anal. Mach. Intell. 44, 3614–3633. Videnovic, J., Lukezic, A., Kristan, M., 2025. A distractor-aware memory for visual object tracking with sam2, in: Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recog., pp. 24255–24264. Wang, H., Yang, G., Zhang, S., Qin, J., Guo, Y., Xu, B., Jin, Y., Zhu, L., 2024. Video-instrument synergistic network for referring video instrument segmentation in robotic surgery. IEEE Trans. Med. Imag. 43, 4457–4469. Wang, Q., Zhao, S., Xu, Z., Zhou, S.K., 2025. Lacoste: Exploiting stereo and temporal contexts for surgical instrument segmentation. Med. Image Anal. 99, 103387. Wei, M., Yuan, K., Li, S., Zhou, Y., Bai, L., Navab, N., Ren, H., Lee, H.J., Vercauteren, T., Padoy, N., 2026. Where it moves, it matters: Referring surgical instrument segmentation via motion, in: Proc. AAAI Conf. Artif. Intell. Wu, D., Wang, T., Zhang, Y., Zhang, X., Shen, J., 2023. Onlinerefer: A simple online baseline for referring video object segmentation, in: Proc. IEEE/CVF Int. Conf. Comput. Vis., pp. 2761–2770. Wu, J., Jiang, Y., Sun, P., Yuan, Z., Luo, P., 2022. Language as queries for referring video object segmentation, in: Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recog., pp. 4974–4984. Wu, J., Li, X., Li, X., Ding, H., Tong, Y., Tao, D., 2024. Toward robust referring image segmentation. IEEE Trans. Image Process. 33, 1782– 1794. Wu, J., Wang, Z., Hong, M., Ji, W., Fu, H., Xu, Y., Xu, M., Jin, Y., 2025. Medical sam adapter: Adapting segment anything model for medical image segmentation. Med. Image Anal. 102, 103547. Yan, S., Zhang, R., Guo, Z., Chen, W., Zhang, W., Li, H., Qiao, Y., Dong, H., He, Z., Gao, P., 2024. Referred by multi-modality: A unified temporal transformer for video object segmentation, in: Proc. AAAI Conf. Artif. Intell., pp. 6449–6457. Yang, C.Y., Huang, H.W., Chai, W., Jiang, Z., Hwang, J.N., 2024. Samurai: Adapting segment anything model for zero-shot visual tracking with motion-aware memory. arXiv preprint arXiv:2411.11922 . Yang, Y., Xing, Z., Yu, L., Fu, H., Huang, C., Zhu, L., 2025. Vivim: a video vision mamba for ultrasound video segmentation. IEEE Trans. Circuit Syst. Video Technol. . Yin, M., Wang, F., Ye, X., Meng, Y., Fu, Z., 2025. Memory-augmented sam2 for training-free surgical video segmentation, in: Proc. Int. Conf. Med. Image Comput. Comput.-Assist. Intervent., pp. 328–337. Yue, W., Zhang, J., Hu, K., Xia, Y., Luo, J., Wang, Z., 2024. Surgicalsam: Efficient class promptable surgical instrument segmentation, in: Proc. AAAI Conf. Artif. Intell., pp. 6890–6898. Zadeh, S.M., François, T., Comptour, A., Canis, M., Bourdel, N., Bartoli, A., 2023. Surgai3. 8k: a labeled dataset of gynecologic organs in laparoscopy with application to automatic augmented reality surgical guidance. J. Minim. Invasive Gynecol. 30, 397–405. Zhao, S., Bai, L., Yuan, K., Li, F., Yu, J., Dong, W., Wang, G., Hoque, M.I., Padoy, N., Navab, N., et al., 2025. Rethinking data imbalance in class incremental surgical instrument segmentation. Med. Image Anal. 105, 103728. Zhou, T., Porikli, F., Crandall, D.J., Van Gool, L., Wang, W., 2022. A survey on deep learning technique for video segmentation. IEEE Trans. Pattern Anal. Mach. Intell. 45, 7099–7122. Zhou, Z., Alabi, O., Wei, M., Vercauteren, T., Shi, M., 2023. Text prompt-able surgical instrument segmentation with vision-language models. Proc. Conf. Neural Inform. Process. Syst. 36, 28611–28623. Zou, X., Yang, J., Zhang, H., Li, F., Li, L., Wang, J., Wang, L., Gao, J., Lee, Y.J., 2023. Segment everything everywhere all at once. Proc. Conf. Neural Inform. Process. Syst. 36, 19769–19782. 
+
+H. Liu et al.: Preprint submitted to Elsevier Page 13 of 13

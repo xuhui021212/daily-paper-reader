@@ -1,0 +1,660 @@
+Title: Adapting SAM to Nuclei Instance Segmentation and Classification via Cooperative Fine-Grained Refinement
+
+URL Source: https://arxiv.org/pdf/2603.28027v1
+
+Published Time: Tue, 31 Mar 2026 01:57:18 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# Adapting SAM to Nuclei Instance Segmentation and Classification via Cooperative Fine-Grained Refinement 
+
+Jingze Su a, Tianle Zhu a, Jiaxin Cai a, Zhiyi Wang a, Qi Li a, Xiao Zhang a, Tong Tong c, Shu Wang b, ∗, Wenxi Liu a, ∗
+
+> aCollege of Computer and Data Science, Fuzhou University, Fuzhou, China
+> bSchool of Mechanical Engineering and Automation, Fuzhou University, Fuzhou, China
+> cCollege of Physics and Information Engineering, Fuzhou University, Fuzhou, China
+
+Abstract 
+
+Nuclei instance segmentation is critical in computational pathology for cancer diagnosis and prognosis. Recently, the Segment Anything Model has demonstrated exceptional performance in various segmentation tasks, leveraging its rich priors and powerful global context modeling capabilities derived from large-scale pre-training on natural images. However, directly applying SAM to the medical imaging domain faces significant limitations: it lacks su ffi cient perception of the local structural features that are crucial for nuclei segmentation, and full fine-tuning for downstream tasks requires substantial computational costs. To e ffi ciently transfer SAM’s robust prior knowledge to nuclei instance segmentation while supplementing its task-aware local perception, we propose a parameter-e ffi cient fine-tuning framework, named Cooperative Fine-Grained Refinement of SAM, consisting of three core components: 1) a Multi-scale Adaptive Local-aware Adapter, which enables e ff ective capability transfer by augmenting the frozen SAM backbone with minimal parameters and instilling a powerful perception of local structures through dynamically gen-erated, multi-scale convolutional kernels; 2) a Hierarchical Modulated Fusion Module, which dynamically aggregates multi-level encoder features to preserve fine-grained spatial details; and 3) a Boundary-Guided Mask Refinement, which integrates multi-context boundary cues with semantic features through explicit supervision, producing a boundary-focused signal to refine initial mask predictions for sharper delineation. These three components work cooperatively to enhance local perception, preserve spatial details, and refine boundaries, enabling SAM to perform accurate nuclei instance segmentation directly. Extensive experiments on three challenging benchmarks demonstrate that our method achieves state-of-the-art performance, outperforming existing methods while requiring significantly fewer trainable parameters. 
+
+Keywords: Nuclei Instance Segmentation, Segment Anything Model, Parameter-E ffi cient Fine-Tuning, Computational Pathology. 
+
+1. Introduction 
+
+With the continuous advancement of whole slide imaging (WSI) generation and scanning technologies, pathological im-age analysis tasks such as nucleus segmentation and classifi-cation have gained increasing importance in cancer diagnosis (Graham et al., 2019). These tasks form the foundation for morphological quantification and tumor grading assessments. By providing essential quantitative characterization of nuclear morphology and architecture, they play a critical role in can-cer diagnosis, treatment planning, and survival analysis, as sup-ported by extensive previous studies (Sirinukunwattana et al., 2018; Lu et al., 2018). Given the vast number of cells in a WSI, large-scale cel-lular analysis has traditionally been time-consuming, labor-intensive, and highly dependent on pathologists’ expertise, making consistent manual assessment particularly challenging (Elmore et al., 2015). With the recent advances in deep learn-ing, convolutional neural network (CNN)-based frameworks have emerged as a powerful alternative, o ff ering automated, effi cient, and reproducible analysis. As a result, CNN-based 
+
+> ∗These authors are co-corresponding authors.
+
+methods have been widely adopted in recent years for nucleus segmentation and classification tasks (Graham et al., 2019; Schmidt et al., 2018; Doan et al., 2022). Their ability to ex-tract local features while preserving fine-grained details helps mitigate common challenges in histopathology, such as faint nuclear boundaries, staining variations, and certain degrees of morphological diversity. However, the inherently limited re-ceptive field of convolutional layers remains a fundamental bot-tleneck, which prevents them from e ff ectively capturing global context and long-range spatial relationships (Dosovitskiy et al., 2020; Hörst et al., 2024). Nuclear overlapping, clustering, and extreme morphological diversity continue to pose a significant challenge to the development of robust segmentation algorithms (Ilyas et al., 2022). To overcome these limitations, recent e ff orts have turned to foundational vision models that excel in capturing global con-text and long-range dependencies. Among them, the Segment Anything Model (SAM) (Kirillov et al., 2023) have demon-strated remarkable performance and strong generalization ca-pabilities in natural image segmentation (Kirillov et al., 2023), prompting researchers to explore its adaptation to nucleus in-stance segmentation (Deng et al., 2025). Although SAM excels in long-range dependency modeling and cross-domain general-
+
+> arXiv:2603.28027v1 [cs.CV] 30 Mar 2026 GT SAM Ours
+> Figure 1: This figure illustrates our motivation. Compared to the segmentation results of a full fine-tuned SAM (second row), our CFR-SAM achieves superior precision, particularly in capturing faint boundaries and distinguishing between densely clustered objects.
+
+ization, its application to nucleus segmentation still faces sev-eral limitations: (1) The full fine-tuning strategy is computa-tionally expensive and necessitates storing a huge number of parameters (Hu et al., 2022). Moreover, it is prone to overfitting and unable to learn generalized representations due to the lim-ited amount of annotated nucleus data (Wu et al., 2025a); (2) While the Transformer backbone in SAM e ff ectively captures global context, its reliance on self-attention mechanisms is in-herently less suited for perceiving fine local details and bound-ary features, leading to degraded performance in regions with faint or densely clustered nuclei, as evidenced by the results in Fig. 1; (3) Most existing approaches (Hörst et al., 2024; Nam et al., 2024) rely on a multi-stage pipeline of semantic segmen-tation followed by complex post-processing (e.g., watershed-based methods inspired by HoVer-Net (Graham et al., 2019)) to separate instances. Such pipelines are often fragile and highly sensitive to parameter tuning, introducing additional error. To address these challenges, we propose Cooperative Fine-grained Refinement of SAM (CFR-SAM), a parameter-e ffi cient fine-tuning framework. Our framework consists of two stages. The first stage is a prompt learning module that automatically generates high-quality point prompts by detecting nuclei cen-troids. The second stage, which embodies our core contribu-tions, takes these prompts as input and performs fine-grained instance segmentation using an adapted SAM. Our strategy is built upon an end-to-end pipeline that directly leverages SAM’s mask decoder with automated point prompts, thereby elimi-nating complex post-processing. However, to fully realize the potential of this pipeline for fine-grained nuclei segmentation, we need to enhance it against two inherent characteristics: (1) its underutilization of shallow encoder features, which contain rich detailed information (e.g., shape and edges) (Hatamizadeh et al., 2022); and (2) its reliance on low-resolution predictions followed by upsampling, which leads to inferior mask detail recovery compared to modern multi-stage decoding architec-tures (Ma et al., 2024; Hörst et al., 2024). To overcome these intertwined limitations in a cooperative manner, CFR-SAM in-troduces three core components that work in concert. First of all, we introduce a Multi-scale Adaptive Local-aware Adapter (MALA), a parameter-e ffi cient fine-tuning (PEFT) module that augments the frozen SAM backbone. While PEFT strategies like Adapter (Houlsby et al., 2019) or LoRA (Hu et al., 2022) enable e ffi cient adaptation of SAM to medical im-ages (Wu et al., 2025a; Zhang and Liu, 2023), they typically ad-just features only along the channel dimension and lack explicit modeling of local contextual information, which is crucial for nuclear segmentation. To overcome this, MALA incorporates multi-scale convolutional operations within a low-rank space to enhance the local receptive field of each token. This design al-lows the model to maintain the global modeling strengths of the Transformer while significantly strengthening its percep-tion of local features such as nuclear boundaries, morphology, and size. To handle the substantial variations in nuclear den-sity and scale, MALA adaptively generates pixel-wise convo-lutional kernels conditioned on the input, thereby matching the optimal receptive field for di ff erent cellular regions and e ff ec-tively extracting region-specific details. Thus, the local features enhanced by MALA provide a superior foundation for the sub-sequent modules. Next, to directly compensate for the decoder’s specific short-comings, we introduce two dedicated components, the Hierar-chical Modulated Fusion Module (HMFM) and the Boundary-Guided Mask Refinement (BGMR), that operate cooperatively. Specifically, HMFM tackles the underutilization of shallow features by dynamically aggregating and modulating features from all encoder levels, including those already enriched by MALA. This ensures that fine-grained spatial details are pre-served and directly contribute to the decoding process. Building upon this enhanced feature representation, BGMR addresses the boundary ambiguity problem, which leverages the Multi-Context Boundary Enhancement (MCBE) component to extract explicit, multi-scale boundary cues from the input image. These cues are then aligned and fused with the upsampled, semanti-cally rich features (which combine output from HMFM and the mask decoder) via a Boundary-Guided Feature Fusion (BGFF) module. This fusion process is supervised by an explicit bound-ary loss, compelling the model to generate a boundary-focused feature representation, which is subsequently used to refine the mask predictions for sharper delineation and improved struc-tural consistency. To sum up, guided by a task-driven analysis of nuclei seg-mentation challenges, we identify three inherent limitations in SAM’s architecture that hinder its direct application. These problems are independent and occur at di ff erent processing stages, thus requiring separate compensatory mechanisms that work in sequence. First, SAM’s backbone lacks local detail sensitivity, and MALA addresses this at the feature level. Sec-ond, SAM’s decoder ignores shallow features, and HMFM han-dles this at the fusion level. Third, SAM’s low-resolution out-put blurs boundaries, and BGMR compensates for this at the refinement level. These three problems are independent and require separate solutions that work in sequence: MALA pro-vides locally-aware features for HMFM, and HMFM’s enriched features then support BGMR’s refinement. This layered design 2is not arbitrary but a necessary way to systematically overcome SAM’s shortcomings. Together with the essential prompt learn-ing stage that generates accurate nuclei centroids, CFR-SAM achieves end-to-end, fine-grained instance segmentation with-out relying on fragile post-processing. For evaluation, the pro-posed method achieves state-of-the-art performance on three challenging benchmarks. Notably, on PanNuke, it outperforms the previous leading method (which required full fine-tuning) by 1.62% in bPQ and 1.34% in mPQ, while utilizing only 10.6% of the trainable parameters. Overall, our contributions are summarized as follows: 
+
+• To address the limitations of full fine-tuning and SAM’s lack of local feature sensitivity, we propose the Multi-scale Adaptive Local-aware Adapter (MALA). This parameter-effi cient module augments the frozen SAM backbone by injecting multi-scale local features via low-rank adapta-tion, significantly enhancing nuclear structure perception with minimal overhead. 
+
+• To overcome the mask decoder’s underutilization of shal-low features, we introduce the Hierarchical Modulated Fusion Module (HMFM). It dynamically aggregates and modulates multi-level encoder features through a channel-wise attention mechanism, ensuring the preservation of fine-grained spatial details for more precise segmentation. 
+
+• To resolve the boundary ambiguity inherent in the mask decoder’s upsampling process, we design the Boundary-Guided Mask Refinement (BGMR). It explicitly incorpo-rates boundary supervision, fusing multi-context cues with semantic features to sharply refine mask predictions, pro-ducing high-quality instance masks without complex post-processing. 
+
+• CFR-SAM achieves state-of-the-art performance on three challenging benchmarks and it outperforms the previous full fine-tuning methods while utilizing much less train-able parameters. 
+
+2. Related Work 
+
+2.1. Instance Segmentation of Nuclei 
+
+In recent years, nucleus instance segmentation has emerged as a key task in computational pathology, with the goal of accu-rately identifying and segmenting each nucleus in microscopic images. Traditional image processing methods, such as the wa-tershed algorithm and level set methods, have been used for nucleus segmentation. However, these methods often rely on handcrafted features, making them sensitive to image quality and noise, and limiting their ability to generalize across di ff er-ent datasets (Wienert et al., 2012; Veta et al., 2013; Corbetta and Bocklitz, 2025). With the development of deep learning, many methods have significantly improved segmentation performance (He et al., 2017; Graham et al., 2019; Schmidt et al., 2018; Chen et al., 2023b; Hörst et al., 2024; Li et al., 2025; Ding et al., 2025). To address the common problems of nuclear crowding and occlu-sion in whole slide images, some studies have begun to incorpo-rate morphological priors, first predicting nuclear semantic seg-mentation and morphological features, and then extracting indi-vidual instances through refined post-processing. Specifically, HoVer-Net (Graham et al., 2019) captures nuclear boundary transitions by computing the gradients of horizontal and verti-cal distance maps, while STARDIST (Schmidt et al., 2018) and its extension CPP-Net (Chen et al., 2023b) predict the distance from each foreground pixel to the instance boundary along predefined directions. Although these methods have achieved excellent performance, they still face considerable di ffi culties when dealing with highly heterogeneous nuclei or low-contrast images due to the limited receptive field of convolutional lay-ers. To address these limitations, we propose a novel parameter-effi cient paradigm that e ff ectively enhances the model’s ability to capture nuclear morphology and contours, highlighting the advantage of leveraging fine-grained details for nuclei segmen-tation. 
+
+2.2. Utilization of SAM for Medical Image Segmentation 
+
+In recent years, the powerful capability of SAM has garnered significant research interest in the field of medical image seg-mentation(Jiao et al., 2026). Initially proposed by Kirillov et al.(Kirillov et al., 2023), SAM introduced a prompt-based seg-mentation mechanism that demonstrated impressive zero-shot generalization ability, marking a breakthrough in natural image segmentation. Following its success in natural image tasks, sev-eral studies have explored SAM’s direct application to medical image segmentation. However, early investigations (e.g., (Deng et al., 2025) and (Huang et al., 2024)) revealed that while SAM performs well on certain tasks, it faces significant limitations in medical imaging tasks such as nucleus, organ, and lesion seg-mentation. These limitations include weak domain adaptability, insu ffi cient sensitivity to fine structural details, and a heavy re-liance on manual prompt inputs. To address these challenges and further enhance SAM’s per-formance in medical imaging, researchers have proposed vari-ous fine-tuning and extension methods. For instance, SPPNet employs a “one-prompt-all-nuclei” strategy to fine-tune a dis-tilled lightweight variant of SAM for nuclear semantic segmen-tation(Xu et al., 2023). Although this method improves seg-mentation outcomes, it still relies on manual prompting and fails to provide nuclear instance information. CellViT lever-ages SAM’s pre-trained image encoder as the backbone within a Vision Transformer-based U-Net architecture for nuclear in-stance segmentation(Hörst et al., 2024). A limitation of this ap-proach is that it does not fully exploit the knowledge in SAM’s integrated architecture (e.g., its prompt encoder and mask de-coder). Furthermore, it relies on elaborate post-processing tech-niques to derive instance segmentation results from semantic masks. In this work, our method fully utilizes the pre-trained knowledge of the entire SAM architecture. By employing au-tomatically predicted nuclear centroids as point prompts, our approach achieves nuclear instance segmentation without rely-ing on manual prompts or elaborate post-processing. 32.3. Parameter-E ffi cient Fine-Tuning (PEFT) for SAM 
+
+The adaptation of SAM to medical image segmentation has increasingly used PEFT strategies. Since its introduction, SAM has garnered significant attention owing to its substantial pa-rameter size and strong generalization capabilities. However, full-parameter fine-tuning entails notable challenges such as high computational expense and potential overfitting. These limitations have motivated researchers to adopt PEFT tech-niques, which are originally popularized in natural language processing, for vision models like SAM. For example, Zhang et al. (Zhang and Liu, 2023) applied Low-Rank Adaptation (LoRA), a method introduced by Hu et al. (Hu et al., 2022), to fine-tune SAMs image encoder using low-rank matrix decom-position, substantially reducing the number of trainable param-eters. Similarly, adapter-based approaches have been proposed, incorporating lightweight modules into Transformer layers to facilitate domain adaptation (Wu et al., 2025a). To further alleviate the heavy reliance on extensive anno-tated data and computational resources, recent studies have be-gun to explore more refined parameter- and data-e ffi cient learn-ing strategies tailored for SAM. On the parameter e ffi ciency front, approaches have introduced task-specific e ffi cient tuning modules (Paranjape et al., 2024a) and SVD-based lightweight approximations (Paranjape et al., 2024b) to significantly re-duce computational overhead during adaptation. Concurrently, to address data scarcity and enhance model flexibility, other works have proposed conditional tuning mechanisms for few-shot adaptation (Xiao et al., 2024) and integrated text-driven paradigms for more universal segmentation (Koleilat et al., 2024). Building on these ideas, recent research has increasingly fo-cused on integrating prompt learning within the PEFT frame-work to tackle the dual challenge of limited annotations and fine-grained structure segmentation. For instance, Konwer et al. (2025); Wang et al. (2024) developed an annotation-e ffi cient prompting strategy that generates prompts in a fully unsuper-vised fashion, capturing essential semantic and spatial informa-tion to guide SAM in low-data scenarios. Similarly, Spiegler et al. (2025) proposed a text prompt learning approach that, combined with LoRA, tunes less than 1% of SAM’s parame-ters for automatic pancreatic tumor segmentation in ultrasound images. The integration of prompt learning with PEFT is particu-larly advantageous in medical imaging, where annotated data are scarce. Unlike conventional fine-tuning that relies on abun-dant pixel-level labels, prompt learning leverages task-specific cues, such as semantic prompts (e.g., text embeddings) or spa-tial prompts (e.g., points or boxes), to steer SAM’s pre-trained knowledge. This approach o ff ers two key benefits in data-limited scenarios: semantic prompts encode high-level priors that guide attention to relevant features, compensating for lim-ited visual examples (Koleilat et al., 2024; Spiegler et al., 2025); spatial prompts derived from sparse annotations (e.g., cen-troid points) enable instance segmentation without dense masks (Konwer et al., 2025). By maximizing the utility of each la-beled sample, prompt learning enables robust adaptation to spe-cialized medical tasks where large-scale, fine-grained labels are impractical. Collectively, these studies demonstrate that com-bining prompt learning with PEFT e ff ectively harnesses seman-tic cues to mitigate data scarcity while maintaining parameter effi ciency. Despite these advances, existing PEFT methods continue to face challenges such as limited generalization across het-erogeneous datasets and insu ffi cient sensitivity to fine-grained anatomical structures. In particular, when applied to nucleus instance segmentation, these methods often struggle to capture multi-scale local features e ff ectively and to delineate precise boundaries, indicating considerable room for improvement. 
+
+2.4. Lightweight Architectures for Nuclei Segmentation 
+
+In the broader context of e ffi cient medical image analy-sis, alongside PEFT techniques that focus on adapting foun-dation models, an orthogonal line of research strives for e ffi -ciency through innovative architectural design. Representative works, such as NuLite (Tommasino et al., 2026) and HoVer-UNet (Tommasino et al., 2024; Wu et al., 2025b), achieve significant reductions in absolute parameter counts and infer-ence costs by constructing lightweight, task-specific networks while maintaining state-of-the-art performance. Distinct from these lightweight architectures that prioritize absolute inference speed, our e ffi ciency claims are inherently centered on the pa-rameter e ffi ciency during the fine-tuning phase. Rather than competing on inference latency, our core objective is to provide a synergistic PEFT framework that, with minimal parameter up-dates, e ff ectively stimulates and transfers the robust generaliza-tion capabilities of universal foundation models to data-scarce medical imaging scenarios. 
+
+3. Proposed Method 
+
+3.1. Preliminary: SAM architecture 
+
+To establish the foundation for our method, we briefly review the architecture of SAM. As a promptable segmentation model, SAM comprises three main components: an image encoder, a prompt encoder, and a mask decoder. The image encoder is based on a standard Vision Transformer (ViT) pre-trained by MAE. Given an input image I ∈ R3×H×W , it produces a fea-ture embedding F ∈ RC×H/16 ×W/16 that is downsampled by a factor of 16. Meanwhile, the prompt encoder encodes various prompts (e.g., points, boxes, masks) into prompt embeddings. The mask decoder is a tailored Transformer decoder block. It employs two-way cross-attention to model interactions between the prompt and image embeddings. A learnable output token, processed through this decoder, is then mapped by an MLP to form a dynamic linear classifier, which finally predicts the tar-get mask. It is worth noting that SAM generates low-resolution masks followed by upsampling to the original image size. 
+
+3.2. Overview 
+
+As illustrated in Fig. 2, our model achieves automated nuclei instance segmentation through two principal stages: Prompt Learning and SAM Adaptation. 4Figure 2: The pipeline illustrates the two-stage procedure of CFR-SAM. First, a Prompt Learner predicts nuclei centroids to generate point prompts. Second, a PEFT strategy adapts the SAM for nuclear instance segmentation. The final instance segmentation results are displayed with contours overlaid on each detected nucleus for clarity. 
+
+In the first stage, a lightweight convolutional network, termed the Prompt Learner, predicts the centroid coordinates and cate-gory labels of all nuclei. These predicted centroid coordinates are then fed into second stage as a set of point prompts for the subsequent segmentation. Formally, given an input image 
+
+I ∈ R3×H×W , the Prompt Learner (Sec. 3.3) produces a set of prompt tuples D = {di}Ni=1, where each di = (pi, ci) comprises a point prompt pi = (xi, yi) denoting a nucleus centroid, and its category label ci ∈ C. Here, N and C represent the predicted number of nuclei in the image and the set of nuclei category, respectively. In the second stage, the point prompts P = {pi|(pi, ci) ∈ D} 
+
+guide our parameter-e ffi cient adaptation of SAM, namely CFR-SAM, to perform instance segmentation. Specifically, the im-age I and prompts P are fed into CFR-SAM, whose encoders are adapted by the MALA module (Sec. 3.4). Multi-scale fea-tures are then aggregated by the HMFM (Sec. 3.5), and ini-tial mask predictions are progressively refined by the BGMR module (Sec. 3.6). This refinement process incorporates fine-grained edge information to enhance boundary clarity. The final output is a set of refined instance masks {M ref  
+
+> i
+
+}Ni=1. It is impor-tant to note that the classification of these instances is solely determined by the first stage. The predicted category labels 
+
+{ci}Ni=1 are associated with their corresponding masks Mref  
+
+> i
+
+via index matching, as the point prompts and labels are generated and processed in a consistent order. The SAM adaptation stage focuses exclusively on binary mask generation. 
+
+3.3. Automatic Point Prompt Generation 
+
+To automate nuclear instance segmentation using SAM, the model requires one prompt per nucleus instance in a given pathological image. Conventional approaches often rely on bounding boxes to delineate each object before segmentation. However, in densely packed and overlapping nuclear regions, bounding boxes tend to collide and incorporate excessive back-ground noise, which adversely a ff ects segmentation accuracy. To overcome this limitation, we employ precise point prompts that directly indicate nuclear centroids, enabling more accurate and robust instance segmentation. 
+
+3.3.1. Anchor Point Learning 
+
+Inspired by (Song et al., 2021), we introduce a lightweight prompt learner. As illustrated in Fig. 2, our model operates according to the following pipeline. First, the input image I is processed by an image encoder Ep for feature extraction. We adopt a Feature Pyramid Network (FPN) with a ConvNeXt-S backbone to produce multi-scale feature maps {F pl }Lp
+
+> l=2
+
+. Here, each feature map F pl has a spatial resolution of ( H/2l, W/2l), and Lp denotes the depth of the encoder. Second, we initial-ize a set of learnable anchor points A = {ai}Mi=1 by uniformly distributing them over the spatial dimensions of the input im-age I, where M is the number of anchors. These anchor points are first refined by an o ff set network, which predicts an initial adjustment to obtain updated positions {ˆai}Mi=1. Third, for each anchor point ˆ ai, we sample its corresponding features from all scale levels of the feature maps F pl via bilinear interpolation. The sampled multi-scale features are then concatenated into a unified descriptor. This unified descriptor is fed into two task-specific heads: a regression head Hreg and a classification head 
+
+Hcls . The regression head Hreg , implemented as a two-layer MLP with ReLU and Dropout, predicts an o ff set ∆i to further refine the anchor ˆ ai towards a ground-truth nucleus centroid, 5yielding the final anchor position (˜ ai = ˆai + ∆ i). The classifi-cation head Hcls , also a two-layer MLP, predicts the category logits qi ∈ RC+1 for the anchor. To enhance the model’s awareness of the foreground, we in-corporate an auxiliary segmentation task. We utilize the feature map F p 
+
+> 2
+
+for this task due to its high spatial resolution, which is beneficial for capturing detailed foreground structures. The fea-ture map is processed by an auxiliary segmentation head Hseg 
+
+(composed of two convolutional layers with batch normaliza-tion and ReLU) to produce a binary foreground mask. 
+
+3.3.2. Anchor Point Matching 
+
+During the training stage, we employ the Hungarian algo-rithm (Kuhn, 1955; Song et al., 2021) to match the predicted an-chor points with ground-truth annotations to define the training objectives. Specifically, we formulate the matching between the M anchors and the G ground-truth nuclear centroids as a bipartite matching problem, where G denotes the total number of nuclei instances in the ground-truth. During the bipartite matching, the matching score wi, j is de-fined to quantify the suitability of assigning the i-th anchor to the j-th ground-truth centroid. It is defined as a combination of classification confidence and spatial proximity: 
+
+wi, j = σ(qi)[ c j] − α∥˜ai − pos j∥2, (1) where c j denotes the class label of the j-th nucleus, pos j rep-resents its position, σ(qi)[ c j] is the corresponding class proba-bility from the i-th anchor, σ(·) represents the function of soft-max, and α is a balancing weight. The l2 distance ∥˜ai − pos j∥2
+
+measures the spatial discrepancy. A higher score wi, j indicates a more favorable match, as it implies both high classification confidence for the correct class and close spatial proximity to the ground-truth. The Hungarian algorithm e ffi ciently finds the matching that maximizes the total score across all assigned pairs. Anchors successfully matched to a ground-truth centroid are selected as positive samples, while unmatched anchors are assigned to the background class. After matching, we obtain Ipos and Ineg which denote the index sets of matched (positive) and unmatched (negative) an-chors, respectively. Note that the number of positive anchors 
+
+|I pos | equals the number of ground-truth centroids G, and 
+
+|I pos | + |I neg | = M, where M is the total number of anchor points. The total training loss for the prompt learner integrates the objectives of classification, regression, and auxiliary segmenta-tion: 
+
+Lptotal = Lcls + Lreg + Lseg ,
+
+Lcls = − 1
+
+M (
+
+∑
+
+> i∈I pos
+
+log σ(qi)[ ci] + β
+
+∑
+
+> z∈I neg
+
+log σ(qz)[ ∅]) ,
+
+Lreg = γ
+
+G (
+
+∑
+
+> i∈I pos
+
+∥˜ai − pos i∥2),
+
+(2) where ∅ indicates the background class. Lseg is the Focal Loss (Lin et al., 2017) between the predicted probability map and the ground-truth binary mask. The hyperparameters β and γ
+
+Algorithm 1 Prompt Learning Stage of CFR-SAM 
+
+Input: Image I ∈ R3×H×W ; during training, ground-truth nu-clear centroids with class labels. 
+
+Output: Point prompts P = {pi}Ni=1 and corresponding cate-gory labels C = {ci}Ni=1 (for inference).  
+
+> 1:
+
+Extract multi-scale feature maps {F pl }Lp 
+
+> l=2
+
+using encoder Ep. 
+
+> 2:
+
+Feed F p 
+
+> 2
+
+into an auxiliary segmentation head Hseg to predict foreground mask.  
+
+> 3:
+
+Initialize M anchor points A = {ai}Mi=1 uniformly over im-age space and apply preliminary coordinate adjustment to obtain ˆ A = {ˆai}Mi=1. 
+
+> 4:
+
+for each anchor ˆ ai do  
+
+> 5:
+
+Sample multi-scale features from {F pl }Lp 
+
+> l=2
+
+and concate-nate into a unified descriptor.  
+
+> 6:
+
+From this descriptor, predict o ff set ∆i via regression head 
+
+Hreg (yielding ˜ ai = ˆai + ∆ i) and category logits qi via classification head Hcls . 
+
+> 7:
+
+end for  
+
+> 8:
+
+if training then  
+
+> 9:
+
+Match {˜ai}Mi=1 to ground-truth nuclear centroids via Hun-garian algorithm (Eq.(1)), based on classification confi-dence and spatial proximity.  
+
+> 10:
+
+Compute total loss Lptotal (Eq.(2)), and update network parameters.  
+
+> 11:
+
+else {inference}  
+
+> 12:
+
+Filter anchors by discarding those predicted as back-ground, retain remaining N anchors as point prompts 
+
+P = {pi}Ni=1 with their predicted category labels C =
+
+{ci}Ni=1. 
+
+> 13:
+
+return P, C 
+
+> 14:
+
+end if 
+
+balance the contributions of the negative samples and the re-gression task, respectively. Note that for each positive anchor 
+
+i ∈ I pos , ci and pos i denote the class and position of its specifi-cally matched ground-truth centroid, respectively. 
+
+3.3.3. Point Prompt Selection 
+
+During inference, the trained model generates point prompts by filtering the refined anchor points {˜ai}Mi=1 based on their clas-sification results. Specifically, anchors predicted as the back-ground class are discarded. The remaining N foreground an-chors constitute the final prompt set P = {pi}Ni=1. These point prompts, along with their corresponding predicted category la-bels C = {ci}Ni=1, are retained as an ordered set. While only the point prompts P are fed into the subsequent SAM adaptation stage to generate masks, the category labels C are preserved to be later associated with the output masks, ensuring that each segmented instance receives its predicted class. 
+
+3.4. Multi-Scale Adaptive Local-Aware Adapter 
+
+While SAM’s rich prior and powerful global context mod-eling have proven e ff ective across numerous tasks, directly ap-plying SAM to nucleus segmentation via full fine-tuning is hin-6Figure 3: The structure of the proposed MALA is detailed, showcasing its role in enhancing the frozen Transformer backbone. 
+
+dered by its substantial computational cost and inherent limita-tion in capturing fine-grained local information. To address these limitations, we propose MALA, aparameter-e ffi cient fine-tuning method. By introducing mini-mal parameters into the frozen Transformer backbone, MALA bridges the domain gap to adapt SAM for nucleus segmen-tation. Unlike previous PEFT methods that primarily rely on linear transformations along feature channels, MALA dy-namically generates pixel-wise, multi-scale convolutional ker-nels conditioned on the input features. This allows the model to adaptively assign the optimal receptive field for di ff erent nucleus regions within a low-rank space, thereby extracting region-specific, fine-grained features crucial for accurate nuclei segmentation. As illustrated in Fig. 3, the trainable MALA module is in-serted into each frozen Transformer block. This design en-hances the model’s ability to capture intricate nuclear structures while preserving its pre-trained capacity for global feature mod-eling. 
+
+3.4.1. The Detailed Architecture of MALA 
+
+The architecture of MALA is illustrated in Fig.3. Given an input feature map X ∈ RC×H′ ×W′
+
+, we first apply layer nor-malization and a residual connection, followed by a down-projection layer that compresses the channel dimension from C
+
+to ˆ C to reduce computational cost, where C ≫ ˆC. The resulting feature X′
+
+then enters the core adaptive multi-scale convolution module. To handle substantial variations in nuclear scale and density across di ff erent images, we introduce an adaptive multi-scale convolution module. This module dynamically generates pixel-wise kernels conditioned on X′
+
+, allowing it to assign an optimal receptive field to each location. Specifically, for each candidate kernel size k ∈ K = {3, 5, 7}, we employ a dedicated 3 × 3 con-volution layer to produce the depth-wise convolution weights for that scale: 
+
+Wkconv = Conv k
+
+> 3×3
+
+(X′
+
+), Wkconv ∈ Rk2×H′ ×W′
+
+. (3) Here, Conv k 
+
+> 3×3
+
+denotes a separate convolutional layer for each scale k, with an output channel dimension of k2.Simultaneously, the unfold operation extracts image patches of spatial size k × k from X′
+
+:
+
+Xkun f = un f old (X′
+
+, k), Xkun f ∈ R ˆC×k2×H′ ×W′
+
+. (4) 
+
+> Figure 4: The design of the HMFM is presented, highlighting its mechanism for aggregating multi-level encoder features.
+
+The generated kernel Wkconv then performs a depth-wise con-volution on its corresponding patches Xkun f . The outputs from all scales are fused by averaging and combined with the original input via a residual connection: ¯X′
+
+= 1
+
+|K|
+
+∑
+
+> k∈K
+
+(Wkconv ∗ Xkun f ) + X′
+
+, (5) where ∗ denotes the depth-wise convolution operation. While depth-wise convolution is e ffi cient, it lacks inter-channel communication. To compensate, a 1 × 1 convolution is applied to ¯ X′
+
+to enable cross-channel communication, followed by a residual connection. As the final step, a GeLU activation function is applied, fol-lowed by an up-projection layer with parameters Wup ∈ R ˆC×C to restore the channel dimension, and another residual connection is added to produce the output. 
+
+3.5. Hierarchical Modulated Fusion Module 
+
+SAM’s encoder captures information at markedly di ff erent levels of granularity across layers: shallow layers focus on low-level details such as edges and textures, whereas deep layers encode high-level semantics. Previous methods (Chen et al., 2024; Ma et al., 2024) often rely solely on deep features, ne-glecting the crucial role that shallow-layer details play in pre-cisely localizing nuclei within complex histological sections. However, simply summing or concatenating these multi-level features is suboptimal due to their semantic misalignment. To overcome this limitation, we introduce the HMFM module, which adaptively modulates features from di ff erent encoder layers, thereby ensuring the e ff ective integration of fine-grained details with high-level semantics. This integration significantly improves the accuracy of both nuclear identification and seg-mentation. As illustrated in Fig.4, our module leverages a channel-wise attention unit to modulate encoder features from multiple SAM layers, which facilitates cross-layer representation integration. Concretely, we select the output features Xl from layer set 
+
+S = { 14 L, 12 L, 34 L, L}, where L denotes the layer number of SAM 7Algorithm 2 SAM Adaptation Stage of CFR-SAM 
+
+Input: Input image I and point prompts P = {pi}Ni=1.
+
+Output: For each nucleus i: initial mask Mori i , refined mask 
+
+Mre f i and boundary mask Mbound i . 
+
+> 1:
+
+Pass I through SAM encoder with MALA (Sec. 3.4), store intermediate features Xl for l ∈ S = { 14 L, 12 L, 34 L, L}, where 
+
+L is the total number of encoder layers.  
+
+> 2:
+
+Fuse {Xl}l∈S using HMFM (Sec. 3.5) to obtain multi-level feature X f . 
+
+> 3:
+
+Encode P via prompt encoder to obtain embeddings Ep. 
+
+> 4:
+
+Decode X f and Ep to get initial masks Mori and mask fea-tures Xmask . 
+
+> 5:
+
+Upsample X f to match Xmask resolution, fuse them, and up-sample to full resolution to obtain Xup mask . 
+
+> 6:
+
+Extract Xmc from I via MCBE (Sec. 3.6.2) to capture multi-scale edge details.  
+
+> 7:
+
+Fuse Xup mask and Xmc via BGFF (Sec. 3.6.3) to produce boundary-oriented feature Xbound and predict boundary mask Mbound . 
+
+> 8:
+
+Refine Xup mask with Xbound via residual bottleneck to obtain enhanced features Xre f mask . 
+
+> 9:
+
+Generate refined masks Mre f from Xre f mask using mask head 
+
+Hmask . 
+
+> 10:
+
+Compute Ltotal (Eq. (15)-(16)) supervising Mori , Mre f ,and Mbound . 
+
+> 11:
+
+return {(Mori i , Mre f i , Mbound i )}Ni=1
+
+encoder. For each Xl we dynamically generate channel-wise weights Wml and apply them to harmonize the inter-layer repre-sentations as follows: 
+
+Wml = S igmoid (GAP (Conv 1×1(Xl))) , (6) where GAP is the Global Average Pooling. The modulated fea-ture Xmi is obtained by a residual gating mechanism: 
+
+Xml = Wml ⊙ Xl + Xl, (7) where ⊙ denotes element-wise multiplication with broadcast-ing. Finally, we aggregate the modulated features into the final representation X f :
+
+X f =
+
+∑
+
+> l∈S
+
+Xml . (8) 
+
+X f then serves as the image embedding for the mask decoder, seamlessly integrating fine-grained structural details with high-level semantic context. 
+
+3.6. Boundary-Guided Mask Refinement 
+
+The feature X f produced by the preceding modules fuses rich multi-scale local details with global semantics. However, the mask decoder of SAM employs a prediction paradigm that generates low-resolution masks followed by upsampling. This inherent design often leads to a loss of spatial precision and blurred object boundaries in the final segmentation. To address this issue, we introduce the BGMR which ex-plicitly amplifies boundary-related signals in the feature space, thereby refining the coarse masks produced by the decoder to achieve sharper delineation of individual nuclei. 
+
+3.6.1. Initial Coarse Mask Generation 
+
+As illustrated in Fig.2, we first obtain coarse mask features 
+
+Xmask . The previously derived point prompts P = {pi|(pi, ci) ∈D} are encoded into prompt embeddings by the prompt en-coder and then interact with the image feature X f in the mask decoder, producing nucleus-specific representations Xmask and initial masks Mori for each prompt. However, these initial masks are typically coarse and lack fine boundary details due to the low-resolution prediction paradigm of the decoder. As illustrated in Fig.5, to refine the spatial precision of the final masks, we first align and fuse the semantic feature X f with the coarse mask feature Xmask . Since 
+
+X f is at 1 /16 of the input resolution and Xmask is at 1 /4, we upsample X f to the 1 /4 resolution using bilinear upsampling followed by convolutions. Specifically, we apply two rounds of 2× upsampling, each followed by a 3 × 3 convolution, to obtain 
+
+Xup f . Then, Xup f and Xmask are concatenated along the channel dimension and fused via a 1 × 1 convolution, yielding the fused feature ˆ Xmask . Finally, ˆ Xmask is further upsampled to the original input resolution, again using two 2 × upsampling steps with in-termediate 3 × 3 convolutions, to produce the upsampled mask feature Xup mask for subsequent boundary-guided refinement. 
+
+3.6.2. Multi-Context Boundary Enhancement 
+
+To fully preserve boundary details at the original resolution, we extract fine-grained structures directly from the input im-age. However, the extreme variability in nuclear size and den-sity within whole slide images requires multi-scale contextual information for accurate boundary discrimination. To this end, we introduce the MCBE module. The MCBE module operates on the base feature map Xinit ,which is obtained by applying a 3 × 3 convolution to the input image I. From Xinit , we first apply another 3 × 3 convolution to generate shallow features X0 
+
+> low
+
+that contain high-frequency details. To capture complementary contextual information from fine to coarse levels, we employ a progressive smoothing strategy. By sequentially applying average pooling and convolution op-erations, we produce a multi-scale feature set {X1
+
+> low
+
+, X2
+
+> low
+
+, X3
+
+> low
+
+}
+
+at the original spatial resolution. Each successive feature layer integrates broader local contextual information than the last, as follows: 
+
+Xtlow = Conv 3×3(AP (Xt−1 
+
+> low
+
+)) , for t ∈ { 1, 2, 3}. (9) Here, AP denotes a 3 ×3 average pooling layer with stride 1 and padding 1, which smooths the features and enables subsequent convolutions to process coarser structural information. These smoothed features {X1
+
+> low
+
+, X2
+
+> low
+
+, X3
+
+> low
+
+} are then fed into Boundary Enhancement (BE) block. The BE block e ff ectively amplifies boundary signals by highlighting the discrepancy be-tween input feature and its locally smoothed version, defined 8Figure 5: The workflow of the BGMR is depicted, demonstrating the process of integrating boundary cues to refine the initial mask prediction. 
+
+as: 
+
+Xtbe = Conv 1×1(Xtlow − AP (Xtlow )) + Xtlow . (10) The set {X0low , X1be , X2be , X3be } forms our multi-contextual rep-resentation for boundary perception. To preserve the original high-frequency details in X0low that are crucial for sharp edges, we apply the BE only to the smoothed features {Xt
+
+> low
+
+}3
+
+> t=1
+
+. This design ensures that the finest structures from the initial feature are retained. To obtain the final output Xmc , all features in the set are con-catenated along the channel dimension, compressed via a 1 × 1convolution, and integrated with the base feature Xinit through a residual connection. 
+
+3.6.3. Boundary-Guided Feature Fusion 
+
+Due to the limited representation capacity of the lightweight detail extraction module, the extracted detail feature Xmc lacks su ffi cient semantic context. Directly fusing it with the up-sampled semantic feature Xup mask would lead to noise coupling, thereby compromising the original discriminative power of 
+
+Xup mask .To address this, we introduce an auxiliary boundary seg-mentation task to guide the fusion process itself. Through the boundary supervision signal, the model is compelled to learn to select and combine the information most relevant to boundaries during the fusion of Xup mask and Xmc , thereby learning a denoised, boundary-oriented fused feature Xbound . We refer to the module designed for this purpose as the BGFF. Its detailed structure is shown in Fig. 5. Specifically, to reduce computational cost, we first split Xup mask 
+
+along the channel dimension into two low-dimensional groups, denoted as Xup mask ,1 and Xup mask ,2. Subsequently, each group is concatenated with the boundary-enhanced feature Xmc and pro-cessed through two parallel fusion branches. In one branch, we apply a standard convolution layer to fuse the features, while in the other one, we employ a deformable convolution layer to adaptively align and fuse the semantic and boundary infor-mation. The outputs of both branches are then modulated by a Spatial Attention (SA) module (Woo et al., 2018) to achieve preliminary focus on important regions: 
+
+Att 1 = SA( Conv ([ Xup mask ,1, Xmc ])) , (11) 
+
+Att 2 = SA( DConv ([ Xup mask ,2, Xmc ])) , (12) ˆXup mask ,v = Att v Xup mask ,v + Xup mask ,v, for v ∈ { 1, 2}. (13) The modulated features ˆ Xup mask ,1 and ˆ Xup mask ,2 are then concate-nated and fused via a 1 × 1 convolution to obtain the initially fused feature Xbound . Subsequently, a boundary segmentation head Hbound , composed of convolution layers, is applied to 
+
+Xbound to predict the boundary map Mbound , which provides the supervision signal to guide the fusion process. 
+
+3.6.4. Boundary-Guided Mask Refinement 
+
+After obtaining the boundary-oriented feature Xbound , we uti-lize it to reinforce the semantic feature. First, Xbound is trans-formed into spatial weights via sigmoid and multiplied with 
+
+Xup mask to enhance the responses in boundary regions. This weighted feature is then passed through a residual bottleneck layer (consisting of a 1 × 1 convolution, a deformable convolu-tion, and another 1 × 1 convolution) and added back to Xup mask ,producing the refined feature Xre f mask :
+
+Xre f mask = Bottleneck( S igmoid (Xbound ) ⊙ Xup mask ) + Xup mask . (14) Finally, a mask head Hmask (composed of two 3 × 3 Conv-BN-ReLU blocks followed by a 1 × 1 convolution) generates the refined segmentation Mre f from Xre f mask .
+
+3.7. Training Objective 
+
+To train our framework, we adopt a multi-task loss function that supervises both mask prediction and boundary awareness. The overall objective combines supervision for the original and 9Table 1: Performance comparison on the PanNuke dataset for nuclei instance segmentation. Following (Chen et al., 2023b; Hörst et al., 2024), both binary PQ (bPQ) and multi-class PQ (mPQ) are computed for evaluation. Red /Blue represents the best /second performance. Params* denotes trainable parameters of model. 
+
+Model Mask R-CNN HoVer-Net CPP-Net PointNu-Net CellViT-H CFR-SAM-B CFR-SAM-H (He et al., 2017) (Graham et al., 2019) (Chen et al., 2023b) (Yao et al., 2023) (Hörst et al., 2024) Ours Ours Params* (M) 41.9 122.8 37.6 122.8 699.7 63.4 74.2 Tissue bPQ mPQ bPQ mPQ bPQ mPQ bPQ mPQ bPQ mPQ bPQ mPQ bPQ mPQ Adrenal 0.5546 0.3470 0.6962 0.4812 0.7031 0.4922 0.7134 0.5115 0.7086 0.5134 0.7161 0.5111 0.7195 0.5140 Bile Duct 0.5567 0.3536 0.6696 0.4714 0.6739 0.4650 0.6814 0.4868 0.6784 0.4887 0.6931 0.4952 0.6935 0.4953 Bladder 0.6049 0.5065 0.7031 0.5792 0.7057 0.5932 0.7226 0.6065 0.7068 0.5844 0.7234 0.5902 0.7252 0.5920 Breast 0.5574 0.3882 0.6470 0.4902 0.6718 0.5066 0.6709 0.5147 0.6748 0.5180 0.6781 0.5261 0.6804 0.5280 Cervix 0.5483 0.3402 0.6652 0.4438 0.6880 0.4779 0.6899 0.5014 0.6872 0.4984 0.7032 0.5092 0.7073 0.5123 Conlon 0.4603 0.3122 0.5575 0.4095 0.5888 0.4269 0.5945 0.4509 0.5921 0.4485 0.6080 0.4681 0.6113 0.4706 Esophagus 0.5691 0.4311 0.6427 0.5085 0.6755 0.5410 0.6766 0.5504 0.6682 0.5454 0.6895 0.5635 0.6919 0.5660 Head Neck 0.5457 0.3946 0.6331 0.4530 0.6468 0.4667 0.6546 0.4838 0.6544 0.4913 0.6694 0.5093 0.6761 0.5141 Kidney 0.5092 0.3553 0.6836 0.4424 0.7001 0.5092 0.6912 0.5066 0.7092 0.5366 0.7107 0.5673 0.7136 0.5688 Liver 0.6085 0.4103 0.7248 0.4974 0.7271 0.5099 0.7314 0.5174 0.7322 0.5224 0.7415 0.5267 0.7439 0.5272 Lung 0.5134 0.3182 0.6302 0.4004 0.6364 0.4234 0.6352 0.4048 0.6426 0.4314 0.6549 0.4372 0.6598 0.4393 Ovarian 0.5784 0.4337 0.6309 0.4863 0.6792 0.5276 0.6863 0.5484 0.6722 0.5390 0.6853 0.5465 0.6871 0.5488 Pancreatic 0.5460 0.3624 0.6491 0.4600 0.6742 0.4680 0.6791 0.4804 0.6658 0.4719 0.6903 0.5073 0.6925 0.5095 Prostate 0.5789 0.3959 0.6615 0.5101 0.6903 0.5261 0.6854 0.5127 0.6821 0.5321 0.6963 0.5422 0.6985 0.5439 Skin 0.5021 0.2665 0.6234 0.3429 0.6192 0.3547 0.6494 0.4011 0.6565 0.4339 0.6755 0.4387 0.6777 0.4399 Stomack 0.5976 0.3684 0.6886 0.4726 0.7043 0.4553 0.7010 0.4517 0.7022 0.4705 0.7100 0.4494 0.7155 0.4543 Testis 0.5420 0.3512 0.6890 0.4754 0.7006 0.4917 0.7058 0.5334 0.6955 0.5127 0.7108 0.5312 0.7157 0.5343 Thyroid 0.5712 0.3037 0.6983 0.4315 0.7094 0.4344 0.7076 0.4508 0.7151 0.4519 0.7274 0.4652 0.7293 0.4662 Uterus 0.5589 0.3683 0.6393 0.4393 0.6622 0.4790 0.6634 0.4846 0.6625 0.4737 0.6730 0.4905 0.6754 0.4915 Average 0.5528 0.3688 0.6596 0.4629 0.6767 0.4817 0.6808 0.4957 0.6793 0.4980 0.6924 0.5092 0.6955 0.5114 Std 0.0370 0.0543 0.0036 0.0076 - - - - 0.0318 0.0413 0.0301 0.0437 0.0298 0.0436 
+
+Table 2: Performance of our CFR-SAM on PanNuke over 5 independent runs.                             
+
+> Model Trainable mPQ bPQ AJI Params (M) CellViT-H 699.7 0.4980 0.6793 0.6519 Ours-B 63.4 0.5091 ±0.0013 0.6923 ±0.0020 0.6865 ±0.0001 Ours-H 74.2 0.5115 ±0.0003 0.6956 ±0.0004 0.6887 ±0.0004
+
+refined masks from SAM, along with explicit boundary predic-tion: 
+
+Ltotal = Lmask (Mori , Mgt )+Lmask (Mre f , Mgt )+ωLbound , (15) where Lmask denotes SAM mask loss, Mori is the initial mask predicted by the mask decoder, Mre f is the refined mask pro-duced by the BGMR module, Lbound = LBCE (Mbound , Mgt bound )is the boundary prediction loss, and ω balances their contribu-tions. The mask loss Lmask for a predicted mask M is composed of: 
+
+Lmask (M, Mgt ) = λLFL + LDL + LIoU , (16) where LFL and LDL represent the focal and dice losses between 
+
+M and the ground-truth Mgt , respectively. LIoU = LMS E (ˆ o, o)penalizes the discrepancy between the predicted IoU ˆ o and ground-truth IoU o, and λ is a weighting factor. 
+
+4. Experiments 
+
+4.1. Datasets 
+
+PanNuke (Gamper et al., 2019, 2020) is a benchmark for simultaneous nucleus instance segmentation and classification, notable for its diversity and scale. It contains 7,904 H&E stained images (256 × 256 pixels) from 19 tissue types, with 189,744 nuclei annotated across five categories. Following the standard evaluation protocol (Gamper et al., 2020), we adopt a three-fold cross-validation strategy and report the average per-formance. 
+
+CPM-17 (Vu et al., 2019) consists of 64 H&E stained images with 7,570 annotated nuclei. The images have resolutions of either 500 × 500 or 600 × 600 pixels. The dataset is equally split between training and testing, with 32 images allocated to each set. 
+
+MoNuSeg (Kumar et al., 2019) provides annotations for nu-cleus segmentation but does not include nuclear classification. This multi-organ dataset contains tissue samples from breast, liver, kidney, prostate, bladder, colon, and stomach. It includes 44 H&E stained images, each with a resolution of 1000 × 1000 pixels. 
+
+4.2. Evaluation Metrics 
+
+To thoroughly evaluate the performance of our method, we employ the following metrics. For instance segmentation, we use the Adjusted Jaccard Index (AJI), binary Panoptic Quality (bPQ), and multi-class Panoptic Quality (mPQ), which together provide a comprehensive assessment of object-level segmenta-tion accuracy (Kumar et al., 2017; Graham et al., 2019; Hörst et al., 2024). For classification, we employ Precision (P), Re-call (R), and F1-score ( F1) for each nucleus type. All metrics are computed for each image, and the overall results for each dataset are reported as averages across all images. 10 Table 3: Comparison of Precision (P), Recall (R), and F1-score ( F1) for nuclei detection and classification across all categories. Results are averaged over the three PanNuke splits.                                                                                                                                                                                          
+
+> Model Detection Classification Neoplastic Epithelial Inflammatory Connective Dead PRF1PRF1PRF1PRF1PRF1PRF1
+> DIST (Naylor et al., 2018) 0.74 0.71 0.73 0.49 0.55 0.50 0.38 0.33 0.35 0.42 0.45 0.42 0.42 0.37 0.39 0.00 0.00 0.00 Mask-RCNN (He et al., 2017) 0.76 0.68 0.72 0.55 0.63 0.59 0.52 0.52 0.52 0.46 0.54 0.50 0.42 0.43 0.42 0.17 0.30 0.22 Micro-Net (Raza et al., 2019) 0.78 0.82 0.80 0.59 0.66 0.62 0.63 0.54 0.58 0.59 0.46 0.52 0.50 0.45 0.47 0.23 0.17 0.19 HoVer-Net (Graham et al., 2019) 0.82 0.79 0.80 0.58 0.67 0.62 0.54 0.60 0.56 0.56 0.51 0.54 0.52 0.47 0.49 0.28 0.35 0.31 STARDIST (Schmidt et al., 2018) 0.85 0.80 0.82 0.69 0.69 0.69 0.73 0.68 0.70 0.62 0.53 0.57 0.54 0.49 0.51 0.39 0.09 0.10 CPP-Net (Chen et al., 2023b) 0.87 0.78 0.82 0.74 0.67 0.70 0.74 0.70 0.72 0.60 0.57 0.58 0.57 0.49 0.53 0.41 0.36 0.38 PointNu-Net (Yao et al., 2023) 0.81 0.81 0.81 0.74 0.72 0.73 0.75 0.71 0.73 0.63 0.57 0.60 0.61 0.55 0.58 0.45 0.24 0.31 CellViT-H (Hörst et al., 2024) 0.84 0.81 0.83 0.72 0.69 0.71 0.72 0.73 0.73 0.59 0.57 0.58 0.55 0.52 0.53 0.43 0.32 0.36 Ours-H 0.82 0.84 0.83 0.75 0.78 0.76 0.77 0.80 0.78 0.69 0.71 0.70 0.63 0.62 0.62 0.49 0.42 0.45
+
+4.3. Implementation Details 
+
+To evaluate the proposed CFR-SAM framework, we develop two variants based on di ff erent SAM backbones: Ours-H (uti-lizing SAM-Huge) and Ours-B (utilizing SAM-Base). Ours-H represents the full capacity of our approach and is designed to explore the upper bound of segmentation performance, serv-ing as the primary variant for comparison with state-of-the-art methods across all datasets. Ours-B, with its parameter scale aligned with mainstream lightweight models, is introduced pri-marily for two purposes: (1) to serve as the backbone for ex-tensive ablation studies (Sec. 4.5) due to its computational ef-ficiency, and (2) to provide a fair basis for computational e ffi -ciency comparison (Sec. 4.6) against methods of similar model size. We implement our model using PyTorch on a workstation equipped with a single NVIDIA RTX 3090 GPU. Following common practices, we use both SAM-Base and SAM-Huge as backbones and optimize the model with Adam, using an initial learning rate of 1 × 10 −4. Our training pipeline is divided into two consecutive stages with distinct configurations. 
+
+Stage 1: Prompt Learning. In this stage, the distance co-effi cient α and the regression loss weight γ are set to 0.1 and 5×10 −3 respectively across all datasets. The other hyperparam-eters are tailored to each dataset’s characteristics. For PanNuke, we use an FPN length Lp of 3, a classification loss coe ffi cient β
+
+of 0.4, a batch size of 16, and train for 200 epochs. For CPM-17, the configuration uses Lp = 4, β = 0.25, a batch size of 8, and 200 epochs. For the smaller MoNuSeg dataset, we set 
+
+Lp = 4, β = 0.2, a batch size of 4, and extend the training to 600 epochs to ensure su ffi cient learning. 
+
+Stage 2: SAM Adaptation. During the second stage, a uni-fied set of hyperparameters is applied across all datasets for consistency: the boundary loss weight ω is set to 1 × 10 −2, the overall loss weight λ is 20, the batch size is 2, and the training runs for 200 epochs. To ensure training e ffi ciency and manage GPU memory constraints, we randomly sample a maximum of 25 nuclei from each image during training. For data augmenta-tion, we adopt the same strategy as CellViT (Hörst et al., 2024). We adopt this two-stage strategy due to the non-di ff erentiable nature of the point prompt selection process. The prompt learner generates candidate points that are filtered based on classification confidence before being passed to SAM’s mask 
+
+> Table 4: Average PQ for each nuclear category across the three PanNuke splits. N, E, I, C, and D represent Neoplastic, Epithelial, Inflammatory, Connective, and Dead, respectively.
+
+Model N E I C DDIST 0.439 0.290 0.343 0.275 0.000 Mask-RCNN 0.472 0.403 0.290 0.300 0.069 Micro-Net 0.504 0.442 0.333 0.334 0.051 HoVer-Net 0.551 0.491 0.417 0.388 0.139 STARDIST 0.547 0.532 0.424 0.380 0.123 CPP-Net 0.571 0.565 0.405 0.395 0.131 PointNu-Net 0.579 0.577 0.433 0.409 0.154 CellViT-H 0.581 0.583 0.417 0.423 0.149 Ours-H 0.599 0.589 0.428 0.433 0.153 decoder. This discrete selection operation blocks gradient flow from the segmentation loss back to the prompt learner, making end-to-end joint optimization unstable, especially during early training when the prompt learner is not yet mature and the se-lected points are often noisy or empty, causing SAM to receive invalid inputs. In contrast, the decoupled design first trains the prompt learner independently, then fine-tunes SAM with stable prompts, ensuring training stability. For datasets without offi cial validation splits (CPM-17, MoNuSeg), we randomly hold out 15% of training images as a validation set for model selection and early stopping. Test sets are never used during training or tuning. For PanNuke, we follow the standard three-fold protocol. All hyperparameters are selected based on validation performance. 
+
+4.4. Comparison With SOTA Methods 
+
+In this section, we evaluate the proposed method against state-of-the-art approaches on three challenging benchmarks: PanNuke, CPM-17, and MoNuSeg. 
+
+4.4.1. PanNuke Dataset 
+
+As summarized in Table 1, our method achieves substan-tial improvements over existing competitors in both bPQ and mPQ. Specifically, Ours-B surpasses the previous best model 11 GT CellViT Ours 
+
+> Figure 6: Visual comparison of our method and CellViT on the PanNuke dataset for nuclei instance segmentation. Each predicted and GT instance mask is as-signed a distinct color at random for visual separation. The red boxes highlight the better results achieved by our model.
+
+by 1.30% in bPQ and 1.11% in mPQ, while Ours-H further el-evates these gains to 1.63% in bPQ and 1.35% in mPQ. The consistent performance improvement from Ours-B to Ours-H demonstrates the scalability of our framework: leveraging a larger SAM backbone yields proportional gains in segmenta-tion accuracy. Notably, despite having significantly fewer pa-rameters than fully fine-tuned models, Ours-B already achieves state-of-the-art performance, confirming the e ff ectiveness of our parameter-e ffi cient design even with a lightweight back-bone. To assess the robustness of our method, we conduct five in-dependent runs on the PanNuke dataset (each with three-fold cross-validation), resulting in 15 evaluation results per model. The mean and standard deviation of the key metrics are reported in Table 2. The low standard deviations, for instance below 0.20% for bPQ and below 0.13% for mPQ across both model variants, demonstrate that our method consistently achieves strong performance with minimal variability. Furthermore, to evaluate the overall instance-level segmen-tation quality and address potential concerns regarding over-segmentation, we examine the AJI, which is sensitive to both over- and under-segmentation by jointly assessing segmenta-tion accuracy and instance assignment correctness. As reported in Table 2, our method achieves substantial and consistent AJI improvements over the previous state-of-the-art (CellViT-H, 0.6519). Specifically, Ours-H attains an AJI of 0.6887 ±
+
+0.0004, with similarly low variance, indicating that the ob-served PQ gains are accompanied by more accurate instance identification and counting, not merely finer boundary predic-tions. This improvement further validates that our framework mitigates over-segmentation risks through its centroid-based prompting and boundary-guided refinement. Notably, compared to the fully fine-tuned (FFT) SOTA ap-proach, our method achieves superior performance while train-ing only 10.6% of the parameters (74.2M vs. 699.7M), demon-strating our method’s e ffi ciency. It is worth noting that the train-able parameters of Ours-H are distributed as 55.1M in the first      
+
+> GT CellViT Ours
+> Neoplastic Epithelial Inflammatory Connective Dead
+> Figure 7: Visual comparison of our method and CellViT on the PanNuke dataset for nuclei classification. Nuclear types are represented by distinct boundary colors.
+
+stage and 19.1M in the second. In terms of nucleus classification, as shown in Table 3, our method attains the highest overall detection F1-score of 83%. The category-specific F1-scores for the five cell types are: Neo-plastic (76%), Epithelial (78%), Inflammatory (70%), Connec-tive (62%), and Dead (45%). It is worth noting that these clas-sification metrics are produced entirely by the first stage, with the predicted category labels subsequently associated with their corresponding masks through point prompt matching. Furthermore, Table 4 details the segmentation performance per category, where our method achieves the highest PQ scores in three key tissue types: Neoplastic (0.599), Epithelial (0.589), and Connective (0.433), demonstrating its consistent superior-ity across diverse nuclear morphologies. 
+
+4.4.2. CPM-17 and MoNuSeg Datasets 
+
+To assess generalization capability, we further evaluate our method on the CPM-17 and MoNuSeg datasets. As shown in Table 5, on CPM-17, our approach outperforms the lead-ing prior method by 0.4 points in AJI and 1.3 points in PQ, achieving scores of 72.5% and 71.9%, respectively. Similarly, on MoNuSeg (Table 6), we observe improvements of 0.7 points in AJI and 2.8 points in PQ, resulting in final scores of 66.8% and 66.2%. These consistent gains across multiple benchmarks strongly validate the robustness and general applicability of our method in varied nucleus instance segmentation scenarios. 
+
+4.4.3. Qualitative Results 
+
+As shown in Figs. 6 and 7, we present visual comparisons between our method and CellViT-H for nucleus instance seg-mentation and classification, respectively. The results demon-strate that our model produces smoother and more accurate nu-clear boundaries, particularly in regions with overlapping nu-clei. These improvements can be attributed to our models en-12 Table 5: Performance comparison on the CPM-17 dataset for nuclei instance segmentation. 
+
+Model AJI PQ U-Net (Ronneberger et al., 2015) 0.666 0.625 DCAN (Chen et al., 2017) 0.561 0.545 Mask-RCNN (He et al., 2017) 0.684 0.674 DIST (Naylor et al., 2018) 0.616 0.504 Micro-Net (Raza et al., 2019) 0.668 0.661 Hover-Net (Graham et al., 2019) 0.705 0.697 FEEDNet (Deshmukh et al., 2022) 0.701 0.705 HARU-Net (Chen et al., 2023a) 0.721 0.701 PointNu-Net (Yao et al., 2023) 0.712 0.706 Ours-H 0.725 0.719   
+
+> Table 6: Performance comparison on the MoNuSeg dataset for nuclei instance segmentation. †indicates our reproduced results.
+
+Model AJI PQ U-Net (Ronneberger et al., 2015) 0.556 0.478 Mask-RCNN (He et al., 2017) 0.546 0.365 DCAN (Chen et al., 2017) 0.477 0.488 DIST (Naylor et al., 2018) 0.559 0.443 Micro-Net (Raza et al., 2019) 0.560 0.519 CIA-Net (Zhou et al., 2019) 0.620 0.577 Hover-Net (Graham et al., 2019) 0.661 0.590 CDNet (He et al., 2021) 0.630 0.634 TopeSeg (He et al., 2023) 0.643 0.625 CellViT-H † (Hörst et al., 2024) 0.644 0.490 Ours-H 0.668 0.662 hanced ability to capture fine-grained local details and bound-ary information. 
+
+4.5. Ablation Study 
+
+To evaluate the e ff ectiveness of our proposed modules, we conduct a series of ablation studies. For e ffi ciency, all abla-tion experiments are performed using a fixed data split (trained on Fold 1, validated on Fold 2, and tested on Fold 3) of the PanNuke dataset, with the pre-trained SAM-B as the backbone. We choose the lightweight Ours-B variant for ablation studies because it allows e ffi cient module-wise analysis while main-taining architectural consistency with Ours-H, ensuring that in-sights gained are transferable to the larger model. 
+
+4.5.1. Analysis on Di ff erent Fine-Tuning Method 
+
+To enable a comprehensive comparison with our approach, we employ two fine-tuning methods, FFT and freezing the en-tire backbone while training only the head. The results are pre-sented on the first three rows of Table 7. Our approach outper-forms these two methods with only a small number of trainable parameters, demonstrating its e ffi ciency and e ff ectiveness. As shown in Figs. 8, we present additional visual comparisons with   
+
+> Table 7: Ablation study of di ff erent modules. All trainable parameters are from the second-stage fine-tuning of SAM. The symbol ∗indicates that we increase the low-rank dimension to match the trainable parameters.
+
+Model Trainable mPQ bPQ Params (M) 
+
+Di ff erent Fine-Tuning Method 
+
+FFT 93.7 0.4940 0.6754 Head Only 4.1 0.4848 0.6645 
+
+Ours 8.3 0.5046 0.6912 Multi-Scale Adaptive Local-Aware Adapter 
+
+w/o MALA 4.6 0.4980 0.6824 MALA static kernel 7.3 0.5033 0.6895 MALA ∗ 
+
+> static kernel
+
+8.8 0.5039 0.6902 MALA learnable kernel 8.3 0.5046 0.6912 
+
+Hierarchical Modulated Fusion Module 
+
+w/o HMFM 8.0 0.5037 0.6899 add 8.0 0.5039 0.6898 concatenate 8.3 0.5040 0.6906 average 8.0 0.5041 0.6902 
+
+Boundary-Guided Mask Refinement 
+
+w/o BGMR 8.0 0.4990 0.6829 BGMR->MLP 8.3 0.5023 0.6886 w/o MCBE 8.3 0.5037 0.6900 w/o BGFF 8.3 0.5032 0.6890 w/o Boundary Supervise 8.3 0.5033 0.6891 fully fine-tuned SAM, where our method demonstrates superior performance in handling clustered nuclei and boundary details. 
+
+4.5.2. Analysis on Multi-Scale Adaptive Local-Aware Adapter 
+
+As shown in the MALA section of Table 7, removing MALA from the encoder leads to a drop of 0.66% in mPQ and 0.88% in bPQ, demonstrating its contribution to fine-grained feature adaptation. To validate the e ff ectiveness of the learnable ker-nel, we compare adaptive convolutional kernels with static kernels. The results indicate that adaptive kernels provide a 0.13% and 0.17% performance gain for bPQ and mPQ, respec-tively, demonstrating their ability to moderately enhance model robustness and flexibly adapt to di ff erent complex scenarios. Moreover, we include a higher parameter static kernel variant which still underperforms the learnable version, further indi-cating that adaptivity o ff ers advantages beyond simply adding parameters. 
+
+4.5.3. Analysis on HMFM 
+
+We evaluate the impact of HMFM through ablations in Ta-ble 7. First, removing HMFM altogether results in perfor-mance degradation, with mPQ and bPQ dropping by 0.09% and 0.13%, respectively, which establishes the necessity of a dedicated fusion module. To further validate the superiority of HMFM’s adaptive modulation, we compare it against three 13 GT FFT Ours 
+
+> Figure 8: Compared to the segmentation results of a full fine-tuned SAM (sec-ond row), our CFR-SAM achieves superior precision, particularly in capturing faint boundaries and distinguishing between densely clustered objects.
+
+standard fusion strategies: addition, averaging, and concatena-tion. Notably, the proposed HMFM consistently achieves the best performance on both metrics, outperforming all the al-ternative fusion strategies. This consistently demonstrates the eff ectiveness of adaptively modulating features from di ff erent stages prior to fusion. 
+
+4.5.4. Analysis on BGMR 
+
+As shown in the BGMR section of Table 7, without employ-ing BGMR to refine coarse mask, directly using upsampled low-resolution mask as final predicted mask results in a decline in mPQ and bPQ by 0.56% and 0.83%, respectively. The visual comparisons in Fig. 9 further demonstrate the e ff ectiveness of BGMR in producing superior mask boundaries. To control for the influence of increased parameters, we replace BGMR with a linear layer of equivalent size. As shown, our proposed module consistently achieves superior performance across the evalua-tion metrics. To validate the e ff ectiveness of key components within BGMR, we conduct ablation studies on MCBE, BGFF, and the explicit boundary supervision. As shown in Table 7, removing the MCBE module results in a 0.09% and 0.12% performance drop, as features extracted from the image lacked boundary en-hancement before being fused with semantic features. This con-firms the importance of explicitly reinforcing boundary infor-mation in features. When the BGFF module is ablated, the boundary-enhanced features are directly used to guide semantic refinement and boundary prediction without prior feature alignment, weaken-ing the representational capacity of the semantic features and leading to a 0.14% and 0.22% decrease in performance. Finally, removing the explicit boundary supervision weaken the models ability to perceive boundary structures, resulting in a further performance degradation of 0.13% and 0.21%. These results collectively demonstrate the critical role of each compo-nent in improving boundary awareness and overall segmenta-tion accuracy.    
+
+> GT w/o BGMR w/ BGMR
+> Figure 9: Visual comparison of the BGMR ablation study for nuclei instance segmentation. Nuclear types are represented by distinct boundary colors.
+> GT Adapter LoRA MALA Figure 10: Visual comparison of di ff erent adapting strategies for nuclei instance segmentation.
+
+4.5.5. Analysis on Di ff erent PEFT Strategy 
+
+To evaluate the eff ectiveness of our proposed MALA, we compare it against established PEFT methods, including Adapter (Houlsby et al., 2019) and LoRA (Hu et al., 2022), integrated into the image encoder of SAM for nuclei instance segmentation. To ensure a fair comparison, the low-rank di-mensions of Adapter and LoRA are set to be identical to those used in MALA. As presented in Table 8, MALA demonstrates superior performance over these baselines. This result validates the importance of incorporating local detail information for ac-curate nuclei segmentation. To further control for parameter count, we increase the intermediate dimension of Adapter to roughly match MALA’s parameter count. Under this setting, increasing model capacity does not yield performance gains; in fact, it leads to slightly worse results. Furthermore, visual com-parisons in Fig. 10 illustrate that MALA enables the model to capture fine-grained local details, allowing it to accurately seg-ment nuclei of varying sizes and quantities, even in complex scenarios. 14 Table 8: Ablation study of di ff erent PEFT methods. It is important to note that these results are obtained using SAM adapted solely by the respective PEFT methods, without any other auxiliary modules. The symbol ∗ indicates that we increase the low-rank dimension of Adapter to approximately match the trainable parameters of MALA for a fair comparison. 
+
+Model Trainable mPQ bPQ Params (M) Adapter (Houlsby et al., 2019) 6.4 0.4969 0.6799 Adapter ∗ (Houlsby et al., 2019) 8.0 0.4955 0.6782 Lora(Hu et al., 2022) 12.8 0.4923 0.6741 MALA 7.8 0.4983 0.6821 
+
+> Table 9: Ablation study of di ff erent low-rank dimension.
+
+Model Trainable mPQ bPQ Params (M) MALA (16) 5.6 0.5033 0.6892 MALA (32) 6.5 0.5031 0.6889 MALA (64) 8.3 0.5046 0.6912 MALA (128) 12.1 0.5043 0.6911 
+
+4.5.6. Analysis on Di ff erent Low-Rank Dimension 
+
+In parameter-e ffi cient fine-tuning methods, the low-rank di-mension is a critical hyperparameter. To investigate its impact, we conduct experiments with low-rank dimensions set to 16, 32, 64, and 128, respectively. As shown in Table 9, the model achieves optimal performance when the low-rank dimension is set to 64. We argue that an excessively low rank (e.g., 16 or 32) provides too few trainable parameters, hindering su ffi cient knowledge transfer from the pre-trained model to the target do-main. Conversely, an overly high dimension (e.g., 128) intro-duces an excess of trainable parameters, which may dilute the valuable pre-trained knowledge. 
+
+4.5.7. Analysis on Number of Sampled Nuclei 
+
+During training, we randomly sample a maximum of 25 nu-clei per image to balance computational e ffi ciency and model performance. To verify that this choice does not introduce bias or a ff ect robustness, we conduct an ablation study by varying the maximum number of sampled nuclei to 20, 25, 30, and 35, while keeping all other settings unchanged. The results are re-ported in Table 10. As shown, the performance remains stable across all tested values, with negligible fluctuations (within 0.03% for mPQ and 0.06% for bPQ). This indicates that sampling 25 nuclei does not introduce noticeable bias and that the model’s performance is robust to this hyperparameter choice. Based on these obser-vations, we select 25 as the default value to balance training effi ciency and GPU memory constraints, as using fewer than 25 would not significantly reduce computation in practice (the maximum is rarely reached in most images), while using more than 25 o ff ers no performance gain but increases memory con-sumption. 
+
+> Table 10: Ablation study on the number of sampled nuclei per image during training.
+
+Model mPQ bPQ Mask (20) 0.5043 0.6908 Mask (25) 0.5046 0.6912 Mask (30) 0.5046 0.6910 Mask (35) 0.5045 0.6906 
+
+> Table 11: Comparison of point prompts and bounding box prompts for SAM adaptation.
+
+Model mPQ bPQ Point (Ours-B) 0.5046 0.6912 Box (Ours-B) 0.4804 0.6612 
+
+4.5.8. Analysis on Prompt Type 
+
+To empirically validate the e ff ectiveness of point prompts over bounding box prompts within our framework, we con-duct an additional experiment by replacing point prompts with bounding boxes while keeping all other components un-changed. Specifically, we modify the Prompt Learner to gener-ate bounding boxes instead of centroid points. All other mod-ules, including MALA, HMFM, and BGMR, remain identical. The comparative results, shown in Table 11, demonstrate that point prompts consistently and significantly outperform bound-ing box prompts, achieving improvements of approximately 2.4% in mPQ and 3.0% in bPQ. These results confirm that point prompts, by directly indicating nuclear centroids, o ff er more precise localization and cleaner contextual information, thereby enabling superior instance segmentation. 
+
+4.6. Model E ffi ciency 
+
+As elaborated in Sec. 4.3, we introduce two variants of our method: Ours-H aims to explore the performance upper bound, while Ours-B is designed with a parameter scale comparable to most mainstream methods, serving as the primary basis for a fair e ffi ciency comparison. In terms of e ffi ciency analysis, as illustrated in Table 12, our proposed method demonstrates notable advantages in parameter e ffi ciency and computational complexity. Compared to existing approaches that rely on heavyweight U-Net architectures and complex post-processing pipelines, our CFR-SAM framework employs a parameter-effi cient fine-tuning strategy by keeping the SAM backbone frozen while introducing only a minimal number of train-able parameters. This design significantly reduces both model storage requirements and computational overhead in terms of MACs. It is worth noting that among all trainable parameters, the majority are concentrated in the first-stage prompt genera-tion. The second-stage fine-tuning of SAM, in comparison, is very lightweight, requiring only 8.3M additional parameters in the base configuration (Ours-B) and 19.1M in the huge configu-ration (Ours-H). This parameter-e ffi cient architecture achieves 15 Table 12: Comparison of model parameters, computational cost and inference speed on the PanNuke dataset. The FPS of all methods is tested in a single NVIDIA RTX 3090 GPU.                                      
+
+> Model Trainable Total MACs (G) FPS Params (M) Params (M) STARDIST (Schmidt et al., 2018) 122.8 122.8 263.6 17 HoVer-Net (Graham et al., 2019) 37.6 37.6 150.0 7CPP-Net (Chen et al., 2023b) 122.8 122.8 264.4 14 PointNu-Net (Yao et al., 2023) 158.1 158.1 335.1 11 CellViT-B (Hörst et al., 2024) 142.9 142.9 232.0 20 Ours-B 63.4 153.1 89.5 13 CellViT-H (Hörst et al., 2024) 699.7 699.7 471.3 13 Ours-H 74.2 650.5 299.7 7
+
+an excellent balance between performance and computational cost. It is important to clarify that our primary focus in this work is parameter-e ffi cient adaptation, i.e., achieving strong perfor-mance while minimizing the number of trainable parameters during fine-tuning. Consequently, FPS is not our main opti-mization target. The FPS values reported in Table 12 are there-fore intended for reference only. The lower throughput rela-tive to some other methods stems from an intentional design trade-o ff : to enhance local feature extraction, we introduce the MALA module, which employs multi-scale convolutional op-erations. While this design e ff ectively captures fine-grained de-tails, it inevitably adds computational overhead during infer-ence. We accept this moderate reduction in speed in exchange for improved segmentation accuracy, a trade-o ff that we con-sider justified for precision-critical applications such as nuclei instance segmentation. 
+
+5. Discussion and Limitation 
+
+The core objective of this study is to address the key bottle-necks in applying SAM to nuclear instance segmentation: the high computational cost of full fine-tuning and the Transformer architecture’s insu ffi cient perception of local details. To elim-inate complex post-processing pipelines, we choose to directly utilize SAM’s mask decoder for instance segmentation. How-ever, this choice introduce two new challenges: the underuti-lization of shallow encoder features and the boundary ambigu-ity caused by its upsampling predictions. The proposed CFR-SAM framework successfully addresses all the above chal-lenges through a parameter-e ffi cient strategy. Experimental re-sults demonstrate that this method achieves high accuracy while significantly improving e ffi ciency, o ff ering a new perspective for leveraging large foundation models to solve specific medi-cal imaging tasks. 
+
+5.1. Local Context Enhancement: Bridging Global Priors and Local Precision 
+
+While SAMs global representation capability, learned from natural images, provides strong generalization, its e ff ectiveness in nuclear segmentation critically depends on the perception of fine-grained local structures such as boundaries and morphol-ogy. A core innovation of CFR-SAM lies in its MALA module, which e ffi ciently injects local perception into the frozen SAM backbone under the constraints of Parameter-E ffi cient Fine-Tuning. MALA is not merely a simple introduction of convo-lutions. Its key strength is the adaptive multi-scale mechanism within a low-rank space, which allows the model to dynami-cally adjust the receptive field based on local image content. The consistent performance gains from learnable convolutional kernels in our ablation studies (Table 7) and the visualization comparison with othe PEFT methods (Fig. 10) demonstrate that this adaptive capability is crucial for handling the vast dif-ferences in nucleus size, density, and contrast, e ff ectively com-pensating for the shortcomings of pure Transformer architec-tures in fine-grained medical image segmentation. 
+
+5.2. Targeted Compensation Mechanisms for Decoder Defi-ciencies 
+
+To fully leverage the potential of the SAM mask decoder for instance segmentation, it is essential to compensate for its two inherent architectural weaknesses. The proposed HMFM and BGMR are precisely targeted compensation solutions. HMFM intelligently fuses multi-level encoder features through an inno-vative modulation mechanism, ensuring that shallow informa-tion rich in spatial details is e ff ectively utilized by the decoder. BGMR goes a step further by introducing explicit boundary su-pervision and a dedicated refinement process involving multi-context boundary enhancement and feature alignment, deeply integrating boundary awareness into the training process. Vi-sual comparisons in Fig. 9 confirm that BGMR is key to the model’s ability to directly output high-quality instance masks. 
+
+5.3. Parameter E ffi ciency and Generalization Capability 
+
+CFR-SAM achieves performance comparable to or surpass-ing state-of-the-art methods on multiple challenging datasets (Tables 1, 5, 6), demonstrating its strong generalization ca-pability. More importantly, this performance improvement is achieved with a minimal parameter increase (as shown in Ta-ble 12), highlighting the significant advantage of its parameter-effi cient fine-tuning strategy. This indicates that through care-fully designed adapter modules, the capabilities of large foun-dation models can be e ff ectively transferred to the data-scarce medical imaging domain without the need for computationally expensive full fine-tuning. It should be noted that the e ffi ciency discussed above refers specifically to parameter e ffi ciency dur-ing adaptation, not inference speed. 
+
+5.4. Limitations and Future Work 
+
+Despite its strengths, CFR-SAM has limitations that provide directions for future research. First, its performance on rare cell types (e.g., Dead cells, F1-score: 45%) remains lower than on common types (e.g., Neoplastic cells, F1-score: 76%), likely due to imbalanced annotation in datasets. Future work could explore class-balanced sampling or synthetic data augmenta-tion to improve rare-class generalization. Second, the perfor-mance upper bound is partly constrained by the accuracy of the first-stage prompt learner. In extremely dense nuclear re-gions, minor inaccuracies in prompt points can lead to instance 16 merging or missed splits. Future work could explore more dis-criminative prompt generation networks or iterative refinement mechanisms. 
+
+6. Conclusion 
+
+In this paper, we present CFR-SAM, a parameter-e ffi cient fine-tuning framework that successfully adapts the Segment Anything Model for the challenging task of nucleus instance segmentation. We identify and address three core limitations of SAM in this domain: its lack of local feature sensitivity, underutilization of shallow encoder features, and the boundary ambiguity in its decoder outputs. The proposed MALA mod-ule e ff ectively bridges the gap between SAM’s global prior and the need for local precision by injecting adaptive, multi-scale contextual information. The HMFM ensures that low-level de-tails are fully leveraged, while the BGMR explicitly enhances boundary awareness through a dedicated refinement process. Collectively, these components enable CFR-SAM to generate high-quality instance masks directly, without relying on com-plex post-processing pipelines. Comprehensive evaluations on multiple public datasets con-firm that our method sets a new state-of-the-art, achieving supe-rior segmentation accuracy and generalization capability. No-tably, this performance gain is attained with a minimal in-crease in trainable parameters, highlighting the e ffi ciency of our design. This study highlights the significant potential of parameter-e ffi cient adaptation strategies in harnessing powerful foundation models for specialized medical imaging tasks, of-fering a practical path forward for clinical application. Future work will focus on improving the robustness of prompt gen-eration in extremely dense regions and enhancing the model’s performance on rare cell types through advanced data augmen-tation strategies. 
+
+References 
+
+Chen, H., Qi, X., Yu, L., Dou, Q., Qin, J., Heng, P.A., 2017. Dcan: Deep contour-aware networks for object instance seg-mentation from histology images. Medical image analysis 36, 135–146. Chen, J., Huang, Q., Chen, Y., Qian, L., Yu, C., 2023a. En-hancing nucleus segmentation with haru-net: a hybrid at-tention based residual u-blocks network. arXiv preprint arXiv:2308.03382 . Chen, S., Ding, C., Liu, M., Cheng, J., Tao, D., 2023b. Cpp-net: Context-aware polygon proposal network for nucleus segmentation. IEEE Transactions on Image Processing 32, 980–994. Chen, Z., Xu, Q., Liu, X., Yuan, Y., 2024. Un-sam: Univer-sal prompt-free segmentation for generalized nuclei images. arXiv preprint arXiv:2402.16663 . Corbetta, E., Bocklitz, T., 2025. Multi-marker similarity en-ables reduced-reference and interpretable image quality as-sessment in optical microscopy. Research 8, 0783. Deng, R., Cui, C., Liu, Q., Yao, T., Remedios, L.W., Bao, S., Landman, B.A., Wheless, L.E., Coburn, L.A., Wilson, K.T., et al., 2025. Segment anything model (sam) for digi-tal pathology: Assess zero-shot segmentation on whole slide imaging, in: IS&T International Symposium on Electronic Imaging, pp. COIMG–132. Deshmukh, G., Susladkar, O., Makwana, D., Mittal, S., et al., 2022. Feednet: A feature enhanced encoder-decoder lstm network for nuclei instance segmentation for histopathologi-cal diagnosis. Physics in Medicine & Biology 67, 195011. Ding, Y., Tan, Z., Li, J., Zhang, W., Fang, B., Bai, H., Xin, W., Voelcker, N.H., Peng, B., Li, L., 2025. Artificial intelligence for organelle segmentation in live-cell imaging. Research 8, 1035. Doan, T.N., Song, B., Vuong, T.T., Kim, K., Kwak, J.T., 2022. Sonnet: A self-guided ordinal regression neural network for segmentation and classification of nuclei in large-scale multi-tissue histology images. IEEE Journal of Biomedical and Health Informatics 26, 3218–3228. Dosovitskiy, A., Beyer, L., Kolesnikov, A., Weissenborn, D., Zhai, X., Unterthiner, T., Dehghani, M., Minderer, M., Heigold, G., Gelly, S., et al., 2020. An image is worth 16x16 words: Transformers for image recognition at scale. arXiv preprint arXiv:2010.11929 . Elmore, J.G., Longton, G.M., Carney, P.A., Geller, B.M., Onega, T., Tosteson, A.N., Nelson, H.D., Pepe, M.S., Al-lison, K.H., Schnitt, S.J., et al., 2015. Diagnostic concor-dance among pathologists interpreting breast biopsy speci-mens. Jama 313, 1122–1132. Gamper, J., Alemi Koohbanani, N., Benet, K., Khuram, A., Rajpoot, N., 2019. Pannuke: an open pan-cancer histology dataset for nuclei instance segmentation and classification, in: European congress on digital pathology, Springer. pp. 11– 19. Gamper, J., Koohbanani, N.A., Benes, K., Graham, S., Jahan-ifar, M., Khurram, S.A., Azam, A., Hewitt, K., Rajpoot, N., 2020. Pannuke dataset extension, insights and baselines. arXiv preprint arXiv:2003.10778 . Graham, S., Vu, Q.D., Raza, S.E.A., Azam, A., Tsang, Y.W., Kwak, J.T., Rajpoot, N., 2019. Hover-net: Simultaneous seg-mentation and classification of nuclei in multi-tissue histol-ogy images. Medical image analysis 58. Hatamizadeh, A., Tang, Y., Nath, V., Yang, D., Myronenko, A., Landman, B., Roth, H.R., Xu, D., 2022. Unetr: Trans-formers for 3d medical image segmentation, in: Proceedings of the IEEE /CVF winter conference on applications of com-puter vision, pp. 574–584. He, H., Huang, Z., Ding, Y., Song, G., Wang, L., Ren, Q., Wei, P., Gao, Z., Chen, J., 2021. Cdnet: Centripetal direction network for nuclear instance segmentation, in: Proceedings 17 of the IEEE /CVF International Conference on Computer Vi-sion, pp. 4026–4035. He, H., Wang, J., Wei, P., Xu, F., Ji, X., Liu, C., Chen, J., 2023. Toposeg: Topology-aware nuclear instance segmentation, in: Proceedings of the IEEE /CVF International Conference on Computer Vision, pp. 21307–21316. He, K., Gkioxari, G., Dollár, P., Girshick, R., 2017. Mask r-cnn, in: Proceedings of the IEEE international conference on computer vision, pp. 2961–2969. Hörst, F., Rempe, M., Heine, L., Seibold, C., Keyl, J., Baldini, G., Ugurel, S., Siveke, J., Grünwald, B., Egger, J., et al., 2024. Cellvit: Vision transformers for precise cell segmenta-tion and classification. Medical Image Analysis 94, 103143. Houlsby, N., Giurgiu, A., Jastrzebski, S., Morrone, B., De Laroussilhe, Q., Gesmundo, A., Attariyan, M., Gelly, S., 2019. Parameter-e ffi cient transfer learning for nlp, in: Inter-national conference on machine learning, PMLR. pp. 2790– 2799. Hu, E.J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., Chen, W., et al., 2022. Lora: Low-rank adaptation of large language models. ICLR 1, 3. Huang, Y., Yang, X., Liu, L., Zhou, H., Chang, A., Zhou, X., Chen, R., Yu, J., Chen, J., Chen, C., et al., 2024. Segment anything model for medical images? Medical Image Analy-sis 92, 103061. Ilyas, T., Mannan, Z.I., Khan, A., Azam, S., Kim, H., De Boer, F., 2022. Tsfd-net: Tissue specific feature distillation net-work for nuclei segmentation and classification. Neural Net-works 151, 1–15. Jiao, L., Hao, J., Li, R., Li, L., Liu, X., Liu, F., Ma, W., Chen, P., Huang, Z., Yang, J., et al., 2026. Foundation models meet medical image interpretation. Research 9, 1024. Kirillov, A., Mintun, E., Ravi, N., Mao, H., Rolland, C., Gustafson, L., Xiao, T., Whitehead, S., Berg, A.C., Lo, W.Y., et al., 2023. Segment anything, in: Proceedings of the IEEE /CVF international conference on computer vision, pp. 4015–4026. Koleilat, T., Asgariandehkordi, H., Rivaz, H., Xiao, Y., 2024. Medclip-samv2: Towards universal text-driven medical image segmentation. arxiv 2024. arXiv preprint arXiv:2409.19483 . Konwer, A., Yang, Z., Bas, E., Xiao, C., Prasanna, P., Bhatia, P., Kass-Hout, T., 2025. Enhancing sam with e ffi cient prompt-ing and preference optimization for semi-supervised medical image segmentation, in: Proceedings of the IEEE /CVF Con-ference on Computer Vision and Pattern Recognition, pp. 20990–21000. Kuhn, H.W., 1955. The hungarian method for the assignment problem. Naval research logistics quarterly 2, 83–97. Kumar, N., Verma, R., Anand, D., Zhou, Y., Onder, O.F., Tsougenis, E., Chen, H., Heng, P.A., Li, J., Hu, Z., et al., 2019. A multi-organ nucleus segmentation challenge. IEEE transactions on medical imaging 39, 1380–1391. Kumar, N., Verma, R., Sharma, S., Bhargava, S., Vahadane, A., Sethi, A., 2017. A dataset and a technique for generalized nu-clear segmentation for computational pathology. IEEE trans-actions on medical imaging 36, 1550–1560. Li, B., Liu, Z., Zhang, S., Liu, X., Sun, C., Liu, J., Qiu, B., Tian, J., 2025. Nuhtc: A hybrid task cascade for nuclei instance segmentation and classification. Medical Image Analysis , 103595. Lin, T.Y., Goyal, P., Girshick, R., He, K., Dollár, P., 2017. Focal loss for dense object detection, in: Proceedings of the IEEE international conference on computer vision, pp. 2980–2988. Lu, C., Romo-Bucheli, D., Wang, X., Janowczyk, A., Ganesan, S., Gilmore, H., Rimm, D., Madabhushi, A., 2018. Nuclear shape and orientation features from h&e images predict sur-vival in early-stage estrogen receptor-positive breast cancers. Laboratory investigation 98, 1438–1448. Ma, J., He, Y., Li, F., Han, L., You, C., Wang, B., 2024. Seg-ment anything in medical images. Nature Communications 15, 654. Nam, S., Namgung, H., Jeong, J., Luna, M., Kim, S., Chikon-twe, P., Park, S.H., 2024. Instasam: Instance-aware segment any nuclei model with point annotations, in: International Conference on Medical Image Computing and Computer-Assisted Intervention, Springer. pp. 232–242. Naylor, P., Laé, M., Reyal, F., Walter, T., 2018. Segmenta-tion of nuclei in histopathology images by deep regression of the distance map. IEEE transactions on medical imaging 38, 448–459. Paranjape, J.N., Nair, N.G., Sikder, S., Vedula, S.S., Patel, V.M., 2024a. Adaptivesam: Towards e ffi cient tuning of sam for surgical scene segmentation, in: Annual Conference on Medical Image Understanding and Analysis, Springer. pp. 187–201. Paranjape, J.N., Sikder, S., Vedula, S.S., Patel, V.M., 2024b. S-sam: Svd-based fine-tuning of segment anything model for medical image segmentation, in: International Conference on Medical Image Computing and Computer-Assisted Inter-vention, Springer. pp. 720–730. Raza, S.E.A., Cheung, L., Shaban, M., Graham, S., Epstein, D., Pelengaris, S., Khan, M., Rajpoot, N.M., 2019. Micro-net: A unified model for segmentation of various objects in microscopy images. Medical image analysis 52, 160–173. Ronneberger, O., Fischer, P., Brox, T., 2015. U-net: Con-volutional networks for biomedical image segmentation, in: International Conference on Medical image computing and computer-assisted intervention, Springer. pp. 234–241. 18 Schmidt, U., Weigert, M., Broaddus, C., Myers, G., 2018. Cell detection with star-convex polygons, in: International con-ference on medical image computing and computer-assisted intervention, Springer. pp. 265–273. Sirinukunwattana, K., Snead, D., Epstein, D., Aftab, Z., Mu-jeeb, I., Tsang, Y.W., Cree, I., Rajpoot, N., 2018. Novel digital signatures of tissue phenotypes for predicting distant metastasis in colorectal cancer. Scientific reports 8, 13692. Song, Q., Wang, C., Jiang, Z., Wang, Y., Tai, Y., Wang, C., Li, J., Huang, F., Wu, Y., 2021. Rethinking counting and local-ization in crowds: A purely point-based framework, in: Pro-ceedings of the IEEE /CVF international conference on com-puter vision, pp. 3365–3374. Spiegler, P., Koleilat, T., Harirpoush, A., Miller, C.S., Ri-vaz, H., Kersten-Oertel, M., Xiao, Y., 2025. Textsam-eus: Text prompt learning for sam to accurately segment pancre-atic tumor in endoscopic ultrasound, in: Proceedings of the IEEE /CVF International Conference on Computer Vision, pp. 948–957. Tommasino, C., Russo, C., Rinaldi, A.M., 2026. Nulite-lightweight and fast model for nuclei instance segmentation and classification. Biomedical Signal Processing and Control 114, 109333. Tommasino, C., Russo, C., Rinaldi, A.M., Ciompi, F., 2024. " hover-unet": Accelerating hovernet with unet-based multi-class nuclei segmentation via knowledge distillation, in: 2024 IEEE International symposium on biomedical imaging (ISBI), IEEE. pp. 1–4. Veta, M., Van Diest, P.J., Kornegoor, R., Huisman, A., Viergever, M.A., Pluim, J.P., 2013. Automatic nuclei seg-mentation in h&e stained breast cancer histopathology im-ages. PloS one 8, e70221. Vu, Q.D., Graham, S., Kurc, T., To, M.N.N., Shaban, M., Qaiser, T., Koohbanani, N.A., Khurram, S.A., Kalpathy-Cramer, J., Zhao, T., et al., 2019. Methods for segmentation and classification of digital microscopy tissue images. Fron-tiers in bioengineering and biotechnology 7, 53. Wang, M., Shi, F., Cheng, X., Chen, S., 2024. Masked genera-tive light field prompting for pixel-level structure segmenta-tions. Research 7, 0328. Wienert, S., Heim, D., Saeger, K., Stenzinger, A., Beil, M., Hufnagl, P., Dietel, M., Denkert, C., Klauschen, F., 2012. Detection and segmentation of cell nuclei in virtual mi-croscopy images: a minimum-model approach. Scientific reports 2, 503. Woo, S., Park, J., Lee, J.Y., Kweon, I.S., 2018. Cbam: Convo-lutional block attention module, in: Proceedings of the Euro-pean conference on computer vision (ECCV), pp. 3–19. Wu, J., Wang, Z., Hong, M., Ji, W., Fu, H., Xu, Y., Xu, M., Jin, Y., 2025a. Medical sam adapter: Adapting segment any-thing model for medical image segmentation. Medical image analysis 102, 103547. Wu, W., Yang, X., Yao, C., Liu, O., Zhao, Q., Shuai, J., 2025b. E-segnet: E-shaped structure networks for accurate 2d and 3d medical image segmentation. Research 8, 0869. Xiao, A., Xuan, W., Qi, H., Xing, Y., Ren, R., Zhang, X., Shao, L., Lu, S., 2024. Cat-sam: Conditional tuning for few-shot adaptation of segment anything model, in: European Confer-ence on Computer Vision, Springer. pp. 189–206. Xu, Q., Kuang, W., Zhang, Z., Bao, X., Chen, H., Duan, W., 2023. Sppnet: A single-point prompt network for nuclei im-age segmentation, in: International Workshop on Machine Learning in Medical Imaging, Springer. pp. 227–236. Yao, K., Huang, K., Sun, J., Hussain, A., 2023. Pointnu-net: Keypoint-assisted convolutional neural network for simulta-neous multi-tissue histology nuclei segmentation and classi-fication. IEEE Transactions on Emerging Topics in Compu-tational Intelligence 8, 802–813. Zhang, K., Liu, D., 2023. Customized segment anything model for medical image segmentation. arXiv preprint arXiv:2304.13785 . Zhou, Y., Onder, O.F., Dou, Q., Tsougenis, E., Chen, H., Heng, P.A., 2019. Cia-net: Robust nuclei instance segmen-tation with contour-aware information aggregation, in: In-ternational conference on information processing in medical imaging, Springer. pp. 682–693. 19
