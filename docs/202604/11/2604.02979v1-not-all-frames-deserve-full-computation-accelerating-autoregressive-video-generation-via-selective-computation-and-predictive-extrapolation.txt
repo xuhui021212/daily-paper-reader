@@ -1,0 +1,706 @@
+Title: Not All Frames Deserve Full Computation: Accelerating Autoregressive Video Generation via Selective Computation and Predictive Extrapolation
+
+URL Source: https://arxiv.org/pdf/2604.02979v1
+
+Published Time: Mon, 06 Apr 2026 01:00:58 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+# Not All Frames Deserve Full Computation: Accelerating Autoregressive Video Generation via Selective Computation and Predictive Extrapolation 
+
+## Hanshuai Cui 1,2, Zhiqing Tang 1, Zhi Yao 1,2, Fanshuai Meng 1, Weijia Jia 1, Wei Zhao 3
+
+> 1
+
+Institute of Artificial Intelligence and Future Networks, Beijing Normal University, Zhuhai 519087, China 
+
+> 2
+
+School of Artificial Intelligence, Beijing Normal University, Beijing 100875, China 
+
+> 3
+
+Shenzhen University of Advanced Technology, Shenzhen, China 
+
+## Abstract 
+
+Autoregressive (AR) video diffusion models enable long-form video generation but remain expensive due to repeated multi-step de-noising. Existing training-free acceleration methods rely on bi-nary cache-or-recompute decisions, overlooking intermediate cases where direct reuse is too coarse yet full recomputation is unneces-sary. Moreover, asynchronous AR schedules assign different noise levels to co-generated frames, yet existing methods process the entire valid interval uniformly. To address these AR-specific ineffi-ciencies, we present SCOPE, a training-free framework for efficient AR video diffusion. SCOPE introduces a tri-modal scheduler over cache, predict, and recompute, where prediction via noise-level Taylor extrapolation fills the gap between reuse and recomputation with explicit stability controls backed by error propagation analysis. It further introduces selective computation that restricts execution to the active frame interval. On MAGI-1 and SkyReels-V2, SCOPE achieves up to 4.73x speedup while maintaining quality comparable to the original output, outperforming all training-free baselines. 
+
+## CCS Concepts 
+
+• Information systems → Multimedia content creation .
+
+## Keywords 
+
+video generation, autoregressive video diffusion, training-free ac-celeration, predictive caching, selective computation 
+
+## 1 Introduction 
+
+Autoregressive (AR) video diffusion has emerged as a leading par-adigm for long-form video generation [ 7, 47 ]. It extends videos causally, chunk by chunk or frame by frame, while conditioning on previously generated content. Built upon diffusion transform-ers (DiTs) [ 13 , 35 ] and flow-matching objectives [ 24 , 28 ], often accelerated by efficient attention mechanisms [ 9 , 10 , 40 ], these models achieve impressive quality on videos spanning hundreds of frames [ 2, 5, 36 ]. However, a fundamental inference bottleneck persists, where every AR unit still performs multi-step diffusion integration, so generating long videos requires many expensive transformer forwards. This cost has motivated a growing body of training-free acceler-ation methods, spanning block caching [ 53 ], layer caching [ 32 ], uni-versal feature reuse [ 42 ], and more recent reuse-oriented schemes [ 8,25 , 27 ]. Most existing methods primarily exploit step-level or block-level similarity in standard diffusion, while FlowCache [ 33 ] targets AR video generation with chunk-aware adaptive caching. However, these methods still rely on a binary cache-or-recompute decision. Original 
+
+> SCOPE
+> Original
+> SCOPE
+> 2.55x
+> 4.73x
+> SkyReels -V2
+> MAGI -1
+
+Figure 1: SCOPE achieves large speedup while preserving near-original quality on both MAGI-1 and SkyReels-V2. 
+
+This leaves a structural gap, as some steps are too inaccurate for di-rect reuse but too smooth to justify a full forward pass. When forced into binary decisions, either quality degrades from excessive reuse or speedup saturates from conservative recomputation. Forecast-style extrapolation is also not new in itself, as TaylorSeers [ 26 ]already predicts diffusion features via Taylor expansion. Our goal is making it usable inside AR video diffusion, where prediction must be embedded into a stable step scheduler and paired with the frame-wise activity structure of asynchronous AR denoising. Beyond the binary cache-or-recompute gap, AR video diffusion also exhibits a second source of inefficiency. Recent causal video diffusion models expose richer inference structure than standard synchronous denoising [ 6 , 7 , 47 , 58 ]. Under asynchronous AR sched-ules [ 6, 7], different frames within the same iteration can reside at different denoising stages, forming a staircase-like step matrix. Only a subset of frames is actively evolving at any given iteration. Existing acceleration methods, however, still process the entire valid interval uniformly, wasting computation on nearly converged frames at the tail and on not-yet-started frames at the head. This spatial redundancy becomes especially severe in long-form gener-ation. The valid interval may span dozens of frames even though only a small active subset requires meaningful updates [ 47 , 58 ]. AR  
+
+> arXiv:2604.02979v1 [cs.CV] 3 Apr 2026 MM ’26, October 26–30, 2026, Melbourne, Australia Hanshuai Cui et al.
+
+inference therefore suffers from two distinct forms of waste, tem-poral redundancy across denoising steps and spatial redundancy within the current valid interval. Building an effective acceleration method for AR diffusion faces two challenges. (C1) How to bridge the gap between direct reuse and full recomputation under AR causal denoising? Approximation errors accumulate over consecutive non-recompute steps and prop-agate into later causal extensions, so an intermediate prediction mechanism must remain stable across an entire AR rollout. (C2) 
+
+How to reduce redundant computation inside asynchronous AR schedules? Because the active denoising frontier moves over time and only a subset of the full valid interval requires meaningful updates, selective execution must efficiently focus computation on the active frame interval. We propose SCOPE ( Selective CO mputation with Predictive 
+
+Extrapolation), a training-free acceleration framework for AR video diffusion models. First, SCOPE introduces a Predict mode that fills the gap between direct reuse and full recomputation by forecast-ing the velocity via local Taylor extrapolation along the denoising trajectory, producing a tri-modal policy over Cache , Predict , and 
+
+Recompute . To maintain prediction stability over long AR rollouts, the scheduler incorporates several stability controls to improve ro-bustness. Second, SCOPE introduces selective computation, which restricts execution to the active frame interval in asynchronous AR schedules, reducing per-iteration cost without altering the AR schedule itself. As a training-free method, the integration overhead of SCOPE is minimal. It requires only a lightweight pre-forward signal for risk estimation, access to recent denoising history for prediction, and support for restricting computation to the active frame interval. We validate SCOPE on MAGI-1 and SkyReels-V2, achieving up to 2.55 × speedup on MAGI-1 and up to 4.73 × speedup on SkyReels-V2. As shown in Figure 1, SCOPE reduces both tem-poral and spatial redundancy while keeping quality close to the Original pipeline. Our main contributions are: 
+
+• We formulate AR denoising control as a tri-modal scheduler over Cache , Predict , and Recompute , introducing predic-tion as an explicit intermediate mode between reuse and recomputation with stability controls for long AR rollouts. 
+
+• We propose selective computation for asynchronous AR schedules, restricting execution to the active frame interval to reduce frame-level redundant computation while remain-ing fully compatible with the Predict branch. 
+
+• We validate SCOPE on two representative AR video diffusion models, MAGI-1 and SkyReels-V2, demonstrating that the tri-modal scheduler and selective computation together yield the strongest speed-quality tradeoff among all training-free baselines. 
+
+## 2 Related Work 2.1 Autoregressive Video Diffusion Models 
+
+Video generation has advanced rapidly through diffusion mod-els [ 11 , 18 , 19 , 34 , 38 , 45 ] and their transformer-based variants [ 1,12 , 35 , 50 ]. Recent models produce high-quality videos via one-shot [ 2, 3, 14 , 16 , 17 , 41 , 51 , 56 , 62 ] or autoregressive generation [ 20 ]. Among AR approaches, SkyReels-V2 [ 7] adopts a diffusion forc-ing [ 6] pipeline where frames carry different noise levels, producing a staircase-like step matrix. MAGI-1 [ 47 ] uses a chunk-causal design where fixed-length chunks are denoised holistically. Both models couple autoregressive conditioning with flow-matching-based de-noising [24, 28, 49], making their cost scale with video length and denoising depth. 
+
+## 2.2 Training-Free Acceleration for Diffusion 
+
+Training-free methods reduce diffusion inference cost without fine-tuning or distillation [ 29 , 30 , 39 , 44 , 54 , 57 ], exploiting the smooth-ness of neighboring denoising states [ 43 ]. These methods can be grouped into three broad categories. 
+
+Block- and layer-level caching. Cache Me if You Can [ 53 ] in-troduces block-level caching for DiTs, and Learning-to-Cache [ 32 ]learns layer-level caching policies. Δ-DiT [ 8] exploits stage depen-dent roles of DiT blocks for block-level reuse. FRDiff [ 42 ] reuses fea-tures universally across blocks. These methods target intra-model redundancy but remain binary in their reuse decisions. 
+
+Attention- and token-level methods. FasterCache [ 31 ] ex-ploits redundancy between conditional and unconditional features. PAB [ 61 ] broadcasts attention across timesteps. T-GATE [ 60 ] prunes cross-attention after early steps. Token merging [ 4 ] reduces token counts to lower per-step cost. While effective for reducing per-step FLOPs, these methods do not adapt to the step-level decision of whether to skip computation entirely. 
+
+Step-level caching and prediction. AdaCache [ 22 ] adapts caching schedules to video content. TeaCache [ 25 ] estimates step similarity from modulated timestep embeddings. TaylorSeers [26] moves beyond binary reuse by forecasting diffusion features via Taylor expansion, but lacks the stability controls needed for long AR rollouts. SCOPE builds on this line by embedding prediction into a tri-modal scheduler with explicit drift control, and by ad-ditionally exploiting the frame-wise activity structure unique to asynchronous AR denoising. 
+
+## 2.3 Acceleration for AR Video Generation 
+
+AR video generation exposes additional structure that generic accel-eration methods do not adapt to. FlowCache [ 33 ] discovers chunk-level heterogeneity and performs chunk-wise adaptive caching, optionally combining reuse with KV compression. However, Flow-Cache retains a binary cache-or-recompute decision within each chunk, leaving no mechanism for lightweight approximation when neither direct reuse nor full recomputation is appropriate. It also does not exploit the frame-level activity structure of asynchronous schedules, processing the entire valid interval uniformly even when only a subset of frames is actively denoising. Recent work on autore-gressive image generation [ 23 , 48 ] and fast AR video diffusion [ 58 ]further motivates efficient inference for causal generative models. SCOPE is complementary to these methods. Rather than modeling chunk heterogeneity or reducing KV cost, SCOPE addresses two complementary gaps: it replaces the binary cache-or-recompute decision with predictive interpolation backed by stability controls for long AR rollouts, and it eliminates redundant computation on inactive frames via dynamic interval shrinking. SCOPE MM ’26, October 26–30, 2026, Melbourne, Australia 
+
+## 3 Methodology 3.1 Preliminaries 
+
+Flow-matching denoising. We consider AR video diffusion mod-els trained under flow-matching [ 24 , 28 ]. A noisy latent at noise level 𝜎 is 𝑥 𝜎 = (1 − 𝜎 )𝑥 0 + 𝜎𝜖 , 𝜖 ∼ N ( 0, 𝐼 ). The model parameter-izes a velocity field 𝑣 𝜃 (𝑥 𝜎 , 𝜎 ) whose reverse ODE 𝑑𝑥 /𝑑𝜎 = 𝑣 𝜃 is integrated by Euler steps: 
+
+𝑥 𝑘 −1 = 𝑥 𝑘 + 𝑣 𝜃 (𝑥 𝑘 , 𝜎 𝑘 )Δ𝜎 𝑘 , Δ𝜎 𝑘 = 𝜎 𝑘 −1 − 𝜎 𝑘 . (1) The high cost of AR video diffusion comes from repeatedly eval-uating 𝑣 𝜃 across many denoising steps and many AR units. 
+
+Autoregressive schedules. AR diffusion models extend a video causally, but the denoising unit may be a synchronized chunk or an asynchronous frame interval [ 46 ]. In chunk-synchronized sched-ules (e.g., MAGI-1), all frames within the AR unit share a common denoising stage, and decisions naturally operate per chunk. The dominant source of waste is repeated unit-level forwards. In asyn-chronous schedules (e.g., SkyReels-V2), different frames occupy different noise levels within the same iteration, producing frame-wise heterogeneity. Here, decisions operate per iteration or per active frame interval, and the primary waste comes from comput-ing inactive frames inside the valid interval. 
+
+Local predictability along the denoising trajectory. Tea-Cache exploits smoothness across neighboring timesteps through timestep embeddings, and TaylorSeers forecasts future features via Taylor expansion across timesteps [ 25 , 26 ]. Motivated by the same local regularity, we parameterize denoising progression by the continuous noise level 𝜎 = 𝑔 (𝑡 ), where 𝑔 is the scheduler-specific monotone map used in the implementation to convert the raw scheduler variable 𝑡 into a noise-level coordinate. We then treat the velocity field as locally smooth along the denoising trajectory. For neighboring states we can write: 
+
+𝑣 (𝜎 + Δ𝜎 ) ≈ 𝑣 (𝜎 ) + 𝑑𝑣 𝑑𝜎 Δ𝜎 + 𝑂 (Δ𝜎 2). (2) This suggests that some intermediate steps need not be treated as either perfect reuse or full recomputation. Instead, they can be approximated from cached history by extrapolating over nearby noise levels. As illustrated in Figure 2, on SkyReels-V2 at Frame 13 over steps 54–59, the cross-prompt mean trajectory of Taylor prediction stays closer to the ground-truth feature than reuse-only. The corresponding cross-prompt mean feature error is also consis-tently lower, reducing the mean absolute deviation by 72% relative to reuse-only, while the shaded bands visualize the cross-prompt standard deviation under a single fixed seed over the 16-prompt diagnostic subset. 
+
+Active frame interval. We define the active frame interval directly from the scheduler-derived update mask. A frame is labeled active at iteration 𝑘 if and only if its scheduling state advances relative to iteration 𝑘 −1 and it has not yet reached the terminal state. Figure 3 visualizes this as a moving active suffix within the scheduler-valid interval. In the Forward row, solid boxes mark active frames, while dashed boxes mark forwarded but inactive ones. The model forward pass and per-frame state update are not always aligned under the asynchronous AR schedule, as some forwarded frames do not actually advance their denoising state, motivating selective computation to skip such redundant work. 54 55 56 57 58 59 
+
+> Denoising step
+> 1.03
+> 1.05
+> 1.07
+> 1.09
+> 1.11
+> Feature value:  || vt|| 1
+> Frame 13, steps 54-59
+> ground-truth feature
+> reuse-only
+> Taylor prediction
+
+(a) Feature trajectory 54 55 56 57 58 59  
+
+> Denoising step
+> 0.00
+> 0.01
+> 0.02
+> 0.03
+> 0.04
+> Absolute feature error
+> Mean abs. error
+> reuse = 0.0097
+> Taylor = 0.0027
+> (72% lower)
+> reuse error
+> Taylor error
+
+(b) Feature error 
+
+Figure 2: At Frame 13 over steps 54–59: (a) Taylor prediction tracks the ground-truth feature more closely than reuse-only; (b) Taylor prediction also yields lower feature error. Steps                   
+
+> Frames
+> f0f16 f8f24 f4f12 f20
+> t55
+> t69
+> t59
+> t63
+> t66
+> Active
+> Forward
+> Scheduler
+> update
+> -AAA-
+> FFFFF
+> -UUU-
+> f0f24 f12 f18 f6
+
+Figure 3: Conceptual step-matrix view of asynchronous au-toregressive denoising. At each iteration, only part of the valid frame interval is active; dark cells mark frames whose scheduling state is still advancing. 
+
+## 3.2 Overview of SCOPE 
+
+Figure 4 summarizes how SCOPE accelerates autoregressive video diffusion through two complementary strategies. Selective computa-tion removes redundant updates across frames, whereas predictive extrapolation reduces redundant computation across denoising. Each chunk is denoised by a DiT conditioned on the text prompt and the decoded frames from the preceding chunk. At each denois-ing step, an accumulated discrepancy score 𝑟 𝑘 is compared with thresholds 𝜏 𝑐 and 𝜏 𝑝 to select one of three modes along the denoising trajectory. In Predict mode, SCOPE extrapolates cached velocity history via Taylor expansion, yielding a closer approximation to the ground truth trajectory than direct reuse. In parallel, selective com-putation leverages the asynchronous noise schedule across frames, so only frames that remain within the active denoising range are evaluated, while frames that are nearly complete or just beginning to denoise are skipped. 
+
+## 3.3 Predictive Extension of Cache Reuse 
+
+The temporal branch of SCOPE extends existing cache-reuse ac-celeration. Traditional caching frameworks decide between direct reuse and full recomputation. SCOPE introduces a third mode, Pre-dict , which estimates the current velocity from cached history. Let 
+
+𝑟 𝑘 denote the accumulated discrepancy score before the decision at step 𝑘 , let 𝜏 (𝑘 ) 
+
+> 𝑐
+
+and 𝜏 (𝑘 ) 
+
+> 𝑝
+
+be the cache and prediction thresholds, and let 𝐻 𝑘 be the maximum allowed non-recompute horizon. When cached output is available and prediction history is sufficient, the MM ’26, October 26–30, 2026, Melbourne, Australia Hanshuai Cui et al. P    
+
+> R
+> CP
+> CC
+> RR
+> R
+> P
+> P
+> R
+> C
+> RRR
+
+Chunk 1 Chunk 2 
+
+Step T 
+
+Step 0 
+
+Step 1 
+
+> ...
+
+𝝈 1.0 
+
+> 0.5
+> 0.0
+
+Frame 0 Frame N ... 
+
+···  
+
+> Accumulated
+> Discrepancy 𝒓 𝒌
+> Cache
+> Predict Recompute
+
+Temporal Dimension: Predictive Caching     
+
+> 𝒓 𝒌 <𝝉 "
+> Cost bar: | 1%= |=5%= |========100% |
+> Cache Predict Recompute
+> Yes
+> No
+> No
+> Text
+> Prompt
+> Text
+> Encoder
+
+Chunk K 
+
+> AR Condition AR Condition
+> Cross
+> Attention
+
+Spatial Dimension: Selective Computation 
+
+Frame( 𝝈 ): 0.02 0.08 0.12 0.20 0.30 0.52 0.70 0.85 0.93 0.98 - -  
+
+> Near -complete
+> →SKIPPED
+> Denoising
+> →COMPUTED
+> Warming
+> up
+> Not in
+> active
+
+Step t: 
+
+## …
+
+Generated Video      
+
+> 𝒇 𝟏 𝒇 𝟐 𝒇 𝟑 𝒇 𝟓 𝒇 𝟒
+> Latents DiT Frames
+
+Chunk 1   
+
+> Latents DiT Frames
+
+Chunk 2                
+
+> Selected Interval [3, 7]
+> Original Interval [0, 9]
+> 𝝉 𝒄 ≤𝒓 𝒌 <𝝉 𝒑
+> Yes
+> Stability Controls
+> •Prediction decay
+> •Bounded skip
+> •Recompute reset
+> xCached history
+> Ground truth Prediction
+> Direct reuse
+> Feature trajectory
+> 𝑣 !"#
+> 𝑣 !"$
+> 𝑣 !
+> 𝑡 %𝑡 %"$𝑡 %"#𝑡 %"&
+
+Figure 4: Overview of SCOPE for accelerating autoregressive video diffusion by reducing redundant computation in both the spatial and temporal dimensions through selective computation and predictive extrapolation. 
+
+candidate mode is: 
+
+𝑚 cand  
+
+> 𝑘
+
+=
+
+
+
+Cache , 𝑟 𝑘 < 𝜏 (𝑘 ) 
+
+> 𝑐
+
+and cache available ,
+
+Predict , 𝜏 (𝑘 ) 
+
+> 𝑐
+
+≤ 𝑟 𝑘 < 𝜏 (𝑘 ) 
+
+> 𝑝
+
+and history available ,
+
+Recompute , otherwise .
+
+(3) This formulation fills the gap between zero-cost reuse and full-cost recomputation. The goal of Predict is not to replace recompu-tation globally, but to extend cache/reuse to cases where direct reuse is too coarse and full recomputation is unnecessarily expensive. 
+
+Discrepancy estimation. We estimate an accumulated discrep-ancy score from lightweight features that can be computed before a full forward pass. Let 𝜙 𝑘 be the host feature used for decision making at step 𝑘 and define the normalized discrepancy: 
+
+𝑑 𝑘 = ∥𝜙 𝑘 − 𝜙 𝑘 −1 ∥1
+
+∥𝜙 𝑘 −1 ∥1 + 𝜀 , (4) where 𝜀 is a small positive constant for numerical stability. The implementation then updates an accumulated discrepancy score: 
+
+𝑟 − 
+
+> 𝑘
+
+= 𝑟 𝑘 −1 + 𝑑 𝑘 ,𝑟 𝑘 =
+
+
+
+𝑟 − 
+
+> 𝑘
+
+, 𝑚 𝑘 = Cache ,𝜆𝑟 − 
+
+> 𝑘
+
+, 𝑚 𝑘 = Predict ,
+
+0, 𝑚 𝑘 = Recompute ,
+
+(5) where 𝜆 ∈ ( 0, 1] is the predict_decay .
+
+Prediction branch. When a step enters Predict , SCOPE fore-casts the velocity from cached history in the noise-level coordinate. Let 𝜎 ★ = 𝑔 (𝑡 ★) be the target noise level, let (𝜎 𝑘 , 𝑣 𝑘 ) be the most recent cached state, and define Δ𝜎 𝑘 = 𝜎 ★ − 𝜎 𝑘 , Δ𝜎 𝑘 −1 = 𝜎 𝑘 − 𝜎 𝑘 −1,and Δ𝜎 𝑘 −2 = 𝜎 𝑘 −1 − 𝜎 𝑘 −2. The first-order predictor is: 
+
+ˆ𝑣 (1) (𝜎 ★) = 𝑣 𝑘 + 𝑣 𝑘 − 𝑣 𝑘 −1
+
+Δ𝜎 𝑘 −1
+
+Δ𝜎 𝑘 . (6) With one more history point, the implementation approximates curvature by a second finite difference and obtains: 
+
+ˆ𝑣 (2) (𝜎 ★) = ˆ𝑣 (1) (𝜎 ★) + 12    
+
+> 𝑣 𝑘 −𝑣 𝑘 −1
+> Δ𝜎 𝑘 −1
+
+− 𝑣 𝑘 −1 −𝑣 𝑘 −2 
+
+> Δ𝜎 𝑘 −2
+
+(Δ𝜎 𝑘 −1 + Δ𝜎 𝑘 −2)/ 2 Δ𝜎 2 
+
+> 𝑘
+
+. (7) In practice, the Predict branch uses a Taylor-based extrapolator with stability checks and conservative clipping. 
+
+## 3.4 Selective Computation 
+
+In asynchronous AR schedules, only a subset of frames remains actively denoising at each iteration. We identify this active subset directly from the scheduler step matrix. Let 𝑢 𝑡,𝑗 denote the scheduler progress index of latent slot 𝑗 at iteration 𝑡 , let 𝑁 be the terminal progress index, let 𝐹 be the number of latent slots in the current scheduler segment, and let 𝐵 be the default scheduler window length. The update mask and the interval end ¯𝑒 𝑡 are: 
+
+𝑚 𝑡,𝑗 = ⊮[𝑢 𝑡,𝑗 ≠ 𝑢 𝑡 −1,𝑗 ∧ 𝑢 𝑡,𝑗 ≠ 𝑁 ],
+
+¯𝑒 𝑡 =
+
+(
+
+min (𝐵, 𝐹 ), { 𝑗 : 𝑚 𝑡,𝑗 = 1} = ∅,
+
+max ( ¯𝑒 𝑡 −1, 1 + max { 𝑗 : 𝑚 𝑡,𝑗 = 1}) , otherwise ,
+
+(8) where ⊮[·] denotes the indicator function, which equals 1 when the enclosed condition is true and 0 otherwise. 𝑚 𝑡,𝑗 is the scheduler-derived update mask indicating whether latent slot 𝑗 both advances at iteration 𝑡 and has not yet reached the terminal state. The result-ing scheduler-facing valid interval is: 
+
+𝑉 𝑡 = [max ( ¯𝑒 𝑡 − 𝐵, 0), ¯𝑒 𝑡 ). (9) Relative to the baseline window length 𝐵 𝑡 = min (𝐵, 𝐹 ) without selective computation, the per-step cost scales primarily with |𝑉 𝑡 |,while the overhead of extracting the interval remains lower order. Because ¯𝑒 𝑡 is monotone, the compute interval remains a safe suffix of the scheduler-valid interval throughout the rollout. Selective computation therefore leaves the AR schedule itself unchanged, as it replaces the default full-length interval with a mask-derived compute interval. This mechanism is orthogonal to the predictive extension of cache reuse, so a step can be processed on a reduced interval. The detailed cost relation is provided in the supplementary material. 
+
+## 3.5 Error Analysis and Stability Controls 
+
+Error propagation analysis. To understand how prediction er-rors affect the output, we analyze how errors propagate through the denoising trajectory. When SCOPE uses Predict mode, the predicted velocity ˆ𝑣 𝑘 differs from the true velocity 𝑣 𝑘 , and this error compounds over multiple steps. SCOPE MM ’26, October 26–30, 2026, Melbourne, Australia 
+
+Table 1: Main comparison on SkyReels-V2 DF-1.3B and MAGI-1 4.5B-distill, with all results measured on a single NVIDIA A800 80GB GPU. LPIPS, SSIM, and PSNR are computed against the Original output as reference. Best and second-best accelerated results are shown in bold and underlined, respectively. Original is excluded from ranking.                                                                                                                                                                           
+
+> Model Method Efficiency Visual Quality Time (s) ↓Speedup ↑FLOPs (P) ↓Speedup ↑VBench ↑LPIPS ↓SSIM ↑PSNR ↑
+> SkyReels-V2 DF-1.3B Original 1452.41 1.00 ×245.01 1.00 ×81.51% 0.0000 1.0000 ∞
+> Δ-DiT 1223.01 1.19 ×201.60 1.22 ×74.57% 0.6052 0.5228 14.25 TeaCache-slow 697.60 2.08 ×109.44 2.24 ×79.83% 0.4436 0.5986 15.60 TeaCache-fast 559.76 2.59 ×84.68 2.89 ×77.49% 0.4786 0.5595 15.59 TaylorSeer-slow 941.41 1.54 ×130.76 1.87 ×75.54% 0.6838 0.4516 10.32 TaylorSeer-fast 799.55 1.82 ×99.05 2.47 ×75.50% 0.7017 0.4484 10.08 FlowCache-slow 429.50 3.38 ×54.62 4.49 ×80.04% 0.1978 0.6654 21.73 FlowCache-fast 364.72 3.98 ×42.56 5.76 ×78.75% 0.2441 0.6058 18.92 SCOPE-slow 350.12 4.15 ×53.87 4.55 ×81.57% 0.1676 0.8101 24.76
+> SCOPE-fast 307.34 4.73 ×46.45 5.27 ×81.47% 0.1900 0.7309 21.96 MAGI-1 4.5B-distill Original 791.08 1.00 ×81.09 1.00 ×76.65% 0.0000 1.0000 ∞
+> Δ-DiT 463.01 1.71 ×38.49 2.11 ×74.54% 0.3607 0.6473 17.50 TeaCache-slow 617.22 1.28 ×56.53 1.43 ×76.94% 0.2686 0.6899 19.58 TeaCache-fast 525.34 1.51 ×43.55 1.86 ×76.20% 0.4274 0.5197 16.15 TaylorSeer-slow 486.79 1.63 ×39.14 2.07 ×76.05% 0.4935 0.3916 12.65 TaylorSeer-fast 460.62 1.72 ×35.54 2.28 ×75.29% 0.5005 0.3656 12.44 FlowCache-slow 535.89 1.48 ×41.62 1.95 ×76.09% 0.2619 0.6960 19.62 FlowCache-fast 451.08 1.75 ×28.50 2.85 ×74.88% 0.4330 0.5142 15.99 SCOPE-slow 361.83 2.19 ×30.50 2.66 ×76.46% 0.2146 0.7844 23.56
+> SCOPE-fast 310.16 2.55 ×24.42 3.32 ×76.32% 0.2456 0.6499 17.06
+
+Let 𝑒 𝑣 𝑘 = ∥ ˆ𝑣 𝑘 − 𝑣 𝑘 ∥2 denote the prediction error on velocity and let 𝑒 𝑥 𝑘 = ∥ ˆ𝑥 𝑘 − 𝑥 𝑘 ∥2 denote the latent-state error before step 𝑘 . From the Euler update in Eq. (1), the one-step latent drift satisfies: 
+
+𝑒 𝑥 𝑘 −1 ≤ 𝑒 𝑥 𝑘 + | Δ𝜎 𝑘 |𝑒 𝑣 𝑘 . (10) This shows that each prediction error 𝑒 𝑣 𝑘 contributes to the latent error proportionally to the step size |Δ𝜎 𝑘 |. After ℎ consecutive predicted steps, the cumulative error becomes: 
+
+𝑒 𝑥 𝑘 −ℎ ≤ 𝑒 𝑥 𝑘 +
+
+> ℎ−1
+
+∑︁ 
+
+> 𝑖 =0
+
+|Δ𝜎 𝑘 −𝑖 |𝑒 𝑣 𝑘 −𝑖 . (11) If the local first-order predictor obeys a Taylor remainder bound 
+
+𝑒 𝑣 𝑘 ≤ 𝐿 2 
+
+> 2
+
+|Δ𝜎 𝑘 |2, then: 
+
+𝑒 𝑥 𝑘 −ℎ ≤ 𝑒 𝑥 𝑘 + 𝐿 2
+
+2
+
+> ℎ−1
+
+∑︁ 
+
+> 𝑖 =0
+
+|Δ𝜎 𝑘 −𝑖 |3. (12) This bound reveals that the error grows cubically with step size, motivating three complementary stability controls. 
+
+Stability controls. First, after each Predict step the discrepancy score is damped by a decay factor 𝑟 𝑘 = 𝜆𝑟 − 
+
+> 𝑘
+
+with 𝜆 ∈ ( 0, 1], steering the system toward a Recompute step before drift becomes excessive. Second, the maximum number of consecutive non-Recompute 
+
+steps is capped at 𝐻 𝑘 , guaranteeing periodic updates regardless of the current discrepancy score. Third, every Recompute step resets the discrepancy score to 𝑟 𝑘 = 0 and refreshes the velocity cache, preventing error propagation across recompute boundaries. The full derivation is deferred to the supplementary material. 
+
+## 4 Experiments 
+
+This section evaluates SCOPE on two representative AR diffusion models. We organize the experiments around the speed-quality tradeoff and the model-specific contribution of each technical line, reporting both quantitative comparisons and qualitative results. 
+
+## 4.1 Models, Dataset, and Metrics 
+
+We evaluate SCOPE on two autoregressive video diffusion models. 
+
+SkyReels-V2 DF-1.3B : we use the 540P diffusion-forcing model with the aligned benchmark configuration that generates 257-frame videos with a base window of 97 frames, 50 denoising steps, and overlap history 17. MAGI-1 4.5B-distill : we use the aligned distill runtime configuration with 240 frames at 480 ×480 resolution and 64 denoising steps. KV offload remains disabled so that the Original and accelerated runs share the same basic generation setup. The prompts are drawn from the VBench gallery [ 21 ], spanning 16 evaluation dimensions. All accelerated methods match the Orig-inal pipeline exactly in frame count, resolution, denoising steps, seeds, and AR settings. A run is valid only after checking for failure modes such as black screens, frozen output, or severe artifacts. We track three categories of metrics. For efficiency , we report end-to-end inference time and speedup relative to Original. For 
+
+quality , we use VBench [ 21 ] total score and its 16 sub-dimensions, and we additionally record LPIPS [ 59 ], SSIM [ 52 ], and PSNR as supplementary diagnostics. For memory , we report peak GPU memory during inference. MM ’26, October 26–30, 2026, Melbourne, Australia Hanshuai Cui et al. Original       
+
+> 1.00x/1.00x
+> FlowCache
+> 3.98x/1.75x
+> TaylorSeer
+> 1.82x/1.72x
+> TeaCache
+> 2.59x/1.51x
+> ∆-DiT
+> 1.19x/1.71x
+> SCOPE
+> 4.73x/2.55x
+> "An astronaut is riding a horse in the space in
+> a photorealistic style "”The bund shanghai zoom out ""a motorcycle gliding through
+> a snowy field "
+
+Figure 5: Qualitative comparison of all methods on representative prompts from the two models. The left two groups show results on SkyReels-V2, while the right group shows results on MAGI-1. Each method row is annotated with its end-to-end speedup on SkyReels-V2 and MAGI-1, respectively. Compared with other accelerated baselines, SCOPE preserves object structure and visual fidelity more consistently while maintaining the strongest overall acceleration-quality tradeoff. SkyReels             
+
+> Reuse 36 | Predict 13 | Compute 21 | Total 70
+> 0% 20% 40% 60% 80% 100%
+> Denoising progress
+> MAGI-1
+> Reuse 243 | Predict 177 | Compute 174 | Total 594
+> 0% 20% 40% 60% 80% 100%
+> Denoising progress
+> Reuse Predict Compute
+
+Figure 6: Tri-modal decision timeline comparison between SkyReels-V2 (top) and MAGI-1 (bottom). Each row shows the 
+
+Cache , Predict , and Recompute decisions across denoising iterations. 
+
+## 4.2 Baselines 
+
+Our main comparison includes the following training-free base-lines. Original is the unaccelerated inference pipeline. Δ-DiT [8]performs block-level reuse adapted to the target AR pipelines by applying block-skip decisions per AR unit rather than globally. Tea-Cache [ 25 ] performs binary timestep-aware caching based on step similarity estimation. TaylorSeer [ 26 ] is a forecast-style acceler-ator. FlowCache [33 ] applies chunk-aware adaptive caching for autoregressive video generation. SCOPE is our predictive caching method with selective computation. Detailed per-method hyperpa-rameter settings are listed in the supplementary material. 
+
+## 4.3 Implementation Details 
+
+The default SCOPE configuration uses a cache threshold 𝜏 𝑐 and a prediction threshold 𝜏 𝑝 to partition steps into Cache , Predict ,
+
+Table 2: Sensitivity analysis across threshold settings on both models. Each configuration is denoted as (𝜏 𝑐 , 𝜏 𝑝 ) where 𝜏 𝑐 is the cache threshold and 𝜏 𝑝 is the prediction threshold. 
+
+Config (𝜏 𝑐 , 𝜏 𝑝 ) Efficiency Quality Time (s) ↓ Speedup ↑ LPIPS ↓ SSIM ↑ PSNR ↑
+
+SkyReels-V2 
+
+(0.12 , 0.30 ) 353.11 4.11 × 0.1723 0.7581 23.17 
+
+(0.15 , 0.36 ) 326.21 4.45 × 0.1798 0.7460 22.74 
+
+(0.18 , 0.42 ) 307.34 4.73 × 0.1900 0.7309 21.96 
+
+(0.21 , 0.48 ) 281.56 5.16 × 0.2152 0.7018 20.69 
+
+(0.25 , 0.55 ) 262.02 5.54 × 0.2399 0.6650 19.48 
+
+MAGI-1 
+
+(0.02 , 0.05 ) 362.34 2.18 × 0.2146 0.7844 23.56 
+
+(0.03 , 0.08 ) 310.16 2.55 × 0.2456 0.6499 17.06 
+
+(0.05 , 0.12 ) 271.46 2.91 × 0.2700 0.6174 16.98 
+
+(0.08 , 0.15 ) 261.07 3.03 × 0.3077 0.5704 16.72 
+
+and Recompute . On SkyReels-V2, the paper-core configuration uses 𝜏 𝑐 = 0.18 , 𝜏 𝑝 = 0.42 , second-order Taylor prediction, predic-tion decay 0.75, bounded skip length 5, and selective computation enabled. On MAGI-1, 𝜏 𝑐 = 0.03 , 𝜏 𝑝 = 0.08 , second-order Taylor prediction, prediction decay 0.75, and bounded skip length 5. These paper-core settings are chosen as practical operating points on the speed-quality frontier rather than to optimize a single metric. The sensitivity analysis in subsection 4.6 shows the resulting trade-off is smooth and the method is robust within a reasonable range. For each model, method, and configuration, we generate over 400 SCOPE MM ’26, October 26–30, 2026, Melbourne, Australia 3 4 5 6 7  
+
+> Max Skip H
+> 300
+> 400
+> 500
+> Time (s)
+> SkyReels-V2 MAGI-1
+
+(a) Time 3 4 5 6 7   
+
+> Max Skip H
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1 - LPIPS  SkyReels-V2 MAGI-1
+
+(b) 1-LPIPS 3 4 5 6 7  
+
+> Max Skip H
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> SSIM
+> SkyReels-V2 MAGI-1
+
+(c) SSIM 3 4 5 6 7   
+
+> Max Skip H
+> 15
+> 20
+> PSNR
+> SkyReels-V2 MAGI-1
+
+(d) PSNR 
+
+Figure 7: Bounded skip-length sensitivity analysis visual-ized across runtime and quality metrics for SkyReels-V2 and MAGI-1. 97 120 257 377 737          
+
+> Frames
+> 0
+> 2
+> 4
+> Denoise time (s)  10 3
+> 4.02x 3.98x
+> 4.73x
+> 4.78x
+> 5.01x
+> Original SCOPE 120 168 240 360 480
+> Frames
+> 0
+> 1
+> 2
+> Denoise time (s)  10 3
+> 2.46x 2.50x 2.55x
+> 2.68x
+> 2.77x
+> Original SCOPE
+
+Figure 8: Denoising time of Original versus SCOPE at varying video lengths. Left: SkyReels-V2 DF-1.3B (97–737 frames). Right: MAGI-1 4.5B-distill (120–480 frames). Annotations indicate the speedup at each frame count. 
+
+videos to ensure statistically meaningful comparisons. FlashAtten-tion [ 10 ] is enabled by default for all experiments. All experiments are conducted on a single NVIDIA A800 80GB GPU under the same inference setting. 
+
+## 4.4 Main Comparisons 
+
+Table 1 reports the main quantitative results on both target models, while Figure 5 shows representative qualitative comparisons. Across both SkyReels-V2 and MAGI-1, SCOPE delivers the strongest overall speed-quality tradeoff among the accelerated baselines. 
+
+Quantitative results. On SkyReels-V2, SCOPE-fast achieves 
+
+4.73 × speedup, significantly faster than FlowCache-fast. SCOPE-slow reaches the highest VBench score among the accelerated meth-ods at 81.57%. This is numerically close to the Original score of 81.51%; the 0.06 percentage-point difference lies within the natural variance of VBench, which aggregates 16 sub-dimensions where small perturbations in individual sub-dimension scores can cause minor fluctuations in either direction. We therefore interpret the two scores as effectively comparable. Methods that rely on whole-sale prediction or simple block-level reuse show substantial quality degradation, confirming that a binary cache-or-recompute par-adigm is insufficient for AR pipelines. On MAGI-1, SCOPE-fast 20 40                  
+
+> Peak GPU Memory (GB)
+> Original
+> TeaCache
+> FlowCache
+> Δ-DiT
+> TaylorSeer
+> SCOPE
+> 17.34 49.74
+> 22.88 51.87
+> 23.76 52.52
+> 23.42 55.09
+> 28.66 52.33
+> 24.80 51.62
+> 20 25 30 35
+> Peak GPU Memory (GB)
+> 20.70 27.47
+> 23.00 27.95
+> 22.97 28.94
+> 23.85 31.28
+> 23.20 27.91
+> 23.33 27.97
+> Short video Long video Per-method span
+
+Figure 9: Peak GPU memory comparison under short and long video generation. Left: SkyReels-V2 at 257 and 480 frames. Right: MAGI-1 at 240 and 480 frames. 
+
+delivers 2.55 × speedup with 76.32% VBench, while TeaCache-slow only achieves 1.28 × and FlowCache-fast reaches 1.75 × at a lower VBench of 74.88%. The gap is especially pronounced in LPIPS and SSIM, where SCOPE-slow outperforms the best competing method. The FLOPs reduction in Table 1 provides a complementary view of efficiency. On SkyReels-V2, SCOPE achieves 5.27 × FLOPs speedup versus 4.73 × time speedup, and on MAGI-1, it achieves 3.32 × versus 
+
+2.55 ×.
+
+Qualitative results. The qualitative comparison in Figure 5 further reveals that SCOPE preserves object structure, appearance fidelity, and scene consistency more reliably than aggressive reuse baselines. While TeaCache and TaylorSeer exhibit blurriness or structural distortion at higher speedups, SCOPE maintains visual quality comparable to the original output. Additional visual com-parisons are provided in the supplementary material. The radar chart for SkyReels-V2 in Figure 10 further shows that SCOPE occupies the strongest overall position across time-normalized efficiency and per-dimension quality metrics. We also evaluated SCOPE on the autoregressive image generation model Infinity [ 15 ], where it achieved a synchronized 1.56 × speedup with only small CLIPScore [ 37 ] and ImageReward [ 55 ] degradation, as detailed in the supplementary material. 
+
+## 4.5 Ablation and Diagnostics 
+
+Selective computation. Disabling selective computation reduces the speedup from 4.73 × to 3.72 × while improving LPIPS from 0.1900 to 0.1685, confirming that selective computation contributes a mean-ingful 1.27 × additional acceleration with a modest quality tradeoff. This shows that the spatial component provides an independent source of savings once the asynchronous frame activity is exposed. A stage-ratio study exploring different interval-ratio configurations is provided in the supplementary material. 
+
+Predictor variants. Comparing first-order Taylor, second-order Taylor, momentum, and auto-selection predictors reveals that the predictor choice has only a limited effect. On SkyReels-V2, all vari-ants achieve 4.73 –4.74 × speedup with LPIPS within 0.001 of each other. On MAGI-1, Taylor-2 provides a marginal improvement over Taylor-1. These results indicate that the main gain does not come from a fragile predictor choice. Instead, the contribution of the temporal branch is to turn prediction into a controlled intermedi-ate mode inside the tri-modal scheduler, for which several simple MM ’26, October 26–30, 2026, Melbourne, Australia Hanshuai Cui et al. VBench 
+
+> total
+> SSIM
+> PSNR
+> 20
+> 40
+> 60
+> 80
+> 100
+> Time
+> VBench
+> quality
+> VBench semantic
+> DeltaDiT
+> TaylorSeer
+> TeaCache
+> FlowCache
+> SCOPE
+
+Figure 10: Radar comparison under time and quality metrics. Original -50             
+
+> 1.00x
+> Original -10
+> 4.40x
+> SCOPE -50
+> 4.73x
+> "Sunset time lapse at the beach with moving clouds
+> and colors in the sky "
+
+Figure 11: Few-step reduced-step Original comparison at matched runtime targets. Table 3: Same-time quality comparison be-tween reduced-step Original and SCOPE on both models.                                     
+
+> Method Efficiency Quality Time (s) ↓Speedup ↑LPIPS ↓SSIM ↑PSNR ↑
+> SkyReels-V2
+> Original-50step 1452.41 1.00 ×0.0000 1.0000 ∞
+> Original-10step 330.08 4.40 ×0.4523 0.5842 14.52 SCOPE-50step 307.34 4.73 ×0.1900 0.7309 21.96
+> MAGI-1
+> Original-64step 791.08 1.00 ×0.0000 1.0000 ∞
+> Original-20step 332.66 2.38 ×0.2912 0.6723 17.48 SCOPE-64step 310.16 2.55 ×0.2456 0.6499 17.06
+
+extrapolators are already sufficient. The full predictor comparison table is provided in the supplementary material. 
+
+Decision timeline. Figure 6 visualizes the tri-modal decision distribution over denoising iterations for MAGI-1 and SkyReels-V2. Total 70 and Total 594 denote the total number of SCOPE denoising decisions over the full generation process. MAGI-1 follows a chunk-synchronized schedule, with Cache concentrated in early low-discrepancy steps, Predict in the middle, and Recompute near chunk transitions. SkyReels-V2 instead exhibits an asynchronous staircase pattern, which creates more Predict opportunities in the early and middle stages while requiring more frequent Recompute 
+
+near convergence. Despite these differences, the scheduler identifies intermediate steps suitable for Predict on both architectures. The larger share of skippable steps in SkyReels-V2 helps explain its higher time speedup under the same bounded skip horizon. 
+
+## 4.6 Sensitivity Analysis 
+
+Threshold sensitivity. Table 2 presents a sensitivity analysis across different cache thresholds 𝜏 𝑐 and prediction thresholds 𝜏 𝑝 for both models. On SkyReels-V2, increasing (𝜏 𝑐 , 𝜏 𝑝 ) from (0.12, 0.30) to (0.25, 0.55) smoothly trades quality for speed, ranging from 4.11 ×
+
+at 0.1723 LPIPS to 5.54 × at 0.2399 LPIPS. On MAGI-1, the tradeoff is steeper: the most aggressive setting (0.08, 0.15) reaches 3.03 ×
+
+but with 0.3077 LPIPS. These results show that SCOPE is robust to threshold selection within a reasonable range, with the paper-core settings representing a practical sweet spot. 
+
+Bounded skip length. We analyze the sensitivity of SCOPE to the bounded skip length 𝐻 in Fig. 7. Increasing 𝐻 consistently reduces runtime but also lowers 1 −LPIPS , SSIM, and PSNR, making 
+
+𝐻 the main control knob for the efficiency-quality trade-off. The sensitivity is model dependent: MAGI-1 degrades more sharply as 
+
+𝐻 increases, whereas SkyReels-V2 remains more stable over mod-erate skip lengths. This suggests that 𝐻 should be tuned separately for each backbone. Exact numerical results are provided in the supplementary material. 
+
+## 4.7 Scalability Analysis 
+
+Video length scaling. Figure 8 compares the denoising time of Original and SCOPE across different video lengths on both target models. On SkyReels-V2, the speedup grows steadily from 4.02 × at 97 frames to 5.01 × at 737 frames. On MAGI-1, a similar trend holds: the speedup rises from 2.46 × at 120 frames to 2.77 × at 480 frames. In both cases, longer videos yield higher acceleration because addi-tional AR chunks introduce more denoising iterations where the predictive caching policy can skip redundant computation. This confirms that SCOPE scales favorably with video length rather than saturating at a fixed speedup ratio. 
+
+Peak GPU memory. Figure 9 reports peak GPU memory for short and long video generation, where short and long correspond to 257 and 480 frames on SkyReels-V2 and 240 and 480 frames on MAGI-1, respectively. On short videos, all caching-based meth-ods incurred comparable overhead relative to Original. SCOPE used 24.80 GB versus 17.34 GB on SkyReels-V2 and 23.33 GB versus 20.70 GB on MAGI-1, in line with TeaCache and FlowCache. On long videos, the memory gap narrowed as model activations domi-nated the budget, with all methods clustering between 49–55 GB on SkyReels-V2 and 27–31 GB on MAGI-1. Δ-DiT showed the highest overhead on MAGI-1 due to its block-level reuse buffers. Over-all, SCOPE achieved the strongest speed-quality tradeoff without introducing disproportionate memory cost. 
+
+## 4.8 Same-Time Original Step Reduction 
+
+Table 3 compares SCOPE against reduced-step Original baselines matched to nearby runtime targets. For SkyReels-V2, the nearest reduced-step baseline uses 10 denoising steps, and for MAGI-1 it uses 20 steps. The results show that on SkyReels-V2, reduced-step Original is both slower and substantially lower in quality than the matched SCOPE configuration. On MAGI-1, the reduced-step baseline is still slower and exhibits worse LPIPS. This gap arises because naively reducing denoising steps removes entire trajectory segments, breaking the smooth evolution that the ODE integrator relies on, whereas SCOPE preserves the full trajectory and only approximates intermediate states via local extrapolation. Figure 11 visualizes this comparison. 
+
+## 5 Conclusion 
+
+We presented SCOPE, a training-free acceleration framework for autoregressive video diffusion that addressed temporal redundancy across denoising steps and spatial redundancy within the current valid interval. SCOPE combines a tri-modal scheduler over Cache ,
+
+Predict , and Recompute with selective computation that restricts execution to the active frame interval. Across MAGI-1 and SkyReels-V2, SCOPE achieved up to 4.73 × speedup while preserving near-lossless VBench quality, outperforming all training-free baselines SCOPE MM ’26, October 26–30, 2026, Melbourne, Australia 
+
+in the overall speed-quality tradeoff. A current limitation is that the operating point still requires per-model threshold calibration, which reduces direct transferability across architectures. Future work will explore learned predictor selection and integration with orthogonal attention-level acceleration to further improve generality. 
+
+## References 
+
+[1] Fan Bao, Shen Nie, Kaiwen Xue, Yue Cao, Chongxuan Li, Hang Su, and Jun Zhu. 2023. All are worth words: A vit backbone for diffusion models. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition . 22669–22679. [2] Omer Bar-Tal, Hila Chefer, Omer Tov, Charles Herrmann, Roni Paiss, Shiran Zada, Ariel Ephrat, Junhwa Hur, Guanghui Liu, Amit Raj, et al . 2024. Lumiere: A space-time diffusion model for video generation. In SIGGRAPH Asia 2024 Conference Papers . 1–11. [3] Andreas Blattmann, Tim Dockhorn, Sumith Kulal, Daniel Mendelevitch, Maciej Kilian, Dominik Lorenz, Yam Levi, Zion English, Vikram Voleti, Adam Letts, et al . 2023. Stable video diffusion: Scaling latent video diffusion models to large datasets. arXiv preprint arXiv:2311.15127 (2023). [4] Daniel Bolya, Cheng-Yang Fu, Xiaoliang Dai, Peizhao Zhang, Christoph Feicht-enhofer, and Judy Hoffman. 2023. Token Merging: Your ViT But Faster. In The Eleventh International Conference on Learning Representations .[5] Tim Brooks, Bill Peebles, Connor Holmes, Will DePue, Yufei Guo, Leo Jing, David Schnurr, Joe Taylor, Troy Luhman, Eric Luhman, et al . 2024. Video generation models as world simulators. OpenAI Blog 1, 8 (2024), 1. [6] Boyuan Chen, Diego Martí Monsó, Yilun Du, Max Simchowitz, Russ Tedrake, and Vincent Sitzmann. 2024. Diffusion forcing: Next-token prediction meets full-sequence diffusion. Advances in Neural Information Processing Systems 37, 24081–24125. [7] Guibin Chen, Dixuan Lin, Jiangping Yang, Chunze Lin, Junchen Zhu, Mingyuan Fan, Hao Zhang, Sheng Chen, Zheng Chen, Chengcheng Ma, et al . 2025. Skyreels-v2: Infinite-length film generative model. arXiv preprint arXiv:2504.13074 (2025). [8] Pengtao Chen, Mingzhu Shen, Peng Ye, Jianjian Cao, Chongjun Tu, Christos-Savvas Bouganis, Yiren Zhao, and Tao Chen. 2024. Δ-DiT: A Training-Free Acceleration Method Tailored for Diffusion Transformers. arXiv preprint arXiv:2406.01125 .[9] Tri Dao. 2024. FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning. In The Twelfth International Conference on Learning Represen-tations .[10] Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. 2022. Flashat-tention: Fast and memory-efficient exact attention with io-awareness. Advances in neural information processing systems 35, 16344–16359. [11] Prafulla Dhariwal and Alexander Nichol. 2021. Diffusion models beat gans on image synthesis. Advances in neural information processing systems 34, 8780– 8794. [12] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xi-aohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et al . 2021. An Image is Worth 16x16 Words: Trans-formers for Image Recognition at Scale. In International Conference on Learning Representations .[13] Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al . 2024. Scaling rectified flow transformers for high-resolution image synthesis. In Forty-first international conference on machine learning .[14] Yuwei Guo, Ceyuan Yang, Anyi Rao, Zhengyang Liang, Yaohui Wang, Yu Qiao, Maneesh Agrawala, Dahua Lin, and Bo Dai. 2024. AnimateDiff: Animate Your Personalized Text-to-Image Diffusion Models without Specific Tuning. In The Twelfth International Conference on Learning Representations .[15] Jian Han, Jinlai Liu, Yi Jiang, Bin Yan, Yuqi Zhang, Zehuan Yuan, Bingyue Peng, and Xiaobing Liu. 2025. Infinity: Scaling bitwise autoregressive modeling for high-resolution image synthesis. In Proceedings of the Computer Vision and Pattern Recognition Conference . 15733–15744. [16] Yingqing He, Tianyu Yang, Yong Zhang, Ying Shan, and Qifeng Chen. 2022. Latent video diffusion models for high-fidelity long video generation. arXiv preprint arXiv:2211.13221 (2022). [17] Jonathan Ho, William Chan, Chitwan Saharia, Jay Whang, Ruiqi Gao, Alexey Gritsenko, Diederik P Kingma, Ben Poole, Mohammad Norouzi, David J Fleet, et al . 2022. Imagen video: High definition video generation with diffusion models. 
+
+arXiv preprint arXiv:2210.02303 (2022). [18] Jonathan Ho, Ajay Jain, and Pieter Abbeel. 2020. Denoising diffusion probabilistic models. Advances in neural information processing systems 33, 6840–6851. [19] Jonathan Ho, Tim Salimans, Alexey Gritsenko, William Chan, Mohammad Norouzi, and David J Fleet. 2022. Video diffusion models. Advances in neu-ral information processing systems 35, 8633–8646. [20] Wenyi Hong, Ming Ding, Wendi Zheng, Xinghan Liu, and Jie Tang. 2023. CogVideo: Large-scale Pretraining for Text-to-Video Generation via Transform-ers. In The Eleventh International Conference on Learning Representations .[21] Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si, Yuming Jiang, Yuan-han Zhang, Tianxing Wu, Qingyang Jin, Nattapol Chanpaisit, et al . 2024. Vbench: Comprehensive benchmark suite for video generative models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition . 21807– 21818. [22] Kumara Kahatapitiya, Haozhe Liu, Sen He, Ding Liu, Menglin Jia, Chenyang Zhang, Michael S Ryoo, and Tian Xie. 2025. Adaptive caching for faster video generation with diffusion transformers. (2025), 15240–15252. [23] Tianhong Li, Yonglong Tian, He Li, Mingyang Deng, and Kaiming He. 2024. Autoregressive image generation without vector quantization. Advances in Neural Information Processing Systems 37, 56424–56445. [24] Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. 2023. Flow Matching for Generative Modeling. In International Conference on Learning Representations (ICLR) .[25] Feng Liu, Shiwei Zhang, Xiaofeng Wang, Yujie Wei, Haonan Qiu, Yuzhong Zhao, Yingya Zhang, Qixiang Ye, and Fang Wan. 2025. Timestep Embedding Tells: It’s Time to Cache for Video Diffusion Model. In Proceedings of the Computer Vision and Pattern Recognition Conference . 7353–7363. [26] Jiacheng Liu, Chang Zou, Yuanhuiyi Lyu, Junjie Chen, and Linfeng Zhang. 2025. From reusing to forecasting: Accelerating diffusion models with taylorseers. In 
+
+Proceedings of the IEEE/CVF International Conference on Computer Vision . 15853– 15863. [27] Jiacheng Liu, Chang Zou, Yuanhuiyi Lyu, Fei Ren, Shaobo Wang, Kaixin Li, and Linfeng Zhang. 2025. Speca: Accelerating diffusion transformers with speculative feature caching. In Proceedings of the 33rd ACM International Conference on Multimedia . 10024–10033. [28] Xingchao Liu, Chengyue Gong, et al . 2023. Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow. In The Eleventh International Conference on Learning Representations .[29] Xingchao Liu, Xiwen Zhang, Jianzhu Ma, Jian Peng, et al . 2023. Instaflow: One step is enough for high-quality diffusion-based text-to-image generation. In The Twelfth International Conference on Learning Representations .[30] Simian Luo, Yiqin Tan, Longbo Huang, Jian Li, and Hang Zhao. 2023. Latent consistency models: Synthesizing high-resolution images with few-step inference. 
+
+arXiv preprint arXiv:2310.04378 (2023). [31] Zhengyao Lv, Chenyang Si, Junhao Song, Zhenyu Yang, Yu Qiao, Ziwei Liu, and Kwan-Yee K Wong. 2024. Fastercache: Training-free video diffusion model acceleration with high quality. arXiv preprint arXiv:2410.19355 (2024). [32] Xinyin Ma, Gongfan Fang, Michael Bi Mi, and Xinchao Wang. 2024. Learning-to-cache: Accelerating diffusion transformer via layer caching. Advances in Neural Information Processing Systems 37, 133282–133304. [33] Yuexiao Ma, Xuzhe Zheng, Jing Xu, Xiwei Xu, Feng Ling, Xiawu Zheng, Huafeng Kuang, Huixia Li, Xing Wang, Xuefeng Xiao, et al . 2026. Flow caching for autoregressive video generation. arXiv preprint arXiv:2602.10825 (2026). [34] Alexander Quinn Nichol and Prafulla Dhariwal. 2021. Improved denoising diffu-sion probabilistic models. In International conference on machine learning . PMLR, 8162–8171. [35] William Peebles and Saining Xie. 2023. Scalable diffusion models with transform-ers. In Proceedings of the IEEE/CVF international conference on computer vision .4195–4205. [36] Adam Polyak, Amit Zohar, Andrew Brown, Andros Tjandra, Animesh Sinha, Ann Lee, Apoorv Vyas, Bowen Shi, Chih-Yao Ma, Ching-Yao Chuang, et al . 2024. Movie gen: A cast of media foundation models. arXiv preprint arXiv:2410.13720 
+
+(2024). [37] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al . 2021. Learning transferable visual models from natural language supervision. In International conference on machine learning . PmLR, 8748–8763. [38] Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer. 2022. High-resolution image synthesis with latent diffusion models. In 
+
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition .10684–10695. [39] Tim Salimans and Jonathan Ho. 2022. Progressive Distillation for Fast Sampling of Diffusion Models. In International Conference on Learning Representations .[40] Noam Shazeer. 2019. Fast transformer decoding: One write-head is all you need. 
+
+arXiv preprint arXiv:1911.02150 (2019). [41] Uriel Singer, Adam Polyak, Thomas Hayes, Xi Yin, Jie An, Songyang Zhang, Qiyuan Hu, Harry Yang, Oron Ashual, Oran Gafni, et al . 2023. Make-A-Video: Text-to-Video Generation without Text-Video Data. In The Eleventh International Conference on Learning Representations .[42] Junhyuk So, Jungwon Lee, and Eunhyeok Park. 2024. Frdiff: Feature reuse for universal training-free acceleration of diffusion models. In European Conference on Computer Vision . Springer, 328–344. [43] Jiaming Song, Chenlin Meng, and Stefano Ermon. 2021. Denoising Diffusion Implicit Models. In International Conference on Learning Representations .MM ’26, October 26–30, 2026, Melbourne, Australia Hanshuai Cui et al. 
+
+[44] Yang Song, Prafulla Dhariwal, Mark Chen, and Ilya Sutskever. 2023. Consistency models. In Proceedings of the 40th International Conference on Machine Learning .32211–32252. [45] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Ste-fano Ermon, and Ben Poole. 2021. Score-Based Generative Modeling through Stochastic Differential Equations. In International Conference on Learning Repre-sentations .[46] Mingzhen Sun, Weining Wang, Gen Li, Jiawei Liu, Jiahui Sun, Wanquan Feng, Shanshan Lao, SiYu Zhou, Qian He, and Jing Liu. 2025. Ar-diffusion: Asyn-chronous video generation with auto-regressive diffusion. In Proceedings of the Computer Vision and Pattern Recognition Conference . 7364–7373. [47] Hansi Teng, Hongyu Jia, Lei Sun, Lingzhi Li, Maolin Li, Mingqiu Tang, Shuai Han, Tianning Zhang, WQ Zhang, Weifeng Luo, et al . 2025. Magi-1: Autoregressive video generation at scale. arXiv preprint arXiv:2505.13211 (2025). [48] Keyu Tian, Yi Jiang, Zehuan Yuan, Bingyue Peng, and Liwei Wang. 2024. Visual autoregressive modeling: Scalable image generation via next-scale prediction. 
+
+Advances in neural information processing systems 37, 84839–84865. [49] Alexander Tong, Kilian Fatras, Nikolay Malkin, Guillaume Huguet, Yanlei Zhang, Jarrid Rector-Brooks, Guy Wolf, and Yoshua Bengio. 2024. Improving and gener-alizing flow-based generative models with minibatch optimal transport. Transac-tions on Machine Learning Research (2024), 1–34. [50] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. 2017. Attention is all you need. Advances in neural information processing systems 30. [51] Yaohui Wang, Xinyuan Chen, Xin Ma, Shangchen Zhou, Ziqi Huang, Yi Wang, Ceyuan Yang, Yinan He, Jiashuo Yu, Peiqing Yang, et al . 2025. Lavie: High-quality video generation with cascaded latent diffusion models. International Journal of Computer Vision 133, 5 (2025), 3059–3078. [52] Zhou Wang, Alan C Bovik, Hamid R Sheikh, and Eero P Simoncelli. 2004. Image quality assessment: from error visibility to structural similarity. IEEE transactions on image processing 13, 4 (2004), 600–612. [53] Felix Wimbauer, Bichen Wu, Edgar Schoenfeld, Xiaoliang Dai, Ji Hou, Zijian He, Artsiom Sanakoyeu, Peizhao Zhang, Sam Tsai, Jonas Kohler, et al . 2024. Cache me if you can: Accelerating diffusion models through block caching. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition . 6211–6220. [54] Yiming Wu, Zhenghao Chen, Huan Wang, and Dong Xu. 2025. Individual Con-tent and Motion Dynamics Preserved Pruning for Video Diffusion Models. In 
+
+Proceedings of the 33rd ACM International Conference on Multimedia . 9714–9723. [55] Jiazheng Xu, Xiao Liu, Yuchen Wu, Yuxuan Tong, Qinkai Li, Ming Ding, Jie Tang, and Yuxiao Dong. 2023. Imagereward: Learning and evaluating human prefer-ences for text-to-image generation. Advances in Neural Information Processing Systems 36 (2023), 15903–15935. [56] Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng Xu, Yuanming Yang, Wenyi Hong, Xiaohan Zhang, Guanyu Feng, et al . 2024. Cogvideox: Text-to-video diffusion models with an expert transformer. arXiv preprint arXiv:2408.06072 (2024). [57] Tianwei Yin, Michaël Gharbi, Richard Zhang, Eli Shechtman, Fredo Durand, William T Freeman, and Taesung Park. 2024. One-step diffusion with distribution matching distillation. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition . 6613–6623. [58] Tianwei Yin, Qiang Zhang, Richard Zhang, William T Freeman, Fredo Durand, Eli Shechtman, and Xun Huang. 2025. From slow bidirectional to fast autoregressive video diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition . 22963–22974. [59] Richard Zhang, Phillip Isola, Alexei A Efros, Eli Shechtman, and Oliver Wang. 2018. The unreasonable effectiveness of deep features as a perceptual metric. In Proceedings of the IEEE conference on computer vision and pattern recognition .586–595. [60] Wentian Zhang, Haozhe Liu, Jinheng Xie, Francesco Faccio, Mike Zheng Shou, and Jürgen Schmidhuber. 2024. Cross-attention makes inference cumbersome in text-to-image diffusion models. arXiv e-prints (2024), arXiv–2404. [61] Xuanlei Zhao, Xiaolong Jin, Kai Wang, and Yang You. 2024. Real-time video generation with pyramid attention broadcast. arXiv preprint arXiv:2408.12588 
+
+(2024). [62] Zangwei Zheng, Xiangyu Peng, Tianji Yang, Chenhui Shen, Shenggui Li, Hongxin Liu, Yukun Zhou, Tianyi Li, and Yang You. 2024. Open-sora: Democratizing efficient video production for all. arXiv preprint arXiv:2412.20404 (2024).

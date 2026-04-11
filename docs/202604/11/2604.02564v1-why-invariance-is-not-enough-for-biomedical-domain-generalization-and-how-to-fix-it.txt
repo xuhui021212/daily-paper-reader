@@ -1,0 +1,836 @@
+Title: Why Invariance is Not Enough for Biomedical Domain Generalization and How to Fix It
+
+URL Source: https://arxiv.org/pdf/2604.02564v1
+
+Published Time: Mon, 06 Apr 2026 00:17:16 GMT
+
+Number of Pages: 36
+
+Markdown Content:
+# Why Invariance is Not Enough for Biomedical Domain Generalization and How to Fix It 
+
+Sebo Diaz 1, Polina Golland 1, Elfar Adalsteinsson 1, and Neel Dey 1,2,3 
+
+> 1
+
+Massachusetts Institute of Technology, Cambridge, MA, USA  
+
+> 2
+
+Harvard Medical School, Boston, MA, USA  
+
+> 3
+
+Massachusetts General Hospital, Boston, MA, USA 
+
+{sdd,polina,elfar,dey}@mit.edu 
+
+Abstract. We present DropGen , a simple and theoretically-grounded approach for domain generalization in 3D biomedical image segmentation. Modern segmentation models degrade sharply under shifts in modality, disease severity, clinical sites, and other factors, creating brittle models that limit reliable deployment. Existing domain generalization methods rely on extreme augmentations, mixing domain statistics, or architec-tural redesigns, yet incur significant implementation overhead and yield inconsistent performance across biomedical settings. DropGen instead proposes a principled learning strategy with minimal overhead that lever-ages both source-domain image intensities and domain-stable foundation model representations to train robust segmentation models. As a result, 
+
+DropGen achieves strong gains in both fully supervised and few-shot segmentation across a broad range of shifts in biomedical studies. Unlike prior approaches, DropGen is architecture- and loss-agnostic, compatible with standard augmentation pipelines, computationally lightweight, and tackles arbitrary anatomical regions. Its implementation is freely available at https://github.com/sebodiaz/DropGen. 
+
+## 1 Introduction 
+
+Medical image segmentation is considered largely solved in controlled environ-ments: with a few hundred labeled examples, strong augmentation, and a good training recipe, models achieve high performance when the test data is from a similar domain as its training samples [29, 32]. Unfortunately, real-world de-ployment is far less forgiving. Annotated medical datasets are often small, and domain shifts in disease prevalence, patient populations, imaging sites, acquisition parameters, and modalities all significantly degrade performance, necessitating costly, time-consuming cycles of retraining and new manual annotations. 
+
+Domain generalization (DG) methods aim to address these shifts during train-ing, aiming to eliminate the need for retraining on distribution-shifted test data. Data-level DG uses extreme augmentations [47] or style transfer [75] to expand the diversity of the available training samples, but cannot guarantee coverage of un-seen target domains or remain compatible with standard augmentation pipelines. Model-level methods modify training architectures or strategies to mix feature       
+
+> arXiv:2604.02564v1 [eess.IV] 2 Apr 2026 2Diaz et al.  
+> Fig. 1: Training on Stable Representations. When trained on in-domain CT (A, top) and tested on out-of-domain MRI (A, bottom), standard ERM models produce representations that are unstable under domain shifts (B). Although performant on unseen in-domain data (E, top), this instability leads to degraded performance on new out-of-distribution images (E, bottom). DropGen instead jointly trains on both
+> in-domain image intensities (A, top) and stable, domain-invariant representations extracted by foundation models (C, top) and regularizes this combination. Grounded and motivated by our theoretical analyses, this framework enables training robust segmentors that generalize new domains automatically without any adaptation (F, bottom). Representations were visualized by mapping 3 arbitrary channels to RGB.
+
+statistics across domains [75, 76], but incur significant computational costs and implicitly assume that the target data lies within the span of the training domains. Further, semi- and unsupervised domain adaptation methods typically finetune, adapt, or train image translation models on each new (potentially unlabeled) target domain at test time [7, 8, 36, 60]. Critically, adaptation approaches demand substantial machine learning expertise and infrastructure, and require repeated effort for each new domain, limiting their practicality for biomedical users. Recent foundation models for interactive biomedical segmentation have shown strong performance by training on large, diverse datasets using clicks, scribbles, bounding boxes, and more as prompts [5, 20, 30, 62, 63]. However, they do not scale to fully automated workflows: prompting thousands of images is infeasi-ble in clinical practice, and interactive segmentation models often struggle on underrepresented domains, even with user inputs. In particular, anatomix [12] is a synthetically-trained 3D foundation model that extracts task-agnostic rep-resentations that are stable under nuisance imaging variations ( e.g ., scanner types, modalities, acquisition protocols). While training a segmentation model on its domain-invariant representations (instead of image intensities) could enable domain generalization, we find that it does not consistently outperform just using the raw images with extensive data augmentation (Sec. 4.3 and Fig. 4). This performance gap motivates the need for combining stable, domain-invariant representations with in-domain image intensities to train robust pre-dictors that generalize. Prior work [16, 34] shows that this combined approach can improve robustness, but assumes access to test data by design and requires finetuning or adaptation on each new task, which, again, cannot be practically ex-ecuted in clinical applications. In this paper, we develop an algorithm that trains DropGen 3
+
+robust segmentors combining in-domain and domain-invariant representations, 
+
+without needing any test-time adaptation. 
+
+Contributions. We present DropGen , a simple and effective domain generaliza-tion method for arbitrary domain shifts. DropGen trains robust segmentation models that leverage both the in-domain image intensities and stable, domain-invariant representations extracted by foundation models [12]. We provide a theoretical and empirical analysis of feature combination under distribution shift, and find näive combination induces shortcut learning, where models over-rely on in-domain features and fail to generalize out-of-distribution. To achieve the best of both worlds, we propose a simple, principled regularization mechanism to prevent this shortcut and force the model to jointly exploit both sources of information. Experimentally, DropGen achieves excellent performance across multiple highly variable biomedical applications and data availability settings, enabling reliable segmentation when applied to new domains. Further, DropGen 
+
+does not require test time adaptation, yet performs competitively with methods that do retrain on (unlabeled) target-domain data. 
+
+## 2 Related Work 
+
+Domain Generalization (DG). DG methods aim to learn domain-invariant segmentors before deployment. Data-level DG methods often use strong data augmentation to expand the training domain, such as convolving images with ran-domly initialized filters [47, 65], stitching samples [69], and incorporating spatial mixing [47], among others [10]. Other model-level DG approaches modify archi-tectures or losses to reduce sensitivity to spurious cues [28, 75, 76]. When domain labels are available ( e.g ., imaging sites or sequences), DG methods can explicitly incorporate domain differences into their modeling or architectures [27, 44, 55, 76]. However, DG methods often add non-trivial computational overhead, do not reliably transfer across applications, may conflict with standard training pipelines, and explicit domain labels are rare in medical imaging datasets. DropGen avoids this dependency on domain labels, requires minimal extra computation, and is fully generic w.r.t. target applications, improving both the practicality and deployment flexibility of DG segmentation. 
+
+Unsupervised Domain Adaptation (UDA). UDA methods address do-main shifts by adapting models at deployment using unlabeled test data. Many approaches optimize surrogate losses that encourage confident or consistent pre-dictions, leveraging auxiliary tasks [54], entropy minimization [60], batch statistics updates [14, 58], augmentation consistency [61], or contrastive regularization [8]. Others focus on aligning feature distributions, either statistically [7, 35, 36, 53, 74] or via adversarial training [57]. Pseudo-labeling frameworks similarly use confident predictions as weak supervision [64, 68, 70, 73, 77]. However, these ad hoc strate-gies often fail to generalize beyond their intended domain shifts and anatomical regions and require considerable machine learning expertise and infrastructure to use, limiting their deployment. In contrast, DropGen does not require test time adaptation and generically handles arbitrary domain shifts and applications. 4 Diaz et al. 
+
+Domain Randomization (DR). DR [18, 22, 56] generates diverse, unrealistic 
+
+synthetic training data by sampling random image intensities within application-specific label maps. By training on heterogeneous data, these approaches achieve robust segmentation [3, 9, 11, 40, 67], registration [17, 23, 24], and pose estima-tion [13]. However, DR methods need to be trained for each biomedical application and require dense label maps, which are often unavailable. Our work builds exten-sively on a DR-based foundation model [12] that provides an application-agnostic 
+
+representation extractor and thereby enables pan-dataset deployment. 
+
+Promptable Foundation Models (PFMs). By training on broad aggregated datasets, recent large-scale promptable models [38, 49] generate segmentation masks conditioned on user inputs such as clicks, bounding boxes, or text, enabling flexible segmentation without task-specific retraining [5,25,30,63]. However, most PFMs operate on 2D slices and require per-image prompting, limiting their practicality for large studies involving thousands of images. Further, they do not exhibit domain-invariance by design and underperform when faced with distribution shifts, making them unsuitable for general-purpose feature extraction. 
+
+Exploiting Stable Representations. Prior work in non-medical settings has explored obtaining and leveraging stable, domain-invariant representations, typically by solving a constrained optimization problem to minimize risk across all training domains [2]. However, the resulting representations can underperform on several tasks, as optimizing for cross-domain stability discards valuable domain-specific information [16, 50, 52, 72]. The key challenge is therefore not choosing between invariant and domain-specific information, but effectively utilizing both sources. Recent work trains two separate models, one capturing stable and one capturing unstable representations, and combines them at test time [16, 34]. However, these two-stage, two-model pipelines are both computationally expensive and may require careful domain-specific tuning at test time. DropGen sidesteps these complications by learning a single predictor at training time alone. 
+
+## 3 Methods and Analysis 
+
+Preliminaries. Let X and Y be the input and label spaces, respectively. Consider data generated from multiple environments, where each environment e ∈ E (e.g ., scanner, modality) induces a joint distribution Pe over X × Y , with training environments Etrain ⊆ E . We assume that environment labels of Etrain are not available during training, as clinical datasets often lack reliable or relevant metadata. A predictor hθ observes only pooled data Dtrain = {(xi, y i)}Ni=1 , where each latent environment ei ∈ E train is unobserved. Empirical Risk Minimization (ERM) [51, 59] optimizes θ∗ = arg min θ E(x,y )∼¯P
+
+ℓ(hθ (x), y ), where ℓ is the loss and ¯P is a mixture of training environments. We aim to learn an hθ that generalizes to unseen environments Etest ⊆ E \ E train without access to any subset of E at train or test time. We first state the algorithm in Sec. 3.1 and then provide analysis in motivation Sec. 3.2. DropGen 5                
+
+> 1feature_ex = load_feature_extractor(trainable= False ) # f_phi
+> 2train_net = initialize_model(trainable= True ) # h_theta
+> 3for (images, labels) in dataloader: # (x_u, Y)
+> 4optimizer.zero_grad()
+> 5with torch.no_grad():
+> 6features = feature_ex(images) # x_s
+> 7inputs = torch.cat([images, features], dim=1) # z
+> 8inputs = F.dropout3d(inputs, p=drop_prob) # \tilde{z}
+> 9outputs = train_net(inputs)
+> 10 loss = loss_fn(outputs, labels)
+> 11 loss.backward()
+> 12 optimizer.step()
+
+Y E
+
+Xs Xu 
+
+> invariant
+> shifts
+> stable unstable
+> environment label
+
+Fig. 2: Method overview. Left: Given a standard PyTorch training loop, the green lines are the only additions required, demonstrating DropGen ’s simplicity. Right : The probabilistic graphical model we use for domain generalization. Label Y generates both stable Xs and unstable Xu variables and the environment E influences only Xu.
+
+3.1 Methods 
+
+DropGen is outlined in Figure 2 alongside our graphical model assumptions. It comprises three key components: domain invariant representation extraction, combination with image intensities, and regularizing the combination to prevent shortcuts. 
+
+Stable Representation Extractor. Let fϕ : X → S denote a representation extractor parameterized by ϕ, mapping inputs x ∈ R1×H×W ×D to representations 
+
+s = fϕ(x) ∈ Rd×H×W ×D where d is the embedding dimension and H, W , and D
+
+indicate the spatial dimensions. Modern foundation models obtain transferable representations that can be used in our setting [12, 30]. In particular, the repre-sentation extractor we use in our primary experiments produces approximately invariant (stable) representations [12], i.e ., fϕ(xe) ≈ fϕ(xe′ ) ∀ e, e ′ ∈ E .
+
+Combining Sources of Information. At test time, prior work combines S
+
+and X by merging logits from models trained separately on S and X or by using a modeled trained on S as a pseudo-labeler to finetune a model trained on 
+
+X [16, 34]. To avoid test time adaptation or training separate models for each source of information, we instead provide the predictor with an input that contains both the raw image and the representation extractor’s outputs: z = concat (x, f ϕ(x)) ∈
+
+R(1+ d)×H×W ×D . The predictor hθ : Z → Y then operates on z directly. We write 
+
+xu := x for the unstable source and xs := fϕ(x) for the stable source, such that 
+
+z = ( xu, x s). In the analysis that follows, we use Xu, X s, and Z to denote the corresponding random variables. 
+
+Regularizing the combination. Directly training hθ on z using ERM does not solve the generalization problem. As xu contains in-domain signal, the predictor trained with an in-domain loss (ERM) is incentivized to rely on the in-domain features xu and ignore the domain-invariant features xs. To prevent this, we randomly mask different channels (features) of z during training. As hθ is now trained on only partial views of z that may or may not include xu, it cannot ignore 6 Diaz et al. 
+
+the stable inputs xs, as shown below. In practice, we apply channel dropout such that each of the (1 + d) channels in z has a probability p of being dropped out. 
+
+3.2 Analysis 
+
+While channel dropout might intuitively prevent overfitting to either information source, does it structurally prevent overfitting to Xu? Further, is this added complexity over training on the domain-invariant Xs alone justified? Here we investigate the following questions: 1. Does channel dropout structurally force hθ to use Xs? (Proposition 1) 2. Does training on (Xu, X s) improve over training on Xs alone? (Proposition 2) In the analysis below, H(·) denotes entropy, H(· | · ) conditional entropy, and 
+
+I(·; ·) mutual information. Because hθ operates on the concatenation (Xu, X s),its first-layer weights are partitioned into slices Wu and Ws corresponding to the unstable and stable inputs, respectively. This holds for any architecture whose first layer is linear in the input, including CNNs and ViTs. We make the following assumptions, the first three of which follow [16]: 
+
+Assumption 1 (Stable inputs) Y ⊥ E | Xs, i.e ., the stable inputs encode information about Y that is environment-invariant. 
+
+Assumption 2 (Unstable inputs) Y̸ ⊥ E | Xu, i.e ., the relationship between the in-domain input Xu and Y depends on the environment. 
+
+Assumption 3 (Complementary information) Y̸ ⊥e Xu | Xs for every e ∈E, where ⊥e denotes conditional independence under Pe, i.e ., in each environment 
+
+Xu carries task-relevant information beyond what Xs provides. 
+
+Assumption 4 (Informative stable inputs) I(Y ; Xs) > 0, i.e ., Xs possesses nonzero predictive information about Y .
+
+Assumptions 1–3 are explicit in the graphical model (Fig. 2, right). Assumption 4 avoids trivially domain stable inputs ( e.g ., all constant values). 
+
+Remark 1 (Shortcut Learning). Assumptions 2 and 3 imply that Xu carries in-domain predictive signal for Y , but the relationship shifts across environments. Given both (Xu, X s), the model is incentivized to primarily use Xu due to its predictive in-domain signal when training with an in-domain loss, thereby ignoring Xs and consequently failing at test-time when the environment changes. We hypothesize that shortcut learning is not due to the stable inputs being uninformative across environments, but is caused by the training objective focusing only on the training environments, an observation we empirically validate in Section 4. In the following, we show that channel dropout as a feature combiner is a principled strategy to regularize the use of both Xu and Xs and mitigates these harmful effects. DropGen 7
+
+Channel Dropout as a Minimal Intervention. For our analysis, we make the simplifying assumption that channel dropout masks either all feature channels of the representation extractor or just the original input. Let M = ( Mu, M s) ∈{0, 1}2 \ { (0 , 0) }, be a random channel mask sampled independently of (x, y ).Writing the masked input as ˜z := ( Mu xu, Ms xs), the training objective is 
+
+L(θ) = E(x,y )∼¯P EM
+
+ ℓ hθ ( ˜z), y  . Let Rμ(θ) := E(x,y )∼¯P
+
+ℓ hθ (μ ⊙ z), y  denote the risk under a fixed mask μ ∈ { (1 , 1) , (1 , 0) , (0 , 1) }, and let πμ := P(M = μ).Then, the training objective additively decomposes as, 
+
+L(θ) = X
+
+> μ
+
+πμ Rμ(θ), μ ∈ { (1 , 1) , (1 , 0) , (0 , 1) }. (1) which is a convex combination of the joint, unstable, and stable risks, respectively. Note that, with channel dropout, R(0 ,1) penalizes solutions that ignore xs, directly counteracting the shortcut learning described in Remark 1. 
+
+Condition 1 (Non-conflicting interaction) For any θ∗ where hθ∗ ignores 
+
+Xs, the gradient of the joint risk R(1 ,1) w.r.t. the stable channel kernel slices Ws
+
+does not oppose the corresponding gradient of the stable-only risk R(0 ,1) :
+
+D
+
+∇Ws R(1 ,1) (θ∗), ∇Ws R(0 ,1) (θ∗)
+
+E
+
+≥ 0.
+
+Remark 2. Condition 1 states that for a solution that ignores Xs, incorporating 
+
+Xs does not hurt prediction when both Xu and Xs are available. To see why this is mild, note that for such a θ∗, the first-layer activation under mask (1 , 1) 
+
+reduces to σ(Wu ⋆ X u), identical to the (1 , 0) regime, because Ws is effectively zero. Activating Ws introduces an additive signal Ws ⋆ X s inside the nonlinearity that carries information about Y (Assumption 4) and is environment-invariant (Assumption 1). Violating this condition would require that this additional informative, domain-stable signal actively degrades prediction, a scenario in which the model is harmed by receiving strictly more task-relevant information. 
+
+Proposition 1 (Stationarity forces use of stable inputs). Given Assump-tions 1–4, let hθ be a model whose first layer computes: a(1) = σ(Wu ⋆X u +Ws ⋆X s)
+
+where Wu, W s denote the first-layer kernel slices corresponding to the unstable and stable input channels, respectively, ⋆ is cross-correlation, and σ is a point-wise non-linearity. Let ℓ be a proper scoring rule, that is differentiable w.r.t. 
+
+θ. Suppose the function class {hθ (0, ·) : θ ∈ Θ} can realize the Bayes-optimal predictor for (Xs, Y ) and that R(0 ,1) has no spurious stationary points w.r.t. Ws.Given Condition 1, if π(0 ,1) > 0, then at no stationary point θ∗ of L can hθ∗
+
+ignore Xs.Proof. Provided in Appendix A. Proposition 1 shows that channel dropout forces the predictor to use stable inputs. We now turn to the natural follow-up question: why not train on the stable inputs Xs alone? If Xs is environment-invariant (Assumption 1), discarding 
+
+Xu eliminates domain shift entirely. The answer is that invariance alone does not guarantee sufficient performance, as shown below. 8 Diaz et al.           
+
+>               
+>    
+
+Fig. 3: Qualitative all-data segmentation results. The rows corresponding to different datasets and domain shift types. Column 1 visualizes a representative in-domain training sample, and columns 3–7 illustrate qualitative results on out-of-domain test set examples. The red arrows highlight regions with incorrect predictions. 
+
+Proposition 2 (Stable-only performance ceiling). Under Assumptions 1–4, 
+
+H(Y | Xs) is environment-invariant, and the Bayes-optimal stable-only predictor 
+
+h∗ 
+
+> s
+
+(xs) := E[Y | Xs = xs] achieves this value as its risk in every environment. Therefore, in any environment e, the Bayes-optimal joint risk He(Y | Xs, X u) <H(Y | Xs), with strict inequality, where He(·) denotes entropy under Pe.Proof. Provided in Appendix A. 
+
+Remark 3. Proposition 2 motivates using both Xu and Xs, as discarding Xu
+
+imposes an upper bound on performance. In parallel, Proposition 1 shows that hθ
+
+cannot become solely dependent on Xu. Together, they imply that Xs provides a floor on performance, and additionally providing Xu improves it in any given environment. This reflects a fundamental limitation of purely invariant approaches, also supported by similar findings in previous work [50, Theorem 5.1]. Therefore, we do not discard the in-domain features Xu but exploit their transferable information, while ensuring the predictor does not learn shortcuts that ignore Xs.
+
+Implementation details. Fig. 2 shows that DropGen needs only five additional lines of code over a standard training loop. We implement hθ as a 3D UNet, which remains competitive with transformer-based alternatives when compared fairly [32]. The model uses an initial convolutional embedding dimension of 20 ,doubled at every resolution across 5 downsampling operations, yielding 36 .9Mparameters. For fϕ, we use anatomix [12], which produces per-voxel embeddings, and has 5.9M parameters. As fϕ was trained entirely on synthetic data, it eliminates data leakage risks. fϕ is frozen throughout training and is not finetuned . We use the representations from its penultimate convolutional block and instance normalize its representations to be channel-wise zero mean and unit DropGen 9
+
+Table 1: All-data domain generalization results. Mean Dice (w/ std. error) across datasets against domain generalization baselines, with avg. ranking at the right.                                                                              
+
+> Method AMOS [33] Modality
+> BraTS [1] Sequence
+> CoW [66] Modality
+> HVSMR [48] Disease
+> PanDG [71] Phase
+> Prostate [44] Site
+> Avg. Rank
+> ERM 57.4 (1.7) 38.9 (1.8) 24.6 (1.5) 63.6 (3.0) 25.3 (2.5) 83.0 (0.7) 8.0 GIN [47] 65.1 (0.7) 29.9 (1.6) 17.9 (1.5) 64.1 (3.0) 41.1 (1.8) 82.1 (0.8) 7.2 GIN+IPA [47] 66 .5(0 .8) 44 .7(1 .6) 37 .6(1 .9) 64.7 (2.6) 50 .3(1.4)84 .1(0 .6) 2.5
+> MixUp [69] 61.5 (0.9) 41.2 (1.7) 36.3 (1.5) 64.5 (3.2) 26.7 (2.5) 82.5 (0.7) 5.5 CutOut [10] 55.5 (1.7) 41.8 (1.6) 26.5 (1.9) 64.9 (3.5) 30.5 (2.4) 84.0 (0.6) 5.0 DSBN [76] 58.0 (1.4) 40.5 (1.7) 29.6 (1.9) 66 .1(3 .2) 26.3 (2.6) 83.4 (0.6) 5.2 MixStyle [75] 53.9 (1.7) 40.7 (1.6) 27.9 (1.4) 64.4 (2.6) 24.0 (2.5) 82.3 (0.7) 7.7 RSC [28] 60.8 (1.3) 42.1 (1.6) 26.0 (1.9) 66 .2(2.9)28.2 (2.4) 83.4 (0.6) 4.3 nnUNet [29] 48.0 (2.7) 35.5 (1.8) 13.7 (2.0) 65.0 (2.5) 30.1 (2.7) 71.6 (3.6) 8.0 Ours 67 .5(0.9)46 .2(1.6)47 .8(1.3)65.8 (3.4) 46 .0(1 .9) 84 .7(0.5)1.5
+
+standard deviation. All runs were optimized using AdamW [45] with weight decay 
+
+λ = 10 −4, a cosine learning rate schedule from 2 × 10 −4 to 0, and a Dice and cross entropy loss (equally weighted). All remaining details are in Appendix C. 
+
+## 4 Experiments 
+
+4.1 Experimental Setup Datasets and Domain Shifts. We evaluate on six datasets spanning five clinically relevant domain shifts: sequence, disease stage, clinical site, imaging phase, and modality. For sequence shifts , we train on T1w, T2w, and T1w-CE MRIs from MSD-BraTS [1] and evaluate on FLAIR MRI from unseen subjects. Site and scanner shifts are examined using a multi-site prostate MRI collection [4, 41,43,44], where training, validation, and testing data all come from distinct sites. To study phase shifts , we use PanDG [71], training on venous-phase abdominal MRIs and evaluating on out-of-phase scans. Finally, we evaluate modality shifts on two datasets: AMOS [33], training on CT and evaluating on MRI for large-scale multi-organ segmentation, and TopCoW [66], training on CT angiography (CTA) and validating/testing on MR angiography (MRA) for vascular structures. A table summarizing splits, sample sizes, and more is in Appendix C. 
+
+Baselines. To reflect practical clinical deployment, we compare against state-of-the-art DG methods that neither require domain labels nor adapt on unlabeled test data. Unless otherwise noted, all methods use the same UNet architecture for their segmentation branch and we optimize each baseline’s primary hyperparameters using a grid search, as detailed in Appendix B. DSBN [76] employs custom BatchNorm layers and perturbs intensities around labels to generate synthetic contrasts. GIN and GIN+IPA [47] filter training data with randomly sampled convolutional kernels to generate diverse appearances and use spatial mixing to remove spurious correlations between locations and voxel intensities. MixStyle [75] mixes feature statistics across samples to simulate domain shifts in training, while CutOut [10] randomly masks inputs spatially to reduce spurious dependencies. 10 Diaz et al. 
+
+Table 2: Few-shot domain generalization results. Left : Mean Dice score (w/ std. error) for few-shot experiments. Right : Arbitrarily selected few-shot results.                                          
+
+> Method AMOS
+> Modality
+> CoW
+> Modality
+> HVSMR
+> Disease
+> Prostate
+> Site
+> ERM 5.4(1.0) 18.2(1.3) 40.4(3.8) 27.8(5.0) GIN 6.0(0.7) 13.4(1.1) 44 .9(4 .0) 20.3(4.3) GINIPA 37 .8(1 .5) 23 .8(1.7) 44 .5(3.8) 27 .9(5.1) MixUp 15 .6(1.6) 33 .7(1 .2) 43 .7(3.9) 53 .2(3 .4)
+> CutOut 8.4(1.1) 18.2 (1.4) 41.3(3.6) 40.8(4.5) DSBN 19 .3(1.8) 22 .2(1.5) 44 .2(3.7) 44 .1(5.2) MixStyle 3.8(0.8) 17.6(1.1) 37.7(3.5) 25.0(5.1) RSC 3.6(1.0) 18.3(1.3) 44.1(3.9) 28.5(5.2) Ours 53 .4(1.4)40 .3(1.5)46 .3(3.8)64 .2(4.4)      
+
+RSC [28] discards dominant features in training to learn robust segmentation, and MixUp [69] interpolates training samples within a batch. We also compare against the widely used nnUNet [29], using its default architecture and augmentation pipeline. Finally, we include an ERM baseline that trains only on the unstable input using a matched architecture and training routine. 
+
+Augmentations. Unless otherwise specified, we apply a strong and extensive data augmentation pipeline across all considered methods to maximize their out-of-distribution generalization potential. We use flips, rotations, resolution degradations, noise, bias fields, contrast adjustments, blurring, sharpening, and affine deformations, each with 0.33 probability. We omit flips and rotations in datasets where left/right correspondence is important. 
+
+Data availability settings. We evaluate performance in two common medical imaging scenarios: datasets with abundant annotations (" all-data ") and those with limited annotations (" few-shot "). The all-data models are trained for 250K iterations following [29], while few-shot models are trained for 40K steps as in [12]. The few-shot experiments used five randomly selected subjects from each dataset for training and excluded the BraTS and PanDG datasets due to high inter-sample heterogeneity ( e.g ., in tumor presentations) that precludes meaningful training and interpretation of few-shot experiments across all methods. 
+
+4.2 Results All-data Experiments. Table 1 summarizes the results across all six datasets. Given the range of evaluated domain shifts, we report the average ranking (far right, 1 = best). DropGen achieves an average ranking of 1.5, outperforming the next closest method (GIN+IPA = 2.5), demonstrating the reliability and consistency of our approach. DropGen performs particularly well under strong appearance differences between source and target domains, as in AMOS, BraTS, and CoW. While GIN+IPA performed better on PanDG, our method was second and substantially outperformed the remaining methods. For the disease stage shift in HVSMR, most methods converge to within a single Dice point of one DropGen 11 Image Only                              
+
+> Reps. Only
+> 0% DO
+> 25% DO
+> 50% DO
+> 75% DO 40
+> 60
+> 80
+> Dice (  )
+> 59.5
+> 64.4 65.1 65.8 66.6 67.4
+> AMOS
+> Image Only
+> Reps. Only
+> 0% DO
+> 25% DO
+> 50% DO
+> 75% DO 30
+> 40
+> 50
+> 41.7 41.3 41.7 42.5
+> 47.2 47.2
+> BraTS
+> Image Only
+> Reps. Only
+> 0% DO
+> 25% DO
+> 50% DO
+> 75% DO 20
+> 40
+> 60
+> 25.6
+> 51.7 49.0 49.5 51.0 52.2
+> CoW
+> Image Only
+> Reps. Only
+> 0% DO
+> 25% DO
+> 50% DO
+> 75% DO 60
+> 62
+> 64
+> 62.5 62.5
+> 61.7
+> 62.6
+> 63.5
+> 62.0
+> HVSMR
+> Image Only
+> Reps. Only
+> 0% DO
+> 25% DO
+> 50% DO
+> 75% DO
+> 50
+> 60
+> 51.4
+> 54.7
+> 51.8
+> 60.2 60.6 60.1
+> PanDG
+> Image Only
+> Reps. Only
+> 0% DO
+> 25% DO
+> 50% DO
+> 75% DO 80
+> 85
+> 90
+> 86.6
+> 83.7 84.5
+> 86.9 87.2 86.8
+> Prostate
+> Image Reps.
+> 5
+> 0
+> 5
+> Dice
+> Image Reps.
+> 5
+> 0
+> 5
+> Image Reps.
+> 5
+> 0
+> 5
+> Image Reps.
+> 10
+> 5
+> 0
+> 5
+> Image Reps.
+> 20
+> 10
+> 0
+> Image Reps.
+> 5
+> 0
+> 5
+> Image and Representations Ablations
+> Sensitivity to Dropped Images or Representations
+> Image Only Reps. Only 0% DO 25% DO 50% DO 75% DO
+
+Fig. 4: Ablating Feature Combination Regularization . Top: We train models with only the image (“Image Only"), only the representations (“Reps. Only"), and both concatenated with and without feature combination regularization via dropout (without: DO = 0% ; with: DO = 25% , 50% , 75% ). Regularizing the combination consistently provides increased validation performance over training on the images or the representations alone and over simply combining them without regularization. 
+
+Bottom: We perform a one-channel removal analysis to measure the sensitivity in validation ( ∆Dice ) w.r.t. the full input (image and representations). Without dropout, the model struggles to balance the two sources of information and relies heavily on the image intensity input and less so on the stable inputs, as indicated by the drop in performance. This is alleviated by increasing the dropout probability. 
+
+another. Notably, our augmentation pipeline lifts performance across all methods as our ERM baseline outperforms the popular nnUNet on four of six datasets, underscoring the outsized role augmentation plays in domain generalization. We note that the second-best method (GIN+IPA) requires a batch size three times that of other methods to supervise their loss. 
+
+Few-shot Experiments. Table 2 and its figure report few-shot segmentation results. DropGen achieved the best performance across all datasets, observing particularly large performance gains of 15.6, 6.6, 11.0 Dice points on the AMOS, CoW, and Prostate datasets, respectively, over the second-best methods. Again, the next-best method changes between datasets, whereas DropGen maintains consistently high performance across domain shift types and anatomical regions, indicating that leveraging representations yields significant data efficiency. While GIN+IPA was the second-best overall in the all-data experiments, it did not perform well in the few-shot setting. 
+
+4.3 Analysis & Abalations Ablating Representation Usage. As an ablation, we train on the stable inputs alone without the original input to investigate the benefits of incorporating both stable and unstable features. Fig 4 (Top) shows that training on stable inputs 12 Diaz et al. 
+
+Table 4: Comparisons with methods that perform adaptation. Mean Dice score for test-time adaptation (TTA) and joint-predictor settings. TTA methods observe the test distribution at inference, whereas DropGen uses no adaptation and shares the same model weights across all evaluations. Despite this, our method matches or outperforms TTA baselines.                                          
+
+> Method Adaptation Needed? AMOS
+> Modality
+> BraTS
+> Sequence
+> CoW
+> Modality
+> HVSMR
+> Disease
+> PanDG
+> Phase
+> Prostate
+> Site
+> Avg. Rank
+> EntMin (ERM) [60] Yes 64.7 (1.2) 38.9 (1.8) 24.4 (1.5) 64.4 (2.9) 27.7 (2.4) 84.5 (0.5) 4.2 EntMin (DO=0%) [60] Yes 65 .8(1 .2) 39 .3(1 .6) 45.1 (1.2) 65.0 (2.8) 35 .7(2 .0) 83.6 (0.5) 3.0
+> SFB [16] Yes 63.6 (1.0) 38.8 (1.6) 41.0 (1.3) 65.2 (2.6) 30.4 (2.5) 85 .4(0.5)3.3 Alpha Tuning [34] Yes 64.1 (1.3) 41.7 (1.8) 49 .0(1 .4) 64.8 (3.3) 28.5 (2.5) 84.3 (0.5) 3.2 Ours No 67 .5(0.9)46 .2(1.6)47 .8(1 .3) 65 .8(3.4)46 .0(1.9)84 .7(0 .5) 1.3
+
+alone is not beneficial across datasets. In fact, it can degrade performance when compared to "Image Only" in some datasets. 
+
+Ablating Regularization. We now investigate the regularization effects of channel dropout applied to the combined features. In Fig. 4 (top), when we concatenate the unstable and stable inputs without applying channel dropout (0% DO), validation set performance improves on four of the six datasets, but can stagnate or decline in others. In contrast, applying moderate channel dropout (25– 75% DO) on the concatenated tensor generally leads to improved performance, which agrees with our theoretical analyses. Further, in Fig. 4 (bottom), we assess dependence on the original image in the trained DropGen models on the validation set by dropping either the image or the representation channels during inference. Models trained without dropout (0% DO) exhibit a strong dependence on the image channel, as dropping it causes large performance drops on several datasets, whereas dropping representations has a relatively smaller impact. With channel dropout regularization, this dependence on the original image is eliminated, indicating that the model learns to use both image and representation features more effectively. 
+
+Table 3: Effect of Dropout Probability. Val-idation Dice scores as a function of dropout prob-ability used in training. Left block: all-data re-sults; right block: few-shot results.                                         
+
+> Dataset All-data Setting Few-Shot Setting
+> 0.00.25 0 .50 0.75 0.00.25 0.50 0.75
+> AMOS [33] 65.1 65.8 66.6 67.4 23.5 41.9 50.8 53.6
+> BraTS [1] 41.7 42.5 47.2 47.2 ––––CoW [66] 49.0 49.5 51.0 52.2 39.0 43.5 37.7 43.0 HVSMR [48] 61.7 62.6 63.5 62.0 43.4 44.4 45.3 44.5 PanDG [71] 51.8 60.2 60.6 60.1 ––––Prostate [44] 84.5 86.9 87.2 86.8 68.4 76.8 82.5 82.1
+
+Varying Regularization. The channel dropout probability, p,is our regularizer’s only hy-perparameter. We now evaluate 
+
+p ∈ [0 .0, 0.25 , 0.50 , 0.75] across all datasets. Table 3 reports the aver-age validation Dice scores for each setting. Overall, a higher p tends to improve validation performance (albeit with some dataset speci-ficity), highlighting the benefits of weight sharing in out-of-distribution generalization. For our test-set results in Sec. 4.2, we perform model selection ( p) on the validation set using this analysis. DropGen 13 
+
+Test-Time Adaptation. We operate in the domain generalization setting, where no adaptation or retraining is allowed on the unseen test domain. To stress-test our method, we compare it against methods that do adapt to the test domain (without labels), to analyze potential performance gaps. Specifically, we apply entropy minimization [60] to both the ERM baseline and naïve model that concatenates stable and unstable representations without regularization (DO=0%). We also evaluate two recent TTA methods that use predictors trained separately on stable and unstable features: Stable Feature Boosting (SFB) [16] and Alpha Tuning [34]. Notably, all of these methods need training or calibration on the test domain, whereas DropGen does not need adaptation .Despite never observing the test domain, DropGen is competitive with both standard TTA and feature combination baselines in Table 4 , outperforming the other methods on four out of six datasets and achieving an average rank of 1.3 compared to 3.0 for the next closest baseline. We attribute this to encouraging usage of both information sources at training-time, which allows the model to jointly exploit stable and unstable learned representations. Given these gains, 
+
+DropGen enables biomedical practitioners to reliably segment distribution-shifted images without performing costly adaptation. 
+
+Table 5: Varying the choice of representation extractor. We report mean Dice score for dropout probabilities of 0.0, 0.25, 0.50, and 0.75, as well as using representations only.                                         
+
+> Dataset Model 0.0 0.25 0.50 0.75 RepOnly AMOS [33] nnInteract. [30] 64.3 65.0 65.9 66.4 63.9 anatomix [12] 65.1 65.8 66.6 67.4 64.4 BraTS [1] nnInteract. [30] 41.5 43.4 44.2 42.9 42.7 anatomix [12] 41.7 42.5 47.2 47.2 41.3 CoW [66] nnInteract. [30] 48.7 45.9 48.9 50.8 50.7 anatomix [12] 49.0 49.5 51.0 52.2 51.7 HVSMR [48] nnInteract. [30] 61.1 61.5 63.1 63.9 61.8 anatomix [12] 61.7 62.6 63.5 62.0 62.5 PanDG [71] nnInteract. [30] 49.0 49.7 54.6 59.0 51.2 anatomix [12] 51.8 60.2 60.6 60.1 54.7 Prostate [44] nnInteract. [30] 87.6 87.7 88.1 87.9 87.8 anatomix [12] 84.5 86.9 87.2 86.8 83.7
+
+Varying the Representa-tion Extractor. For all of our experiments, we use anatomix [12] as fϕ because of its stable, domain-invariant representations. However, Drop-Gen is generic and can freely use other 3D biomedical foun-dation models to extract rep-resentations. We experiment with nnInteractive [30] for this task, as it is the only other multi-region 3D biomed-ical foundation model, having been trained on 114 hetero-geneous datasets. We extract representations from its penultimate convolutional layer and assume no prompts as inputs. Further implementation details are provided in Appendix C. In Table 5 , in four of six datasets, anatomix achieved higher validation performance and hence was chosen as fϕ for the primary experiments. We also find that previous trends observed for the anatomix representations continue to hold for nnInteractive: while training on concatenated images and representations alone (DO=0%) does not improve performance, simply applying regularization (DO >0%) substantially increases its performance on the validation set. 
+
+Regularization location. While DropGen uses channel dropout to regularize the combination of stable and unstable sources, channel dropout is also a generi-cally helpful regularizer. To assess whether the benefit comes from regularizing 14 Diaz et al. 
+
+Table 6: Regularization location. Ablation comparing our regularization of stable and unstable source combination vs. channel dropout applied to all predictor layers.                        
+
+> Dropout Location AMOS [33] BraTS [1, 46] CoW [66] HVSMR [48] PanDG [71] Prostate [44] On Each Layer 67.0 (1.0) 39.8 (1.5) 33.0 (1.1) 65.3 (3.4) 35.3 (2.5) 83.6 (0.6) On Inputs Only 67 .5(0.9)46 .2(1.6)47 .8(1.3)65 .8(3.4)46 .0(1.9)84 .7(0.5)
+
+the source combination rather than from dropout itself, we compare our method to typical channel dropout usage: applying dropout to every layer of the predictor 
+
+hθ (except its final layer) in Table 6 . Across all six datasets, regularizing the source combination yields better out-of-distribution performance than generically regularizing the predictor. 
+
+Table 7: Run time analysis. Comparison of average run time over 3 runs on BraTS for 1000 training steps each. The ∆ column shows the relative increase compared to the ERM baseline. All runs were performed on the same NVIDIA RTX A6000.                
+
+> Method Run Time (s) ∆vs ERM (%) ERM 551.6 ±1.1 0% Ours 665.9 ±0.9 +20.7% GIN+IPA [47] 1842.7 ±0.8 +234.1%
+
+Runtime analysis. DropGen re-quires a forward pass through a frozen foundation model on top of standard training. To quantify the additional overhead in training time, we compare its average run time over 3 runs on BraTS [1, 46] for 1000 training steps. As shown in Table 7, DropGen in-creases run time by approximately 21% relative to standard training (ERM), representing a modest increase. In contrast, a widely used biomedical domain generalization baseline, GIN+IPA [47], requires a significantly higher computational overhead of a 234% increase over ERM. 
+
+## 5 Discussion 
+
+Limitations and Future Work. DropGen has a single, tunable hyperparam-eter: the channel dropout probability p. While the optimal p is in a consistent range, for optimal performance, it must be tuned on validation data as in Table 3. However, higher p values induces an appropriate amount of regularization for most datasets. Future work can instead train a hypernetwork [15, 19] conditioned on p
+
+using DropGen for segmentation that removes the need for training multiple models and can be freely tuned after training. Further, DropGen is compatible with any data-level domain generalization method and their combinations may have compounding benefits. However, this would require careful future work analyzing the interplay between stable representations and highly heterogeneous synthetic or augmented inputs. 
+
+Conclusions. This article presented DropGen , a simple and general framework for domain-generalized biomedical image segmentation that combines raw image intensities with stable representations from foundation models. By enforcing robust usage of both information sources through a lightweight feature combina-tion regularizer, DropGen achieved strong and consistent gains across diverse domain shifts, modalities, anatomies, and data-availability settings, all without DropGen 15 
+
+requiring complex architectural changes or specialized loss functions as needed by existing methods. DropGen ’s simplicity follows from and is supported by our theoretical analyses showing that jointly combining stable and unstable sources with regularization yields a principled solution. Our experiments demonstrated that DropGen outperformed state-of-the-art domain generalization methods in both standard training and few-shot regimes, enabling practitioners to no longer need substantial data- or model-level interventions to train and use robust segmentation models. 
+
+## 6 Acknowledgments 
+
+Sebo Diaz was supported by the National Science Foundation Graduate Research Fellowship Program (NSF GRFP) under Grant No. DGE-2146755, the MathWorks MATLAB Graduate Fellowship, and the National Institutes of Health (NIH) under Grant No. GENFD0002152100. Polina Golland is partially supported by MIT CSAIL-Wistron Program and MIT Health and Life Sciences Collaborative (HEALS). Elfar Adalsteinsson is partially supported by NIH R01 EB032708 and NIH R01 EB036945. Neel Dey is partially supported by NIH NIBIB R01EB033773, NIMH UM1 MH134812-01, and an MGB Radiology Innovation Award. 
+
+## References 
+
+1. Antonelli, M., Reinke, A., Bakas, S., Farahani, K., Kopp-Schneider, A., Landman, B.A., Litjens, G., Menze, B., Ronneberger, O., Summers, R.M., et al.: The medical segmentation decathlon. Nature communications 13 (1), 4128 (2022) 9, 12, 13, 14, 26, 27, 28 2. Arjovsky, M., Bottou, L., Gulrajani, I., Lopez-Paz, D.: Invariant risk minimization. arXiv preprint arXiv:1907.02893 (2019) 4 3. Billot, B., Greve, D.N., Puonti, O., Thielscher, A., Van Leemput, K., Fischl, B., Dalca, A.V., Iglesias, J.E., et al.: Synthseg: Segmentation of brain mri scans of any contrast and resolution without retraining. Medical image analysis 86 , 102789 (2023) 4 4. Bloch, N., Madabhushi, A., Huisman, H., Freymann, J., Kirby, J., Grauer, M., Enquobahrie, A., Jaffe, C., Clarke, L., Farahani, K.: Nci-isbi 2013 challenge: Auto-mated segmentation of prostate structures. The Cancer Imaging Archive (2015). 
+
+https://doi.org/10.7937/K9/TCIA.2015.zF0vlOPv , http://doi.org/10.7937/K9/ TCIA.2015.zF0vlOPv 95. Butoi, V.I., Ortiz, J.J.G., Ma, T., Sabuncu, M.R., Guttag, J., Dalca, A.V.: Uni-verseg: Universal medical image segmentation. In: Proceedings of the IEEE/CVF International Conference on Computer Vision. pp. 21438–21451 (2023) 2, 4 6. Cardoso, M.J., Li, W., Brown, R., Ma, N., Kerfoot, E., Wang, Y., Murrey, B., Myronenko, A., Zhao, C., Yang, D., et al.: Monai: An open-source framework for deep learning in healthcare. arXiv preprint arXiv:2211.02701 (2022) 32 7. Chen, C., Dou, Q., Chen, H., Qin, J., Heng, P.A.: Synergistic image and feature adaptation: Towards cross-modality domain adaptation for medical image segmen-tation. In: Proceedings of the AAAI conference on artificial intelligence. vol. 33, pp. 865–872 (2019) 2, 3 16 Diaz et al. 8. Chen, D., Wang, D., Darrell, T., Ebrahimi, S.: Contrastive test-time adaptation. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 295–305 (2022) 2, 3 9. Chollet, E., Balbastre, Y., Mauri, C., Magnain, C., Fischl, B., Wang, H.: Neurovas-cular segmentation in soct with deep learning and synthetic training data. arXiv preprint arXiv:2407.01419 (2024) 4 10. DeVries, T., Taylor, G.W.: Improved regularization of convolutional neural networks with cutout. arXiv preprint arXiv:1708.04552 (2017) 3, 9, 35 11. Dey, N., Abulnaga, M., Billot, B., Turk, E.A., Grant, E., Dalca, A.V., Golland, P.: Anystar: Domain randomized universal star-convex 3d instance segmentation. In: Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision. pp. 7593–7603 (2024) 4 12. Dey, N., Billot, B., Wong, H.E., Wang, C.J., Ren, M., Grant, P.E., Dalca, A.V., Golland, P.: Learning general-purpose biomedical volume representations using randomized synthesis. In: International Conference on Learning Representations (2025) 2, 3, 4, 5, 8, 10, 13, 23, 24, 26, 33 13. Diaz, S., Billot, B., Dey, N., Zhang, M., Abaci Turk, E., Grant, P.E., Golland, P., Adalsteinsson, E.: Robust fetal pose estimation across gestational ages via cross-population augmentation. In: International Conference on Medical Image Computing and Computer-Assisted Intervention. pp. 549–559. Springer (2025) 4 14. Dong, H., Konz, N., Gu, H., Mazurowski, M.A.: Medical image segmentation with intent: Integrated entropy weighting for single image test-time adaptation. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 5046–5055 (2024) 3 15. Dosovitskiy, A., Djolonga, J.: You only train once: Loss-conditional training of deep networks. In: International conference on learning representations (2019) 14 16. Eastwood, C., Singh, S., Nicolicioiu, A.L., Vlastelica Pogančić, M., von Kügelgen, J., Schölkopf, B.: Spuriosity didn’t kill the classifier: Using invariant predictions to harness spurious features. Advances in Neural Information Processing Systems 36 ,18291–18324 (2023) 2, 4, 5, 6, 12, 13, 36 17. Fu, J., Dalca, A.V., Fischl, B., Moreno, R., Hoffmann, M.: Learning accurate rigid registration for longitudinal brain mri from synthetic data. In: 2025 IEEE 22nd International Symposium on Biomedical Imaging (ISBI). pp. 1–5. IEEE (2025) 4 18. Gopinath, K., Hoopes, A., Alexander, D.C., Arnold, S.E., Balbastre, Y., Billot, B., Casamitjana, A., Cheng, Y., Chua, R.Y.Z., Edlow, B.L., et al.: Synthetic data in generalizable, learning-based neuroimaging. Imaging Neuroscience 2, 1–22 (2024) 4 19. Ha, D., Dai, A., Le, Q.V.: Hypernetworks. arXiv preprint arXiv:1609.09106 (2016) 14 20. He, Y., Guo, P., Tang, Y., Myronenko, A., Nath, V., Xu, Z., Yang, D., Zhao, C., Simon, B., Belue, M., et al.: Vista3d: Versatile imaging segmentation and annotation model for 3d computed tomography. arXiv e-prints pp. arXiv–2406 (2024) 2 21. Hochreiter, S., Schmidhuber, J.: Flat minima. Neural computation 9(1), 1–42 (1997) 30 22. Hoffmann, M.: Domain-randomized deep learning for neuroimage analysis. arXiv preprint arXiv:2507.13458 (2025) 4 23. Hoffmann, M., Billot, B., Greve, D.N., Iglesias, J.E., Fischl, B., Dalca, A.V.: Synthmorph: learning contrast-invariant registration without acquired images. IEEE transactions on medical imaging 41 (3), 543–558 (2021) 4 24. Hoffmann, M., Hoopes, A., Greve, D.N., Fischl, B., Dalca, A.V.: Anatomy-aware and acquisition-agnostic joint registration with synthmorph. Imaging Neuroscience 
+
+2, 1–33 (2024) 4 DropGen 17 25. Hoopes, A.: Voxelprompt: A vision-language agent for grounded medical image analysis. Ph.D. thesis, Massachusetts Institute of Technology (2025) 4 26. Hu, J., Shen, L., Albanie, S., Sun, G., Wu, E.: Squeeze-and-excitation networks (2017) 27 27. Hu, S., Liao, Z., Zhang, J., Xia, Y.: Domain and content adaptive convolution based multi-source domain generalization for medical image segmentation. IEEE Transactions on Medical Imaging 42 (1), 233–244 (2022) 3 28. Huang, Z., Wang, H., Xing, E.P., Huang, D.: Self-challenging improves cross-domain generalization. In: European conference on computer vision. pp. 124–140. Springer (2020) 3, 9, 10, 36 29. Isensee, F., Jaeger, P.F., Kohl, S.A., Petersen, J., Maier-Hein, K.H.: nnu-net: a self-configuring method for deep learning-based biomedical image segmentation. Nature methods 18 (2), 203–211 (2021) 1, 9, 10, 32, 34 30. Isensee, F., Rokuss, M., Krämer, L., Dinkelacker, S., Ravindran, A., Stritzke, F., Hamm, B., Wald, T., Langenberg, M., Ulrich, C., et al.: nninteractive: Redefining 3d promptable segmentation. arXiv preprint arXiv:2503.08373 (2025) 2, 4, 5, 13, 23, 24, 33 31. Isensee, F., Ulrich, C., Wald, T., Maier-Hein, K.H.: Extending nnu-net is all you need. In: BVM workshop. pp. 12–17. Springer (2023) 34 32. Isensee, F., Wald, T., Ulrich, C., Baumgartner, M., Roy, S., Maier-Hein, K., Jaeger, P.F.: nnu-net revisited: A call for rigorous validation in 3d medical image segmen-tation. In: International Conference on Medical Image Computing and Computer-Assisted Intervention. pp. 488–498. Springer (2024) 1, 8 33. Ji, Y., Bai, H., Ge, C., Yang, J., Zhu, Y., Zhang, R., Li, Z., Zhanng, L., Ma, W., Wan, X., et al.: Amos: A large-scale abdominal multi-organ benchmark for versatile medical image segmentation. Advances in neural information processing systems 
+
+35 , 36722–36732 (2022) 9, 12, 13, 14, 27, 28, 29 34. Jiang, Y., Veitch, V.: Invariant and transportable representations for anti-causal domain shifts (2022) 2, 4, 5, 12, 13, 36 35. Kang, G., Jiang, L., Yang, Y., Hauptmann, A.G.: Contrastive adaptation network for unsupervised domain adaptation. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 4893–4902 (2019) 3 36. Karani, N., Erdil, E., Chaitanya, K., Konukoglu, E.: Test-time adaptable neural networks for robust medical image segmentation. Medical Image Analysis 68 , 101907 (2021) 2, 3 37. Keskar, N.S., Mudigere, D., Nocedal, J., Smelyanskiy, M., Tang, P.T.P.: On large-batch training for deep learning: Generalization gap and sharp minima. arXiv preprint arXiv:1609.04836 (2016) 30 38. Kirillov, A., Mintun, E., Ravi, N., Mao, H., Rolland, C., Gustafson, L., Xiao, T., Whitehead, S., Berg, A.C., Lo, W.Y., et al.: Segment anything. In: Proceedings of the IEEE/CVF international conference on computer vision. pp. 4015–4026 (2023) 439. Kornblith, S., Norouzi, M., Lee, H., Hinton, G.: Similarity of neural network representations revisited. In: International conference on machine learning. pp. 3519–3529. PMlR (2019) 24 40. Laso, P., Cerri, S., Sorby-Adams, A., Guo, J., Mateen, F., Goebl, P., Wu, J., Liu, P., Li, H.B., Young, S.I., et al.: Quantifying white matter hyperintensity and brain volumes in heterogeneous clinical and low-field portable mri. In: 2024 IEEE International Symposium on Biomedical Imaging (ISBI). pp. 1–5. IEEE (2024) 4 18 Diaz et al. 41. Lemaître, G., Martí, R., Freixenet, J., Vilanova, J.C., Walker, P.M., Meriaudeau, F.: Computer-aided detection and diagnosis for prostate cancer based on mono and multi-parametric mri: a review. Computers in biology and medicine 60 , 8–31 (2015) 942. Li, H., Xu, Z., Taylor, G., Studer, C., Goldstein, T.: Visualizing the loss landscape of neural nets. Advances in neural information processing systems 31 (2018) 30 43. Litjens, G., Toth, R., Van De Ven, W., Hoeks, C., Kerkstra, S., Van Ginneken, B., Vincent, G., Guillard, G., Birbeck, N., Zhang, J., et al.: Evaluation of prostate segmentation algorithms for mri: the promise12 challenge. Medical image analysis 
+
+18 (2), 359–373 (2014) 9 44. Liu, Q., Chen, C., Qin, J., Dou, Q., Heng, P.A.: Feddg: Federated domain general-ization on medical image segmentation via episodic learning in continuous frequency space. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 1013–1023 (2021) 3, 9, 12, 13, 14, 27, 28, 29 45. Loshchilov, I., Hutter, F.: Decoupled weight decay regularization. arXiv preprint arXiv:1711.05101 (2017) 9 46. Menze, B.H., Jakab, A., Bauer, S., Kalpathy-Cramer, J., Farahani, K., Kirby, J., Burren, Y., Porz, N., Slotboom, J., Wiest, R., et al.: The multimodal brain tumor image segmentation benchmark (brats). IEEE transactions on medical imaging 
+
+34 (10), 1993–2024 (2014) 14, 26, 27, 28 47. Ouyang, C., Chen, C., Li, S., Li, Z., Qin, C., Bai, W., Rueckert, D.: Causality-inspired single-source domain generalization for medical image segmentation. IEEE Transactions on Medical Imaging 42 (4), 1095–1106 (2022) 1, 3, 9, 14, 27, 28, 29, 35 48. Pace, D.F., Contreras, H.T., Romanowicz, J., Ghelani, S., Rahaman, I., Zhang, Y., Gao, P., Jubair, M.I., Yeh, T., Golland, P., et al.: Hvsmr-2.0: A 3d cardiovascular mr dataset for whole-heart segmentation in congenital heart disease. Scientific Data 
+
+11 (1), 721 (2024) 9, 12, 13, 14, 27, 28, 29 49. Ravi, N., Gabeur, V., Hu, Y.T., Hu, R., Ryali, C., Ma, T., Khedr, H., Rädle, R., Rolland, C., Gustafson, L., et al.: Sam 2: Segment anything in images and videos. arXiv preprint arXiv:2408.00714 (2024) 4 50. Rosenfeld, E., Ravikumar, P., Risteski, A.: The risks of invariant risk minimization. arXiv preprint arXiv:2010.05761 (2020) 4, 8 51. Shalev-Shwartz, S., Ben-David, S.: Understanding machine learning: From theory to algorithms. Cambridge university press (2014) 4 52. Shui, C., Wang, B., Gagné, C.: On the benefits of representation regularization in invariance based domain generalization. Machine Learning 111 (3), 895–915 (2022) 453. Sun, B., Saenko, K.: Deep coral: Correlation alignment for deep domain adaptation. In: European conference on computer vision. pp. 443–450. Springer (2016) 3 54. Sun, Y., Wang, X., Liu, Z., Miller, J., Efros, A., Hardt, M.: Test-time training with self-supervision for generalization under distribution shifts. In: International conference on machine learning. pp. 9229–9248. PMLR (2020) 3 55. Tiwary, P., Bhattacharyya, K., et al.: Langdaug: Langevin data augmentation for multi-source domain generalization in medical image segmentation. arXiv preprint arXiv:2505.19659 (2025) 3 56. Tobin, J., Fong, R., Ray, A., Schneider, J., Zaremba, W., Abbeel, P.: Domain randomization for transferring deep neural networks from simulation to the real world. In: 2017 IEEE/RSJ international conference on intelligent robots and systems (IROS). pp. 23–30. IEEE (2017) 4 DropGen 19 57. Tzeng, E., Hoffman, J., Saenko, K., Darrell, T.: Adversarial discriminative domain adaptation. In: Proceedings of the IEEE conference on computer vision and pattern recognition. pp. 7167–7176 (2017) 3 58. Valanarasu, J.M.J., Guo, P., Patel, V.M., et al.: On-the-fly test-time adaptation for medical image segmentation. In: Medical Imaging with Deep Learning. pp. 586–598. PMLR (2024) 3 59. Vapnik, V.N.: An overview of statistical learning theory. IEEE transactions on neural networks 10 (5), 988–999 (1999) 4 60. Wang, D., Shelhamer, E., Liu, S., Olshausen, B., Darrell, T.: Tent: Fully test-time adaptation by entropy minimization. arXiv preprint arXiv:2006.10726 (2020) 2, 3, 12, 13, 36 61. Weihsbach, C., Kruse, C.N., Bigalke, A., Heinrich, M.P.: Dg-tta: Out-of-domain medical image segmentation through augmentation, descriptor-driven domain gen-eralization, and test-time adaptation. Sensors 25 (17), 5603 (2025) 3 62. Wong, H.E., Ortiz, J.J.G., Guttag, J., Dalca, A.V.: Multiverseg: Scalable inter-active segmentation of biomedical imaging datasets with in-context guidance. In: Proceedings of the IEEE/CVF International Conference on Computer Vision. pp. 20966–20980 (2025) 2 63. Wong, H.E., Rakic, M., Guttag, J., Dalca, A.V.: Scribbleprompt: fast and flexible interactive segmentation for any biomedical image. In: European Conference on Computer Vision. pp. 207–229. Springer (2024) 2, 4 64. Wu, J., Guo, D., Wang, G., Yue, Q., Yu, H., Li, K., Zhang, S.: Fpl+: Filtered pseudo label-based unsupervised cross-modality adaptation for 3d medical image segmentation. IEEE Transactions on Medical Imaging 43 (9), 3098–3109 (2024) 3 65. Xu, Z., Liu, D., Yang, J., Raffel, C., Niethammer, M.: Robust and general-izable visual representation learning via random convolutions. arXiv preprint arXiv:2007.13003 (2020) 3 66. Yang, K., Musio, F., Ma, Y., Juchler, N., Paetzold, J.C., Al-Maskari, R., Höher, L., Li, H.B., Hamamci, I.E., Sekuboyina, A., Shit, S., Huang, H., Prabhakar, C., de la Rosa, E., Waldmannstetter, D., Kofler, F., Navarro, F., Menten, M., Ezhov, I., Rueckert, D., Vos, I., Ruigrok, Y., Velthuis, B., Kuijf, H., Hämmerli, J., Wurster, C., Bijlenga, P., Westphal, L., Bisschop, J., Colombo, E., Baazaoui, H., Makmur, A., Hallinan, J., Wiestler, B., Kirschke, J.S., Wiest, R., Montagnon, E., Letourneau-Guillon, L., Galdran, A., Galati, F., Falcetta, D., Zuluaga, M.A., Lin, C., Zhao, H., Zhang, Z., Ra, S., Hwang, J., Park, H., Chen, J., Wodzinski, M., Müller, H., Shi, P., Liu, W., Ma, T., Yalçin, C., Hamadache, R.E., Salvi, J., Llado, X., Estrada, U.M.L.T., Abramova, V., Giancardo, L., Oliver, A., Liu, J., Huang, H., Cui, Y., Lin, Z., Liu, Y., Zhu, S., Patel, T.R., Tutino, V.M., Orouskhani, M., Wang, H., Mossa-Basha, M., Zhu, C., Rokuss, M.R., Kirchhoff, Y., Disch, N., Holzschuh, J., Isensee, F., Maier-Hein, K., Sato, Y., Hirsch, S., Wegener, S., Menze, B.: Benchmarking the cow with the topcow challenge: Topology-aware anatomical segmentation of the circle of willis for cta and mra (2024) 9, 12, 13, 14, 27, 28, 29 67. Zalevskyi, V., Sanchez, T., Roulet, M., Aviles Verdera, J., Hutter, J., Kebiri, H., Bach Cuadra, M.: Improving cross-domain brain tissue segmentation in fetal mri with synthetic data. In: International Conference on Medical Image Computing and Computer-Assisted Intervention. pp. 437–447. Springer (2024) 4 68. Zhang, G., Qi, X., Yan, B., Wang, G.: Iplc: iterative pseudo label correction guided by sam for source-free domain adaptation in medical image segmentation. In: International Conference on Medical Image Computing and Computer-Assisted Intervention. pp. 351–360. Springer (2024) 3 20 Diaz et al. 69. Zhang, H., Cisse, M., Dauphin, Y.N., Lopez-Paz, D.: mixup: Beyond empirical risk minimization. arXiv preprint arXiv:1710.09412 (2017) 3, 9, 10, 35 70. Zhang, X., Wu, Y., Angelini, E., Li, A., Guo, J., Rasmussen, J.M., O’Connor, T.G., Wadhwa, P.D., Jackowski, A.P., Li, H., Posner, J., Laine, A.F., Wang, Y.: Mapseg: Unified unsupervised domain adaptation for heterogeneous medical image segmen-tation based on 3d masked autoencoding and pseudo-labeling. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR). pp. 5851–5862 (June 2024) 3 71. Zhang, Z., Peng, L., Dou, W., Sun, C., Aktas, H.E., Bejar, A.M., Keles, E., Du-rak, G., Bagci, U.: Rethink domain generalization in heterogeneous sequence mri segmentation. arXiv preprint arXiv:2507.23110 (2025) 9, 12, 13, 14, 27, 28 72. Zhao, H., Dan, C., Aragam, B., Jaakkola, T.S., Gordon, G.J., Ravikumar, P.: Fundamental limits and tradeoffs in invariant representation learning. Journal of machine learning research 23 (340), 1–49 (2022) 4 73. Zhao, X., Mithun, N.C., Rajvanshi, A., Chiu, H.P., Samarasekera, S.: Unsupervised domain adaptation for semantic segmentation with pseudo label self-refinement. In: Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision (WACV). pp. 2399–2409 (January 2024) 3 74. Zheng, B., Zhang, R., Diao, S., Zhu, J., Yuan, Y., Cai, J., Shao, L., Li, S., Qin, W.: Dual domain distribution disruption with semantics preservation: Unsupervised domain adaptation for medical image segmentation. Medical Image Analysis 97 ,103275 (2024) 3 75. Zhou, K., Yang, Y., Qiao, Y., Xiang, T.: Domain generalization with mixstyle. arXiv preprint arXiv:2104.02008 (2021) 1, 2, 3, 9, 35 76. Zhou, Z., Qi, L., Yang, X., Ni, D., Shi, Y.: Generalizable cross-modality medical image segmentation via style augmentation and dual normalization. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 20856–20865 (2022) 2, 3, 9, 35 77. Zou, Y., Yu, Z., Liu, X., Kumar, B., Wang, J.: Confidence regularized self-training. In: Proceedings of the IEEE/CVF international conference on computer vision. pp. 5982–5991 (2019) 3 DropGen 21 
+
+## A Proofs 
+
+We first restate the propositions for completeness and then proceed with the proofs. 
+
+Proposition 1 (Stationarity forces use of stable inputs). Given Assump-tions 1–4, let hθ be a model whose first layer computes: a(1) = σ(Wu ⋆X u +Ws ⋆X s)
+
+where Wu, W s denote the first-layer kernel slices corresponding to the unstable and stable input channels, respectively, ⋆ is cross-correlation, and σ is a point-wise non-linearity. Let ℓ be a proper scoring rule that is differentiable w.r.t. θ. Suppose the function class {hθ (0, ·) : θ ∈ Θ} can realize the Bayes-optimal predictor for 
+
+(Xs, Y ) and that R(0 ,1) has no spurious stationary points w.r.t. Ws.4 If π(0 ,1) > 0
+
+and Condition 1 holds, then no stationary point θ∗ of L ignores Xs.Proof. As a reminder, our input is X = ( Xu, X s) and masks are (0 , 1) , (1 , 0) , or 
+
+(1 , 1) . Additionally, for clarity, we say hθ ignores Xs if its output under the mask 
+
+(0 , 1) is invariant w.r.t. Xs, i.e ., if hθ ignores Xs, its output is constant w.r.t. changes in Xs.We proceed to construct a proof by contradiction. Let θ∗ be a stationary point of L and let hθ∗ ignore Xs.
+
+Step 1: Input Partitioning. Because the input to hθ has explicit partitions 
+
+(Xu, X s), the first-layer admits a weight slicing into Wu and Ws by input channel group, while all subsequent layers share weights across the activations produced by both groups, i.e ., the input is the only part of the model that is explicitly separated. Stationarity of L at θ∗ requires that the gradient vanishes when restricted to Ws:
+
+∇Ws L(θ∗) = π1,0 ∇Ws R(1 ,0) (θ∗)+ π1,1 ∇Ws R(1 ,1) (θ∗)+ π0,1 ∇Ws R(0 ,1) (θ∗)= 0.
+
+(2) 
+
+Step 2: Unstable Input Regime Is Independent of Ws. Under mask 
+
+(1 , 0) the stable channels are set to zero, so the first layer computation becomes 
+
+σ(Wu ⋆ X u), which is independent of Ws. Because all subsequent layers are functions of this activation alone, the entire forward pass, and hence the loss, is independent of Ws: ∇Ws R(1 ,0) (θ∗) = 0 . This holds exactly by the bi-linearity of cross-correlation: Ws ⋆ 0 = 0 and ∂(Ws ⋆ 0) = 0. Substituting this into Eq.2 eliminates the first term. 
+
+Step 3: Stable-only risk is suboptimal. Under mask (0 , 1) the input is (0, X s).Because hθ∗ ignores Xs, the output hθ∗ (0, X s) is constant in Xs. For any strictly proper scoring rule, the minimal achievable risk by a constant predictor is H(Y ),so  R(0 ,1) (θ∗) ≥ H(Y ).
+
+By Assumption 4, I(Y ; Xs) > 0, hence H(Y | Xs) < H (Y ). Therefore 
+
+R(0 ,1) (θ∗) ≥ H(Y ) > H (Y | Xs), which violates the hypothesis that R(0 ,1) has      
+
+> 4i.e ., every stationary point achieves risk ≤H(Y|Xs).
+
+22 Diaz et al. 
+
+no suboptimal stationary points. It follows that θ∗ is not stationary for R(0 ,1) 
+
+w.r.t. Ws, and since the risk is differentiable, there exists a direction vs such that 
+
+∇Ws R(0 ,1) (θ∗), v s < 0.
+
+Step 4: Contradiction via non-adversarial interaction. Set the gradient direction vs := −∇ Ws R(0 ,1) (θ∗), as a descent direction for the stable-only risk. Because the deeper layers are shared, activating Ws also affects predictions under 
+
+(1 , 1) , so ∇Ws R(1 ,1) (θ∗) do not vanish. However, by Condition 1, the gradient does not oppose the stable-only descent: 
+
+∇Ws L(θ∗), v s = π(0 ,1) ∇Ws R(0 ,1) (θ∗), v s
+
+| {z }   
+
+> −∇Ws R(0 ,1)
+> 2
+> <0
+
++ π(1 ,1) ∇Ws R(1 ,1) (θ∗), v s
+
+| {z }  
+
+> ≤0(Condition 1)
+
+< 0, (3) which contradicts ∇Ws L(θ∗) = 0. This concludes the proof. 
+
+Proposition 2 (Stable-only performance ceiling). Under Assumptions 1–4, 
+
+H(Y | Xs) is environment-invariant, and the Bayes-optimal stable-only predictor 
+
+h∗ 
+
+> s
+
+(xs) := E[Y | Xs = xs] achieves this value as its risk in every environment. However, in any environment e, the Bayes-optimal joint risk He(Y | Xs, X u) <H(Y | Xs), with strict inequality, where He(·) denotes entropy under Pe.Proof. We provide the following proof in three steps. 
+
+Step 1: Environment-invariance of H(Y | Xs). By Assumption 1, Y ⊥
+
+E | Xs, so for any environment e, Pe(Y | Xs) = P(Y | Xs). It follows that 
+
+He(Y | Xs) = H(Y | Xs) for all e ∈ E . The Bayes-optimal stable-only predictor 
+
+h∗ 
+
+> s
+
+(xs) := E[Y | Xs = xs] therefore achieves risk H(Y | Xs) in every environment, including unseen ones. 
+
+Step 2: Joint risk is not larger than the stable-only risk. For any environment e, the conditional entropy satisfies 
+
+He(Y | Xs, X u) = He(Y | Xs) − Ie(Y ; Xu | Xs) ≤ He(Y | Xs) = H(Y | Xs),
+
+where the inequality follows because mutual information is non-negative, and the final equality from Step 1. 
+
+Step 3: Strict inequality between joint and stable-only risk. By Assump-tion 3, Y̸ ⊥e Xu | Xs for every e, so Ie(Y ; Xu | Xs) > 0 and hence 
+
+∆e := H(Y | Xs) − He(Y | Xs, X u) ≥ Ie(Y ; Xu | Xs) > 0.
+
+Therefore, He(Y | Xs, X u) < H (Y | Xs), concluding the proof. DropGen 23 
+
+## B Additional Results 
+
+Fig. 5: Comparing cross-modality representations extracted by foundation models. Rows 1–4: Given a subject from BraTS, we visualize its representations across MRI sequence shifts produced by nnInteractive [30] (rows 1, 2) and anatomix [12] (rows 3, 4), finding that anatomix representations are more stable and suitable for domain generalization. Rows 5–8: We now produce a similar visualization for two unpaired subjects with cross-modality domain shift from the AMOS dataset and find the same stability trend. 
+
+B.1 Representation analysis 
+
+While the main paper visualizes three representation channels as RGB images, here we present a broader subset of arbitrarily selected representations to provide a more comprehensive view. 24 Diaz et al. nnInteractive anatomix              
+
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> CKA Similarity (  )
+> A) Sequence Shift Stability (Aggregated)
+> 0.5 1.0 1.5 2.0 2.5
+> Gamma
+> B) CKA Similarity vs. Gamma
+> 0100 200 300 400 500
+> Subject Index
+> C) Sequence Shift Stability (Subject-wise)
+> nnInteractive anatomix
+
+Fig. 6: CKA Representation Similarity of Foundation Models Under Sequence Shifts. A: CKA [39] between each 3D foundation model’s chosen embeddings across MRI sequence shifts given subjects with multiple MRI sequences from BraTS. B: Given a fixed sequence, we now perturb image contrast (via gamma adjustments) and visualize CKA as a measure of representational stability under contrast shifts. C: A per-subject visualization of the plot in panel A.
+
+Representation stability and choice of feature extractor. In addition to the quantitative results shown in Table 4 of the main text, we now visual-ize the representations extracted by the two foundation models we considered (anatomix [12] and nnInteractive [30]) to qualitatively investigate their stability to domain shifts. In Figure 5, we compare T1 vs. T2 and CT vs. MRI features from BraTS and AMOS, respectively, to assess the consistency of learned features across different imaging modalities. In this comparison, anatomix produces visu-ally more stable and coherent representations under domain shifts, even though nnInteractive has been exposed to a substantially larger corpus of real-world data. This suggests that anatomix may better capture domain-stable features, as needed in our work. To explicitly measure representation stability, we compute the centered kernel alignment (CKA) similarity [39] (where higher is more similar) between the representations extracted from FLAIR and T1 subjects in BraTS. We plot the CKA results for all subjects in Figure 6A and C, and find that anatomix, being specifically trained for domain stability is stable to these shifts. Further, given random contrast perturbation with Gamma adjustment in Figure 6B, anatomix maintains robustness across corruption levels. These reasons together demonstrate why we choose anatomix [12] as a stable representation extractor for DropGen 
+
+over other current foundation models for biomedical volumes. 
+
+Choice of layer. Representations can be extracted from arbitrary layers of foundation models. While the original anatomix model [12] uses the final net-work layer as representations, we conduct a preliminary qualitative analysis for alternative representations. We examine qualitative differences between the penultimate and final block outputs for intra-subject FLAIR vs. T2 sequences and CT vs. MRI abdomen (Figure 7), from the BraTS and AMOS datasets, DropGen 25      
+
+> Fig. 7: Choice of layer from which to use representations. We compare anatomix’s final block representations (rows 1–2, 5-6) to its penultimate block representations (rows 3–4, 7-8) for two different datasets with two different kinds of domain shifts. Rows 1–4: T1 GAD (rows 1 and 3) and FLAIR (rows 2 and 4) from BraTS, representing intra-subject MRI sequence shifts. Rows 5–8: CT (rows 5 and 7) and MRI (rows 6 and 8) from AMOS, representing inter-subject modality shifts. Representation channels (columns 2-7) were arbitrarily selected. Qualitatively, the penultimate output better preserves high-frequency details while retaining inter-domain stability.
+
+respectively. The illustrations indicate that, across either FLAIR vs. T2 or CT vs. MR, representations remain relatively stable. However, outputs from the penultimate block retain finer structural details, such as edges and high-frequency information, likely due to contributions from skip connections. In contrast, the final block tends to produce more abstracted representations that may lose some of these fine details. Based on these observations, we chose to use the penultimate block outputs in our method, as representations with stronger edges while being cross-modally consistent are more likely to be useful for segmentation. 
+
+Empirically validating Condition 1. To empirically support Condition 1, we examine the gradients of the initial convolutional kernel corresponding to the 26 Diaz et al. 0.2 0.4 0.6 0.8 1.0 
+
+Cosine Similarity Ws (1, 1) , Ws (0, 1) 
+
+> 0
+> 100
+> 200
+> 300
+> 400
+> 500
+> 600
+> 700
+> 800
+> Count
+
+Histogram of Cosine Similarity  
+
+> Fig. 8: Histogram of Cosine Similarities. Cosine similarities for the two masked regimes of (1,0) and (1,1) for our method sampled every 100 steps during an "All-data" training experiment on BraTS [1, 46] to empirically support Condition 1. A KDE curve is fitted to the histogram for clarity.
+
+stable inputs. Specifically, we consider the regime where we mask the original input versus the regime where we mask nothing. Condition 1 predicts that these gradients have non-conflicting directions, i.e., their inner product is ≥ 0. We plot a histogram of the cosine similarities (to bound values between -1 and 1) between the joint training gradient ∇Ws R(1 ,1) and the stable-only gradient ∇Ws R(0 ,1) ,where Ws denotes the kernel slices of the first convolutional layer corresponding to the stable input channels. The cosine similarity is used as a normalized surrogate for the inner product. We compute this quantity every 100 training steps on a held-out batch, evaluating the model in inference mode to avoid corrupting batch-normalization statistics. Figure 8 shows that the overwhelming majority of measurements fall well above zero throughout training, providing empirical support that the joint training gradient does not oppose the stable-input gradient. 
+
+Finetuning the foundation model fϕ. Our proposed approach uses foundation model features for training (among other aspects). We now investigate the standard approach of simply finetuning the foundation model fϕ instead of our proposed approach and examine its robustness to domain shifts. We finetune the anatomix [12] model ( fϕ in the main text) in the All-data settings. In particular, we train in two regimes: finetuning only the decoder, while maintaining a frozen encoder (F.T. Decoder), and finetuning the entire model DropGen 27 
+
+Table 8: Finetuning domain-stable foundation models does not yield domain generalization . Ablation comparing finetuning all of the foundation model’s weights (F.T. Extractor), finetuning its decoder-alone (F.T. Decoder), and our proposed approach in the All-data setting.                               
+
+> Method AMOS [33] BraTS [1, 46] CoW [66] HVSMR [48] PanDG [71] Prostate [44] F.T. Extractor 56.8 (1.5) 37.7 (1.7) 17.3 (1.7) 64.6 (3.2) 23.7 (2.6) 84.2 (0.5) F.T. Decoder 57.2 (1.5) 39.5 (1.7) 18.5 (1.7) 63.2 (2.9) 27.7 (2.6) 83.8 (0.7) Ours 67 .5(0.9)46 .2(1.6)47 .8(1.3)65 .8(3.4)46 .0(1.9)84 .7(0.5)
+
+(F.T. Extractor). As seen in Table 8, our method significantly outperforms each of these approaches on every dataset and further motivates our approach. 
+
+Alternative feature combination approaches. Our proposed method applies feature concatenation and channel dropout to the stable and unstable features. We now perform additional experimentation on select datasets to investigate alternative feature combination methods in the fully supervised setting and examine their ability to generalize across domains. Specifically, we train a method that uses Squeeze+Excite [26] layers (a form of channel attention) to combine extracted representations and the original image before feeding it into the UNet. Additionally, we investigate dropping out only the original image during training or all of the stable representation channels at once (instead of per-channel dropout, as in the main text). This operates as a structured dropout approach and the structured dropout probability is tuned on the respective validation sets. As in Table 9, our proposed approach outperforms both feature combination methods on our domain generalization benchmarks. 
+
+Table 9: Alternative approaches for feature combination. A comparison of alternative feature combination methods vs. our proposed method. 
+
+Ablations AMOS [33] BraTS [1, 46] Structured Dropout 65.6 (1.1) 39.3 (1.7) Squeeze+Excite [26] 64.3 (1.1) 38.8 (1.7) Ours 67 .5(0.9) 46 .2(1.6)
+
+Baseline Hyperparameter Tuning. Wherever applicable, we tuned each baseline’s hyperparameter on each dataset’s validation set, for both the fully supervised ("all-data") and few-shot settings. Specifically, each baseline typically applied its proposed method with stochastic probability p. For GIN+IPA [47], we swept values of 1, 10, 20 for its KL divergence consistency loss term. The original recommended value was 10. The highest performing model on the validation set was used to report test set results in Tables 1 and 2. Validation set tuning results can be found in Tables 10 and 11. 28 Diaz et al. 
+
+Table 10: All-data hyperparameter tuning. Mean Dice score for each applicable baseline on each dataset. Bolded values are the highest in each dataset and the model reported in Table 1. kl is the KL divergence consistency loss weight in GIN+IPA [47] and p denotes the probability of applying each method. 
+
+AMOS [33] BraTS [1, 46] 
+
+kl=5 kl=10 kl=20 kl=5 kl=10 kl=20 GIN+IPA 65.8 65.7 66.3 45.9 45.5 46.1 
+
+p=0.25 p=0.50 p=0.75 p=0.25 p=0.50 p=0.75 MixUp 60.7 60.8 61.8 42.3 41.1 43.2 
+
+CutOut 59.9 57.2 57.9 40.8 41.6 42.2 
+
+DSBN 61.4 59.1 58.2 42.3 41.8 43.1 
+
+MixStyle 58.9 57.8 57.9 41.9 41.2 41.5 RSC 58.7 61.3 59.2 42.8 40.4 43.9 
+
+CoW [66] HVSMR [48] 
+
+kl=5 kl=10 kl=20 kl=5 kl=10 kl=20 GIN+IPA 42.5 43.4 43.0 61.0 61.2 60.8 
+
+p=0.25 p=0.50 p=0.75 p=0.25 p=0.50 p=0.75 MixUp 30.9 37.6 41.5 63.1 64.4 62.7 CutOut 28.6 24.3 23.4 63.5 63.5 62.6 DSBN 31.9 33.1 24.5 64.0 63.3 63.7 MixStyle 20.9 30.9 20.4 62.4 62.1 62.7 
+
+RSC 18.1 30.8 26.5 62.6 62.3 63.4 
+
+PanDG [71] Prostate [44] 
+
+kl=5 kl=10 kl=20 kl=5 kl=10 kl=20 GIN+IPA 54.9 54.4 54.4 86.0 86.3 85.9 
+
+p=0.25 p=0.50 p=0.75 p=0.25 p=0.50 p=0.75 MixUp 59.9 58.4 60.0 86.1 85.8 83.9 CutOut 52.8 53.9 57.4 86.7 86.8 87.3 
+
+DSBN 55.9 53.8 54.6 86.9 86.3 87.0 
+
+MixStyle 53.0 53.2 52.7 86.7 86.6 86.6 RSC 52.1 53.0 54.6 86.9 86.9 86.6 DropGen 29 
+
+Table 11: Few-shot hyperparameter tuning. Mean Dice score for each applicable baseline on each dataset. Bolded values are the highest in each dataset and the model reported in Table 2. kl is the KL divergence consistency loss weight in GIN+IPA [47] and p denotes the probability of applying each method. 
+
+AMOS [33] CoW [66] 
+
+kl=5 kl=10 kl=20 kl=5 kl=10 kl=20 GIN+IPA 5.9 39.6 25.6 21.0 17.0 28.0 
+
+p=0.25 p=0.50 p=0.75 p=0.25 p=0.50 p=0.75 MixUp 11.6 16.4 18.0 18.8 16.2 35.8 
+
+CutOut 10.8 6.9 3.9 20.4 15.0 17.8 DSBN 18.0 20.0 9.1 24.6 22.1 14.7 MixStyle 3.4 5.0 3.4 15.5 16.5 17.9 
+
+RSC 3.4 2.5 4.7 12.6 13.5 19.4 
+
+HVSMR [48] Prostate [44] 
+
+kl=5 kl=10 kl=20 kl=5 kl=10 kl=20 GIN+IPA 42.5 43.4 43.0 61.0 61.2 60.8 
+
+p=0.25 p=0.50 p=0.75 p=0.25 p=0.50 p=0.75 MixUp 45.4 46.5 43.8 79.0 78.4 78.5 CutOut 41.5 39.9 40.1 69.6 72.3 67.0 DSBN 42.9 45.0 44.5 71.9 49.1 56.1 MixStyle 41.1 40.2 41.0 65.8 60.8 67.3 
+
+RSC 39.6 43.8 42.0 60.8 65.3 63.3 30 Diaz et al. 
+
+Robustness Analysis. We now assess how robust each DG method is to controllable domain shifts that are commonly encountered in practice. We employ randomly generated bias fields and gamma/contrast adjustments as corruptions, as these frequently change between MRI domains. As random bias fields vary spatially, we generate three different bias fields at each corruption level and report the average performance, whereas gamma corruption is deterministic. All methods were trained with strong gamma and bias augmentation, except for nnUNet, which uses its default augmentation pipeline and is thus excluded from this experiment for fair comparison. As shown in Figure 9, DropGen maintains its robustness under gamma and bias corruptions across most datasets on held-out test datasets. We again find that the next most stable method changes in between datasets, indicating that our representation-based approach offers the most consistent benefits across anatomies and domain shift types. We also now examine the out-of-distribution robustness of the converged optimal weights of each method on held-out test data. As flat minima often generalize better [21, 37, 42], methods that maintain performance under weight perturbations are more robust. To assess flatness, we add Gaussian noise of varying magnitudes to all parameters and measure the resulting performance drop. For each noise level α, we average results over five random perturbations. Figure 9 shows that DropGen degrades gracefully under increasing noise, indicating a more robust solution than competing methods, which decline sharply with weight corruption across most datasets. DropGen 31 0 0.4 0.8 1.2 1.6 2                                                                                                       
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> 00.4 0.8 1.2 1.6 200.4 0.8 1.2 1.6 200.4 0.8 1.2 1.6 200.4 0.8 1.2 1.6 200.4 0.8 1.2 1.6 2
+> 00.5 11.5 22.5 3
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> 00.5 11.5 22.5 300.5 11.5 22.5 300.5 11.5 22.5 300.5 11.5 22.5 300.5 11.5 22.5 3
+> 00.2 0.4 0.6 0.8 1
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> 00.2 0.4 0.6 0.8 100.2 0.4 0.6 0.8 100.2 0.4 0.6 0.8 100.2 0.4 0.6 0.8 100.2 0.4 0.6 0.8 1
+
+Data-Level: Bias Field vs. Dice 
+
+Data-Level: Contrast vs. Dice 
+
+Weight-Level: Noise Intensity vs. Dice 
+
+β (Strength → )
+
+γ ( ← Strength → )
+
+α (Strength → )
+
+> Mean Dice (  ↑ )
+
+AMOS BraTS CoW HVSMR PanDG Prostate 
+
+Ours ERM CutOut DSBN GIN GIN+IPA MixStyle MixUp RSC 
+
+Fig. 9: Corruption Analysis. We apply simulated domain shifts with increasing strengths, via bias ( top ) and contrast/gamma ( middle ) corruptions and observe that 
+
+DropGen maintains high robustness. In the bottom row, we perturb the trained model weights with additive Gaussian noise, and find that DropGen is stable under these corruptions, indicating a flatter and more generalizable solution. Dashed vertical line in all plots signifies the "identity" or no corruption level. 32 Diaz et al. 
+
+## C Implementation Details 
+
+C.1 Augmentations 
+
+To best estimate the effects of DropGen in addition to data augmentation, we use an extensive augmentation pipeline (provided below) for all the experiments, except for nnUNet [29], which has its own augmentation framework and is recommended by its authors to be used as-is. Listed functions correspond to MONAI conventions [6]. 
+
+opts.aug_prob = 0.33 train_transforms = Compose([ LoadImaged(keys=["image", "label"]), EnsureChannelFirstd(keys=["image", "label"]), EnsureTyped(keys=["image", "label"]), Spacingd(keys=["image", "label"], pixdim=opts.spacing, mode=("bilinear", "nearest")), SpatialPadd(keys=["image", "label"], spatial_size=opts.crop_size), ScaleIntensityd(keys="image") if opts.dataset not in ["AMOS", "COW"] else 
+
+ScaleIntensityRanged(keys="image", a_min=-1024, a_max=1024, b_min=0.0, b_max=1.0,clip= True ,), 
+
+> ,→
+> ,→
+
+RandAxisFlipd(keys=["image", "label"], prob=opts.aug_prob) if opts.dataset not in ["AMOS", "COW"] else Identity(keys=["image", "label"]), ,→
+
+RandRotate90d(keys=["image", "label"], prob=opts.aug_prob, max_k=3, spatial_axes=(0, 1)) if 
+
+opts.dataset not in ["AMOS", "COW"] else Identity(keys=["image", "label"]), ,→
+
+RandSimulateLowResolutiond(keys="image", prob=opts.aug_prob, zoom_range=(0.25, 1.0),), RandGaussianNoised(keys="image", prob=opts.aug_prob), RandBiasFieldd(keys="image", prob=opts.aug_prob, coeff_range=(0.0, 0.1)), RandGibbsNoised(keys="image", prob=opts.aug_prob, alpha=(0.0, 0.33)), RandAdjustContrastd(keys="image", prob=opts.aug_prob), RandGaussianSmoothd(keys="image", prob=opts.aug_prob, sigma_x=(0.0, 0.1), sigma_y=(0.0, 0.1), sigma_z=(0.0, 0.1)), ,→
+
+RandGaussianSharpend(keys="image", prob=opts.aug_prob), RandAffined(keys=["image", "label"], prob=opts.aug_prob, mode=("bilinear", "nearest"), rotate_range=(np.pi / 4, np.pi / 4, np.pi / 4), scale_range=(0.2, 0.2, 0.2), shear_range=(0.2, 0.2, 0.2), spatial_size=opts.crop_size, padding_mode= 'zeros ',), 
+
+> ,→
+> ,→
+
+ScaleIntensityd(keys="image"), [0,1] ]) 
+
+C.2 Architecture 
+
+We provide the base 3D UNet segmentation architecture used throughout this paper in Table 12. All methods used this base architecture except for nnUNet [29], which is recommended to be used as is. 
+
+Notation: – nc : base number of channels 
+
+– nout : number of output channels in the final layer 
+
+– Conv-BN-ReLU (c): A Convolution → BatchNorm → ReLU with c output channels block 
+
+– MaxPool (k): Max pooling with kernel size k
+
+– Upsample k×: nearest-neighbor upsampling by factor k
+
+– “Concatenate with layer X”: skip connection via concatenation DropGen 33 
+
+Table 12: U-Net architectural details. Conv-BN-ReLU refers to a sequence of 3D convo-lutional with 3 × 3 × 3 kernels, batch normalization, and pointwise ReLU non-linearities. 
+
+nin is the number if input channels. nc is the channel width multiplier and n is the number of output channels. 
+
+Block Contents 
+
+0 Conv-BN-ReLU( nin , n c)1 Conv-BN-ReLU( nc)2 Conv-BN-ReLU( nc)3 MaxPool(2), Conv-BN-ReLU( 2nc)4 Conv-BN-ReLU( 2nc)5 Conv-BN-ReLU( 2nc)6 MaxPool(2), Conv-BN-ReLU( 4nc)7 Conv-BN-ReLU( 4nc)8 Conv-BN-ReLU( 4nc)9 MaxPool(2), Conv-BN-ReLU( 8nc)10 Conv-BN-ReLU( 8nc)11 Conv-BN-ReLU( 8nc)12 MaxPool(2), Conv-BN-ReLU( 16 nc)13 Conv-BN-ReLU( 16 nc)14 Conv-BN-ReLU( 16 nc)15 MaxPool(2), Conv-BN-ReLU( 32 nc)16 Conv-BN-ReLU( 32 nc)17 Conv-BN-ReLU( 32 nc)18 Upsample 2×, Concatenate with layer 14 19 Conv-BN-ReLU( 32 nc)20 Conv-BN-ReLU( 32 nc)21 Upsample 2×, Concatenate with layer 11 22 Conv-BN-ReLU( 16 nc)23 Conv-BN-ReLU( 16 nc )24 Upsample 2×, Concatenate with layer 8 25 Conv-BN-ReLU( 4nc )26 Conv-BN-ReLU( 4nc )27 Upsample 2×, Concatenate with layer 5 28 Conv-BN-ReLU( 2nc )29 Conv-BN-ReLU( 2nc )30 Upsample 2×, Concatenate with layer 2 31 Conv-BN-ReLU( nc )32 Conv-BN-ReLU( nc )33 Conv-BN-ReLU( nout )
+
+C.3 Feature Extractor 
+
+Our paper evaluates two large-scale medical imaging foundation models as representation extractors for DropGen : anatomix [12] and nnInteractive [30]. Below, we describe their specific model configurations and checkpoints used in our experiments. 34 Diaz et al.                                                          
+
+> Table 13: Dataset details. Pre-processing details such as crop size and spacing, alongside splits used for each dataset in the experiments.
+> Dataset Crop Size Spacing (mm) # Train # Val. # Test
+> AMOS (192 ,192 ,128) (1 .0,1.0,1.5) 300 30 30
+> BraTS (128 ,128 ,128) (1 .0,1.0,1.0) 1020 48 96
+> CoW (192 ,160 ,128) (0 .3,0.3,0.6) 75 20 30
+> HVSMR (128 ,160 ,128) (0 .74 ,0.74 ,0.8) 23 18 19
+> PancreasDG (256 ,224 ,64) (1 .09 ,1.09 ,4.4) 53 100 100
+> Prostate (224 ,256 ,64) (0 .52 ,0.51 ,1.25) 49 25 42
+
+anatomix. We use the publicly released weights provided in the official GitHub repository, specifically the anatomix.pth checkpoint. These weights correspond to the pretrained model described in the referenced work and require no additional modification. 
+
+nnInteractive. For nnInteractive, we rely on the reference implementation available in the associated GitHub repository. All experiments use nnInteractive v1.0, fold 0, with the checkpoint_final.pth model. Consistent with the setup described in the main text, we extract features from the final decoder layer for all comparisons and ablations. 
+
+C.4 Dataset pre-processing and splits 
+
+Here, we describe the domain shifts present in the training, validation, and testing sets and summarize the corresponding dataset statistics and splits in Table 13. Dataset splitting scripts are provided in the accompanying code. All methods were trained, validated, and tested using the same voxel spacing. Voxel spacing was determined using the nnUNet planning pipeline [29] run on the train split in isolation, with the exception of AMOS, for which we followed the AMOS-specific recommendations from the nnUNet extensions [31]. Crop sizes were selected based on memory constraints and to ensure compatibility with the feature extractors used in our experiments. Below, we describe the specific datasets and any other additional information important for training. We refer readers to the referenced work for download links. 
+
+C.5 Baseline implementations 
+
+We summarize how each baseline method was implemented for the comparisons in the main paper. For reproducibility, we refer readers to the official open-sourced implementations provided by the authors of each respective method. 
+
+nnU-Net. We used the latest publicly available version of nnU-Net from the official repository [29]. Training plans were generated exclusively from the training splits we randomly selected to prevent any leakage from the validation or test sets. For evaluation, we selected the best-performing validation checkpoint and DropGen 35 
+
+disabled test-time augmentation to ensure a fair comparison across baselines. Further, its default five-network ensembling was not used in order to achieve a one-to-one comparison. 
+
+GIN and GIN+IPA. GIN consists of a shallow convolutional block that randomly samples convolutional kernels at each forward pass; we used the au-thors’ GINGroupConv3D module with default settings, as recommended in the reference code [47]. Since no open-source implementation of IPA is provided, we implemented it following the descriptions in the original work. IPA generates a GPU-based B-spline bias field with user-controlled spacing; we used a spacing of 
+
+[16 , 16 , 16]  for all experiments. IPA also incorporates a consistency regularization term, for which we followed the parameterization used in the reference code and tuned its consistency weight on the validation set. GIN+IPA effectively increases the batch size because multiple perturbations are applied per input ( e.g ., an initial batch size of 4 becomes an effective batch size of 12). This increase in batch size in addition to the B-spline computation causes a significant runtime increase as demonstrated in Table 7. Additionally, both GIN and GIN+IPA were highly sensitive to initialization, necessitating the use of multiple random seeds to avoid divergent training. We trained GIN and GIN+IPA with three different random seeds each, and selected the corresponding models with the best performance on the validation set. 
+
+MixUp. MixUp [69] interpolates pairs of samples within each batch, producing soft labels that encourage smoother decision boundaries. We applied MixUp with a probability p that was tuned on the validation set and sampled interpolation coefficients from the recommended  Beta (0 .4, 0.4)  distribution. 
+
+CutOut. CutOut [10] masks out randomly positioned cubic regions from both the image and its label, reducing the model’s reliance on small, highly discriminative regions. The size of the masked cube was set to  0.33 × the crop size along each dimension (rounded to the nearest integer). CutOut was applied with a probability p tuned on the validation set. Because the input was scaled to  [0 , 1] ,we zero-centered the volume before applying CutOut and then shifted it back to  [0 , 1] , producing a neutral “gray” cube instead of a zero-valued region. This stabilized training when using batch normalization. 
+
+DSBN. Domain-Specific Batch Normalization [76] replaces standard batch normalization with multiple domain-specific branches. Since no domain labels are provided, domains were assigned based on whether the Bézier intensity transformation applied to the foreground increased or decreased the intensity. Transformations were applied with a probability p tuned on the validation set. 
+
+MixStyle. MixStyle [75] mixes feature statistics within each batch to simulate domain variation. Because explicit domain labels are not available, we mixed statistics randomly between samples in the batch. We applied MixStyle to the UNet encoder. We applied the MixStyle with probability p tuned on the validation set. 36 Diaz et al. 
+
+RSC. RSC [28] requires two forward passes: one to compute standard gradients and another in which the top 20% of dominant gradients are masked. This discourages the model from over-relying on a small set of highly discriminative features. As high-level features emerge in deeper encoder layers, we applied RSC at the deepest encoder block. We applied RSC with probability p tuned on the validation set. 
+
+Stable Feature Boosting (SFB). Stable Feature Boosting (SFB) [16] ap-proaches the domain generalization problem by training two separate model: unstable and stable. At test time, SFB uses a calibrated stable model to produce pseudo-labels. These pseudo-labels serve to supervise the unstable model during test time. A bias correction procedure is used to mitigate the wrong predictions made by the stable feature during test time. In our context, the "stable" model is a model trained on the stable representations only and the "unstable" model is a model trained on the unstable representations only. We first calibrate the stable model via temperature scaling on the validation set. For each test volume, the stable model products calibrated softmax probabilities. The unstable model is then adapted over 3 outer rounds: in each round, it is finetuned for S gradients steps using a KL divergence loss against the pseudo-labels with a learning rate of LR . Unstable model’s predictions are bias corrected. Final segmentation is the argmax of the pseudo-labels after all 3 rounds. S and LR are tuned on the validation set. 
+
+Alpha Tuning. We interpreted Alpha Tuning [34] as a linear combination between a stable model and a unstable model. Specifically, we fused the logits according to final_logits = (1 − α) · hstable  
+
+> θ
+
++ α · hstable  
+
+> θ
+
+where α is tuned on the validation set. 
+
+Entropy Minimization (Ent. Min.). TENT [60] adapts a pretrained model at test time by minimizing the entropy of its predictions on each test volume. Only the batch normalization (BN) parameters are updated, while all other weights are frozen. For each test volume, we reset the model to its pretrained weights and run S gradient steps of SGD with learning rate of LR , where each step is a random spatial crop. S and LR are tuned on the validation set.

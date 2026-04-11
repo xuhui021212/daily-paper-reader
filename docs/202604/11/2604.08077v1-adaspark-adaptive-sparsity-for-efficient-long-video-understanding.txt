@@ -1,0 +1,549 @@
+Title: AdaSpark: Adaptive Sparsity for Efficient Long-Video Understanding
+
+URL Source: https://arxiv.org/pdf/2604.08077v1
+
+Published Time: Fri, 10 Apr 2026 01:09:47 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# AdaSpark: Adaptive Sparsity for Efficient Long-Video Understanding 
+
+## Handong Li 1,2,3 * Zikang Liu 1,2,3* Longteng Guo 1,2* Tongtian Yue 1,2,3 Yepeng Tang 2
+
+## Xinxin Zhu 1,2 Chuanyang Zheng 3,4 Ziming Wang 3,4 Zhibin Wang 3,4 
+
+## Jun Song 3,4 Cheng Yu 3,4 Bo Zheng 3,4 Jing Liu 1,2 †
+
+> 1
+
+## School of Artificial Intelligence, University of Chinese Academy of Sciences 
+
+> 2
+
+## Institute of Automation, Chinese Academy of Sciences 
+
+> 3
+
+## Alibaba Group Holding Limited 4Future Living Lab of Alibaba 
+
+## Abstract 
+
+Processing long-form videos with Video Large Language Models (Video-LLMs) is computationally prohibitive. Cur-rent efficiency methods often compromise fine-grained per-ception through irreversible information disposal or in-hibit long-range temporal modeling via rigid, predefined sparse patterns. This paper introduces AdaSpark, an adap-tive sparsity framework designed to address these limita-tions. AdaSpark first partitions video inputs into 3D spatio-temporal cubes. It then employs two co-designed, context-aware components: (1) Adaptive Cube-Selective Attention (AdaS-Attn), which adaptively selects a subset of relevant video cubes to attend for each query token, and (2) Adaptive Token-Selective FFN (AdaS-FFN), which selectively pro-cesses only the most salient tokens within each cube. An entropy-based (Top-p) selection mechanism adaptively al-locates computational resources based on input complex-ity. Experiments demonstrate that AdaSpark significantly reduces computational load by up to 57% FLOPs while maintaining comparable performance to dense models and preserving fine-grained, long-range dependencies, as vali-dated on challenging hour-scale video benchmarks. 
+
+## 1. Introduction 
+
+Fine-grained understanding of long-form videos represents a critical frontier for Video Large Language Models (Video-LLMs) [3, 19, 38, 52]. While significant strides have been made in the domain of short-video understanding [6, 7, 21, 26, 54], scaling these successes to long-form videos presents a formidable challenge. Long videos can easily generate token sequences exceeding tens of thou-sands or even approaching 1M tokens. Applying standard Video-LLMs to such inputs is computationally infeasible. 
+
+> *Equal Contribution.
+> †Corresponding Author.
+
+The core bottlenecks are twofold: the quadratic complex-ity ( O(N 2)) of the self-attention mechanism and the sub-stantial activation costs of the Feed-Forward Neural Net-works (FFNs) . Consequently, the computational load esca-lates dramatically, rendering training and inference on high-resolution, long-duration videos prohibitively expensive. In response to this scalability crisis, a plethora of effi-cient designs have been proposed to mitigate the computa-tional burden [5, 12, 14, 15, 24, 27, 34, 46]. Despite achiev-ing commendable trade-offs between efficiency and accu-racy, we observe that these methods suffer from a few limi-tations, which we categorize into two primary drawbacks. (1) Compromised Fine-Grained Perception. Many ex-isting strategies rely on heuristic information disposal to reduce the effective sequence length. Techniques such as 
+
+frame sampling [35, 46, 50] or token pruning [5, 42, 51] permanently discard spatio-temporal tokens, either prior to model ingress or dynamically during computation. While effective at reducing cost, this irreversible information loss risks eliminating subtle visual details or brief, yet crucial, events. Similarly, token compression [4, 14, 22, 32], which fuses features based on similarity, can corrupt or average out distinct information, leading to a loss of perceptual fidelity required for fine-grained tasks. (2) Inhibited Long-Range Temporal Modeling The second drawback stems from the imposition of rigid, pre-defined computational patterns. Approaches like local at-tention [17, 25, 43] mechanisms replace the full O(N 2)
+
+matrix with a restricted, computationally cheaper pattern. It explicitly breaks global sequence connectivity and re-stricts information flow to fixed local windows. This structural constraint fundamentally undermines the model’s capacity to capture complex, long-range dependencies across extended temporal spans. Furthermore, information-discarding methods (like sampling) also contribute to this issue by creating temporal discontinuities, making it diffi-cult to model continuous, evolving causal relationships. To address the above challenges, we first conduct a pre-1
+
+> arXiv:2604.08077v1 [cs.CV] 9 Apr 2026
+
+liminary analysis on the Qwen2.5-VL [3] model, as illus-trated in Figure 1. Our findings are twofold: (1) The video attention exhibit high intrinsic sparsity. 
+
+The upper plot of Figure 1 shows that the attention weights are highly concentrated, with a small subset of vision to-kens consistently capturing the majority of the cumulative attention probability. This confirms the inherent sparsity of the attention structure. Furthermore, the number of tokens required to reach a fixed cumulative probability threshold varies significantly across different layers. This observa-tion strongly suggests that employing a static, fixed sparsity ratio would be suboptimal, as it would inevitably lead to information loss in layers requiring denser attention. (2) The FFN layers exhibit computational inertia for visual tokens. The lower plot of Figure 1 reveals a stark contrast in how FFN layers process different modalities. Text tokens (highlighted by the red boxes) undergo a sub-stantial transformation, as evidenced by the large variance and high spikes in their L2-norm ratio (post-FFN vs. pre-FFN). In sharp contrast, the vast majority of vision to-kens exhibit a much more stable and consistent norm ra-tio. This implies that the transformative effect of the FFN on many video tokens is significantly less dynamic, provid-ing a strong justification for a sparse design that selectively applies FFN computation. These observations collectively indicate that a large por-tion of computation in long-video processing is redundant. Motivated by this, we introduce Adaptive Cube-Token Sparsity (AdaSpark) , which applies adaptive sparsity at both the cube level and the token level in a coordinated fash-ion, selecting informative 3D spatio-temporal cubes for at-tention while identifying salient tokens inside each cube for FFN computation, thereby reducing unnecessary compu-tation without sacrificing fine-grained detail or long-range temporal dependencies. Our method first leverages the inherent 3D spatio-temporal locality of video by partitioning the input into se-mantically related cubes , each with a shape of h × w ×
+
+t. This partitioning underpins our unified adaptive condi-tional computation strategy, which is implemented via two core components. The Adaptive Cube-Selective Atten-tion (AdaS-Attn) mechanism introduces sparsity to self-attention; rather than computing full attention, each query 
+
+token adaptively selects a subset of video cubes to serve as the keys and values . On the other hand, the Adaptive Token-Selective FFN (AdaS-FFN) component addresses the feed-forward layers by identifying and processing only the most salient tokens within each video cube (i.e., those with the largest L2-norm). The remaining, less salient to-kens bypass this expensive computation via a residual con-nection, significantly reducing the computational load. We further introduce an entropy-based mechanism (Top-p se-lection) that makes the sparsity fully context-aware, allow-Prob. accumulation   
+
+> Text token
+> Vision token
+> Text token
+> Figure 1. Preliminary analysis. We analyzed internal distribu-tions within the video-LLM layers. The upper figure shows text-to-visual attention score distributions, marking the 0.7 cumulative probability point per layer with a star. The lower figure displays L2 norm changes across modalities after the FFN, quantified as the post-to-pre norm ratio.
+
+ing the model to intelligently adapt its computational budget based on the information density of the current input. Comprehensive experiments demonstrate that our method, AdaSpark, achieves strong performance across a suite of diverse long-video benchmarks, consistently outperforming both dense baselines and prior efficiency-focused methods. This is achieved while substantially reducing the computational burden, achieving up to a 57% reduction in FLOPs compared to the dense backbone. In summary, our contributions can be summarized as follows: • We propose AdaSpark, a novel and efficient Video-LLM framework that introduces an adaptive unified sparse strategy to mitigate the prohibitive computational cost of processing long-video sequences. • We develop two complementary, entropy-guided sparse mechanisms for video that establish hierarchical cube–token sparsity, adaptively selecting informative 3D spatio-temporal cubes and the salient tokens within them to adapt computation to input complexity. • We demonstrate through extensive experiments that AdaSpark achieves strong performance on a suite of long-video benchmarks while achieving up to a 57% reduction in FLOPs compared to the dense backbone. 22. Related Work 
+
+2.1. Long Video Understanding 
+
+When video durations extend to the hour scale, visual token sequences can approach 300,000, introducing prohibitive computational complexity. Some works [29, 31, 36, 37, 45, 53, 56] aim to reduce visual tokens before core model ingestion, typically achieved through compression, merg-ing, or downsampling techniques. For instance, LLaMA-VID [24] and Video-CCAM [10] utilize cross-attention mechanisms to compress visual features into fixed-length query embeddings. Furthermore, VideoChat-Flash [23] directly merges similar visual tokens via the ToMe [4] methodology, whereas VideoLLaMA2 [9] employs spatio-temporal convolutions for effective visual token downsam-pling. FrameFusion [12] achieves more efficient context compression by implementing merging and pruning oper-ations based on inter-frame attention scores. Inspired by advancements in long-context LLMs, it is evident that exhaustive, full-attention computation be-tween all query and key vectors is frequently unneces-sary. Building on this observation, MMInference [25] intro-duced pre-defined sparse patterns to adaptively optimize the computational FLOPs for distinct attention heads, thereby achieving notable optimization during the pre-filling stage. VideoChat-Flash [23] attempts to accelerate both pre-filling and decoding by eliminating KVs in specific layers that exhibit low relevance to the query text. Video-XL [34] partitions the video input into chunks and processes them streamingly, generating sparse KVs from special tokens in-serted among the visual tokens. While these works explore information redundancy in long video understanding, they predominantly rely on fixed sparsity paradigms or lack a unified design across multiple modules. 
+
+2.2. Sparse Network Design 
+
+Recently, significant advancements have emerged in long-context sparse modeling for LLMs. As an alternative to conventional approaches, such as structural constraints based on attention sinks, dynamic inference-time sparsity, or linear-like models requiring training from scratch, a promising paradigm known as Native Sparse Modeling has appeared. This approach functions by allowing the model to determine where to attend without relying on prede-fined biases. Such an architecture facilitates a seamless transition between full and sparse attention modes, thereby maximizing compatibility with existing pre-trained mod-els and enabling both efficient inference and accelerated training without compromising performance. This direc-tion has spurred the development of methods like NSA [47], whose ’select’ branch partitions the context into blocks and computes attention on a top-k selection based on atten-tion scores. Similarly, MoBA [28] divides the context into chunks and selects the top-k chunks based on inter-chunk similarity. However, such trainable sparse modeling ap-proaches are incapable of adaptively selecting the number of chunks for long input contexts and necessitate specific architectural designs tailored for long video. 
+
+## 3. Method 
+
+Motivated by the high spatio-temporal redundancy inher-ent in video data and the intrinsic sparsity of LLMs, we propose AdaSpark, a unified and efficient sparse strategy applied to both Attention and FFN components (Figure 2), to reduce the computational costs of model inference. 
+
+3.1. Video Cube Partition 
+
+AdaSpark applies sparse computation at the granularity of 
+
+Cube-Token levels. This design choice mandates that tokens encapsulated within a single cube should be as semantically homogeneous as possible (i.e., possess high semantic cohe-sion). This cohesion is critical for enhancing the accuracy and stability of the sparse selection mechanism. Unlike one-dimensional natural language, video data is inherently characterized by a 3D spatio-temporal structure, exhibiting strong locality; proximate tokens in this 3D space are highly likely to be correlated. We therefore leverage this intrinsic property by partitioning the video tokens fed into the LLM according to a cube window with a shape of 
+
+h × w × t. These resulting cubes serve as the atomic units for our subsequent sparse attention and FFN algorithms. 
+
+3.2. Adaptive Cube-Selective Attention 
+
+In the attention component, we introduce an Adaptive Cube-Selective Attention (AdaS-Attn) for video tokens, computed per attention head. For any given video query token, q, belonging to the i-th cube Ci (where i ∈{1, 2, . . . , N } and N is the total number of cubes), we first determine its relevance to all preceding cubes. This is achieved by computing a selection similarity score between 
+
+q and the mean key vector (¯kj ) of each preceding block Cj
+
+(where j < i ). This process yields a probability distribution Pi over the preceding blocks: 
+
+Pi = Softmax 
+
+ q · ¯k1
+
+√dk
+
+, q · ¯k2
+
+√dk
+
+, . . . , q · ¯ki−1
+
+√dk
+
+T !
+
+(1) where dk is the dimension of the key vectors and ¯kj =
+
+Mean (k ∈ Kj ) is the average key vector for all tokens in cube Cj .Next, we employ an entropy-based, adaptive selection strategy to determine the set of cubes to attend to. We uti-lize nucleus (Top-p) sampling on the distribution Pi. This strategy is inherently context-aware: 
+
+Si = {j | j < i and pj ∈ Top-p (Pi, p )} (2) 3Video Encoder  Text Embedding 
+
+> Native Resolution Input
+> Describe this video in detail: The video features a capybara, the largest rodent in the world,…
+> Input Text
+
+AdaS-Attn 
+
+AdaS-FFN 
+
+> …
+
+AdaS-Attn 
+
+AdaS-FFN 
+
+× 𝑁𝑁 
+
+> Cube Partition
+> Routing Scores
+> Feed Forward Network
+
+Adaptive Cube-Selective Attention 
+
+Adaptive Token-Selective FFN 
+
+> Cube Selection
+> K/V Cubes
+> Pooling
+
+𝑞𝑞 𝑖𝑖 
+
+𝑞𝑞 𝑖𝑖 
+
+> L2-norm
+> Top-p Selection
+
+# …
+
+# …  
+
+> Top-p Selection Top-p Selection Top-p Selection
+
+# … … 
+
+> 𝑥𝑥 2
+> hours-long video
+
+Figure 2. Framework illustration of AdaSpark. We process long-duration videos at their native resolution and subsequently apply video cube partitioning. Within the AdaS-Attn layer, each token query performs adaptive selection based on relevance scores computed over preceding Cubes. Upon entering the AdaS-FFN, visual tokens within each Cube are adaptively selected to pass through the FFN, while the transformations for the remaining tokens are estimated via Mean Compensation. Text tokens pass densely through the AdaS-FFN. 
+
+where Si is the selected set of block indices and pj is the 
+
+j-th probability from Pi (Eq. 1). This approach adaptively adapts the sparsity level. For a high-entropy (flat) distri-bution, where similarity is dispersed, more cubes are se-lected to aggregate sufficient information. Conversely, for a low-entropy (sharp) distribution, where relevance is con-centrated, only the few most pertinent cubes are chosen. Finally, based on the proximity hypothesis—positing that adjacent tokens are most critical—the query q always 
+
+performs full attention on the preceding tokens within its 
+
+own cube (denoted K<q i and V <q i ). The final video token attention output is computed by attending to the concatena-tion of the selected sparse cubes and the local cube: 
+
+Katt = Concat  [Kj for j ∈ S i] , K <q i
+
+
+
+Vatt = Concat  [Vj for j ∈ S i] , V <q i
+
+
+
+Out (q) = Softmax 
+
+ qK T
+
+> att
+
+√dk
+
+
+
+Vatt 
+
+(3) where Kj and Vj represent all keys and values in cube Cj .For text tokens, cube-wise attention is applied to preceding visual tokens, while standard token-wise attention is applied to text tokens. 
+
+3.3. Adaptive Token-Selective FFN 
+
+Leveraging the high semantic cohesion within each video cube Ci, our Adaptive Token-Selective FFN (AdaS-FFN) efficiently processes only the most salient tokens through the expensive FFN transformations, while the remaining to-kens bypass this computation. We hypothesize that tokens which are more information-rich exhibit a higher L2-norm (∥x∥2) [1]. Specifically, for all token embeddings xj within a given cube Ci, we first compute an importance score sj by L1-normalizing their L2-norms. This creates a probability dis-tribution Si representing the relative importance of each to-ken in the cube: 
+
+sj = ∥xj ∥2
+
+P 
+
+> k∈Ci
+
+∥xk∥2 + ϵ (4) where ϵ is a small constant for numerical stability. Analogous to our attention strategy, we employ an entropy-aware nucleus (Top-p) selection on the importance distribution Si to identify the set of tokens to activate, Mi:
+
+Mi = {j | j ∈ Ci and sj ∈ Top-p (Si, p )} (5) This adaptively selects only the most prominent tokens for full FFN computation. Let Ri = Ci \ M i denote the set of remaining (unselected) tokens. The final computation is then bifurcated. Tokens in the activated set Mi are processed by the full FFN (which in-cludes its own residual connection): 
+
+yj = xj + FFN (xj ), ∀j ∈ M i (6) The remaining tokens xk in Ri bypass the expensive FFN. We apply a Mean Compensation strategy for those 4skipped tokens. We first compute the activated set’s mean transformation mi, then use it as an estimate of those re-maining tokens’ transformation, and apply their own resid-ual connection: 
+
+yk = xk + ¯ mi, ∀k ∈ R i,
+
+¯mi = 1
+
+|M i|
+
+X
+
+> j∈M i
+
+FFN (xj ) (7) This strategy significantly reduces computation while en-suring all tokens are updated. Finally, similar to the atten-tion layer, all text tokens xt undergo the full, dense FFN computation to preserve their rich instructional and seman-tic content. In summary, our AdaS-Attn and AdaS-FFN provide a coherent framework for efficient long-video modeling. By leveraging semantically cohesive cubes as the fundamen-tal computational unit, we apply context-aware, entropy-based sparsity to both the attention and FFN. This holistic approach significantly reduces computational and memory overhead, while preserving the critical fine-grained infor-mation and global long-range dependencies necessary for high-fidelity long video understanding. 
+
+## 4. Experiment 
+
+In this section, we present the experimental setup, details of the datasets, and comparisons with state-of-the-art effi-cient methods across multiple video benchmarks 
+
+Implementation Details. We apply our AdaSpark method on the Qwen2.5-VL-3B [38] and Qwen2.5-VL-7B backbones, thereby accommodating distinct model scales. Video inputs are sampled at 4 frames per second (fps) to preserve comprehensive temporal information while maintaining native resolution for spatial perception. This configuration supports a maximum visual sequence length of 48k tokens and a maximum context length of 64k tokens, the latter being double that of the backbone architecture. Subsequently, a 8 × 8 × 4 spatio-temporal window is employed to partition the visual tokens into blocks. A top-p sampling threshold of p = 0 .7 is applied within both the sparse attention mechanism and the sparse Feed-Forward Network (FFN) component. Throughout training, the visual encoder remains frozen. The model is trained using a learning rate of 2 × 10 −6 and a global batch size of 256. The entire post-training procedure completes in approximately 4 days utilizing 32 NVIDIA H100 GPUs. 
+
+Training Data. Our training methodology incorporates a mixed dataset, centrally featuring the llava-video-178k [52] dataset, which serves as a foundational corpus for basic video understanding. In addition, we augment this data with 77k timestamp-grounded samples from DideMo [2] and ActivityNet Captions [16] to enhance the model’s ca-pacity for identifying key temporal information. Additional hyper-parameter details are available in the Appendix. 
+
+4.1. Main Results 
+
+We evaluate AdaSpark on a series of comprehen-sive video-language benchmarks: 1) Extra Long Video Understanding, using Video Needle in a Haystack [49, 55]; 2) Long Video Understanding, which includes MLVU [57], VideoMME [11], LongVideoBench [41], and LVBench [39]; 3) Short Video Understanding, using MVBench [20]; 4) Spatial Reasoning, with VSIBench [44]; and 5) Video Grounding, utilizing CharadesSTA [13]. We evaluated the AdaSpark framework against leading efficiency-focused methods by integrating them into the Qwen-2.5-VL-3B and Qwen-2.5-VL-7B backbones. For these competing methods, we utilized the optimal settings as provided in their original publications. For MoBA, we employed the same post-training data and number of train-ing steps as our method to ensure a fair comparison. We utilized a unified evaluation script from lmms-eval [18, 48] and re-evaluated the performance of Qwen-2.5-VL to facil-itate a fair comparison. As detailed in Table 1, our method demonstrated su-perior performance across key capability axes. On the extra-long video benchmark, Video-NIAH, AdaSpark out-performs all sparse methods and classical long-video mod-els, indicating our method’s efficient extraction of key in-formation (detailed experimental comparisons and visual-izations are provided in Section 4.2). In Long Video Un-derstanding, AdaSpark significantly outperformed other ef-ficient methods and the backbone model; our 7B model achieved top scores on all four benchmarks, while the 3B model led on three. This validates that our adaptive sparse methodology effectively retains long-temporal information while reducing computational cost. In Spatial Reasoning, AdaSpark matched the strongest sparse attention baselines and surpassed other efficient methods, confirming its preser-vation of spatial fidelity. Our model also surpassed all effi-cient methods in Short Video Understanding, with distinct advantages in Video Grounding (3B: 45.0, 7B: 55.3). Conversely, MoBA exhibited the weakest performance, which we attribute to its failure to perform meaningful vi-sual sequence partitioning. In contrast, AdaSpark’s supe-rior performance on several benchmarks is ascribed to its effective spatio-temporal feature preservation. These com-prehensive results validate that our adaptive sparse design consistently yields significant performance gains, enabling efficient, high-fidelity video understanding. 
+
+4.2. Extra Long Video Evaluation 
+
+To further assess our model’s performance on extended-duration video inputs, we conducted a video “Needle in a Haystack” (VideoNIAH) evaluation. This test is designed 5Table 1. Performance on zero-shot video-language benchmarks. We evaluate AdaSpark on 1 extra long video benchmarks, 4 long-form video benchmarks, 1 short video benchmark, 1 spatial perception video benchmark and 1 video grounding benchmark. The results in bold 
+
+and underline values indicate the best and second-best performance among encoder-free models, respectively.                                                                                                                                                                                     
+
+> Model Extra Long Long-form Short-form Spatial Grounding VideoNIAH MLVU Dev VideoMME LongVideo LVBench MVBench VsiBench CharadesSTA
+> Small Size Models
+> LongVU-3B [33] -55.9 51.5 --60.9 --InternVL2.5-2B [8] -61.4 51.9 52.0 -68.8 --VideoChat-Flash-2B [23] 92.0 65.7 57.0 58.3 42.9 70.0 -45.2
+> Qwen-2.5-VL-3B [3] 86.5 65.3 61.5 54.2 43.3 65.7 32.4 42.6 Qwen-2.5-VL-3B [3] + SFT 88.0 65.2 60.3 53.6 43.1 64.9 33.1 43.6 + FastV [5] 88.0 65.1 62.4 55.9 43.3 65.6 29.9 41.1 + ToMe [4] 86.5 65.4 62.2 55.8 42.4 64.5 29.4 43.3 + MoBA [28] 65.5 63.2 58.4 51.2 39.4 64.0 28.9 40.1 + FrameFusion [12] 90.0 65.0 62.4 56.0 43.4 65.4 33.6 41.4
+> + AdaSpark (Ours) 95.5 67.3 63.5 56.3 45.0 66.5 35.8 45.0
+> Mid Size Models
+> LLaMA-VID-7B [24] -33.2 ---41.4 --VideoChat2-7B [20] -47.9 39.5 39.3 -62.3 --LongVA-7B [49] 58.0 56.3 52.6 47.8 ----Video-XL-7B [34] 90.0 64.9 55.5 50.7 -55.3 --Qwen-2.5-VL-7B [3] 83.0 68.3 65.1 60.7 45.3 69.6 35.6 52.4 Qwen-2.5-VL-7B [3] + SFT 86.0 68.1 64.7 59.8 45.2 67.0 36.7 53.9 + FastV [5] 88.5 65.7 66.0 60.8 43.3 67.0 39.2 51.3 + ToMe [4] 85.0 66.1 65.8 60.8 43.1 67.2 38.7 53.5 + MoBA [28] 70.5 64.7 63.4 58.3 42.3 67.5 34.8 50.7 + FrameFusion [12] 92.5 66.3 66.1 61.1 42.8 66.8 39.3 51.3
+> + AdaSpark (Ours) 97.5 69.8 66.2 62.1 47.9 70.3 39.8 55.3
+
+to measure the model’s ability to retrieve specific, localized information embedded at various temporal depths within a protracted video context. As illustrated in Figure 3, we benchmarked AdaSpark against two classical long-video models [40, 49] and two alternative sparse methodologies. In contrast to prior works that employed perplexity-based metrics—which we observed can be easily satisfied even with non-specific answers—we adopted a more rigorous generative NIAH evaluation. For the classical long-video models, we report the performance cited in their origi-nal publications. For the sparse methodologies, we re-implemented them uniformly using the Qwen2.5-VL back-bone, processing 4,096 frames at 224 resolution, which re-sulted in a 300k-token context. The resulting heatmaps de-pict retrieval accuracy, revealing that baseline methods suf-fer from severe performance degradation (indicated by yel-low/red patches) at various temporal depths. In sharp con-trast, our model maintains consistently high retrieval accu-racy across all evaluated depths and video lengths. These re-sults confirm that AdaSpark scales effectively to extra-long video inputs, demonstrating a clear advantage by achieving superior retrieval accuracy while operating under a minimal computational budget. 
+
+4.3. Ablation Study 
+
+For the default configuration in our ablation studies, we employ our 3B model with the ViT parameters remaining frozen. To mitigate computational cost, the visual context length is constrained to 24k and sampled at 2 frames per second (fps), utilizing a spatial resolution of 224 × 224 ,which collectively results in 64 tokens per frame. 
+
+Effect of AdaS-Attn and AdaS-FFN. We conducted an ablation study to evaluate our proposed sparse modules (Ta-ble 2), using Qwen2.5VL-3B as the baseline. TFLOPs were measured via the DeepSpeed profiler [30]. The Cube FFN module reduces computational cost (299.5 →
+
+216.9 TFLOPs) and improves performance on VideoMME, LongVideo, and LVBench, but shows degradation on tem-porally sensitive tasks (MLVU, Charades-STA), suggesting a prioritization of spatial features. In contrast, the Cube Attn module improves performance across all five benchmarks, with the largest gains on MLVU and Charades-STA, while similarly reducing TFLOPs (299.5 → 213.1). The two com-ponents are complementary; when combined, they achieve superior performance to the baseline while reducing total computational cost by 57%. 
+
+Effect of Cube Shape. Constraining the blocksize to 64, we subsequently investigate three different cube partition-ing strategies: (a) a temporally-focused shape ( 1 × 1 × 64 ), (b) a balanced spatio-temporal shape ( 4 × 4 × 4), and (c) a spatially-focused shape ( 8 × 8 × 1). As detailed in Ta-ble 3, the balanced 4 × 4 × 4 configuration (b) achieves the most robust performance, yielding the highest scores of 6LongLLaVA     
+
+> LongVA
+> Qwen 2.5 VL
+> Qwen 2.5 VL + MoBA Qwen 2.5 VL + AdaSpark
+> Qwen 2.5 VL + FrameFusion Figure 3. Video Needle in A Haystack Results. We compare AdaSpark against existing high-efficiency models and methods. Table 2. Effects of AdaS-Attn and AdaS-FFN .
+
+Module TFLOPs ↓ MLVU VideoMME LongVideo LVBench Charades STA 
+
+AdaS-Attn AdaS-FFN M-avg w/o sub acc acc mIoU 
+
+✗ ✗ 299.5 65.2 60.3 53.6 43.1 43.6 
+
+✗ ✓ 216.9(-28%) 63.9 62.8 55.6 44.1 41.7 
+
+✓ ✗ 213.1(-29%) 66.0 61.2 54.5 43.4 43.7 
+
+✓ ✓ 128.5(-57%) 65.4 62.1 55.3 44.3 44.2                                                          
+
+> Table 3. Ablation on design choices of AdaSpark .
+> Model Factors Charades STA VideoMME MLVU
+> Cube Shape
+> (a) 1×1×64 35.3 52.7 51.3 (b) 4×4×435.5 54.0 52.1
+> (c) 8×8×134.5 54.2 49.4
+> Cube Size
+> (d) 64 35.5 54.0 52.1 (e) 128 36.0 53.9 55.8 (f) 256 36.1 55.7 57.5
+> (g) 512 34.9 55.6 56.9 (h) 1024 34.6 54.9 57.3
+> Mean Compensation
+> (i) w/o mean 35.0 54.1 56.4 (j) w/ mean 36.1 55.7 57.5
+
+35.5 on Charades STA and 52.1 on MLVU, while remaining competitive on VideoMME with a score of 54.0. This find-ing suggests that balancing spatial and temporal granularity yields an optimal configuration. 
+
+Effect of Cube Size. We ablate the size of the token blocks, ranging from 64 to 1024. As shown in Table 3, per-formance peaks with a cube size of 256 (f). This configura-tion achieves the highest scores across all three benchmarks, yielding 36.1 on Charades STA, 55.7 on VideoMME, and 57.5 on MLVU. 
+
+Effect of Mean Compensation for AdaS-FFN. We test the effect of adding the mean transformation of activated tokens to the bypassed tokens in the sparse FFN. As shown in Table 3, the model w/ mean (j) shows superior results, achieving 36.1 on Charades STA, 55.7 on VideoMME, and 57.5 on MLVU. This outperforms the model w/o mean 
+
+(i), which scored 35.0, 54.1, and 56.4 on the respective benchmarks. This demonstrates that the computed mean feature serves as a good estimation for the tokens that by-pass the MLP. 
+
+Effect of Top-P Adaptive Selection. We conducted com-prehensive experiments on various probability thresholds for Top-P selection. We compared a fixed Top-K selec-tion strategy, calibrated to have an equivalent average spar-sity level, against our entropy-based adaptive Top-P selec-tion. In Figure 4 (right), we represent model performance using the average score across three benchmarks (Charades-STA, MLVU, and Video-MME), while the bar chart illus-trates the computational complexity associated with each 
+
+Top-P setting. The Top-P strategy significantly outper-forms the Top-K approach when an appropriate parameter is chosen. It is observable that setting p = 0 .7 yields the best trade-off between performance and computational cost, which we adopted as our default setting. This highlights the advantage of entropy-based, content-adaptive selection. 70 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32 34                  
+
+> Layer
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> 16
+> #Cubes
+> Selected #Cubes in Attention Layers
+> #Cubes
+> 0246810 12 14 16 18 20 22 24 26 28 30 32 34
+> Layer
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Keep Ratio
+> Keep Ratio in FFN Layers
+> Keep Ratio
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Density 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+> Top p
+> 40
+> 42
+> 44
+> 46
+> 48
+> 50
+> Avg. Performance
+> K = 32
+> Avg. vs. Top p
+> Trade-off Point
+> TFLOPs
+> 0
+> 50
+> 100
+> 150
+> 200
+> 250
+> 300
+> TFLOPs
+> Avg. Performance and TFLOPs vs. Top p
+
+Figure 4. Analysis of adaptive selection within AdaSpark. The left figure illustrates the number of cubes selected by each query per layer in AdaS-Attn. The middle figure details the average token keep ratio per cube for each layer in AdaS-FFN. The right figure demonstrates the impact of parameter choices on the dynamic selection mechanism. The given query happens in 4.9 – 9.1 seconds 
+
+> Detect and report the start and end timestamps of the video segment that semantically matches the given textual query:
+> person in red go upstairs
+
+…
+
+Figure 5. Illustration of adaptive selection in a case study. 
+
+AdaSpark adaptively selects visual cubes that exhibit high rele-vance to the posed query token. 
+
+4.4. Visualization of Adaptive Selection 
+
+To validate the efficacy of the adaptive top-p selec-tion mechanism, we visualized its layer-wise operation within our 3B model. Our initial analysis focused on the AdaS-Attn module. Utilizing 1,000 samples from LongVideoBench, we computed the average number of cubes selected by each query token per layer. As illustrated in Figure 4 (left), a distinct trend emerges: the model selects a larger quota of cubes for attention in shallower layers, progressively reducing this allocation in intermediate and deeper layers. This suggests the top-p mechanism excels at modeling foundational visual features at the outset and subsequently conserves computation by pruning attention on features that have already acquired high-level semantic representations. Concurrently, we define a “keep ratio” as the average sparsity granularity within each AdaS-FFN cube. As shown in Figure 4 (mid), this keep ratio exhibits significant layer-wise variation. Specifically, the module retains a high pro-portion of tokens (0.6-0.8) in shallower layers, applies pro-gressively greater sparsity (i.e., reduces the keep ratio) in intermediate layers, and ultimately reduces the ratio to a minimal level in the deepest layers, where nearly all tokens bypass the FFN. Furthermore, the AdaS-FFN demonstrates a pronounced tendency to adaptively adjust sparsity in the middle layers (e.g., layers 11-28), as indicated by the larger variance in this segment. To further elucidate the fine-grained operational princi-ples of our modules, we visualized a specific case study. As illustrated in Figure 5, we posed a temporal-grounding query to a minute-long video. For this analysis, we com-puted two metrics: (1) for the AdaS-Attn module, the av-erage selection frequency of each Cube by text tokens (de-noted ’Attn Slc.’), and (2) for the AdaS-FFN module, the average token keep ratio within each Cube (denoted ’FFN Slc.’). We observed that the statistics from both modules exhibit information retention patterns that strongly corre-late with the temporal localization required by the query. This result further validates our modules’ capability for key information extraction and their capacity for fine-grained visual-text modal interaction. 
+
+## 5. Conclusion 
+
+In this work, we introduced AdaSpark, an adaptive spar-sity framework to address the prohibitive computational cost of long-form video understanding in Video-LLMs. We demonstrated that existing methods often compromise per-ceptual fidelity or long-range temporal modeling. Our ap-proach, which partitions video into spatio-temporal cubes, successfully mitigates these issues through two co-designed components: Adaptive Cube-Selective Attention and Adap-tive Token-Selective FFN. By leveraging an entropy-based selection mechanism, AdaSpark adaptively allocates com-putation based on content complexity. Our experiments confirm that this strategy achieves significant computational reductions by up to 57% FLOPs while preserving fine-grained details and long-range dependencies, offering com-parable performance to dense models. This validates adap-tive sparsity as a viable and effective path for scaling Video-LLMs to handle real-world, long-duration video inputs. 8Acknowledgments 
+
+This research is supported by the Strategic Prior-ity Research Program of Chinese Academy of Sci-ences under Grant XDB1350103, and the National Natural Science Foundation of China (62437001, 62436001, 62531026), and the Natural Science Foun-dation of Jiangsu Province under Grant BK20243051. 
+
+## References 
+
+[1] Sina Abbasi, Mohammad Reza Modarres, and Moham-mad Taher Pilehvar. Normxlogit: The head-on-top never lies. In Proceedings of the 2025 Conference on Empirical Meth-ods in Natural Language Processing , pages 34914–34935, 2025. 4 [2] Lisa Anne Hendricks, Oliver Wang, Eli Shechtman, Josef Sivic, Trevor Darrell, and Bryan Russell. Localizing mo-ments in video with natural language. In Proceedings of the IEEE international conference on computer vision , pages 5803–5812, 2017. 5, 12 [3] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, et al. Qwen2. 5-vl technical report. arXiv preprint arXiv:2502.13923 , 2025. 1, 2, 6 [4] Daniel Bolya, Cheng-Yang Fu, Xiaoliang Dai, Peizhao Zhang, Christoph Feichtenhofer, and Judy Hoffman. Token merging: Your vit but faster. In ICLR , 2023. 1, 3, 6 [5] Liang Chen, Haozhe Zhao, Tianyu Liu, Shuai Bai, Junyang Lin, Chang Zhou, and Baobao Chang. An image is worth 1/2 tokens after layer 2: Plug-and-play inference acceleration for large vision-language models. In European Conference on Computer Vision , pages 19–35. Springer, 2024. 1, 6 [6] Sihan Chen, Xingjian He, Handong Li, Xiaojie Jin, Jiashi Feng, and Jing Liu. Cosa: Concatenated sample pretrained vision-language foundation model. In The Twelfth Interna-tional Conference on Learning Representations . 1 [7] Sihan Chen, Handong Li, Qunbo Wang, Zijia Zhao, Mingzhen Sun, Xinxin Zhu, and Jing Liu. Vast: Avision-audio-subtitle-text omni-modality foundation model and dataset. Advances in Neural Information Processing Sys-tems , 36:72842–72866, 2023. 1 [8] Zhe Chen, Weiyun Wang, Yue Cao, Yangzhou Liu, Zhang-wei Gao, Erfei Cui, Jinguo Zhu, Shenglong Ye, Hao Tian, Zhaoyang Liu, et al. Expanding performance boundaries of open-source multimodal models with model, data, and test-time scaling. arXiv preprint arXiv:2412.05271 , 2024. 6 [9] Zesen Cheng, Sicong Leng, Hang Zhang, Yifei Xin, Xin Li, Guanzheng Chen, Yongxin Zhu, Wenqi Zhang, Ziyang Luo, Deli Zhao, et al. Videollama 2: Advancing spatial-temporal modeling and audio understanding in video-llms. 
+
+arXiv preprint arXiv:2406.07476 , 2024. 3 [10] Jiajun Fei, Dian Li, Zhidong Deng, Zekun Wang, Gang Liu, and Hui Wang. Video-ccam: Enhancing video-language un-derstanding with causal cross-attention masks for short and long videos. arXiv preprint arXiv:2408.14023 , 2024. 3 [11] Chaoyou Fu, Yuhan Dai, Yongdong Luo, Lei Li, Shuhuai Ren, Renrui Zhang, Zihan Wang, Chenyu Zhou, Yunhang Shen, Mengdan Zhang, et al. Video-mme: The first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis. arXiv preprint arXiv:2405.21075 , 2024. 5, 13 [12] Tianyu Fu, Tengxuan Liu, Qinghao Han, Guohao Dai, Shen-gen Yan, Huazhong Yang, Xuefei Ning, and Yu Wang. Framefusion: Combining similarity and importance for video token reduction on large visual language models. arXiv preprint arXiv:2501.01986 , 2024. 1, 3, 6 [13] Jiyang Gao, Chen Sun, Zhenheng Yang, and Ram Nevatia. Tall: Temporal activity localization via language query. In 
+
+Proceedings of the IEEE international conference on com-puter vision , pages 5267–5275, 2017. 5, 13 [14] Bo He, Hengduo Li, Young Kyun Jang, Menglin Jia, Xue-fei Cao, Ashish Shah, Abhinav Shrivastava, and Ser-Nam Lim. Ma-lmm: Memory-augmented large multimodal model for long-term video understanding. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 13504–13514, 2024. 1 [15] Peng Jin, Ryuichi Takanobu, Wancai Zhang, Xiaochun Cao, and Li Yuan. Chat-univi: Unified visual representation em-powers large language models with image and video un-derstanding. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 13700– 13710, 2024. 1 [16] Ranjay Krishna, Kenji Hata, Frederic Ren, Li Fei-Fei, and Juan Carlos Niebles. Dense-captioning events in videos. In 
+
+Proceedings of the IEEE international conference on com-puter vision , pages 706–715, 2017. 5, 12 [17] Xunhao Lai, Jianqiao Lu, Yao Luo, Yiyuan Ma, and Xun Zhou. Flexprefill: A context-aware sparse attention mecha-nism for efficient long-sequence inference. In The Thirteenth International Conference on Learning Representations . 1 [18] Bo Li, Peiyuan Zhang, Kaichen Zhang, Fanyi Pu, Xinrun Du, Yuhao Dong, Haotian Liu, Yuanhan Zhang, Ge Zhang, Chunyuan Li, and Ziwei Liu. Lmms-eval: Accelerating the development of large multimoal models, 2024. 5 [19] Handong Li, Yiyuan Zhang, Longteng Guo, Xiangyu Yue, and Jing Liu. Breaking the encoder barrier for seam-less video-language understanding. In Proceedings of the IEEE/CVF International Conference on Computer Vision ,pages 23167–23176, 2025. 1 [20] Kunchang Li, Yali Wang, Yinan He, Yizhuo Li, Yi Wang, Yi Liu, Zun Wang, Jilan Xu, Guo Chen, Ping Luo, et al. Mvbench: A comprehensive multi-modal video understand-ing benchmark. arXiv preprint arXiv:2311.17005 , 2023. 5, 6, 13 [21] Kunchang Li, Yali Wang, Yinan He, Yizhuo Li, Yi Wang, Yi Liu, Zun Wang, Jilan Xu, Guo Chen, Ping Luo, et al. Mvbench: A comprehensive multi-modal video understand-ing benchmark. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 22195– 22206, 2024. 1 [22] Xirui Li, Chao Ma, Xiaokang Yang, and Ming-Hsuan Yang. Vidtome: Video token merging for zero-shot video editing. 
+
+9In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 7486–7495, 2024. 1 [23] Xinhao Li, Yi Wang, Jiashuo Yu, Xiangyu Zeng, Yuhan Zhu, Haian Huang, Jianfei Gao, Kunchang Li, Yinan He, Chenting Wang, et al. Videochat-flash: Hierarchical com-pression for long-context video modeling. arXiv preprint arXiv:2501.00574 , 2024. 3, 6 [24] Yanwei Li, Chengyao Wang, and Jiaya Jia. Llama-vid: An image is worth 2 tokens in large language models. In 
+
+European Conference on Computer Vision , pages 323–340. Springer, 2024. 1, 3, 6 [25] Yucheng Li, Huiqiang Jiang, Chengruidong Zhang, Qianhui Wu, Xufang Luo, Surin Ahn, Amir H Abdi, Dongsheng Li, Jianfeng Gao, Yuqing Yang, et al. Mminference: Accelerat-ing pre-filling for long-context vlms via modality-aware per-mutation sparse attention. arXiv preprint arXiv:2504.16083 ,2025. 1, 3 [26] Zikang Liu, Sihan Chen, Longteng Guo, Handong Li, Xingjian He, and Jing Liu. Enhancing vision-language pre-training with jointly learned questioner and dense captioner. In Proceedings of the 31st ACM International Conference on Multimedia , pages 5120–5131, 2023. 1 [27] Zikang Liu, Longteng Guo, Yepeng Tang, Tongtian Yue, Junxian Cai, Kai Ma, Qingbin Liu, Xi Chen, and Jing Liu. Vrope: Rotary position embedding for video large language models. arXiv preprint arXiv:2502.11664 , 2025. 1 [28] Enzhe Lu, Zhejun Jiang, Jingyuan Liu, Yulun Du, Tao Jiang, Chao Hong, Shaowei Liu, Weiran He, Enming Yuan, Yuzhi Wang, et al. Moba: Mixture of block attention for long-context llms. arXiv preprint arXiv:2502.13189 , 2025. 3, 6 [29] Shichen Lu, Tongtian Yue, Longteng Guo, Handong Li, Xingjian He, Si Liu, and Jing Liu. Vipe: Visual perception in parameter space for efficient video-language understanding. In Proceedings of the 2025 Conference on Empirical Meth-ods in Natural Language Processing , pages 17775–17786, 2025. 3 [30] Jeff Rasley, Samyam Rajbhandari, Olatunji Ruwase, and Yuxiong He. Deepspeed: System optimizations enable train-ing deep learning models with over 100 billion parameters. In Proceedings of the 26th ACM SIGKDD international con-ference on knowledge discovery & data mining , pages 3505– 3506, 2020. 6 [31] Yuzhang Shang, Mu Cai, Bingxin Xu, Yong Jae Lee, and Yan Yan. Llava-prumerge: Adaptive token reduction for efficient large multimodal models. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 22857– 22867, 2025. 3 [32] Leqi Shen, Tianxiang Hao, Tao He, Sicheng Zhao, Yifeng Zhang, Yongjun Bao, Guiguang Ding, et al. Tempme: Video temporal token merging for efficient text-video retrieval. In 
+
+The Thirteenth International Conference on Learning Rep-resentations , . 1 [33] Xiaoqian Shen, Yunyang Xiong, Changsheng Zhao, Lemeng Wu, Jun Chen, Chenchen Zhu, Zechun Liu, Fanyi Xiao, Bal-akrishnan Varadarajan, Florian Bordes, et al. Longvu: Spa-tiotemporal adaptive compression for long video-language understanding. In Forty-second International Conference on Machine Learning , . 6 [34] Yan Shu, Zheng Liu, Peitian Zhang, Minghao Qin, Jun-jie Zhou, Zhengyang Liang, Tiejun Huang, and Bo Zhao. Video-xl: Extra-long vision language model for hour-scale video understanding. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 26160–26169, 2025. 1, 3, 6 [35] Xi Tang, Jihao Qiu, Lingxi Xie, Yunjie Tian, Jianbin Jiao, and Qixiang Ye. Adaptive keyframe sampling for long video understanding. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 29118–29128, 2025. 1[36] Yepeng Tang, Weining Wang, Longteng Guo, Tongtian Yue, Wenxuan Wang, Chunjie Zhang, and Jing Liu. Divid: Dis-entangled spatial-temporal modeling within llms for tempo-rally grounded video understanding. In The Fourteenth In-ternational Conference on Learning Representations . 3 [37] Burak Uzkent, Amanmeet Garg, Wentao Zhu, Keval Doshi, Jingru Yi, Xiaolong Wang, and Mohamed Omar. Dynamic inference with grounding based vision and language models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 2624–2633, 2023. 3 [38] Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Yang Fan, Kai Dang, Mengfei Du, Xuancheng Ren, Rui Men, Dayiheng Liu, Chang Zhou, Jingren Zhou, and Jun-yang Lin. Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution. arXiv preprint arXiv:2409.12191 , 2024. 1, 5 [39] Weihan Wang, Zehai He, Wenyi Hong, Yean Cheng, Xiao-han Zhang, Ji Qi, Ming Ding, Xiaotao Gu, Shiyu Huang, Bin Xu, et al. Lvbench: An extreme long video understanding benchmark. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 22958–22967, 2025. 5, 13 [40] Xidong Wang, Dingjie Song, Shunian Chen, Chen Zhang, and Benyou Wang. Longllava: Scaling multi-modal llms to 1000 images efficiently via a hybrid architecture. arXiv preprint arXiv:2409.02889 , 2024. 6 [41] Haoning Wu, Dongxu Li, Bei Chen, and Junnan Li. Longvideobench: A benchmark for long-context interleaved video-language understanding. Advances in Neural Informa-tion Processing Systems , 37:28828–28857, 2024. 5, 13 [42] Long Xing, Qidong Huang, Xiaoyi Dong, Jiajie Lu, Pan Zhang, Yuhang Zang, Yuhang Cao, Conghui He, Jiaqi Wang, Feng Wu, et al. Pyramiddrop: Accelerating your large vision-language models via pyramid visual redundancy re-duction. arXiv preprint arXiv:2410.17247 , 2024. 1 [43] Ruyi Xu, Guangxuan Xiao, Haofeng Huang, Junxian Guo, and Song Han. Xattention: Block sparse attention with an-tidiagonal scoring. In Forty-second International Conference on Machine Learning . 1 [44] Jihan Yang, Shusheng Yang, Anjali W Gupta, Rilyn Han, Li Fei-Fei, and Saining Xie. Thinking in space: How mul-timodal large language models see, remember, and recall spaces. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 10632–10643, 2025. 5, 13 [45] Weihao Ye, Qiong Wu, Wenhao Lin, and Yiyi Zhou. Fit and prune: Fast and training-free visual token pruning for multi-
+
+10 modal large language models. In Proceedings of the AAAI Conference on Artificial Intelligence , pages 22128–22136, 2025. 3 [46] Sicheng Yu, CHENGKAI JIN, Huanyu Wang, Zhenghao Chen, Sheng Jin, ZHONGRONG ZUO, XU XIAOLEI, Zhenbang Sun, Bingni Zhang, Jiawei Wu, et al. Frame-voyager: Learning to query frames for video large language models. In The Thirteenth International Conference on Learning Representations . 1 [47] Jingyang Yuan, Huazuo Gao, Damai Dai, Junyu Luo, Liang Zhao, Zhengyan Zhang, Zhenda Xie, Yuxing Wei, Lean Wang, Zhiping Xiao, et al. Native sparse attention: Hardware-aligned and natively trainable sparse attention. In 
+
+Proceedings of the 63rd Annual Meeting of the Associa-tion for Computational Linguistics (Volume 1: Long Papers) ,pages 23078–23097, 2025. 3 [48] Kaichen Zhang, Bo Li, Peiyuan Zhang, Fanyi Pu, Joshua Adrian Cahyono, Kairui Hu, Shuai Liu, Yuanhan Zhang, Jingkang Yang, Chunyuan Li, and Ziwei Liu. Lmms-eval: Reality check on the evaluation of large multimodal models, 2024. 5 [49] Peiyuan Zhang, Kaichen Zhang, Bo Li, Guangtao Zeng, Jingkang Yang, Yuanhan Zhang, Ziyue Wang, Haoran Tan, Chunyuan Li, and Ziwei Liu. Long context transfer from language to vision. arXiv preprint arXiv:2406.16852 , 2024. 5, 6, 13 [50] Shaojie Zhang, Jiahui Yang, Jianqin Yin, Zhenbo Luo, and Jian Luan. Q-frame: Query-aware frame selection and multi-resolution adaptation for video-llms. arXiv preprint arXiv:2506.22139 , 2025. 1 [51] Yuan Zhang, Chun-Kai Fan, Junpeng Ma, Wenzhao Zheng, Tao Huang, Kuan Cheng, Denis A Gudovskiy, Tomoyuki Okuno, Yohei Nakata, Kurt Keutzer, et al. Sparsevlm: Vi-sual token sparsification for efficient vision-language model inference. In Forty-second International Conference on Ma-chine Learning . 1 [52] Yuanhan Zhang, Jinming Wu, Wei Li, Bo Li, Zejun Ma, Zi-wei Liu, and Chunyuan Li. Video instruction tuning with synthetic data. arXiv preprint arXiv:2410.02713 , 2024. 1, 5, 12 [53] Yiyuan Zhang, Handong Li, Jing Liu, and Xiangyu Yue. Learning beyond still frames: Scaling vision-language mod-els with video. In Proceedings of the IEEE/CVF Interna-tional Conference on Computer Vision , pages 22425–22435, 2025. 3 [54] Yiyuan Zhang, Handong Li, Jing Liu, and Xiangyu Yue. Scaling omni-modal pretraining with multimodal context: Advancing universal representation learning across modal-ities. In Proceedings of the IEEE/CVF International Confer-ence on Computer Vision , pages 1336–1348, 2025. 1 [55] Zijia Zhao, Haoyu Lu, Yuqi Huo, Yifan Du, Tongtian Yue, Longteng Guo, Bingning Wang, Jing Liu, et al. Nee-dle in a video haystack: A scalable synthetic evaluator for video mllms. In The Thirteenth International Conference on Learning Representations . 5, 13 [56] Yiwu Zhong, Zhuoming Liu, Yin Li, and Liwei Wang. Aim: Adaptive inference of multi-modal llms via token merging and pruning. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 20180–20192, 2025. 3[57] Junjie Zhou, Yan Shu, Bo Zhao, Boya Wu, Shitao Xiao, Xi Yang, Yongping Xiong, Bo Zhang, Tiejun Huang, and Zheng Liu. Mlvu: A comprehensive benchmark for multi-task long video understanding. arXiv preprint arXiv:2406.04264 ,2024. 5, 13 
+
+11 AdaSpark: Adaptive Sparsity for Efficient Long-Video Understanding 
+
+# Supplementary Material 
+
+## 6. Effect of Selection Strategy 
+
+Adhering to the ablation experimental setup described in the main text, we investigate the influence of various token se-lection strategies under an identical compression ratio. As summarized in Table 4, we initially evaluate the most rudi-mentary approach: uniform sampling. This method exhibits the most significant performance degradation under equiva-lent compression levels. Subsequently, we report the perfor-mance of the static Top-K strategy, which serves as our pri-mary comparative baseline. Due to its inability to dynami-cally select visual cubes across different layers, the Top-K approach lags behind our method, resulting in performance deficits of 1.9 on Charades STA, 3.1 on VideoMME, and 2.4 on MLVU. We further explore a constrained variant that applies Top-K selection exclusively to fixed I-frames (keyframes identified by traditional video compression al-gorithms); the results indicate that the performance devi-ation from the standard Top-K approach is negligible. In contrast, our AdaSpark employs a dynamic Top-P mech-anism, which facilitates a more flexible selection strategy and yields superior performance. 
+
+Table 4. Ablation on more selection strategy. 
+
+Selection Strategy Charades STA VideoMME MLVU Uniform Sampling 31.5 50.2 53.8 Top-K 34.2 52.6 55.1 I-Frame 34.0 52.9 55.7 Top-P 36.1 55.7 57.5 
+
+## 7. Implementation Details 
+
+7.1. Training Configuration 
+
+Table 5 provides a comprehensive summary of the hyperparameters employed in the training of AdaSpark. Throughout this process, the visual encoder is maintained in a frozen state, and we implement a cube-based sparse strategy regulated by a top-p threshold. Our training methodology incorporates a mixed dataset, centrally featuring the llava-video-178k [52] dataset, which serves as a foundational corpus for basic video understand-ing. In addition, we augment this data with 77k timestamp-grounded samples from DideMo [2] and ActivityNet Cap-tions [16] to enhance the model’s capacity for identifying key temporal information. 
+
+7.2. Pseudocode 
+
+To provide a comprehensive understanding of our method, we present the pseudocode detailing the AdaS-Attn and 
+
+Table 5. Hyperparameter configuration for AdaSpark train-ing. The model undergoes a single-stage post-training protocol. 
+
+Hyperparameter Value 
+
+Model Configuration 
+
+Backbone Qwen2.5-VL-3B / 7B Visual Encoder Status Frozen Max Visual Sequence Length 48k Max Context Length 64k Cube Size ( H × W × T ) 8 × 8 × 4
+
+Top-p Threshold 0.7 
+
+Training Optimization 
+
+Data Scale ∼255K (178K + 77K) Global Batch Size 256 Learning Rate (lr) 2 × 10 −6
+
+Sequence Parallel 4LR Schedule Cosine Decay Optimizer AdamW Weight Decay 0DeepSpeed Stage Zero2 
+
+Data & Hardware 
+
+Input FPS 4Compute Resources 32 × NVIDIA H100 Training Time ≈ 4 Days 
+
+Algorithm 1: AdaSpark Training Algorithm 
+
+Input: Video Tokens Xvid , Text Xtxt , Cube (t, h, w ), p 
+
+> 1
+
+for each transformer layer do  
+
+> 2
+
+Q, K, V ← Linear (X); Apply RoPE (Q, K ) 
+
+> 3
+
+AdaS-Attn : Reshape K, V into Cubes 
+
+(B, N, t · h · w, D ) 
+
+> 4
+
+For each query, select Top-p relevant cubes based on proxy scores  
+
+> 5
+
+Calculate Attention on {Selected Cubes ∪ Local Cube }; 
+
+> 6
+
+AdaS-FFN : Reshape video tokens into Cubes  
+
+> 7
+
+Calculate token importance via L2-norm; Select Top-p salient tokens  
+
+> 8
+
+Apply FFN to selected vision tokens and full text tokens; Add Mean(FFN( Active )) to others  
+
+> 9
+
+Restore original sequence shape and add residual connections  
+
+> 10
+
+end  
+
+> 11
+
+return Updated Xseq 
+
+AdaS-FFN mechanisms in Algorithm 1. We provide the implementation of critical compo-nents for reference; please refer to AdaS-Attn.py and 
+
+AdaS-FFN.py in zip file for specific details. 12 To facilitate a more detailed understanding of the com-pression achieved by our algorithm on standard causal at-tention and FFN layers, we provide a comprehensive dis-cussion on the theoretical FLOPs calculation in the follow-ing section. 
+
+7.3. Detail of FLOPs Calculation 
+
+FLOPs Analysis for AdaS-Attn. We compare the theo-retical FLOPs of standard dense causal attention with our proposed AdaS-Attn. Let S, Dmodel , and C denote the sequence length, model dimension, and the number of to-kens per spatiotemporal cube, respectively. For standard 
+
+dense causal attention , computational costs arise from the Query-Key ( QK T ) and Attention-Value ( AV ) multiplica-tions. Since each query attends to all preceding keys/val-ues (averaging S/ 2 tokens due to the causal mask), the to-tal complexity exhibits a quadratic dependence on sequence length: 
+
+F LOP s Dense ≈ 2 × S × S
+
+2 × Dmodel 
+
++ 2 × S × S
+
+2 × Dmodel 
+
+≈ 2S2Dmodel 
+
+(8) In contrast, AdaS-Attn computes attention sparsely. Let ¯N
+
+be the average number of top-p cubes selected per query. The attention mechanism is restricted to the tokens within these selected cubes (totaling ¯N ×C tokens). The complex-ity for the sparse QK T and AV phases is calculated as: 
+
+F LOP s AdaS = F LOP s QK T + F LOP s AV 
+
+≈ (2 S · ¯N C · Dmodel )+ (2 S · ¯N C · Dmodel )
+
+≈ 4S ¯N CD model 
+
+(9) Since the number of selected tokens is significantly smaller than the full sequence ( ¯N C ≪ S), AdaS-Attn achieves linear complexity O(S), drastically reducing computational overhead compared to the O(S2) standard attention. 
+
+FLOPs Analysis for AdaS-FFN. We further analyze the efficiency gains in the Feed-Forward Network (FFN). Let 
+
+Df f denote the intermediate dimension of the FFN (typ-ically 4Dmodel or similar).In a Standard FFN, every token in the sequence S undergoes projection up to Df f and down to Dmodel . The total FLOPs are dominated by these dense matrix multiplications: 
+
+F LOP s Std −F F N ≈ 2 × S × Dmodel × Df f 
+
++ 2 × S × Df f × Dmodel 
+
+= 4 SD model Df f 
+
+(10) For our AdaS-FFN, computation is content-aware. The additional overhead for calculating L2-norms and the im-portance distribution Si is O(S · Dmodel ), which is neg-ligible compared to the matrix transformations ( Dmodel ×
+
+Df f ).The heavy FFN computation is only applied to the set of activated tokens Mi. Let Sact = P |Mi| be the to-tal number of activated tokens across all cubes, and ¯r =
+
+Sact /S be the average activation ratio. The inactive to-kens Ri bypass the FFN and utilize the Mean Compensa-tion strategy, which involves only lightweight vector addi-tion operations ( O(S ·Dmodel )).Thus, the FLOPs for AdaS-FFN are proportional only to the activated tokens: 
+
+F LOP s AdaS −F F N ≈ 4 × Sact × Dmodel × Df f 
+
+= 4 × (¯ r · S) × Dmodel × Df f 
+
+(11) Given that ¯r is controlled by the top-p threshold (typically 
+
+¯r ≪ 1), AdaS-FFN significantly reduces the FLOPs by a factor of ¯r compared to the standard FFN, while preserving semantic integrity through mean compensation. 
+
+## 8. Evaluation Settings 
+
+We evaluate AdaSpark on a series of comprehensive video-language benchmarks: 1) Extra Long Video Un-derstanding, using Video Needle in a Haystack [49, 55]; 2) Long Video Understanding, which includes MLVU [57], VideoMME [11], LongVideoBench [41], and LVBench [39]; 3) Short Video Understanding, using MVBench [20]; 4) Spatial Reasoning, with VSIBench [44]; and 5) Video Grounding, utilizing CharadesSTA [13]. Ta-ble 6 details the frame sampling configurations employed during inference via the lmms-eval framework. For all tasks, we strictly adhere to the default prompts and scoring protocols provided by the evaluation framework.       
+
+> Table 6. Evaluation settings summary for each benchmark.
+> For all benchmarks, we set the temperature, top p, and number of beams to 0, 0, and 1, respectively. FPS denotes the sampling frames per second, and # F represents the maximum number of sampling frames allowed.
+
+Benchmark FPS # F (Max Frames) 
+
+VideoNIAH 1 4096 MLVU (Dev) 1 512 VideoMME 1 256 LongVideo 1 1024 LVBench 1 1024 MVBench 2 256 VsiBench 2 256 CharadesSTA 4 256 
+
+13
