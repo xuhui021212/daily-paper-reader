@@ -6,91 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-11
-- 运行时间：2026-04-11 19:48:05 UTC
+- 最新运行日期：2026-04-12
+- 运行时间：2026-04-12 19:42:48 UTC
 - 运行状态：成功
-- 本次总论文数：23
-- 精读区：11
+- 本次总论文数：19
+- 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日聚焦 23 篇 AI 前沿进展，重点突破医疗影像智能诊断与长视频高效理解。
-满分论文 EchoAgent 实现了可靠的超声心动图解构，AdaSpark 则通过自适应稀疏化重塑了长视频处理效率。
-推荐深入探索多模态 Agent 在垂直领域的应用，并关注视频理解中端到端训练与推理加速的新范式。
-- 详情：[/202604/11/README](/202604/11/README)
+今日精选 19 篇前沿论文，重点攻克医疗 AI 智能体可靠性与边缘云协同推理效率。
+满分论文 EchoAgent 实现了具备“眼手脑”协同的超声心动图解读，DAT 则为多模态大模型提供了双感知自适应传输方案。
+建议深入探索视频表征的可解释性与伪造检测技术，以应对更复杂的视觉交互与安全挑战。
+- 详情：[/202604/12/README](/202604/12/README)
 
 ### 精读区论文标签
-1. [EchoAgent: Towards Reliable Echocardiography Interpretation with "Eyes","Hands" and "Minds"](/202604/11/2604.05541v1-echoagent-towards-reliable-echocardiography-interpretation-with-eyeshands-and-minds)  
+1. [EchoAgent: Towards Reliable Echocardiography Interpretation with "Eyes","Hands" and "Minds"](/202604/12/2604.05541v1-echoagent-towards-reliable-echocardiography-interpretation-with-eyeshands-and-minds)  
    标签：评分：10.0/10、query:medvid
-   evidence：用于端到端超声心动图解释和分析的智能体系统
-2. [AdaSpark: Adaptive Sparsity for Efficient Long-Video Understanding](/202604/11/2604.08077v1-adaspark-adaptive-sparsity-for-efficient-long-video-understanding)  
-   标签：评分：10.0/10、query:lvu
-   evidence：用于高效长视频理解的自适应稀疏性
-3. [An Explainable Vision-Language Model Framework with Adaptive PID-Tversky Loss for Lumbar Spinal Stenosis Diagnosis](/202604/11/2604.02502v1-an-explainable-vision-language-model-framework-with-adaptive-pid-tversky-loss-for-lumbar-spinal-stenosis-diagnosis)  
+   evidence：用于端到端超声心动图解释和医学视频分析的智能体系统
+2. [DAT: Dual-Aware Adaptive Transmission for Efficient Multimodal LLM Inference in Edge-Cloud Systems](/202604/12/2604.05375v1-dat-dual-aware-adaptive-transmission-for-efficient-multimodal-llm-inference-in-edge-cloud-systems)  
+   标签：评分：9.0/10、query:lvu
+   evidence：连续视频流上的高效多模态大模型推理
+3. [Mem3R: Streaming 3D Reconstruction with Hybrid Memory via Test-Time Training](/202604/12/2604.07279v1-mem3r-streaming-3d-reconstruction-with-hybrid-memory-via-test-time-training)  
+   标签：评分：9.0/10、query:lvu
+   evidence：3D重建中长视觉流的混合记忆设计
+4. [VSAS-BENCH: Real-Time Evaluation of Visual Streaming Assistant Models](/202604/12/2604.07634v1-vsas-bench-real-time-evaluation-of-visual-streaming-assistant-models)  
+   标签：评分：9.0/10、query:lvu
+   evidence：超越纯视频理解的实时视觉流助手模型新框架和基准
+5. [Benchmarking Deep Learning for Future Liver Remnant Segmentation in Colorectal Liver Metastasis](/202604/12/2604.07999v1-benchmarking-deep-learning-for-future-liver-remnant-segmentation-in-colorectal-liver-metastasis)  
    标签：评分：9.0/10、query:medvid
-   evidence：腰椎管狭窄症诊断的视觉语言模型
-4. [See the Forest for the Trees: Loosely Speculative Decoding via Visual-Semantic Guidance for Efficient Inference of Video LLMs](/202604/11/2604.05650v2-see-the-forest-for-the-trees-loosely-speculative-decoding-via-visual-semantic-guidance-for-efficient-inference-of-video-llms)  
-   标签：评分：9.0/10、query:lvu
-   evidence：用于降低视频大语言模型推理延迟的高效推理框架
-5. [SonoSelect: Efficient Ultrasound Perception via Active Probe Exploration](/202604/11/2604.05933v3-sonoselect-efficient-ultrasound-perception-via-active-probe-exploration)  
-   标签：评分：9.0/10、query:medvid
-   evidence：通过主动探头探索实现高效超声感知
-6. [CodecFlow: Codec-Guided End-to-End Optimization for Streaming Video Analytics](/202604/11/2604.06036v2-codecflow-codec-guided-end-to-end-optimization-for-streaming-video-analytics)  
-   标签：评分：9.0/10、query:lvu
-   evidence：用于高效流媒体视频分析和多模态推理的编解码器引导优化
-7. [Insights from Visual Cognition: Understanding Human Action Dynamics with Overall Glance and Refined Gaze Transformer](/202604/11/2604.06783v1-insights-from-visual-cognition-understanding-human-action-dynamics-with-overall-glance-and-refined-gaze-transformer)  
-   标签：评分：9.0/10、query:lvu
-   evidence：利用稀疏时间注意力捕捉视频任务中的运动和长程依赖
-8. [Grounded Forcing: Bridging Time-Independent Semantics and Proximal Dynamics in Autoregressive Video Synthesis](/202604/11/2604.06939v1-grounded-forcing-bridging-time-independent-semantics-and-proximal-dynamics-in-autoregressive-video-synthesis)  
-   标签：评分：9.0/10、query:lvu
-   evidence：双重记忆KV缓存，将局部时间动态与全局语义锚点解耦，以实现长期连贯性
-9. [Fast Spatial Memory with Elastic Test-Time Training](/202604/11/2604.07350v1-fast-spatial-memory-with-elastic-test-time-training)  
-   标签：评分：9.0/10、query:lvu
-   evidence：用于处理3D重建中任意长序列的快速空间记忆（FSM）
-10. [Rotation Equivariant Convolutions in Deformable Registration of Brain MRI](/202604/11/2604.08034v1-rotation-equivariant-convolutions-in-deformable-registration-of-brain-mri)  
-   标签：评分：9.0/10、query:medvid
-   evidence：使用旋转等变卷积对脑部MRI序列进行时空分析和配准
-11. [CrashSight: A Phase-Aware, Infrastructure-Centric Video Benchmark for Traffic Crash Scene Understanding and Reasoning](/202604/11/2604.08457v1-crashsight-a-phase-aware-infrastructure-centric-video-benchmark-for-traffic-crash-scene-understanding-and-reasoning)  
-   标签：评分：9.0/10、query:lvu
-   evidence：交通碰撞场景理解与推理的视频基准
+   evidence：针对手术规划中的肝脏残余分割进行深度学习基准测试
+6. [Temporal Inversion for Learning Interval Change in Chest X-Rays](/202604/12/2604.04563v1-temporal-inversion-for-learning-interval-change-in-chest-x-rays)  
+   标签：评分：8.5/10、query:medvid
+   evidence：医学图像序列的时间建模以评估间隔变化
+7. [Motion-Adaptive Multi-Scale Temporal Modelling with Skeleton-Constrained Spatial Graphs for Efficient 3D Human Pose Estimation](/202604/12/2604.03652v1-motion-adaptive-multi-scale-temporal-modelling-with-skeleton-constrained-spatial-graphs-for-efficient-3d-human-pose-estimation)  
+   标签：评分：8.0/10、query:lvu
+   evidence：基于视频的姿态估计的高效多尺度时间建模
 
 ### 速读区论文标签
-1. [A Paradigm Shift: Fully End-to-End Training for Temporal Sentence Grounding in Videos](/202604/11/2604.02860v1-a-paradigm-shift-fully-end-to-end-training-for-temporal-sentence-grounding-in-videos)  
+1. [Leveraging Gaze and Set-of-Mark in VLLMs for Human-Object Interaction Anticipation from Egocentric Videos](/202604/12/2604.03667v1-leveraging-gaze-and-set-of-mark-in-vllms-for-human-object-interaction-anticipation-from-egocentric-videos)  
    标签：评分：8.0/10、query:lvu
-   evidence：未修剪视频中的端到端时间句子定位
-2. [QVAD: A Question-Centric Agentic Framework for Efficient and Training-Free Video Anomaly Detection](/202604/11/2604.03040v1-qvad-a-question-centric-agentic-framework-for-efficient-and-training-free-video-anomaly-detection)  
+   evidence：从第一视角视频中预测人机交互的多模态方法
+2. [ActivityForensics: A Comprehensive Benchmark for Localizing Manipulated Activity in Videos](/202604/12/2604.03819v1-activityforensics-a-comprehensive-benchmark-for-localizing-manipulated-activity-in-videos)  
    标签：评分：8.0/10、query:lvu
-   evidence：用于视频异常检测与推理的智能体框架
-3. [Imagine Before Concentration: Diffusion-Guided Registers Enhance Partially Relevant Video Retrieval](/202604/11/2604.03653v1-imagine-before-concentration-diffusion-guided-registers-enhance-partially-relevant-video-retrieval)  
+   evidence：视频中篡改动作定位的基准
+3. [Interpreting Video Representations with Spatio-Temporal Sparse Autoencoders](/202604/12/2604.03919v1-interpreting-video-representations-with-spatio-temporal-sparse-autoencoders)  
    标签：评分：8.0/10、query:lvu
-   evidence：未修剪视频中的全局上下文感知
-4. [BoxComm: Benchmarking Category-Aware Commentary Generation and Narration Rhythm in Boxing](/202604/11/2604.04419v1-boxcomm-benchmarking-category-aware-commentary-generation-and-narration-rhythm-in-boxing)  
+   evidence：对视频表示中时间相干性的稀疏自编码器进行的系统研究
+4. [Scalable and Explainable Learner-Video Interaction Prediction using Multimodal Large Language Models](/202604/12/2604.04482v1-scalable-and-explainable-learner-video-interaction-prediction-using-multimodal-large-language-models)  
    标签：评分：8.0/10、query:lvu
-   evidence：用于体育视频理解与解说的大规模数据集
-5. [Visual Instruction-Finetuned Language Model for Versatile Brain MR Image Tasks](/202604/11/2604.02748v1-visual-instruction-finetuned-language-model-for-versatile-brain-mr-image-tasks)  
-   标签：评分：7.0/10、query:medvid
-   evidence：用于医学图像任务（包括序列重建）的深度学习架构
-6. [Few-Shot Distribution-Aligned Flow Matching for Data Synthesis in Medical Image Segmentation](/202604/11/2604.02868v1-few-shot-distribution-aligned-flow-matching-for-data-synthesis-in-medical-image-segmentation)  
-   标签：评分：7.0/10、query:medvid
-   evidence：医学图像分割和临床部署的数据合成
-7. [Not All Frames Deserve Full Computation: Accelerating Autoregressive Video Generation via Selective Computation and Predictive Extrapolation](/202604/11/2604.02979v1-not-all-frames-deserve-full-computation-accelerating-autoregressive-video-generation-via-selective-computation-and-predictive-extrapolation)  
+   evidence：基于视频内容的多模态学习者交互预测
+5. [INSPATIO-WORLD: A Real-Time 4D World Simulator via Spatiotemporal Autoregressive Modeling](/202604/12/2604.07209v1-inspatio-world-a-real-time-4d-world-simulator-via-spatiotemporal-autoregressive-modeling)  
+   标签：评分：7.5/10、query:lvu
+   evidence：用于视频中一致场景演化的时空自回归建模
+6. [DiffVC: A Non-autoregressive Framework Based on Diffusion Model for Video Captioning](/202604/12/2604.08084v1-diffvc-a-non-autoregressive-framework-based-on-diffusion-model-for-video-captioning)  
+   标签：评分：7.5/10、query:lvu
+   evidence：视频字幕生成的多模态交互建模
+7. [SBF: An Effective Representation to Augment Skeleton for Video-based Human Action Recognition](/202604/12/2604.03590v1-sbf-an-effective-representation-to-augment-skeleton-for-video-based-human-action-recognition)  
    标签：评分：7.0/10、query:lvu
-   evidence：通过选择性计算加速长视频生成
-8. [Can LLMs Reason About Attention? Towards Zero-Shot Analysis of Multimodal Classroom Behavior](/202604/11/2604.03401v1-can-llms-reason-about-attention-towards-zero-shot-analysis-of-multimodal-classroom-behavior)  
+   evidence：基于视频的人类动作识别的时间建模与表示
+8. [ComPrivDet: Efficient Privacy Object Detection in Compressed Domains Through Inference Reuse](/202604/12/2604.03640v1-comprivdet-efficient-privacy-object-detection-in-compressed-domains-through-inference-reuse)  
    标签：评分：7.0/10、query:lvu
-   evidence：使用推理模型对讲座片段中的学生行为进行零样本分析
-9. [Why Invariance is Not Enough for Biomedical Domain Generalization and How to Fix It](/202604/11/2604.02564v1-why-invariance-is-not-enough-for-biomedical-domain-generalization-and-how-to-fix-it)  
-   标签：评分：6.0/10、query:medvid
-   evidence：3D生物医学图像分割中的领域泛化
-10. [GP-4DGS: Probabilistic 4D Gaussian Splatting from Monocular Video via Variational Gaussian Processes](/202604/11/2604.02915v1-gp-4dgs-probabilistic-4d-gaussian-splatting-from-monocular-video-via-variational-gaussian-processes)  
+   evidence：压缩视频域中高效的隐私对象检测
+9. [A Generative Foundation Model for Multimodal Histopathology](/202604/12/2604.03635v1-a-generative-foundation-model-for-multimodal-histopathology)  
+   标签：评分：6.5/10、query:medvid
+   evidence：组织病理学与临床数据的多模态基础模型
+10. [Adaptive Differential Privacy for Federated Medical Image Segmentation Across Diverse Modalities](/202604/12/2604.06518v1-adaptive-differential-privacy-for-federated-medical-image-segmentation-across-diverse-modalities)  
+   标签：评分：6.5/10、query:medvid
+   evidence：跨多种模态的联邦医学图像分割
+11. [Object-Attribute-Relation Model Driven Adaptive Hierarchical Transmission for Multimodal Semantic Communication](/202604/12/2604.07859v1-object-attribute-relation-model-driven-adaptive-hierarchical-transmission-for-multimodal-semantic-communication)  
+   标签：评分：6.5/10、query:lvu
+   evidence：融合视觉、文本和音频流的多模态语义通信框架
+12. [Single-agent vs. Multi-agents for Automated Video Analysis of On-Screen Collaborative Learning Behaviors](/202604/12/2604.03631v1-single-agent-vs-multi-agents-for-automated-video-analysis-of-on-screen-collaborative-learning-behaviors)  
    标签：评分：6.0/10、query:lvu
-   evidence：视频中的时间外推和运动建模
-11. [SD-FSMIS: Adapting Stable Diffusion for Few-Shot Medical Image Segmentation](/202604/11/2604.03134v1-sd-fsmis-adapting-stable-diffusion-for-few-shot-medical-image-segmentation)  
-   标签：评分：6.0/10、query:medvid
-   evidence：使用扩散模型的医学图像分割
-12. [SD-FSMIS: Adapting Stable Diffusion for Few-Shot Medical Image Segmentation](/202604/11/2604.03134v2-sd-fsmis-adapting-stable-diffusion-for-few-shot-medical-image-segmentation)  
-   标签：评分：6.0/10、query:medvid
-   evidence：使用扩散模型的医学图像分割
+   evidence：利用视觉语言模型对协作学习视频进行自动化分析
 
 
 <div class="dpr-home-promo-card">
