@@ -1,0 +1,422 @@
+Title: Beyond Few-Step Inference: Accelerating Video Diffusion Transformer Model Serving with Inter-Request Caching Reuse
+
+URL Source: https://arxiv.org/pdf/2604.04451v1
+
+Published Time: Tue, 07 Apr 2026 01:45:49 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+Inter-Request Caching for Video DiT Serving 
+
+# Beyond Few-Step Inference: Accelerating Video Diffusion Transformer Model Serving with Inter-Request Caching Reuse 
+
+## Hao Liu 1 Ye Huang 1 Chenghuan Huang 2 Zhenyi Zheng 1
+
+## Jiangsu Du 1,∗ Ziyang Ma 2 Jing Lyu 2 Yutong Lu 1
+
+> 1
+
+Sun Yat-sen University, China 2Independent Researcher 
+
+{liuh393,huangy783,zhengzhy37 }@mail2.sysu.edu.cn 
+
+{caderhuang,ziyangma,eckolv }@tencent.com {dujiangsu,luyutong }@mail.sysu.edu.cn 
+
+## Abstract 
+
+Video Diffusion Transformer (DiT) models are a dominant approach for high-quality video genera-tion but suffer from high inference cost due to iter-ative denoising. Existing caching approaches pri-marily exploit similarity within the diffusion pro-cess of a single request to skip redundant denois-ing steps. In this paper, we introduce Chorus, a caching approach that leverages similarity across requests to accelerate video diffusion model serv-ing. Chorus achieves up to 45% speedup on in-dustrial 4-step distilled models, where prior intra-request caching approaches are ineffective. Partic-ularly, Chorus employs a three-stage caching strat-egy along the denoising process. Stage 1 performs full reuse of latent features from similar requests. Stage 2 exploits inter-request caching in specific latent regions during intermediate denoising steps. This stage is combined with Token-Guided Atten-tion Amplification to improve semantic alignment between the generated video and the conditional prompts, thereby extending the applicability of full reuse to later denoising steps. Stage-3 oper-ates in the final steps and disables caching reuse to repair discontinuities. 
+
+## 1. Introduction 
+
+Video Diffusion Transformer (DiT) models, such as Wan (Wan et al., 2025) and Hunyuan (Kong et al., 2024), have substantially advanced the quality of video synthesis. However, these improvements come at a significant compu-tational cost. For instance, the vanilla Wan2.1 takes 16.9 minutes to generate a 5-second video on a single NVIDIA A100 GPU. As a result, video DiT models are prohibitively expensive for large-scale deployment and practical video generation services. To improve computational efficiency, various acceleration techniques have been proposed (Zhang et al., 2026; Lin et al., 2024; Zhang et al., 2025a), among which feature caching-based approaches (Xu et al., 2018) have shown promise.  
+
+> ∗
+
+Corresponding author: dujiangsu@mail.sysu.edu.cn. 
+
+Figure 1. The video generation illustration of Chorus on a distilled 4-step Wan2.1 model. Chorus reuses cached latent states from a semantically similar request. It significantly accelerates inference while maintaining accurate semantic generation. 
+
+Video DiTs employ an iterative denoising process with tens of steps, during which highly similar features are observed across adjacent timesteps. To this end, intra-request caching approaches (Liu et al., 2025a;b) store features from previous timesteps and reuse them in subsequent ones, allowing dif-fusion models to skip redundant computations and reduce inference latency. However, in addition to limited accel-eration, it often fails for industrial 4-step distilled models, where intra-request redundancy has largely been removed. Furthermore, feature similarity across different requests has also been observed in DiT models, and such similar-ity tends to increase as requests accumulate. This observa-tion motivates inter-request caching approaches, particularly for applications with a well-defined scope. For example, Adobe’s NIRVANA (Agarwal et al., 2024) reports high sim-ilarity among prompt queries in its text-to-image service, where users often issue similar prompts within a session and prompts across different users also exhibit substantial overlap. As shown in Fig. 1, this observation motivates ex-ploiting inter-request similarity to accelerate its image DiT inference. Although inter-request caching has proven effec-tive in image generation, it remains a significant challenge in video generation. To leverage inter-request caching for video DiT serving, we propose Chorus. It adopts a three-stage inter-request caching strategy throughout the denoising process, consisting of full reuse in the initial stage (stage-1), selective region reuse 
+
+in the intermediate stage (stage-2), and full computation 
+
+in the final stage (stage-3). Stage 1 follows a similar idea to NIRVANA by reusing latent features at a specific initial denoising step. However, since video sequences are consid-1    
+
+> arXiv:2604.04451v1 [cs.CV] 6 Apr 2026 Inter-Request Caching for Video DiT Serving ×N Transformer Blocks
+> Latent Space
+> Self Attention Cross Attention FFN Prompt Embedding Initial Noisy Input Timestep Embedding
+> iterative output/cache
+> Figure 2. The DiT model architecture and inference process.
+
+erably longer than images and are subject to an additional temporal consistency constraint, naive caching reuse must start from very early denoising steps; otherwise, semantic in-accuracies may arise. We propose Token-Guided Attention Amplification (TGAA) , a mechanism that strengthens the influence of the whole prompt and key tokens in subsequent denoising steps, thereby improving semantic alignment and enabling more steps to be safely skipped. As denoising progresses, the generation becomes increas-ingly specific, making full reuse ineffective. Accordingly, stage 2 performs selective region reuse, reusing latent states corresponding to specific objects or background regions. Given that attention dominates the computation in video DiT models and its cost scales quadratically with sequence length, selective region reuse can further reduce overall computation by restricting attention to shorter sequences. Finally, in the late steps, the generation becomes highly spe-cific and sensitive to fine-grained details. At this stage, even region-based reuse may introduce visual or semantic discon-tinuities. To recover from such artifacts, Stage 3 disables reuse entirely and performs full computation, allowing the model to refine details and restore generation consistency. Our contributions can be summarized as follows: • We propose Chorus, a three-stage inter-request caching approach that enables effective reuse throughout the video DiT denoising process. To the best of our knowledge, Chorus is the first work to effectively exploit inter-request caching in video DiT. • We conduct extensive evaluations on both vanilla and in-dustrial distilled DiT models, demonstrating that Chorus achieves significant acceleration while preserving genera-tion quality. Moreover, Chorus is orthogonal to distillation and intra-request caching approaches, and can be com-bined to further improve performance beyond the state of the art. 
+
+## 2. Background 
+
+2.1. Diffusion Transformer Model 
+
+Diffusion Transformer (DiT) models (Peebles & Xie, 2023) integrate diffusion modeling (Ho et al., 2020; Sohl-Dickstein et al., 2015) with Transformers (Vaswani et al., 2017) and have emerged as a dominant paradigm for im-age (Rombach et al., 2022; Dhariwal & Nichol, 2021) and video generation (Ho et al., 2022). As shown in Fig. 2, a DiT model generally consists of a Transformer backbone as the core component. Moreover, since video is represented as an extremely long sequence, video DiT inference is typi-cally performed with a batch size of one, and the attention module dominates the overall computational cost. Generation begins from a noise-initialized input, which is progressively refined by the Transformer through a sequence of denoising steps. At each step, prompt conditioning and timestep embeddings are injected into the model input to steer the denoising process. Notably, the prompt condition-ing is used to guide the denoising process by cross attention. The output produced at one step is then fed back as the input to the next, forming an iterative refinement loop until the final result is obtained. 
+
+2.2. Distilled DiT Models 
+
+Knowledge distillation (Hinton et al., 2015) is a model com-pression technique that transforms complex models into lighter and more efficient ones while largely preserving per-formance. For video DiT models, distillation can reduce the number of sampling timesteps while maintaining out-put quality (Salimans & Ho, 2022; Song et al., 2023; Yin et al., 2024), thereby significantly alleviating the compu-tational bottleneck. In industrial scenarios, distilled video DiT models (Team et al., 2025; Zhang et al., 2025b) are commonly adopted with 4–8 sampling steps, achieving up to 26 × acceleration compared to standard 50-step models. 
+
+2.3. Intra-request Caching Reuse 
+
+During the denoising process, intermediate outputs at ad-jacent timesteps often exhibit high similarity, particularly in later steps. As illustrated in Fig. 3, intra-request caching reuse exploits this temporal redundancy within a single request by skipping some steps. Early methods, such as TeaCache (Liu et al., 2025a) and PAB (Kahatapitiya et al., 2025), focus on directly reusing cached outputs from previ-ous timesteps, whereas more recent approaches, including TaylorSeer (Liu et al., 2025b) and Hiten (Feng et al., 2025), further extend this idea by predicting features for the current timestep using learned functions. These intra-request reuse techniques can achieve significant speedups, particularly for vanilla video DiT models. Unfortunately, these approaches are not orthogonal to distillation techniques, as both pri-marily eliminate redundancy across denoising steps. As a result, intra-request caching reuse methods often become in-effective on practical distilled models. They cannot further reduce the number of denoising steps. 
+
+2.4. Inter-request Caching Reuse 
+
+Besides similarity between timesteps of a single request, the inter-request caching reuse leverages the similarity across 2Inter-Request Caching for Video DiT Serving XN    
+
+> Random Gaussian Noise Prompt: a tiger run on snowy plain Prompt: a lion run on snowy plain
+> A compute step
+> Inter-request reuse
+> X(N-1) X(N-2) X1X(N-1) X(N-2) X1Features
+> Intra-request reuse
+> Full Reuse
+> A skip step X(N-3) X(N-3)
+> Partial Reuse
+
+Figure 3. Illustration of intra- and inter-request caching reuse, with denoising timesteps explicitly expanded. 
+
+requests. For instance, Adobe’s NIRVANA (Agarwal et al., 2024) observes that feature similarity across requests in-creases as the number of requests accumulates and exploits this property for image generation. As shown in Fig. 3, when a new request arrives, it does not generate images from scratch. Instead, it identifies a matched intermedi-ate output at a corresponding denoising step from another request and continues generation from that state, thereby skipping several initial denoising steps. We refer to this inter-request mechanism as full reuse. Since videos are significantly larger than images and involve much longer sequences, inter-request reuse becomes more sensitive and can only be safely applied from very early denoising steps. In Chorus, we introduce a novel mechanism to enable full reuse that skips more denoising steps, and further propose partial reuse, as in Fig. 3, to selectively skip computation in intermediate steps. 
+
+## 3. Chorus Design 
+
+3.1. Overview of the Chorus Framework 
+
+The video generation process in Chorus is illustrated in Fig. 4. Chorus first overcomes the challenge that existing full inter-request reuse approaches can only be applied at very early denoising steps. By introducing a Token-Guided Attention Amplification (TGAA) mechanism, Chorus preserves semantic alignment while enabling full reuse across substantially more denois-ing steps. Next, to overcome the challenge that only the ini-tial stage can benefit from the inter-request caching, Chorus proposes to reuse caching from other requests in a region-based manner. In this way, the video generation process in Chorus is naturally divided into 3 stages. For a target prompt: • Full Reuse (Stage-1). The system retrieves cached source requests whose CLIP embeddings (Radford et al., 2021) exhibit the highest cosine similarity to that of the target prompt. If the similarity exceeds a threshold τ , the target and source prompts are considered semantically similar. Upon a successful match, the generation process reuses the latent features from the matched source prompt for a predefined number of denoising steps. Otherwise, the 
+
+Figure 4. Chorus Overview. 
+
+system falls back to standard generation. • Selective Region Reuse (Stage-2). To extend inter-request reuse to subsequent steps, we selectively compute regions that differ between the target and source prompts while reusing latent features for semantically similar regions. To identify prompt-differentiated regions, we employ a lightweight LLM to extract object tokens from the text prompt and then map these tokens to visual regions using a segmentation model (Ren et al., 2024). In addition, TGAA is applied in Stage 2 to further improve semantic alignment, where the lightweight LLM is used to identify differentiating tokens that guide attention enhancement. • Full Compute (Stage-3). In the final denoising steps, we perform full computation to repair any discontinuities introduced by mask-driven acceleration across different regions and to refine fine-grained details. 
+
+Stage Boundary Determination. Suppose the denoising process consists of N steps. Chorus partitions the denois-ing process into three stages by determining two transition points, K1 and K2, where 0 ≤ K1 ≤ K2 ≤ N . These stage boundaries are determined by a scheduler via a monotonic mapping function F parameterized by a matching score m:
+
+(K1, K 2) = F(m; N ). (1) The monotonicity of F ensures that stronger inter-request similarity leads to later transition points, enabling more aggressive reuse while preserving semantic alignment. In other words, higher similarity leads to larger values of K1
+
+and K2. If no cached prompt meets the minimum similarity threshold τ (i.e., m < τ ), we set K1 = K2 = 0 .
+
+Cache Update. If no suitable cached request is found (i.e., 
+
+m < τ ), the system falls back to standard generation. In this case, the intermediate latent states, prompt, and generated video of the request are stored in the cache for potential reuse by future requests. 
+
+3.2. Token-Guided Attention Amplification (TGAA) 
+
+When extending previous inter-request latent reuse method from image to video generation, we observe persistent se-mantic misalignment: reused video latents tend to preserve 3Inter-Request Caching for Video DiT Serving An African wild dog walk in a green field <end> 
+
+> condition sequence video latent sequence
+> Enhance relevant key vectors tokens that represent differentiation
+> LLM
+> Source prompt Target prompt Condition token Video latent token Attention scores: darker = higher
+
+Figure 5. The illustration of key amplification in TGAA.We dy-namically amplify key vectors of condition tokens (e.g., “African”, “wild”) that best capture the semantic difference in cross-attention operator to guide video latents. 
+
+attributes of the source prompt instead of fully adapting to the target prompt. For example, reusing latents from “a spotted dog” to generate “an African wild dog” often yields videos that retain the spotted appearance, as shown in Fig. 1. We attribute this post-reuse misalignment primarily to the constraint of temporal consistency prior in the model. While essential for inter-frame coherence, the strong temporal prior inherently restricts the flexibility of latent updates. This prior functions as a strict regularizer that suppresses the significant feature shifts required for semantic alignment with the target prompt, thereby inhibiting the generation of visual features aligned with the target semantics. To address the misalignment between reused video latents and target prompt conditions, we propose Token-Guided Attention Amplification(TGAA) . This mechanism adap-tively identifies tokens exhibiting the most significant se-mantic shifts and selectively amplifies their influence to reinforce text guidance, thereby ensuring precise alignment with the target prompt. TGAA operates in three steps: (1) identifying and boost-ing the key vectors of condition tokens that best capture the semantic difference; (2) strengthening the entire cross-attention output; and (3) dynamically decaying the amplifi-cation strength across denoising process. 
+
+Key Amplification. TGAA first introduces precise semantic guidance by identifying and amplifying the key vectors of the condition tokens that capture the semantic differences between the target and source prompts. These differential tokens are identified by comparing the target and source prompts using a lightweight LLM. As illustrated in Fig. 5, during cross-attention, the key vectors corresponding to these tokens are selectively scaled by a factor γk:
+
+K′[: , Tdiff , :] = γk · K[: , Tdiff , :] , K ∈ RB×L′×dk
+
+Attention (Q, K ′, V ) = softmax 
+
+ QK ′⊤ 
+
+√dk
+
+
+
+V (2) A
+
+> spott
+> ed
+> dog
+> walk
+> s
+> in
+> a
+> green
+> field
+> .
+> </s>
+> Condition Tokens
+> 0
+> 25
+> 50
+> 75
+> 100
+> 125
+> 150
+> 175
+> Query Position
+> Step 2 (early-stage denoising)
+> A
+> spott
+> ed
+> dog
+> walk
+> s
+> in
+> a
+> green
+> field
+> .
+> </s>
+> Condition Tokens
+> 0
+> 25
+> 50
+> 75
+> 100
+> 125
+> 150
+> 175
+> Query Position
+> Step 48 (late-stage denoising)
+
+Figure 6. Attention map of cross-attention. Cross-attention is more influential in the early denoising stages, while its effect diminishes later, with nearly all attention scores concentrating on the EOS token. We visualize step 2 (early-stage denoising) and step 48 (late-stage denoising). 
+
+where Tdiff denotes the indices of the differential tokens. This targeted key amplification sharpens the attentional fo-cus of the latent queries on the new semantic attributes. By strengthening the key projections of the differential tokens, the resulting attention scores are skewed toward those to-kens, which effectively forces the latent queries to prioritize the newly introduced attributes, thereby driving the semantic transformation more effectively. 
+
+Output Amplification. TGAA simultaneously applies a global scaling factor to the entire cross-attention output to reinforce prompt conditioning. In a standard DiT block, the cross-attention output is added to the latent features and we add a scaling factor γo to strengthen the influence of the text prompt on every latent token: 
+
+xout = xin + γo · cross attn (xin ). (3) In summary, key amplification identifies the target-specific attributes that define the desired update direction, while output amplification globally strengthens the conditioning signal to drive the latent sequence more strongly along that direction. They work together to guide the denoising up-dates toward the target prompt. 
+
+Dynamic Decay Scheduler. Although attention amplifica-tion is effective, it is not feasible to keep two amplification factors γk and γo constant throughout the denoising pro-cess. As shown in Fig. 6, text-condition guidance is most effective during the early steps for establishing the over-all structure and macro properties of the video, while its influence diminishes in later steps as its attention scores be-come dominated by the EOS token. A static, non -adaptive amplification strategy mismatches this dynamic, leading to distinct artifacts: excessive output scaling blurs frames, while over - amplifying specific keys suppresses other critical tokens (e.g., motion words), harming temporal coherence. Therefore, we design a dynamic decay scheduler that adapts the amplification strength according to the denoising progress. The scheduler adjusts γk(t) and γo(t) as functions of the current timestep t and the matching score m:4Inter-Request Caching for Video DiT Serving Reuse and Concat Visible tokens of target Updated tokens of target Cached tokens of source Self Attention Cross Attention FFN Input O O’ Reuse  
+
+> Key Query
+> Masked out Computed tokens of target Compute Region
+
+Figure 7. The illustration of selective region denoising. 
+
+γk(t) = Fk(t, m ), γo(t) = Fo(t, m ) (4) The modulation functions Fk, F o are designed to satisfy three key principles: • The factors decrease as denoising progresses, providing stronger guidance in early steps while gradually weaken-ing the influence in later steps. • For a large matching score ( m), the amplification is re-duced to avoid over-forcing unnatural transformations. • The factors are clamped to be no smaller than 1.0, ensur-ing that the conditioning signal is never weakened. 
+
+3.3. Selective Region Denoising (SRD) 
+
+Despite TGAA improving semantic alignment and enabling full reuse across more denoising steps, the remaining denois-ing steps still constitute the majority of the process, limiting the overall impact of inter-request caching reuse. As the generation becomes increasingly specific, full latent reuse, even with TGAA, often leads to significant visible quality degradation and semantic drift in regions that differ between prompts. We observe that relying solely on full reuse and extending it to later denoising steps is overly coarse. In many cases, semantic mismatches are localized to specific regions, rather than affecting the entire generation. For in-stance, transforming a “spotted dog” into an “African wild dog” allows background semantics to be reused, whereas updates are needed only in the object region. Selective Region Denoising (SRD) adopts a fine-grained strategy to enable partial caching reuse and compute only a small set of regions. Generally, it persistently reuses well-aligned regions, restricting recomputation exclusively to divergent regions. As illustrated in Fig. 7, SRD first gen-erates a region mask to identify divergent regions between the target and source prompts. The mask is then applied to restrict computation in the self-attention, cross-attention, and FFN layers to only these divergent regions. Finally, the spotted dog Max downsampled pixel space Dilated Convolution latent space Segment Model Mask Edit Mask See 
+
+Figure 8. The mask generation process. 
+
+newly computed regions are merged with the cached latent features from the source prompt to form the updated latent representation. Thus, SRD necessitates addressing three core challenges: (i) accurately localizing divergent regions, (ii) ensuring spatial consistency between recomputed and reused areas, and (iii) effectively turning this computational sparsity into actual acceleration. 3.3.1. R EGION MASK GENERATION 
+
+We use the lightweight LLM to compare target and source prompts and identify the divergent regions, and then gen-erate a binary mask Mbase to distinguish where the source and target prompts differ. As shown in Fig. 8, the mask generation pipeline consists of three stages: 1. Object Prompt Extraction. A LLM compares the source and target prompts to extract the most salient divergent object phrase (e.g., “spotted dog”). 2. Pixel-Space Segmentation. Using the extracted phrase as a text prompt, a pretrained segmentation model (Ren et al., 2024) processes the stored video of source prompt to obtain a pixel-level mask. To achieve efficiency, we adopt a key-frame strategy. Masks are generated only for sparsely-sampled key frames and are propagated to adjacent frames within the same temporal group. 3. Latent-Space Projection. The pixel - space binary mask is downsampled via a max pooling operator to the latent space, where denoising operates. 3.3.2. H IERARCHICAL MASKS FOR LATENT FUSION 
+
+Strictly denoising only within the masked region Mbase 
+
+would introduce hard boundaries, leading to visible seams, as it constrains object motion and lacks sufficient surround-ing context. To address this, we introduce a hierarchical mask that expands the receptive field while explicitly in-dicating the active update regions. Thus, we generate two levels of expanded masks based on the fundamental mask. The Mbase is expanded via morphological dilation to create two specialized masks: 
+
+Medit = I(Mbase ∗ Kr > 0) 
+
+Msee = I(Mbase ∗ Kr′ > 0) (5) with r′ > r , where ∗ is convolution with an all-ones kernel 
+
+K, and I is the indicator function. This yields the contain-5Inter-Request Caching for Video DiT Serving 
+
+ment hierarchy Msee ⊇ Medit ⊇ Mbase . Particularly, Edit Mask ( Medit ) defines the active update region. Its moderate dilation ( r) accommodates object motion and transforma-tion, ensuring all edits remain within this buffer zone. Visi-ble Mask ( Msee ) defines the context window for attention computation. Its larger dilation ( r′) provides sufficient sur-rounding background, enabling the model to integrate the updated region with the reused region. With these two masks, updates are strictly confined to the 
+
+Medit region, preserving the fidelity of reused content. Cru-cially, although feature updates are limited to Medit , the attention layers are allowed to attend over the larger Msee 
+
+region, providing sufficient contextual information. This dual-mask design maintains temporal and spatial consis-tency between the updated and reused regions. Formally, features are updated by: 
+
+L ← Medit ⊙ L + (1 − Medit ) ⊙ SL (6) 3.3.3. SRD I MPLEMENTATION 
+
+Although computational sparsity is introduced, it remains difficult to translate this sparsity into actual acceleration. Unlike prior approaches where masks merely zero out inac-tive regions while still participating in computation, Chorus leverages the hierarchical masks to explicitly select the re-gions to be computed in the FlashAttention kernel (Dao et al., 2022). Notably, Chorus is compatible with FlashAt-tention technique. After constructing the hierarchical masks, we feed both the latent embeddings and the masks into the Transformer block, where the masks are used to guide selective computation, as illustrated in Fig. 7. Since attention dominates inference latency in video genera-tion, contributing roughly 80% of the runtime at 720p (Fu et al., 2025), and scales quadratically with sequence length, stage-2 effectively reduces its cost by restricting attention to selected regions. Empirically, when 50% of the region is visible, SRD achieves a 1.8 × speedup in self-attention and a 1.5 × end-to-end acceleration per stage-2 step, while pre-serving visual fidelity with no obvious quality degradation. 
+
+## 4. Experiments 
+
+4.1. Experimental Setup 
+
+We summarize the key experimental settings below; addi-tional details are provided in the appendix. B. 
+
+Model Configuration. Our experiments were conducted on the widely-used Wan2.1-T2V model family (Wan et al., 2025), evaluating three distinct variants: the acclaimed 14B-parameter Wan2.1-14B-T2V for video generation, its lightweight counterpart Wan2.1-1.3B-T2V with reduced layers and embedding size, and the four-step distilled vari-ant from LightX2V (Lightx2v, 2025). All models were evaluated using the DPM++ solver (Lu et al., 2025), with all other sampling parameters kept at their default values. 
+
+Hardware. Unless otherwise noted, all main experiments are conducted on NVIDIA H20 96GB GPUs. Ablation studies are run on NVIDIA A100 80GB GPUs. 
+
+Dataset . We evaluate Chorus on dataset VidProM (Wang & Yang, 2024), which contains 1.67 M unique text-to-Video prompts from real-world users on Discord. To expedite evaluation, we sample 2,000 prompts from VidProM: 1,000 to initialize the cache and 1,000 for testing. 
+
+Baselines and Cache Settings. We compare against the no-reuse baseline (vanilla inference), TeaCache (Liu et al., 2025a) as an intra-request caching baseline, and NIR-VANA (Agarwal et al., 2024) as an inter-request reuse base-line. For inter-request methods (Chorus/NIRVANA), we evaluate two cache initialization settings: (i) cold start (de-noted as (0)), where the cache starts empty and is populated online by completed requests; and (ii) warm start (denoted as (1k)), where the cache is initialized with 1K prompts and kept fixed during the test stream. 
+
+Metrics. We evaluate generation quality using CLIP-SCORE (Hessel et al., 2021) and VBench (Huang et al., 2024), where we report the average score (vbench-q) over four quality-related dimensions: subject consistency, back-ground consistency, imaging quality, and motion smooth-ness. For efficiency, we report Latency(s) (mean denoising time per request) and Speedup relative to the no-reuse base-line. Chorus introduces a small preprocessing overhead on the order of hundreds of milliseconds. 
+
+4.2. Overall Results on T2V Generation 
+
+We evaluate Chorus on three Wan2.1 text-to-video variants (14B distilled 4-step, 14B 50-step, and 1.3B 50-step) in a serving-style inter-request reuse setting, with cold-start (0) and warm-start (1k) caches. For each incoming request, Chorus retrieves a similar cached request and applies stage-wise reuse for generation. Table 1 summarizes generation quality (CLIP-SCORE, VBench-q) and efficiency (latency and speedup) compared with the no-reuse baseline, NIR-VANA, and TeaCache. 
+
+Distilled Model (4 steps). Experiments on Wan2.1-14B-T2V-distilled model demonstrate that Chorus significantly outperforms the inter-request baseline, NIRVANA, in terms of CLIP-Score and VBench-quality across both cold-start and warm-start scenarios, highlighting its superiority in gen-eration quality. Regarding efficiency, despite the overhead introduced by the inclusion of an LLM and a segmenta-tion model for quality enhancement, Chorus consistently 6Inter-Request Caching for Video DiT Serving 
+
+Table 1. Quantitative comparison on Wan2.1 text-to-video models. (0)/(1k) denote cold-start and warm-start caches, respectively. Hit Latency represents the average latency of requests with cache hit. The matching threshold (CLIP similarity) for both distilled models and 50-step models are 0.75 and 0.65 respectively. We highlight the best and second best entries. 
+
+Method CLIP-SCORE ↑ vbench-q ↑ Latency(s) ↓ Hit Latency(s) ↓ Speedup ↑ Speedup(hit) ↑ Hit Rate Wan2.1-14B-T2V-distilled (81 frames, 480P, 4steps, no cfg) baseline 31.9970 0.9000 64.15 - 1.00x 1.00x -
+
+NIRVANA(0) 31.3038 0.8993 56.75 46.37 1.13x 1.38× 42.6% 
+
+Chorus(0) 31.5006 0.9005 55.91 44.51 1.15x 1.44× 42.6% 
+
+NIRVANA(1k) 31.0635 0.8991 53.79 46.93 1.19x 1.37× 58.9% 
+
+Chorus(1k) 31.3081 0.9006 52.09 44.15 1.23x 1.45x 58.9% 
+
+Wan2.1-14B-T2V (81 frames, 480P, 50steps) baseline 31.3764 0.8976 1683.1 - 1.00x 1.00x -
+
+NIRVANA(1k) 29.6641 0.8962 1381.2 1277.88 1.22x 1.32× 58.0% 
+
+teacache(l=0.2) 31.4445 0.8971 1082.1 - 1.55x - -
+
+Chorus(1k) 30.5598 0.8987 1339.2 1206.69 1.26x 1.39× 58.0% 
+
+Chorus(1k)+teacache(l=0.2) 30.4624 0.8983 866.4 782.24 1.94x 2.15× 58.0% 
+
+Wan2.1-1.3B-T2V (81 frames, 480P, 50steps) baseline 30.3637 0.8954 319.01 - 1.00x 1.00x -
+
+NIRVANA(1k) 29.0643 0.8945 261.46 245.72 1.22x 1.30× 58.0% 
+
+teacache(l=0.2) 30.3580 0.8940 114.68 - 2.78x - -
+
+Chorus(1k) 29.7352 0.8912 251.62 226.08 1.27x 1.41× 58.0% 
+
+Chorus(1k)+teacache(l=0.2) 29.5147 0.8868 103.09 89.16 3.09x 3.58× 58.0% 
+
+achieves higher speedups and superior video quality com-pared to NIRVANA across all settings. Notably, it attains a speedup of 1.23× and ideally 1.45× speedup to the 4-step baseline, where intra-request caching is typically ineffective, validating its superiority in industrial serving scenarios. 
+
+Vanilla Models (50 steps). Chorus demonstrates superior performance in the 50-step video diffusion model serving scenarios. Evaluated on both Wan2.1-14B and 1.3B, Cho-rus consistently achieves higher CLIP-Scores and VBench scores compared to NIRVANA, maintaining video quality competitive with the vanilla model. Notably, on the 14B model, Chorus even surpasses the vanilla model in VBench quality scores. Furthermore, as our method is fully orthogo-nal to intra-request caching techniques, it can be seamlessly integrated with intra-request caching approaches like Tea-Cache. This combination yields speedups of up to 1.94 ×
+
+for the 14B model and 3.09 × for the 1.3B model, with negligible degradation in visual quality. 
+
+Key Insights. Three key observations emerge from our experiments. (1) Chorus exhibits a superior quality-efficiency trade-off com-pared to NIRVANA, most notably on the 4-step distilled model, where it simultaneously achieves higher accelera-tion and better generation quality metrics. Our approach effectively addresses the efficiency bottleneck in the few-step regime where intra-request caching is typically ineffec-tive. (2) On vanilla models, Chorus is orthogonal to intra-request caching: combining Chorus with TeaCache yields multiplicative speedups, highlighting the complementary nature of inter-request and intra-request reuse paradigms. (3) Cache capacity is critical for performance, as larger caches naturally lead to higher hit rates and greater acceler-ation. With a sufficiently large cache, Chorus is projected to achieve peak speedups of 1.45 × on the 4-step distilled model and up to 3.58 × on vanilla models. 
+
+4.3. Ablation Studies 
+
+We ablate three key factors in Chorus: TGAA, SRD, and cache capacity. All ablations are conducted on Wan2.1-14B-T2V-distilled. To isolate component effects under cache-hit conditions, we construct a hit-only pool by filtering requests that have a valid match in the cache, and then randomly sample 150 requests from this pool for the TGAA/SRD ablations. Over-all, the ablations show that (1) TGAA effectively improve semantic alignment after reuse but is sensitive to the ampli-fication strength; (2) SRD reduces denoising compute with a controllable speed–quality trade-off; and (3) larger caches improve reuse and yield larger gains. 
+
+Table 2. Ablation study of TGAA. We fix Stage-1 reuse and toggle TGAA components (output vs. key amplification). Speedup is relative to the no-reuse baseline.                         
+
+> Method CLIP-SCORE ↑vbench-q ↑Latency(s) ↓Speedup ↑
+> baseline 31.7581 0.8995 38.51 1.000x Stage-1 only 30.5059 0.8988 28.20 1.365 ×
+> Stage-1 + TGAA (output) 30.5883 0.9014 28.04 1.373 ×
+> Stage-1 + TGAA (key) 30.7958 0.8987 28.20 1.365 ×
+> Stage-1 + TGAA 30.7987 0.9013 28.20 1.365 ×
+
+Ablation of TGAA. We keep Stage-1 reuse fixed and ab-late TGAA by toggling output/key amplification under the same default strength schedule. Table 2 quantifies the con-7Inter-Request Caching for Video DiT Serving 
+
+Table 3. Ablation study of SRD . The (m, n ) controls mask ex-pansion and the token compute fraction. Lower compute generally improves end-to-end speed with a small quality trade-off. Speedup is relative to the no-reuse baseline.                          
+
+> Method Compute(%) ↓CLIP-SCORE ↑vbench-q ↑Latency(s) ↓Speedup ↑
+> Stage-1 + TGAA (w/o SRD) 100.00 30.7987 0.9013 28.20 1.37 ×
+> Stage-1 + TGAA + SRD(12,20) 90.91 30.7653 0.9013 27.13 1.42 ×
+> Stage-1 + TGAA + SRD(8,14) 83.80 30.7469 0.9014 26.90 1.43 ×
+> Stage-1 + TGAA + SRD(0,0) 38.42 30.3223 0.9015 24.13 1.60 ×
+
+Figure 9. Cache dynamics under cold start. Cache hit rate and average latency as the cache grows from an empty initialization. 
+
+tribution of TGAA on top of Stage-1 reuse. While Stage-1 alone yields a clear speedup, it also introduces semantic drift (CLIP-SCORE drops to 30.5059). Adding TGAA mit-igates this degradation with negligible overhead: output amplification improves CLIP-SCORE to 30.5883, and key amplification further boosts it to 30.7958. Combining both achieves the best overall trade-off (30.7987 CLIP-SCORE and 0.9013 vbench-q), suggesting that the two mechanisms are complementary—output amplification stabilizes the gen-erated content, whereas key amplification more directly strengthens target-condition binding. We further study sensitivity to the amplification factors by varying γk and γo. As shown in Fig. 10, TGAA is sensitive to the amplification strength and requires a dynamic decayed schedule across denoising steps. Over-amplifying keys fac-c) Low facto r      
+
+> a) High key factor
+> b) High outpu tfacto r
+> d) Appropriate factor
+> Source prompt: a deer jum pon the snowy plain
+> Target prompt: a cow jump on the snowy plain
+> Jump
+> Quality
+> Cow
+> Jump
+> Quality
+> Cow
+
+Figure 10. Sensitivity of TGAA amplification factors. (a) Over-amplified keys hurt motion. (b) Over-amplified outputs add arti-facts. (c) Under-amplification fails to steer semantics. 
+
+tor ( γk) over-focuses attention on conditional tokens, sup-pressing motion/attribute cues and causing motion artifacts or missing objects (Fig. 10a). Over-amplifying outputs fac-tor ( γo) may inject artifacts and blur details (Fig. 10b). Con-versely, insufficient amplification fails to steer the genera-tion toward the target concept (Fig. 10c). These results show that TGAA is a lightweight, training-free inference-time en-hancement, but its gains depend on reasonable choices of 
+
+(γk, γ o) and a step-decay schedule to avoid over-steering. 
+
+Ablation of SRD. With Stage-1 reuse and TGAA fixed, we only vary SRD by changing the mask expansion pa-rameters (m, n ), which directly controls the token compute fraction (Compute%). As shown in Table 3, lowering Com-pute% consistently improves denoising speed, with a mild quality trade-off. The most aggressive setting SRD(0,0) re-duces Compute% to 38.4% and achieves the largest speedup (1.60×), but also incurs the largest CLIP-SCORE drop. In contrast, moderate expansions such as SRD(8,14) and SRD(12,20) preserve quality (near-identical vbench-q and 
+
+≤ 0.05 CLIP-SCORE drop) while still providing consistent acceleration ( 1.42 –1.43 ×). We adopt SRD(8,14) as the de-fault due to its favorable balance between efficiency and fidelity. A limitation is that SRD’s gains are bounded by mask coverage: when large regions must be denoised (e.g., heavy motion or broad appearance changes), Compute% remains high and the speedup diminishes. 
+
+Cache Growth and Hit-Rate Evolution. During online serving from a cold start, the cache grows continuously, leading to a monotonic increase in hit rate and a steady reduction in latency (Fig. 9). We report hit rate@0.75 and average latency aggregated over every 100 consecutive re-quests. As more requests are cached, the database better covers the prompt distribution, increasing the likelihood of finding a reusable match. Concretely, the hit rate remains below 20% within the first 200 requests, but rises to ∼ 50% 
+
+after ∼ 1,500 requests, corresponding to a ∼ 1.2× speedup, with the trend still improving. While our evaluation trace is not long enough to reach the high-hit-rate regime (e.g., 
+
+≥ 90% ), these results should be viewed as conservative. At scale, larger caches and workload locality can push the hit rate beyond 90% , driving speedup toward the ∼ 1.5×,where the benefit of inter-request reuse is most pronounced. 
+
+## 5. Conclusion 
+
+This paper presents Chorus, an inter-request caching reuse approach for accelerating video DiT serving at scale. We in-troduce Token-Guided Attention Amplification mechanism to strengthen prompt conditioning and preserve semantic alignment, thereby enabling more aggressive full reuse and skipping additional denoising steps. Next, we propose Se-lective Region Denoising to enable partial reuse during inter-mediate steps, further reducing computation. Experiments show that Chorus substantially outperforms prior intra- and 8Inter-Request Caching for Video DiT Serving 
+
+inter-request approaches, achieving higher speedups while preserving generation quality. Notably, Chorus is applicable to industrial scenarios. Even on industrial 4-step distilled models, where intra-request caching reuse becomes ineffec-tive, Chorus delivers up to 45% speedup. 
+
+## Impact Statement 
+
+This paper presents work whose goal is to advance the field of video DiT serving. There are many potential societal consequences of our work, none of which we feel must be specifically highlighted here. 
+
+## References 
+
+Agarwal, S., Mitra, S., Chakraborty, S., Karanam, S., Mukherjee, K., and Saini, S. K. Approximate caching for efficiently serving {Text-to-Image } diffusion models. In 
+
+21st USENIX Symposium on Networked Systems Design and Implementation (NSDI 24) , pp. 1173–1189, 2024. Dao, T., Fu, D., Ermon, S., Rudra, A., and R ´e, C. Flashat-tention: Fast and memory-efficient exact attention with io-awareness. Advances in neural information processing systems , 35:16344–16359, 2022. Dhariwal, P. and Nichol, A. Diffusion models beat gans on image synthesis. Advances in neural information processing systems , 34:8780–8794, 2021. Feng, L., Zheng, S., Liu, J., Lin, Y., Zhou, Q., Cai, P., Wang, X., Chen, J., Zou, C., Ma, Y., et al. Hicache: Training-free acceleration of diffusion models via hermite polynomial-based feature caching. arXiv preprint arXiv:2508.16984 ,2025. Fu, Z., Song, W., Wang, Y., Wu, X., Zheng, Y., Zhang, Y., Xu, D., Wei, X., Xu, T., and Zhao, X. Sliding window at-tention training for efficient large language models, 2025. URL https://arxiv.org/abs/2502.18845 .Hessel, J., Holtzman, A., Forbes, M., Le Bras, R., and Choi, Y. Clipscore: A reference-free evaluation metric for image captioning. In Proceedings of the 2021 conference on empirical methods in natural language processing , pp. 7514–7528, 2021. Hinton, G., Vinyals, O., and Dean, J. Distilling the knowledge in a neural network. arXiv preprint arXiv:1503.02531 , 2015. Ho, J., Jain, A., and Abbeel, P. Denoising diffusion proba-bilistic models. Advances in neural information process-ing systems , 33:6840–6851, 2020. Ho, J., Salimans, T., Gritsenko, A., Chan, W., Norouzi, M., and Fleet, D. J. Video diffusion models. Advances in neural information processing systems , 35:8633–8646, 2022. Huang, Z., He, Y., Yu, J., Zhang, F., Si, C., Jiang, Y., Zhang, Y., Wu, T., Jin, Q., Chanpaisit, N., et al. Vbench: Compre-hensive benchmark suite for video generative models. In 
+
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pp. 21807–21818, 2024. Kahatapitiya, K., Liu, H., He, S., Liu, D., Jia, M., Zhang, C., Ryoo, M. S., and Xie, T. Adaptive caching for faster video generation with diffusion transformers. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pp. 15240–15252, 2025. Kong, W., Tian, Q., Zhang, Z., Min, R., Dai, Z., Zhou, J., Xiong, J., Li, X., Wu, B., Zhang, J., et al. Hunyuan-video: A systematic framework for large video generative models. arXiv preprint arXiv:2412.03603 , 2024. Lightx2v. Wan2.1-I2V-14B-480P-StepDistill-CfgDistill-Lightx2v. Hugging Face Model Repository, 2025. URL 
+
+https://huggingface.co/lightx2v/Wan2. 1-Distill-Models .Lin, J., Tang, J., Tang, H., Yang, S., Chen, W.-M., Wang, W.-C., Xiao, G., Dang, X., Gan, C., and Han, S. Awq: Activation-aware weight quantization for on-device llm compression and acceleration. Proceedings of machine learning and systems , 6:87–100, 2024. Liu, F., Zhang, S., Wang, X., Wei, Y., Qiu, H., Zhao, Y., Zhang, Y., Ye, Q., and Wan, F. Timestep embedding tells: It’s time to cache for video diffusion model. In Pro-ceedings of the Computer Vision and Pattern Recognition Conference , pp. 7353–7363, 2025a. Liu, J., Zou, C., Lyu, Y., Chen, J., and Zhang, L. From reusing to forecasting: Accelerating diffusion models with taylorseers, 2025b. URL https://arxiv.org/ abs/2503.06923 .Lloyd, S. Least squares quantization in pcm. IEEE transac-tions on information theory , 28(2):129–137, 1982. Lu, C., Zhou, Y., Bao, F., Chen, J., Li, C., and Zhu, J. Dpm-solver++: Fast solver for guided sampling of diffusion probabilistic models. Machine Intelligence Research , pp. 1–22, 2025. Peebles, W. and Xie, S. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF interna-tional conference on computer vision , pp. 4195–4205, 2023. Radford, A., Kim, J. W., Hallacy, C., Ramesh, A., Goh, G., Agarwal, S., Sastry, G., Askell, A., Mishkin, P., Clark, J., et al. Learning transferable visual models from natural 9Inter-Request Caching for Video DiT Serving 
+
+language supervision. In International conference on machine learning , pp. 8748–8763. PmLR, 2021. Ren, T., Liu, S., Zeng, A., Lin, J., Li, K., Cao, H., Chen, J., Huang, X., Chen, Y., Yan, F., Zeng, Z., Zhang, H., Li, F., Yang, J., Li, H., Jiang, Q., and Zhang, L. Grounded sam: Assembling open-world models for diverse vi-sual tasks, 2024. URL https://arxiv.org/abs/ 2401.14159 .Rombach, R., Blattmann, A., Lorenz, D., Esser, P., and Ommer, B. High-resolution image synthesis with latent diffusion models. In Proceedings of the IEEE/CVF con-ference on computer vision and pattern recognition , pp. 10684–10695, 2022. Salimans, T. and Ho, J. Progressive distillation for fast sampling of diffusion models. arXiv preprint arXiv:2202.00512 , 2022. Sohl-Dickstein, J., Weiss, E., Maheswaranathan, N., and Ganguli, S. Deep unsupervised learning using nonequi-librium thermodynamics. In International conference on machine learning , pp. 2256–2265. pmlr, 2015. Song, Y., Dhariwal, P., Chen, M., and Sutskever, I. Consis-tency models. 2023. Team, I., Cai, H., Cao, S., Du, R., Gao, P., Hoi, S., Hou, Z., Huang, S., Jiang, D., Jin, X., Li, L., Li, Z., Li, Z.-Y., Liu, D., Liu, D., Shi, J., Wu, Q., Yu, F., Zhang, C., Zhang, S., and Zhou, S. Z-image: An efficient image generation foundation model with single-stream diffu-sion transformer, 2025. URL https://arxiv.org/ abs/2511.22699 .Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., and Polosukhin, I. At-tention is all you need. Advances in neural information processing systems , 30, 2017. Wan, T., Wang, A., Ai, B., Wen, B., Mao, C., Xie, C.-W., Chen, D., Yu, F., Zhao, H., Yang, J., et al. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 , 2025. Wang, W. and Yang, Y. Vidprom: A million-scale real prompt-gallery dataset for text-to-video diffusion models. 
+
+Advances in Neural Information Processing Systems , 37: 65618–65642, 2024. Xu, M., Zhu, M., Liu, Y., Lin, F. X., and Liu, X. Deepcache: Principled cache for mobile deep vision. In Proceedings of the 24th annual international conference on mobile computing and networking , pp. 129–144, 2018. Yin, T., Gharbi, M., Park, T., Zhang, R., Shechtman, E., Du-rand, F., and Freeman, B. Improved distribution matching distillation for fast image synthesis. Advances in neural information processing systems , 37:47455–47487, 2024. Zhang, J., Wang, H., Jiang, K., Yang, S., Zheng, K., Xi, H., Wang, Z., Zhu, H., Zhao, M., Stoica, I., Gonzalez, J. E., Zhu, J., and Chen, J. Sla: Beyond sparsity in diffusion transformers via fine-tunable sparse-linear at-tention, 2025a. URL https://arxiv.org/abs/ 2509.24006 .Zhang, J., Zheng, K., Jiang, K., Wang, H., Stoica, I., Gon-zalez, J. E., Chen, J., and Zhu, J. Turbodiffusion: Accel-erating video diffusion models by 100-200 times, 2025b. URL https://arxiv.org/abs/2512.16093 .Zhang, K., Huang, Y., Deng, Y., Yu, J., Chen, J., Ling, H., Xie, E., and Zhou, D. Mhla: Restoring expressivity of linear attention via token-level multi-head, 2026. URL 
+
+https://arxiv.org/abs/2601.07832 .10 Inter-Request Caching for Video DiT Serving 
+
+## A. More Visual Results A brown bear grazing in a green field 
+
+> (target prompt)
+
+A brown horse grazing in a green field 
+
+> (source prompt )
+> Pure
+> Computation
+> NIRVANA
+> Chorus
+> Chorus with
+> teacache
+> 1.26x
+> 1.46x
+> 2.51x
+
+A cow jump on a snowy plain 
+
+> (target prompt)
+
+A deer ru n on a snowy plain 
+
+> (source prompt )
+
+Figure 11. Results on Wan2.1-T2V-14B. A tiger running on a snowy plain 
+
+> (target prompt)
+
+A lion running on a nowy plain 
+
+> (source prompt)
+> Pure
+> Computation
+> NIRVANA
+> Chorus
+> 1. 32 x
+> 1. 60 x
+
+A little dog jump in a green field 
+
+> (target prompt)
+
+A little dog walk in a green field (source prompt) 
+
+Figure 12. Results on distilled Wan2.1-T2V-14B 
+
+## B. Experimental Details 
+
+B.1. Dataset Processing 
+
+We evaluate Chorus on VidProM (Wang & Yang, 2024), which contains 1.67M unique text-to-video prompts. To improve data quality, we filter out low-quality prompts using a simple length-based heuristic, resulting in a subset of 50,000 prompts. To accelerate evaluation while preserving workload locality, we embed all remaining prompts using the CLIP text encoder (768-d) and apply k-means clustering (Lloyd, 1982) with k = 20 on the normalized embeddings. We then select one cluster with approximately 2,000 prompts as our evaluation workload. From this cluster, we randomly sample 1,000 prompts to initialize the cache (index), and use the remaining 1,000 prompts as the test stream for video generation and metric evaluation. 
+
+B.2. Cache Backend and Retrieval 
+
+We use ChromaDB as the cache backend, which provides lightweight vector similarity search. Each prompt is represented by a 768-d CLIP text embedding, and we retrieve the top-1 nearest neighbor under cosine similarity. With a cache size of 1,000 entries, retrieval typically takes on the order of tens of milliseconds, which is negligible compared to the end-to-end denoising latency. 11

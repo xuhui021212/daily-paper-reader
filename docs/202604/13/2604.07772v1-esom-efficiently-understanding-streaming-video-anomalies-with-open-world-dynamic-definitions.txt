@@ -1,0 +1,782 @@
+Title: ESOM: Efficiently Understanding Streaming Video Anomalies with Open-world Dynamic Definitions
+
+URL Source: https://arxiv.org/pdf/2604.07772v1
+
+Published Time: Fri, 10 Apr 2026 00:31:00 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 1
+
+# ESOM: Efficiently Understanding Streaming Video Anomalies with Open-world Dynamic Definitions 
+
+Zihao Liu, Xiaoyu Wu, Wenna Li, Jianqin Wu, Linlin Yang 
+
+Abstract —Open-world video anomaly detection (OWVAD) aims to detect and explain abnormal events under different anomaly definitions, which is important for applications such as intelligent surveillance and live-streaming content moderation. Recent MLLM-based methods have shown promising open-world generalization, but still suffer from three major limitations: inefficiency for practical deployment, lack of streaming pro-cessing adaptation, and limited support for dynamic anomaly definitions in both modeling and evaluation. To address these issues, this paper proposes ESOM, an efficient streaming OW-VAD model that operates in a training-free manner. ESOM includes a Definition Normalization module to structure user prompts for reducing hallucination, an Inter-frame-matched Intra-frame Token Merging module to compress redundant visual tokens, a Hybrid Streaming Memory module for effi-cient causal inference, and a Probabilistic Scoring module that converts interval-level textual outputs into frame-level anomaly scores. In addition, this paper introduces OpenDef-Bench, a new benchmark with clean surveillance videos and diverse natural anomaly definitions for evaluating performance under varying conditions. Extensive experiments show that ESOM achieves real-time efficiency on a single GPU and state-of-the-art per-formance in anomaly temporal localization, classification, and description generation. The code and benchmark will be released at github.com/Kamino666/ESOM OpenDef-Bench. 
+
+Index Terms —Video anomaly detection, open-world, multi-modal learning, video understanding. 
+
+I. I NTRODUCTION 
+
+Video anomaly detection (VAD) aims to detect video events that deviate from what is expected [1], which plays an important role in intelligent surveillance and live-streaming content moderation. Open-World Video Anomaly Detection (OWVAD) is a promising research direction, with existing methods exploring generalization to unseen scenarios [2]–[4], explainability [5], [6], and adaptation to dynamic anomaly definitions [7]. However, existing methods fail to jointly inte-grate these advantages, and often suffer from inefficiency and a lack of streaming video inference capability, making them less practical for open-world video anomaly detection. Although the concept of open-world in OWVAD has not yet been unified, existing studies generally characterize it from generalization and explainability perspectives. For generaliza-tion , the challenges lie in adaptation to unseen scenarios and 
+
+Zihao Liu, Xiaoyu Wu, Wenna Li, Jianqin Wu, Linlin Yang are with the State Key Laboratory of Media Convergence and Communication, Commu-nication University of China, Beijing, China (e-mail: liuzihao@cuc.edu.cn; wuxiaoyu@cuc.edu.cn; liwenna@cuc.edu.cn; wujianqin@mails.cuc.edu.cn; lyang@cuc.edu.cn). Corresponding author: Xiaoyu Wu. Manuscript received April 19, 0000; revised August 16, 0000. ① Traditional ② Drift@  
+
+> Efficient Streaming
+> Open-world
+
+Training-free MLLM     
+
+> Token Compression
+> -65% Visual Tokens
+> Streaming Memory
+> -50% KV Cache
+> Video
+> Stream
+> Dynamic Anomaly Definition Frame-level Score & Text Outputs
+> ①Fall , Smoking, Violence
+> ② Fighting, Fire, Carrying weapons
+> ①Abnormal; a man falls, consistent
+> with the given definition.
+> ②Normal; no event in the video
+> matches the given definition.
+> frame
+> scores
+> frame
+> scores
+> Def#1
+> Def#2
+> Video#1
+> Video#2
+> ③ OpenDef-Bench
+> Video#1
+> Video#2
+> Def#1
+> (a) Efficient Streaming Open-world Model (ESOM)
+> (b) Open Definition Benchmark (OpenDef-Bench)
+> scene-dependent definitions
+> with high diversity
+> misaligned definitions
+> with low diversity
+> static definition
+> Video#1
+> Video#2
+> Def#1
+> Def#2
+> Def#3
+> Def#4
+
+Fig. 1. Motivation of ESOM and OpenDef-Bench. (a) ESOM addresses three key challenges in OWVAD: efficiency, streaming processing, and ability of generating frame-level anomaly scores and textual explanations under dynamic anomaly definitions. (b) OpenDef-Bench provides diverse, scene-dependent anomaly definitions. In contrast, Traditional settings [2] rely on static definitions, while recent Drift@5 [7] suffers from limited diversity and weak alignment with real-world scenarios. 
+
+dynamic anomaly definitions. First, generalizing to unseen sce-narios is difficult for methods based on small models with task-specific fine-tuning [8]–[10], as their capacity is constrained by the limited scale and diversity of existing VAD training data, while recent training-free LLM-based methods [5], [11] can better exploit large-scale pre-trained knowledge and have shown stronger zero-shot generalization. Second, generalizing to dynamic anomaly definitions raises a fundamental question concerning what should be regarded as an anomaly. Semi-supervised and unsupervised approaches [12], [13] typically treat events that deviate from the distribution of normal data as abnormal, whereas supervised and weakly supervised methods [8], [9] define anomalies according to the labeled categories in the dataset. Both paradigms implicitly assume static anomaly definitions, while in practice abnormality often varies with user requirements (e.g., periods, policies, and scenes). Apioneering work [7] takes a first step by jointly modeling videos and anomaly definitions. However, due to limited training data, its performance degrades significantly on unseen scenes. For explainability , traditional methods [2], [7], [9] lack language generation ability and therefore cannot provide detailed anomaly analysis. By contrast, some LLM-based methods [14]–[17] can readily generate textual outputs, but struggle to produce fine-grained frame-level anomaly scores. 
+
+0000–0000/00$00.00 © 2021 IEEE  
+
+> arXiv:2604.07772v1 [cs.CV] 9 Apr 2026 JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 2
+
+Together, these challenges motivate a unified framework that addresses the key goals of OWVAD, as shown in Fig. 1a. To enable OWVAD, Multi-modal LLMs (MLLMs) play a crucial role. However, another key obstacle is whether the model can support efficient streaming inference. In surveil-lance and live-streaming scenarios, both causality and real-time inferencing are essential: the former requires the model to rely only on previous infomation, while the latter requires the processing speed to keep up with the video stream. However, existing training-free methods [5], [11], [17] build a complex pipeline with agents or multiple models, which fail to meet real-time requirements, and single-model methods [14]–[16] are not trained in a streaming manner. Empirically, the main efficiency bottleneck comes from visual tokens, especially as historical information accumulates in streaming inputs. To address this, this paper adopts a simplified framework and proposes two plug-and-play modules: one to compress spatiotemporal redundancy in visual tokens and the other to efficiently manage and reuse previous memory, both tailored to streaming inference. Beyond model design, existing evaluation methods are still unable to effectively measure performance under dynamic anomaly definitions. As shown in Fig. 1b, prior works [2], [3] adopt evaluation with a single, fixed anomaly definition, which fails to assess performance under dynamic definitions. The Drift@5 protocol proposed in [7] instead evaluates with five different anomaly definitions. However, the diversity of these definitions remains limited, and the proposed definitions are often unnatural and misalign with real scenarios, explicitly re-quiring models to ignore severe anomalies such as explosions or traffic accidents. In practice, events whose abnormality varies are more commonly minor rule violations, such as smoking or jaywalking. Consequently, this work proposes a new benchmark that introduces a more diverse set of natural anomaly definitions. To address the above challenges, we propose ESOM, an 
+
+Efficient Streaming Open-world Video Anomaly Detection 
+
+Model, as illustrated in Fig. 1, which operates in a training-free manner and processes videos with a sliding-window strategy. First, to tackle the open-world challenges, the model intro-duces a Definition Normalization (DN) module and a Proba-bilistic Scoring (PS) module. The DN module converts user prompt into a structured anomaly definition table to reduce hallucination, while the PS module converts MLLM’s interval-level textual outputs into frame-level soft anomaly scores. Second, to enable efficient streaming inference, the model incorporates Inter-frame-matched Intra-frame Token Merging (IIM) and Hybrid Streaming Memory (HSM). Inspired by video coding, the IIM reduces visual tokens within each sliding window by dividing frames into groups with IBP-like references for spatiotemporal matching, enabling redundant tokens to be merged while preserving temporal localization. Meanwhile, the HSM manages streaming memory by reusing the KV cache from the previous window as short-term memory via inverse RoPE [18] rotation, and injecting prediction texts from earlier windows into prompts as long-term memory. For evaluation, this paper presents O PEN DEF -B ENCH , a high-quality benchmark comprising 770 videos and 1,492 samples, which provides diverse scene-dependent anomaly definitions and is built entirely from clean surveillance footage without camera cuts, visual effects, or watermarks. Unlike artificially constructed label partitions, its definitions reflect the natural context-dependent nature of anomalies, with definition shifts primarily arising from relatively subtle abnormal behav-iors (e.g., smoking), thereby enabling more realistic evaluation. Our contributions are summarized as follows: 1) We propose ESOM, a training-free streaming frame-work for open-world video anomaly detection under dynamic anomaly definitions. It includes a Definition Normalization module for precise anomaly-definition conditioning and a Probabilistic Scoring module that converts interval-level textual outputs into frame-level soft anomaly scores. 2) We design the IIM and HSM modules to improve efficiency, which reduce spatial-temporal redundancy for streaming videos and remain compatible with main-stream MLLMs and acceleration techniques. 3) We introduce OpenDef-Bench, a new benchmark that provides diverse and natural dynamic anomaly defini-tions for evaluating open-world generalization. 4) Extensive experiments demonstrate that ESOM achieves real-time inference on a single GPU while maintaining state-of-the-art performance in anomaly temporal local-ization, classification, and description generation. II. R ELATED WORKS 
+
+A. Open-world Video Anomaly Detection 
+
+Recent advances in vision-language multimodal models have driven VAD toward a more open paradigm. Neverthe-less, the concept of open-world VAD remains interpreted in different ways across the literature. One line of research [2], [3], [19]–[24] associates it with cross-domain generaliza-tion, where the primary goal is to handle unseen categories, novel scenes, and distribution shifts. Another line of work [6], [14], [25]–[29] emphasizes video anomaly understanding, suggesting that models should not only localize and classify anomalies, but also interpret and explain them in natural language. More recently, some studies [7], [30] have stressed the importance of modeling dynamically defined anomalies, requiring VAD systems to accurately detect abnormal events under varying user-provided definitions. For cross-domain generalization, traditional methods often degrade substantially across domains. To address this issue, recent studies have explored open-set, open-vocabulary, and domain-generalization approaches: 1) Openset: [19] gener-ates pseudo-anomalies in low-density regions via normaliz-ing flows. [20] constructs a human-prior feature space via semantic-aware transformation to learn domain-agnostic nor-mality rules. 2) Open-vocabulary: OVVAD [2] is among the first to introduce vision-language models to match visual features with anomaly text descriptions for label assignment. Anomize [3] further improve the text branch with static and dynamic prompts to reduce detection ambiguity. 3) Domain-generalization: [24] creates pseudo-abnormal examples in nor-mal video frames to learn the relative difference between them. JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 3
+
+However, these methods do not exploit the rich knowledge embedded in MLLMs, which limits their generalization ability. For video anomaly understanding, recent studies formulate it as an MLLM-based QA problem [14], [29], which overlook the core task of temporal localization. A few methods attempt to localize anomalies alongside generating text, but they either provide only coarse segment-level predictions [15], [16] or rely on cascaded pipelines [6]. Therefore, a more integrated architecture is needed to jointly support fine-grained temporal localization and language-level anomaly understanding. For dynamic anomaly definition, existing VAD methods can be broadly grouped by how anomalies are defined. Semi-supervised and unsupervised methods treat deviations from the normal data distribution as anomalies [12], [13], while weakly supervised and fully supervised methods rely on dataset-provided category labels [8], [9]. Despite their differences, both assume fixed anomaly definitions, mean-ing that an event considered abnormal during training can-not become normal at test time. In contrast, [7] explicitly introduces dynamic anomaly definitions into VAD, but its understanding of anomaly semantics is still limited by model scale. Although existing training-free MLLM-based methods can support dynamic detection via prompt engineering, they remain unexplored in this setting and exhibit unsatisfactory performance in our experiments. However, these perspectives are largely studied separately. Existing methods usually address only one facet of open-world VAD, but fail to jointly support cross-domain generalization, language-level understanding with fine-grained localization, and dynamic anomaly definition. Therefore, a unified frame-work that integrates all three capabilities remains absent. 
+
+B. VAD with Multimodal Large Language Models 
+
+With the rapid development of MLLMs, an increasing number of studies have introduced them into video anomaly detection. Some methods draw inspiration from general video understanding and reformulate VAD as QA-style tasks. Among them, HAWK [14] focuses on motion-related anomaly cues, HolmesVAU [6] designs an anomaly-aware frame sampling module, and [15], [16], [29] further incorporate chain-of-thought reasoning. Another group of methods follows atraining-free paradigm. LAVAD [5] adopts a describe-then-score strategy, VERA [11] performs score estimation followed by post-processing, and PANDA [17] builds a more complex agent-based framework that improves performance through reflection and tool use. Since intelligent surveillance is one of the primary application scenarios of VAD, streaming and real-time processing are of particular importance in practice. In such settings, the model should only access past observations and must keep pace with the incoming video stream. However, existing MLLM-based VAD methods largely overlook these practical requirements. 
+
+C. Evaluation Methods for VAD 
+
+Traditional VAD evaluation typically tests models on data drawn from the same distribution as the training set. Although recent methods achieve strong results under this setting, it is insufficient for assessing generalization. To address this issue, some works [2], [3], [19]–[24] adopt cross-domain zero-shot evaluation, where models are tested on datasets with different distributions to examine robustness to unseen categories, novel scenes, and distribution shifts. However, these settings still assume static anomaly definitions. To move beyond this limi-tation, [7] proposes Drift@5, a dynamic-definition evaluation protocol that constructs five anomaly definitions by selecting category subsets and reports the average performance across them. Nevertheless, the resulting definitions remain limited in diversity, and some are unnatural (e.g., treating explosions as normal events). Therefore, we aim to build a larger-scale and more diverse benchmark for dynamic anomaly evalua-tion, where changes in anomaly definitions are restricted to relatively subtle or weak anomalies (e.g., smoking), leading to more realistic and meaningful evaluation scenarios. III. M ETHOD 
+
+A. Problem Formulation 
+
+Given an input video V = {Im}T −1 
+
+> m=0
+
+with T frames and a anomaly definition z provided by the user, where z specifies a category set C = {c1, . . . , c K }, the task of open-world video anomaly detection discussed in this paper is to produce three types of outputs: a frame-level anomaly score sequence S =
+
+{S(m)}T −1 
+
+> m=0
+
+with S(m) ∈ [0 , 1] , a generated textual prediction sequence {yt} over sliding windows, and the corresponding predicted category sequence {ct} parsed from the generated texts, where ct ∈ C .
+
+B. Framework Overview 
+
+As shown in Fig. 2, ESOM is a training-free streaming framework for open-world video anomaly detection under dynamic anomaly definitions. Given a user-defined anomaly description and an input video stream, the framework produces textual explanations, category labels, and frame-level anomaly scores. For each sliding window, the DN module first converts the raw user prompt into a structured definition. The video frames are then encoded into visual tokens and compressed by the IIM module. Based on the normalized definition and com-pressed tokens, the MLLM performs inferencing autoregres-sively, while the HSM module manages the memory across the windows. Finally, the PS module converts interval-level predictions into frame-level anomaly scores. These modules together enable efficient streaming inference and adaptation to dynamic anomaly definitions. The details of these modules are as follows. 
+
+C. Definition Normalization 
+
+In open-world video anomaly detection, anomaly definitions are often provided in free-form natural language, which can be ambiguous for understanding [7]. To improve semantic clarity, a Definition Normalization (DN) module converts the raw user definition z into a structured definition table through an external LLM: 
+
+zn = N (z, P norm ), (1) JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 4Current Window Sliding 
+
+GoF GoF I B B B P
+
+…
+
+…
+
+> Group of Frames (GoF)
+
+Large Language Model  
+
+> Hybrid Streaming
+> Memory (HSM)
+> Description ：A man in black fell down in the
+> staircase in the video...
+> Reasoning ：The video shows a fall incident,
+> which matches the description of option B...
+> Classification ：B
+> Anomaly Segment ：$$:$$:&$.&'( - $$:$$:&'.*+&
+> Probabilistic
+> Scoring (PS)
+> Anomaly Score
+> Raw User Input Model Output
+
+GoF GoF  GoF GoF  GoF GoF  GoF GoF  GoF GoF                              
+
+> Definition Table
+> Definition
+> Normalization (DN)
+> I want to detect smoking, conflicts,
+> sudden falls, or any situations that
+> may affect safety in this corridor
+> scene.
+> Anonymous Class: A
+> Positive def: Holding cigarettes or
+> pipes, inhaling and exhaling smoke.
+> Negative def: Cigarette tucked be-
+> hind the ear.
+> Start def: Placing a lit cigarette in
+> the mouth and smoking.
+> End def: Extinguishing or throwing
+> the cigarette.
+> Anonymous Class: B
+> Positive def: ... Negative def: ...
+> Start def: ... End def: ...
+> current
+> window
+> I. Inter-frame
+> Matching
+> II. Intra-frame
+> Merging
+> Vision Encoder
+> Inter-frame-matched
+> Intra-frame
+> Token Merging (IIM)
+> II. Long-term
+> memory injection
+> 1,2,... RoPE Indicies：
+> RoPE matrix ：
+> Anomaly definition
+> Video tokens
+> Generated tokens
+> Long-term memory
+> Droped tokens
+> I. Short-term KV reuse
+> 123456Win# t 78
+> 12345678Win# t+&
+> 12345678Win# t+=
+> Inter-frame-matched Intra-frame Token Merging (IIM) Hybrid Streaming Memory (HSM)
+
+I B B B P
+
+I B P Top K  
+
+> Bottom K
+> previous
+> windows
+
++  
+
+> 12
+> 24
+> aggregation
+
+Fig. 2. ESOM is a training-free streaming framework for open-world video anomaly detection under dynamic anomaly definitions. Given a raw user prompt, The DN module first converts it into a structured anomaly definition table. And the input video is processed in a sliding-window manner, where each window is encoded into visual tokens, and the IIM module compresses redundant tokens before they are fed into the LLM. Meanwhile, the HSM module manages the model’s cross-window memory states to maintain temporal continuity during streaming inference. Based on the LLM outputs, including anomaly reasoning, classification, and temporal segments, the PS module further converts interval-level textual predictions into frame-level soft anomaly scores. 
+
+where N (·) denotes the normalization function, Pnorm is the prompt, and zn is the normalized definition. The normalized definition includes anonymous class op-tions, positive definitions, negative definitions, and event boundary definitions for each category. Anonymous class options replace original category names with neutral identifiers (e.g., letters) to reduce semantic bias. Positive definitions describe what events should be regarded as belonging to each category, while negative definitions specify confusing but excluded cases. Event boundary definitions further clarify when an anomalous event should be considered to start and end, thereby standardizing the temporal criteria for anomaly localization. Since DN is only triggered when the anomaly definition changes, it can be handled by a black-box LLM with no extra overhead during streaming inference. 
+
+D. Inter-frame-matched Intra-frame Token Merging 
+
+During inference, visual tokens dominate the computational cost and are therefore the primary target for efficiency op-timization. To design a visual token compression module, it should first remain training-free and compatible with general-purpose MLLMs, so that it can be readily adapted to new models without finetuning. Second, it should support stream-ing inference by performing token compression stably within each window. Finally, it should preserve temporal information, since accurate anomaly localization depends on fine-grained temporal cues. Existing strategies such as keyframe selection [31] or inter-frame feature fusion [32] are less suitable in our setting because they either change the temporal sampling density or blur temporal positions. Inspired by the Group-of-Frames (GoF) design in video coding (e.g., H.264 [33]), each input window is first divided into multiple GoFs, and the frames within each GoF are further assigned as I-, P-, and B-frames. The I-frame is kept intact, while the P- and B-frames are matched with their reference frames to identify redundant patches, which are then compressed by intra-frame token merging. In this way, the temporal structure required for streaming localization is preserved. The specific process is divided into two steps: 
+
+a) Inter-frame matching: For the current window t, the sampled frames are encoded into visual features vt, which are further divided into GoFs of size lg . Omitting the GoF index for brevity, let gu,v j ∈ Rd denote the feature of the patch at spatial position (u, v ) in frame j of a GoF. For each frame, reference frames are selected according to its frame type. For a P-frame, the reference is the previous I-frame or P-frame; for a B-frame, the references are the preceding and following I/P-frames. Let R(j) denote the index set of reference frames for frame j. For any patch (u, v ), its importance score is defined as the minimum cosine distance to the local neighborhood 
+
+N (u, v ) in the reference frames: 
+
+ou,v j = min 
+
+r∈R(j) min 
+
+(u′,v ′)∈N (u,v )
+
+
+
+1 − cos 
+
+
+
+gu,v j , g u′,v ′
+
+r
+
+ 
+
+. (2) A smaller value of ou,v j indicates stronger redundancy. 
+
+b) Intra-frame merging: Given the retained proportion γ,the patches of frame j are ranked according to their importance scores {ou,v j }. The top ⌊γhw ⌋ patches form the high-score set H(j), and the remaining patches form the low-score set 
+
+L(j). Inspired by the I/B/P frame design in video coding, the JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 5
+
+retained proportion is set differently for different frame types, with γB < γ P < γ I = 1 .For each low-score patch (u, v ) ∈ L(j), its most similar target patch in the high-score set H(j) is defined as 
+
+πj (u, v ) = arg max 
+
+> (p,q )∈H(j)
+
+cos  gu,v j , g p,q j
+
+ . (3) Accordingly, the low-score patches assigned to a high-score patch (p, q ) ∈ H(j) form the set Ap,q j =
+
+{(u, v ) ∈ L(j) | πj (u, v ) = ( p, q )} Then, each high-score patch (p, q ) ∈ H(j) is updated by merging the patches in 
+
+Ap,q j with similarity-based weights: 
+
+α(u,v )→(p,q ) = exp  cos  gu,v j , g p,q j
+
+ P
+
+> (u′,v ′)∈A p,q j
+
+exp 
+
+
+
+cos 
+
+
+
+gu′,v ′ 
+
+> j
+
+, g p,q j
+
+ ,
+
+˜gp,q j = 12 gp,q j + 12
+
+X
+
+> (u,v )∈A p,q j
+
+α(u,v )→(p,q ) gu,v j .
+
+(4) After merging, only the updated high-score tokens 
+
+{˜gp,q j }(p,q )∈H(j) are retained for each frame. The compressed visual representation of the current window, denoted by ˜vt, is obtained by concatenating all retained tokens in their original temporal and spatial order. 
+
+E. Hybrid Streaming Memory 
+
+When processing streaming videos, preserving all histori-cal information is infeasible under limited memory budgets, while temporal windows at different positions also contribute unequally. Therefore, a Hybrid Streaming Memory (HSM) module is introduced to combine short-term KV reuse with compact long-term memory injection. On the one hand, the short-term memory in the overlap between windows t − 1 and 
+
+t is reused to eliminate redundant computation. However, as shown in Fig. 2, this reuse disrupts the continuity of temporal encoding between anomaly-definition tokens and video tokens. Inspired by [34], a reverse RoPE matrix is applied to the reused KV cache to restore temporally consistent encoding. On the other hand, the outputs from windows earlier than t−1
+
+are summarized into long-term memory and injected into the current window in textual form at low cost. 
+
+a) Short-term KV reuse: Specifically, the input sequence of the MLLM for the t-th window consists of four parts: 
+
+xt = Concat[ P sys , s n, ˜vt, P mem  
+
+> t−1
+
+], (5) where P sys denotes the system prompt used to constrain the task behavior and output format of the model, sn is the normalized prompt text obtained in Sec. III-C, ˜vt is the compressed visual feature obtained in Sec. III-D, and P mem 
+
+> t−1
+
+is the long-term memory text from previous windows. Since P sys and sn remain unchanged throughout inference until the anomaly definition changes, their shared prefix KV cache, denoted by (Kpre , V pre ), is computed only once: 
+
+Kpre , V pre = Mprefill 
+
+ K0, V 0, Concat[ P sys , s n], (6) where Mprefill (K, V, x ) denotes the prefilling stage of the MLLM that appends the token sequence x to the existing KV cache and outputs the updated cache, and K0, V 0 is the empty cache. For the visual input, the visual KV cache of the first window, 
+
+(Kvis 1 , V vis 1 ), is computed through a standard prefilling: 
+
+Kvis 1 , V vis 1 = Mprefill 
+
+ Kpre , V pre , ˜v1
+
+. (7) For subsequent windows, we exploit the relative property of RoPE [18] and apply an inverse rotation to the overlapped key cache, which is equivalent to shifting its RoPE indices backward by M ′. For window t > 1, the contextual KV cache 
+
+(Kctx  
+
+> t
+
+, V ctx  
+
+> t
+
+) is computed as 
+
+Kctx  
+
+> t
+
+, V ctx  
+
+> t
+
+= Mprefill 
+
+
+
+Concat[ Kpre , R −M ′ Kov 
+
+> t−1
+
+],
+
+Concat[ V pre , V ov 
+
+> t−1
+
+], ˜vnew 
+
+> t
+
+
+
+,
+
+(8) where (Kov 
+
+> t−1
+
+, V ov 
+
+> t−1
+
+) denote the overlapping tail of the previous visual KV cache, ˜vnew  
+
+> t
+
+denotes the newly added visual tokens in the current window, and R−M ′ denotes the corresponding rotation matrix. 
+
+b) Long-term memory injection: The long-term memory is updated autoregressively across windows. For the current window t, the model obtains the full cache (Kfull  
+
+> t
+
+, V full  
+
+> t
+
+) by appending the previous memory text P mem  
+
+> t−1
+
+:
+
+Kfull  
+
+> t
+
+, V full  
+
+> t
+
+= Mprefill 
+
+ Kctx  
+
+> t
+
+, V ctx  
+
+> t
+
+, P mem 
+
+> t−1
+
+. (9) The model then generates the prediction yt with the full cache and updates the memory for the next window: 
+
+yt = Mdec 
+
+ Kfull  
+
+> t
+
+, V full 
+
+> t
+
+, P mem  
+
+> t
+
+= Fmem 
+
+ P mem  
+
+> t−1
+
+, y t
+
+ (10) where Mdec (K, V ) denotes the decode stage of the MLLM, 
+
+Fmem (·) denotes a memory update function that retains the generated descriptions of the most recent M windows, main-taining compact long-range context while minimizing token cost. Finally, the predicted category is parsed from the gener-ated text ct = Fparse (yt), where the parse function maps the generated text to a category in C.
+
+F. Probabilistic Scoring 
+
+The MLLM produces temporal localization results in textual form, which cannot be directly used for frame-level evaluation. To bridge this gap, a Probabilistic Scoring (PS) module is introduced to transform each predicted interval into a local probability curve and then aggregate the curves from overlap-ping sliding windows into a global frame-level anomaly score sequence. The module is implemented in two steps. 
+
+a) Interval probabilization: First, we probabilize the in-terval output along the temporal dimension. For each window 
+
+t, the parsed temporal interval is [τ st , τ et ]. Let the window length be l frames, and let the local frame index be x ∈{0, 1, . . . , l − 1}. A log-normal kernel is then defined as 
+
+kt(x) = 
+
+
+
+1
+
+xσ k
+
+exp 
+
+
+
+− (ln x − μt)2
+
+2σ2
+
+> k
+
+
+
+, x > 0,
+
+0, x ≤ 0,
+
+(11) where σk is the shape parameter, μt is the location parameter, and kt(x) is set to zero if no valid interval is parsed. To place the peak at relative position r ∈ (0 , 1) within the JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 6
+
+predicted interval, we set μt = ln  (τ et − τ st )r + τ st
+
+ + σ2
+
+> k
+
+.In our implementation, we set r = 0 .2 to impose a prior that anomaly onsets are typically easier to identify consistently than anomaly endings due to the subjective nature of anomaly annotation, as discussed in [35]. 
+
+b) Confidence calibration: Next, we also probabilize the output at the window level. Specifically, we use the average difference between the top-1 and top-2 token probabilities over all generated tokens in the current window [36] as the window-level confidence αt, and smooth the resulting score with a Gaussian kernel gσg with standard deviation σg :
+
+at(x) = αt (gσg ∗ kt)( x). (12) After obtaining the local anomaly scores, we accumulate the scores from all windows to produce the global frame-level anomaly score sequence: 
+
+At(m) = 
+
+(
+
+at(m − st), m ∈ [st, s t + l − 1] ,
+
+0, otherwise . (13) 
+
+S(m) = 
+
+P 
+
+> t
+
+At(m)max m
+
+P 
+
+> t
+
+At(m) , (14) where m ∈ { 0, 1, . . . , T − 1} is the global frame index, and 
+
+st denotes the starting frame index of window t on the global timeline. Under a fixed window length and overlap ratio, the normalization factor max m
+
+P 
+
+> t
+
+At(m) can be determined in advance, making the entire scoring process compatible with streaming inference. IV. B ENCHMARK : O PEN DEF -B ENCH 
+
+To comprehensively evaluate model performance for video anomaly detection under open-world scenarios with dy-namic anomaly definitions, we propose OpenDef-Bench ,an Open -world dynamic def inition video anomaly detection 
+
+bench mark. For each video, OpenDef-Bench provides mul-tiple anomaly definitions, each containing several candidate categories. All definitions are manually verified to ensure that they are natural and consistent with the scene context. For example, OpenDef-Bench includes videos of pets entering meeting rooms, for which both positive (i.e., treating it as abnormal) and negative definitions (i.e., treating it as normal) are provided. In contrast, the existing dynamic definition method [7] directly treats events such as car accidents or fights as either abnormal or normal, while regarding such events as normal is generally unnatural and may reduce the realism of the evaluation setting. We introduce the construction pipeline, evaluation tasks and statistics of OpenDef-Bench as follows. 
+
+A. Construction Pipeline 
+
+Fig. 3(a) illustrates the four steps of the pipeline: 1) Video collection. OpenDef-Bench targets surveillance and long-video scenarios. It is constructed from multiple sources, including public datasets such as ShanghaiTech [37], NWPU [38], VIRAT [39], and MEVA [40], together with our newly recorded videos. . Video Collection   
+
+> . Dense Temporal
+> Annotation
+> . Dynamic Definition
+> Annotation
+> . Quality Review
+> (a) Construction Pipeline (b) Examples of positive and negative samples.
+> (video,definition,answer)
+> Positive Sample
+> Definition:
+> A. Blaze
+> B. Carrying guns or knives
+> C. Presence of smoke or fumes
+> Answer:
+> Option: B
+> Segment: [/.s, /.1s]
+> Negative Sample
+> Definition:
+> A. Person falling
+> B. Running
+> C. Cigarette smoking
+> D. Fire incident
+> E. Making or answering a phone call
+> Answer: None
+
+Fig. 3. The construction pipeline and example samples of the proposed OpenDef-Bench. Each video is annotated with multiple definitions containing multiple candidate categories. A sample is a triplet of a video, a definition, and the corresponding answer. 
+
+During collection, watermarks, visual effects, and edit-ing artifacts are strictly avoided. To ensure video diver-sity, the data is balanced across factors such as day and night, indoor and outdoor scenes, and target distance. 2) Dense temporal annotation. Annotators densely label all events in each video with frame-level temporal boundaries that may be considered abnormal under certain definitions. This step is designed to cover events whose abnormality depends on the definition. 3) Dynamic definition annotation. Annotators provide multiple definitions for the events obtained from the previous step. They first review the full video and then propose multiple scene-appropriate anomaly categories. Each event is subsequently annotated as a positive or negative sample under different definitions. For positive samples, 3–20 candidate categories are randomly se-lected, with exactly one matching the event; for negative samples, all selected categories are irrelevant. To further increase the difficulty, categories are allowed to be free-form phrases, and some of the categories are designed to require fine-grained discrimination, such as “riding a bicycle with one hand” and “cycling with a passenger”. 4) Resample and review. Finally, the collected data is resampled to balance the distribution across scenes and categories, while a cross-review process is conducted to remove samples with inaccurate temporal boundaries or ambiguous semantics. Each sample is organized as a “video–definition–answer” triplet. 
+
+B. Evaluation Tasks 
+
+OpenDef-Bench supports two evaluation tasks: dynamic temporal localization and dynamic category selection : For dynamic temporal localization, the model is required to pro-duce frame-level anomaly scores conditioned on dynamic anomaly definitions. These scores are then evaluated using temporal localization metrics based on the frame-level an-notations provided by the benchmark. For dynamic category selection, the model is required to select the correct category from the dynamically provided anomaly definitions, or predict normal if none of the defined categories is present. This task is evaluated using accuracy, which measures the model’s ability to perform fine-grained category discrimination under dynamically specified anomaly definitions. JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 7
+
+TABLE I COMPARISON OF OPEN DEF -B ENCH WITH EXISTING VAD BENCHMARKS .CLEAN : W/O WATERMARKS , EDITING , OR VISUAL EFFECTS .                                                           
+
+> Benchmark Dynamic Clean # Videos # Samples Duration (h) Resolution Definitions
+> UCF-Crime [41] ××290 290 10.3 240P XD-Violence [42] ××800 800 27.0 360P MSAD [43] ××240 240 1.4 720P, 1080P ShanghaiTech [37] ×✓107 107 0.5 480P NWPU [38] ×✓242 242 4.3 1080P
+> OpenDef-Bench ✓✓770 1492 27.7 480P, 1080P <720p 720p-1080p >=1080p
+> Resolution
+> 0
+> 50
+> 100
+> 150
+> 200
+> 250
+> 300
+> 350
+> 400
+> Number of Videos
+> 386
+> 46
+> 338
+> (a) Resolution Distribution <=20s 21-40s 41-60s 61-120s >120s
+> Duration
+> 0
+> 50
+> 100
+> 150
+> 200
+> 250
+> Number of Videos
+> 126
+> 270
+> 133 131 110 (b) Duration Distribution <=4 5678910 >=11
+> Number of Options
+> 0
+> 50
+> 100
+> 150
+> 200
+> 250
+> 300
+> Number of Questions
+> 191
+> 303 295
+> 235
+> 150
+> 94
+> 62
+> 162
+> (c) Option Distribution 927 (62.1%)
+> Normal
+> 565 (37.9%)
+> Abnormal (d) Answer Distribution.
+
+Fig. 4. Statistics of OpenDef-Bench. With high video resolution, long video duration, and diverse answer options, OpenDef-Bench presents a challenging benchmark for evaluation. 
+
+C. Data Statistics 
+
+Table I compares OpenDef-Bench with representative video anomaly detection benchmarks. Existing benchmarks such as UCF-Crime [41], XD-Violence [42], and MSAD [43] cover diverse scenarios, but they use fixed anomaly definitions and do not provide dynamic definition annotations. In addition, they mainly collect data from online videos, which often contain heavy watermarks and editing artifacts. Datasets such as ShanghaiTech [37] and NWPU [38] rely on manually recorded surveillance videos and therefore better reflect real surveillance environments. However, they remain limited in both scale and scenario diversity, and they do not support the dynamic definition required in open-world settings. By contrast, as shown in Table I and Fig. 4, OpenDef-Bench includes videos without watermarks and editing while introducing dynamic definitions. It also covers more videos, more samples, and longer video duration, thus providing a more reliable and challenging benchmark for evaluating model generalization under dynamic anomaly definitions. To verify the diversity of anomaly definitions, we concate-nate the category texts and extract their text embeddings using Qwen3 [44], followed by T-SNE visualization. As shown in Fig. 5, traditional benchmarks adopt a single fixed anomaly definition, which corresponds to only one point in the vi-sualization. Drift@5 [7] introduces five anomaly definitions and therefore corresponds to five points. However, we observe that these definitions are highly semantically similar, making them insufficient for effectively evaluating definition diversity. In contrast, OpenDef-Bench covers a much broader range of OpenDef-Bench 
+
+> UCF-Crime
+> MSAD
+> MSAD-Drift@
+> XD-Violence
+> XD-Drift@
+> ShanghaiTech
+> UBNormal
+
+Fig. 5. T-SNE visualization of text embeddings of anomaly definitions from OpenDef-Bench and existing VAD benchmarks. Definitions from existing benchmarks cluster in localized regions, while those from OpenDef-Bench are more uniformly distributed across the semantic space. 
+
+anomaly definitions, enabling a more comprehensive evalua-tion of model performance under dynamic-definition scenarios. More examples and a dataset statement are provided in the supplementary material. V. E XPERIMENTS 
+
+A. Evaluation Methods 
+
+We compare the proposed method with existing approaches from four perspectives in the open-world setting.  
+
+> •
+
+Traditional zero-shot performance is evaluated through localization and classification tasks in the zero-shot set-ting on UCF-Crime [41], XD-Violence [42], and Shang-haiTech [37]. Specifically, for ShanghaiTech, we adopt the split [45] that includes both normal and abnormal videos. For temporal localization, we use AUC and AP metrics, together with the LaAP metric proposed in [35], which measures whether a model can detect anomalies at an early stage of events. For classification, we use Macro-F1 to mitigate class imbalance.  
+
+> •
+
+Dynamic definition performance is evaluated with two tasks on OpenDef-Bench and the Drift@5 [7] on XD-Violence. For the dynamic temporal localization task, we adopt the AUC, AP and LaAP. For the dynamic category selection task, we use Accuracy.  
+
+> •
+
+Explainability . We evaluate the quality of generated descriptions on HIVAU-70K [6]. Specifically, due to the lack of dedicated datasets for streaming inference explainability, we use 398 video-level annotated samples from this dataset and employ GPT-4o as a judge to compare the generated descriptions with those produced by HolmesVAU [6] fine-tuned on HIVAU-70K. The judge analyzes content accuracy, completeness, and hallucina-tion, and reports the win rate (WR).  
+
+> •
+
+Efficiency . We compare efficiency under the same hard-ware platform and environment using the Real-Time Factor (RTF) [46], defined as the ratio between model processing time and input video duration. When RTF is less than 1, the model can process video streams in real time. We report the average RTF over multiple long videos as the final result. 
+
+B. Implementation Details 
+
+We use the non-thinking version of Qwen3-VL-8B as default. Unless otherwise specified, all experiments are con-JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 8
+
+TABLE II COMPARISON WITH EXISTING METHODS ON TRADITIONAL ZERO -SHOT VIDEO ANOMALY DETECTION BENCHMARKS . T DENOTES TRAINING , GF  
+
+> DENOTES
+
+GRADIENT -FREE , AND TF DENOTES TRAINING -FREE .                                                                                                      
+
+> Model Type Online UCF-Crime XD-Violence ShanghaiTech AUC LaAP F1 AP LaAP F1 AUC LaAP VadCLIP [8] T×80.16 21.70 10.52 58.29 60.16 26.16 60.73 9.20 LaGoVAD [7] T×81.11 22.48 16.64 74.25 75.82 63.80 45.74 4.94 Qwen3-VL-8B TF ×63.64 6.33 21.79 44.36 33.92 69.02 58.68 4.38 LAVAD [5] TF ×79.21 24.01 ––––57.58 6.52 VERA [11] GF ×85.57 29.82 –56.24 56.61 –59.10 16.36 VERA GF ✓75.27 16.87 –44.22 50.97 –54.85 6.48 PANDA [17] TF ✓82.57 ––72.41 ––––Qwen3-VL-8B TF ✓71.99 18.06 35.63 29.94 27.55 19.23 56.20 3.85
+> ESOM TF ✓86.18 33.21 41.26 71.68 73.64 73.57 77.06 34.33
+
+TABLE III COMPARISON OF DYNAMIC DEFINITION PERFORMANCE AND EXPLAINABILITY WITH STATE -OF -THE -ART METHODS ON 
+
+OPEN DEF -B ENCH , XD-V IOLENCE AND HIVAU-70 K. T DENOTES 
+
+TRAINING AND TF DENOTES TRAINING -FREE .Model Type Online OpenDef-Bench XD-Violence HIVAU-70k Temporal Localization Category Selection Drift@5 Video Description AUC AP LaAP ACC AUC AP Win Rate HolmesVAU [6] T × 46.35 3.74 – 0.71 – – –LaGoVAD [7] T × 48.19 6.40 6.43 9.34 85.7 37.1 –LAVAD [5] TF × 50.13 4.91 4.84 – 81.7 34.8 –Qwen3-VL-8B TF × 54.86 10.22 7.02 12.74 78.8 34.0 61.7% Qwen3-VL-8B TF ✓ 52.73 8.49 6.62 27.35 81.7 24.2 52.8%          
+
+> ESOM TF ✓59.22 15.88 10.17 32.74 89.3 44.8 69.6%
+
+ducted on a single GPU with 48G memory, implemented with 
+
+flash-attention 2 and bfloat16 , while no quanti-zation is applied. For streaming video inference, a sampling rate of 4 fps is used, with a sliding window length of 224 frames and an overlap of 160 frames between adjacent windows. For the IIM module, a GoF structure with size 8 is adopted, where the first frame is treated as an I-frame, the last frame as a P-frame, and the remaining frames as B-frames. Correspondingly, the token retention ratios for B-frames and P-frames are set to γB = 0 .2 and γP = 0 .6, respectively. In the PS module, the relevant hyperparameters are set as r = 0 .2,
+
+σk = 1 .2, and σg = 4 .
+
+C. Comparison with state of the art 
+
+In the experiments, we consider both offline and online settings. The offline setting processes the entire video at once, whereas the online setting performs streaming video understanding incrementally. Based on these two settings, we further construct Qwen3-VL-8B baselines for comparison. The offline baseline uniformly samples 240 frames, whereas the online baseline follows the same sliding-window configuration as ESOM, directly uses category names as prompts, and extracts abnormal intervals from the generated text. Table II compares ESOM under the traditional zero-shot setting. To ensure fairness, an online version of VERA is constructed by removing its score post-processing step. ESOM achieves the best performance in both temporal localization and fine-grained multi-class classification. Table III compares performance under dynamic-definition and explainability. HolmesVAU [6] suffers from strong bias 
+
+TABLE IV COMPARISON OF INFERENCE EFFICIENCY . FPS DENOTES THE VIDEO SAMPLING RATE .
+
+Model Single Model Param. FPS RTF ↓ UCF-Crime OpenDef-Bench AUC ↑ AUC ↑ AP ↑
+
+LAVAD [5] × ≈43B 2 11.05 79.21 50.13 4.91 VERA [11] × ≈9B 2 5.74 75.27 – –ESOM ✓ 8B 2 0.27 82.13 57.84 15.43 ESOM ✓ 8B 4 0.52 86.18 59.22 15.88 
+
+TABLE V ABLATION STUDY OF EACH MODULE .                                                 
+
+> Method UCF-Crime OpenDef-Bench Token Ratio (%) Prefill Time (s) Decode Time (s) AUC ↑F1 ↑AUC ↑ACC ↑
+> ESOM 86.18 41.26 59.22 32.74 0.22 0.381 8.31
+> −w/o IIM 85.75 40.71 58.70 31.65 0.44 0.865 10.94
+> −w/o HSM 80.53 40.70 54.87 31.86 1.00 2.692 18.07
+> −w/o PS 76.11 40.70 52.41 31.86 1.00 2.692 18.07
+> −w/o DN 71.99 35.63 52.73 27.35 1.00 2.692 18.07
+
+toward seen categories due to its training-data distribution and therefore tends to predict most videos as normal. LaGoVAD [7] benefits from its dynamic paradigm, but its performance is still limited by the generalization of small models. Other training-free baselines also perform unsatisfactorily. Moreover, both offline and online Qwen3-VL-8B baselines achieve in-ferior performance, indicating that a general-purpose MLLM cannot be directly applied to this task effectively. By contrast, ESOM consistently achieves the best overall performance. Table IV further compares the efficiency of different models. The results indicate that ESOM achieves superior performance while satisfying real-time requirements. Moreover, ESOM uses only a single model, resulting in a smaller parameter size and making it easier to deploy. 
+
+D. Ablation Studies 
+
+We report the main ablations in this section. For more results and visualizations, please refer to the supplementary material. 
+
+1) Module Effectiveness: We report ablation studies of modules in Table V, where the running time is measured with a total token length of 40K. The results show that removing either IIM or HSM leads to a significant decrease in efficiency, accompanied by a noticeable drop in performance, which indi-cates that token compression reduces computational overhead while suppressing redundant visual tokens that introduce noise. Meanwhile, the hybrid streaming memory improves perfor-mance by compressing weakly related long-term information while maintaining the continuous propagation of short-term information. In addition, the Probabilistic Scoring module has a substantial impact on temporal localization performance, while the Definition Normalization module plays a critical role in classification performance. 
+
+2) Comparison with Other Token Compression Methods: 
+
+To further validate the effectiveness of the token compression module, we replace it with several general-purpose alternatives and compare their performance under different compression ratios. Specifically, ToME [47] is applied independently to each frame, DyCoke refers to the Stage 1 strategy in [48], JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 9Token Ratio 
+
+> AUC
+> IIM (ours)
+> ToME
+> DyCoke
+> LargeSmall
+> Full Token .
+
+Fig. 6. Comparison of different token compression methods [47]–[49] under varying token ratios on UCF-Crime. TABLE VI COMPARISON OF DIFFERENT BACKBONES 
+
+Method UCF-Crime AUC ↑ F1 ↑
+
+Qwen3-VL-4B 84.62 40.18 Qwen3-VL-8B 86.18 41.26 Qwen3-VL-32B 84.74 43.18 
+
+Qwen2.5-VL-7B 73.06 38.62 Keye-VL-1.5-8B 81.39 20.74 
+
+TABLE VII ABLATION STUDIES ON THE DEFINITION NORMALIZATION MODULE .
+
+Anonymous Category Start–End Definition Format UCF-Crime AUC ↑ F1 ↑
+
+✓ ✓ markdown 86.18 41.26 
+
+✓ ✓ json 84.27 41.08 
+
+✓ ✓ tsv 84.17 43.01 
+
+✓ × markdown 83.59 35.23 
+
+× ✓ markdown 83.26 37.48 
+
+and LargeSmall denotes the high–low resolution interleaving strategy used in [49]. As shown in Fig. 6, IIM consistently delivers the best performance across all compression ratios. 
+
+3) Different Backbones: We also evaluate different MLLMs within our framework in Table VI, including Qwen2.5-VL [50], Qwen3-VL [51], and Keye-VL-1.5 [49]. Among them, Qwen3-VL achieves the best temporal performance, and larger models tend to perform better on classification, but do not necessarily show stronger temporal localization ability. Con-sidering efficiency, we finally adopt the 8B variant. 
+
+4) Effectiveness of the Designs in DN: Table VII presents ablation studies on the individual components of the DN module, comparing whether anonymous category names are used, whether start–end boundaries are explicitly defined, and the prompt format used for the definitions. The results confirm the critical role of category anonymization and boundary specification, and indicate that the markdown table format achieves the best overall performance. 
+
+5) Effectiveness of the Designs in IIM: Table VIII explores the GoF strategy and the P-frame interval in the IIM module. The results show that, within a certain range, increasing the window size and enlarging the P-frame interval can improve the compression ratio while maintaining strong detection per-formance. An overlarge GoF size leads to long matching intervals, making it hard to accurately find redundant tokens. 
+
+E. Visualizations 
+
+Fig. 7 presents qualitative examples showing that ESOM can accurately localize abnormal events under given anomaly def-initions and produce detailed textual explanations. Additional qualitative results are provided in the supplementary material. Anomaly definitions:                                   
+
+> Standing on furniture surfaces,
+> Slipper wearing，Putting legs on
+> the table, Bringing a pet along,
+> Food and drink consumption ,
+> Shoes off, Detonation, Fire
+> incident, Severe damage to life
+> and property, Smoke incident,
+> Cigarette smoking, Lying or
+> reclining
+> Model Outputs:
+> Description : In a classroom environment, a male student sits at a desk.
+> Starting from %%:%&:'%, he picks up an item in red packaging, opens it,
+> and eats its contents .
+> Reasoning :Three possible categories are considered: E(eating), B
+> (walking or standing while wearing slippers), F (barefoot). Analysis
+> proceeds as follows. [MORE] Finally, the event matches the definition of
+> E (eating): starting at %%:%&:'%, the male student takes food from the red
+> package and eats it until %%:%3:%4 .
+> Category : E Segment : %%:%&:'%.%%% - %%:%3:%4.446
+> 06:00 00:00 00:40 01:20 02:00 02:40 03:20 04:00 04:40 05:20
+> [MORE...]
+> [MORE...]
+> [MORE...]
+
+Fig. 7. Qualitative results of ESOM. Due to space limitations, some text is truncated and marked with [MORE...] . TABLE VIII ABLATION STUDY OF THE IIM MODULE .GoF Size P-frame Interval UCF-Crime AUC ↑ F1 ↑
+
+15 7 84.31 40.93 8 7 86.18 41.26 4 3 83.81 38.46 4 1 86.00 41.93 
+
+VI. C ONCLUSION 
+
+In this paper, we propose ESOM, a novel framework for open-world video anomaly detection. We first build a training-free framework that can address the challenges of generaliza-tion, output format, and dynamic definitions in the open-world setting. This framework includes a Definition Normalization module to accurately adapt to dynamic anomaly definitions, and a Probabilistic Scoring module to produce frame-level scores rather than interval-level outputs. We further propose the IIM and HSM modules to improve efficiency. By reducing spatio-temporal redundancy and minimizing interference with the original inference process, these modules reduce 78% of tokens while maintaining performance. In addition, we construct a new benchmark, OpenDef-Bench, which supports evaluations under diverse anomaly definitions. Experiments demonstrate that ESOM achieves SOTA performance while supporting real-time and online inference. Future work can explore accurate detection using models with fewer parameters and higher compression ratios. REFERENCES [1] P. Wu, C. Pan, Y. Yan, G. Pang, P. Wang, and Y. Zhang, “Deep learning for video anomaly detection: A review,” arxiv preprint , vol. abs/2409.05383, 2024. [2] P. Wu, X. Zhou, G. Pang, Y. Sun, J. Liu, P. Wang, and Y. Zhang, “Open-vocabulary video anomaly detection,” in CVPR . Seattle, USA: IEEE, 2024, pp. 18 297–18 307. [3] F. Li, W. Liu, J. Chen, R. Zhang, Y. Wang, X. Zhong, and Z. Wang, “Anomize: Better open vocabulary video anomaly detection,” in CVPR ,2025, pp. 29 203–29 212. [4] C. Huang, W. Huang, Q. Jiang, W. Wang, J. Wen, and B. Zhang, “Mul-timodal evidential learning for open-world weakly-supervised video anomaly detection,” TMM , 2025. JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 10 
+
+[5] L. Zanella, W. Menapace, M. Mancini, Y. Wang, and E. Ricci, “Harness-ing large language models for training-free video anomaly detection,” in CVPR . Seattle, USA: IEEE, 2024, pp. 18 527–18 536. [6] H. Zhang, X. Xu, X. Wang, J. Zuo, X. Huang, C. Gao, S. Zhang, L. Yu, and N. Sang, “Holmes-vau: Towards long-term video anomaly understanding at any granularity,” in CVPR , 2025, pp. 13 843–13 853. [7] Z. Liu, X. Wu, J. Wu, X. Wang, and L. Yang, “Language-guided open-world video anomaly detection under weak supervision,” arXiv preprint arXiv:2503.13160 , 2025. [8] P. Wu, X. Zhou, G. Pang, L. Zhou, Q. Yan, P. Wang, and Y. Zhang, “Vadclip: Adapting vision-language models for weakly supervised video anomaly detection,” in AAAI , M. J. Wooldridge, J. G. Dy, and S. Natara-jan, Eds. Vancouver, Canada: AAAI Press, 2024, pp. 6074–6082. [9] H. Zhang, X. Wang, X. Xu, X. Huang, C. Gao, Y. Wang, S. Zhang, and N. Sang, “Glancevad: Exploring glance supervision for label-efficient video anomaly detection,” in ICME . IEEE, 2025, pp. 1–6. [10] P. Chen, S. Du, X. Zhao, J. Hu, J. Li, and T. Li, “Dctformer: A dual-branch transformer with cloze tests for video anomaly detection,” TMM ,2025. [11] M. Ye, W. Liu, and P. He, “Vera: Explainable video anomaly detection via verbalized learning of vision-language models,” in CVPR , 2025, pp. 8679–8688. [12] S. Smeureanu, R. T. Ionescu, M. Popescu, and B. Alexe, “Deep appearance features for abnormal behavior detection in video,” in Int. Conf. Image Anal. Proc. , ser. Lecture Notes in Computer Science, vol. 10485. Springer, 2017, pp. 779–789. [13] P. Wu, J. Liu, and F. Shen, “A deep one-class neural network for anomalous event detection in complex scenes,” TNNLS , vol. 31, no. 7, pp. 2609–2622, 2020. [14] J. Tang, H. LU, R. WU, X. Xu, K. Ma, C. Fang, B. Guo, J. Lu, Q. Chen, and Y. Chen, “Hawk: Learning to understand open-world video anomalies,” in NeurIPS , vol. 37, 2024, pp. 139 751–139 785. [15] C. Huang, B. Wang, J. Wen, C. Liu, W. Wang, L. Shen, and X. Cao, “Vad-r1: Towards video anomaly reasoning via perception-to-cognition chain-of-thought,” arXiv preprint arXiv:2505.19877 , 2025. [16] L. Zhu, Q. Chen, X. Shen, and X. Cun, “Vau-r1: Advancing video anomaly understanding via reinforcement fine-tuning,” arXiv preprint arXiv:2505.23504 , 2025. [17] Z. Yang, C. Gao, and M. Z. Shou, “Panda: Towards generalist video anomaly detection via agentic ai engineer,” arXiv preprint arXiv:2509.26386 , 2025. [18] J. Su, M. Ahmed, Y. Lu, S. Pan, W. Bo, and Y. Liu, “Roformer: En-hanced transformer with rotary position embedding,” Neurocomputing ,vol. 568, p. 127063, 2024. [19] Y. Zhu, W. Bao, and Q. Yu, “Towards open set video anomaly detection,” in ECCV , ser. Lecture Notes in Computer Science, S. Avidan, G. J. Brostow, M. Ciss´ e, G. M. Farinella, and T. Hassner, Eds., vol. 13694. Tel Aviv,Israel: Springer, 2022, pp. 395–412. [20] H. Huang, Z. Hu, D. Feng, C. Chen, D. Li, H. Liu, and L. Duan, “Enabling real-world supervised video anomaly detection: New open-set benchmark and new framework,” TMM , 2026. [21] A. Acsintoae, A. Florescu, M. Georgescu, T. Mare, P. Sumedrea, R. T. Ionescu, F. S. Khan, and M. Shah, “Ubnormal: New benchmark for supervised open-set video anomaly detection,” in CVPR . New Orleans, USA: IEEE, 2022, pp. 20 111–20 121. [22] Z. Wang, X. Gu, H. Yan, and X. Gu, “Domain generalization for video anomaly detection considering diverse anomaly types,” Signal, Image and Video Processing , vol. 18, no. 4, pp. 3691–3704, 2024. [23] Y. Jain, A. Dabouei, and M. Xu, “Cross-domain learning for video anomaly detection with limited supervision,” in ECCV . Springer, 2024, pp. 468–484. [24] A. Aich, K.-C. Peng, and A. K. Roy-Chowdhury, “Cross-domain video anomaly detection without target domain adaptation,” in WACV , 2023, pp. 2579–2591. [25] L. Zhou, Y. Gao, M. Zhang, P. Wu, P. Wang, and Y. Zhang, “Human-centric behavior description in videos: New benchmark and model,” 
+
+TMM , vol. 26, pp. 10 867–10 878, 2024. [26] Q. Bao, F. Liu, L. Jiao, Y. Liu, S. Li, L. Li, X. Liu, X. Wang, and B. Chen, “Anomaly-led prompting learning caption generating model and benchmark,” TMM , 2025. [27] H. Du, S. Zhang, B. Xie, G. Nan, J. Zhang, J. Xu, H. Liu, S. Leng, J. Liu, H. Fan, D. Huang, J. Feng, L. Chen, C. Zhang, X. Li, H. Zhang, J. Chen, Q. Cui, and X. Tao, “Uncovering what, why and how: A comprehensive benchmark for causation understanding of video anomaly,” in CVPR .IEEE, 2024, pp. 18 793–18 803. [28] T. Yuan, X. Zhang, K. Liu, B. Liu, C. Chen, J. Jin, and Z. Jiao, “Towards surveillance video-and-language understanding: New dataset, baselines, and challenges,” in CVPR , 2024, pp. 22 052–22 061. [29] X. Wang, X. Wu, and Z. Liu, “Enhancing video anomaly understanding via multi-task instruction tuning,” IEEE Signal Processing Letters ,vol. 32, pp. 4359–4363, 2025. [30] M. Cho, T. Kim, M. Shim, D. Wee, and S. Lee, “Towards multi-domain learning for generalizable video anomaly detection,” NeurIPS , vol. 37, pp. 50 256–50 284, 2024. [31] X. Tang, J. Qiu, L. Xie, Y. Tian, J. Jiao, and Q. Ye, “Adaptive keyframe sampling for long video understanding,” in CVPR , 2025, pp. 29 118– 29 128. [32] T. Fu, T. Liu, Q. Han, G. Dai, S. Yan, H. Yang, X. Ning, and Y. Wang, “Framefusion: Combining similarity and importance for video token reduction on large vision language models,” in ICCV , 2025, pp. 22 654– 22 663. [33] T. Wiegand, G. J. Sullivan, G. Bjontegaard, and A. Luthra, “Overview of the h. 264/avc video coding standard,” TCSVT , vol. 13, no. 7, pp. 560–576, 2003. [34] G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis, “Efficient streaming language models with attention sinks,” arXiv , 2023. [35] Z. Liu, X. Wu, W. Li, L. Yang, and S. Wang, “Rethinking met-rics and benchmarks of video anomaly detection,” arXiv preprint arXiv:2505.19022 , 2025. [36] X. Wang and D. Zhou, “Chain-of-thought reasoning without prompting,” 
+
+NeurIPS , vol. 37, pp. 66 383–66 409, 2024. [37] J. Zhong, N. Li, W. Kong, S. Liu, T. H. Li, and G. Li, “Graph convolutional label noise cleaner: Train a plug-and-play action classifier for anomaly detection,” in CVPR , 2019, pp. 1237–1246. [38] C. Cao, Y. Lu, P. Wang, and Y. Zhang, “A new comprehensive bench-mark for semi-supervised video anomaly detection and anticipation,” in 
+
+CVPR . Vancouver, Canada: IEEE, 2023, pp. 20 392–20 401. [39] S. Oh, A. Hoogs, A. Perera, N. Cuntoor, C.-C. Chen, J. T. Lee, S. Mukherjee, J. K. Aggarwal, H. Lee, L. Davis et al. , “A large-scale benchmark dataset for event recognition in surveillance video,” in CVPR .IEEE, 2011, pp. 3153–3160. [40] K. Corona, K. Osterdahl, R. Collins, and A. Hoogs, “Meva: A large-scale multiview, multimodal video dataset for activity detection,” in WACV ,2021, pp. 1060–1068. [41] W. Sultani, C. Chen, and M. Shah, “Real-world anomaly detection in surveillance videos,” in CVPR . Computer Vision Foundation / IEEE Computer Society, 2018, pp. 6479–6488. [42] P. Wu, J. Liu, Y. Shi, Y. Sun, F. Shao, Z. Wu, and Z. Yang, “Not only look, but also listen: Learning multimodal violence detection under weak supervision,” in ECCV , ser. Lecture Notes in Computer Science, vol. 12375. Springer, 2020, pp. 322–339. [43] L. Zhu, L. Wang, A. Raj, T. Gedeon, and C. Chen, “Advancing video anomaly detection: A concise review and a new dataset,” in NeurIPS ,vol. 37. Curran Associates, Inc., 2024, pp. 89 943–89 977. [44] A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv et al. , “Qwen3 technical report,” arXiv preprint arXiv:2505.09388 , 2025. [45] Y. Pu, X. Wu, L. Yang, and S. Wang, “Learning prompt-enhanced context features for weakly-supervised video anomaly detection,” TIP ,vol. 33, pp. 4923–4936, 2024. [46] Z. Sun, Z. Peng, Y. Ma, Y. Chen, Z. Zhou, Z. Zhou, G. Zhang, Y. Zhang, Y. Zhou, Q. Lu et al. , “Streamavatar: Streaming diffusion models for real-time interactive human avatars,” arXiv preprint arXiv:2512.22065 ,2025. [47] D. Bolya, C.-Y. Fu, X. Dai, P. Zhang, C. Feichtenhofer, and J. Hoffman, “Token merging: Your vit but faster,” arXiv preprint arXiv:2210.09461 ,2022. [48] K. Tao, C. Qin, H. You, Y. Sui, and H. Wang, “Dycoke: Dynamic compression of tokens for fast video large language models,” in CVPR ,2025, pp. 18 992–19 001. [49] B. Yang, B. Wen, B. Ding, C. Liu, C. Chu, C. Song, C. Rao, C. Yi, D. Li, D. Zang et al. , “Kwai keye-vl 1.5 technical report,” arXiv preprint arXiv:2509.01563 , 2025. [50] S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, H. Zhong, Y. Zhu, M. Yang, Z. Li, J. Wan, P. Wang, W. Ding, Z. Fu, Y. Xu, J. Ye, X. Zhang, T. Xie, Z. Cheng, H. Zhang, Z. Yang, H. Xu, and J. Lin, “Qwen2.5-VL Technical Report,” arXiv preprint arXiv:2502.13923 , Feb. 2025. [51] S. Bai, Y. Cai, R. Chen, K. Chen, X. Chen, Z. Cheng, L. Deng, W. Ding, C. Gao, C. Ge et al. , “Qwen3-vl technical report,” arXiv preprint arXiv:2511.21631 , 2025.

@@ -1,0 +1,697 @@
+Title: How Should Video LLMs Output Time? An Analysis of Efficient Temporal Grounding Paradigms
+
+URL Source: https://arxiv.org/pdf/2604.08966v1
+
+Published Time: Mon, 13 Apr 2026 00:34:49 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# How Should Video LLMs Output Time? An Analysis of Efficient Temporal Grounding Paradigms 
+
+## Shengji Jin 1* Yuanhao Zou 1* Victor Zhu 2 Zhengping Ji 2 Chen Chen 11The University of Central Florida 2Axon 
+
+j604319238@gmail.com, yuanhaoz@ucf.edu, chen.chen@crcv.ucf.edu vzhu@axon.com, zji@axon.com 
+
+## Abstract 
+
+While Multimodal Large Language Models (MLLMs) have advanced Video Temporal Grounding (VTG), existing meth-ods often couple output paradigms with different backbones, datasets, and training protocols. This makes it challenging to isolate the specific impact of the output design. Addi-tionally, as VTG systems are increasingly considered for resource-constrained edge deployment, the trade-off be-tween output formulation and system-level efficiency re-quires systematic investigation. In this paper, we present a controlled empirical study comparing three dominant VTG output paradigms: Text Numeral Generation, Tem-poral Token Generation, and Continuous Temporal Decod-ing. We evaluate these paradigms across identical compact VLMs (SmolVLM2, FastVLM, and Molmo2) using consis-tent datasets and LoRA fine-tuning protocols. Evaluations on Charades-STA, QVHighlights, and YouCook2 measure both localization accuracy and system efficiency, including inference latency, training throughput, and parameter over-head. Our results demonstrate that the choice of output for-mulation significantly affects both grounding accuracy and computational cost, independent of model scale. Specif-ically, the continuous distribution paradigm consistently achieves the most favorable efficiency-accuracy trade-off on the Pareto frontier, delivering robust localization with mini-mal latency overhead. These findings provide objective em-pirical guidelines for designing efficient, deployment-ready VTG systems. 1
+
+## 1. Introduction 
+
+Video temporal grounding (VTG), the task of localizing temporal segments in a video matching a natural language query, has attracted growing research interest. Core tasks  
+
+> *Equal contribution.
+> 1Our code and models are publicly available: https : / / tg -paradigms.github.io/
+
+including moment retrieval [1, 4], dense video caption-ing [11, 34], highlight detection [12], and grounded video question answering [32, 33] all require models to produce precise temporal boundaries. As multimodal large language models (MLLMs) increasingly serve as the backbone for these tasks, diverse temporal output formulations have been proposed [30]. Based on the different temporal output formulation , existing approaches diverge into three main paradigms (Figure 1): (a) text numeral generation, express-ing timestamps as text numerals within the language modal-ity [8, 14]; (b) temporal token generation, introducing ded-icated temporal tokens into the vocabulary [5, 6, 22]; and (c) continuous temporal decoding, encompassing both re-gression modules that predict scalar timestamps from hid-den states [19, 29] and distribution-based methods that convert temporal embeddings into probability distributions over time bins [37], both sharing the principle of mapping hidden representations to continuous temporal targets while differing in whether a distributional prior is imposed. Each paradigm is exemplified by recent work: the text numeral approach generates temporal boundaries as plain-text numerals within a chat-style dialogue framework [8]; the temporal token generation paradigm employs causal event modeling, decoding events auto-regressively through task-specific encoder-decoder pairs [5]; and continuous temporal decoding approaches, such as distribution-based methods, introduce a learnable temporal token to model boundary ambiguity via a probabilistic decoder [37]. We omit standalone regression heads from our study as they can be viewed as a degenerate case of distribution-based decod-ing without the distributional prior. However, as summa-rized in Table 1, each system uses its own backbone, data, and protocol, making it impossible to attribute performance differences to the output formulation alone. This raises a critical yet underexplored question: how should temporal predictions be formulated in the model’s output space? The survey [30] explicitly identifies this lack of controlled cross-paradigm comparison as an open chal-lenge. 
+
+> arXiv:2604.08966v1 [cs.CV] 10 Apr 2026
+
+# M-LLM Layers 
+
+(a) Text Numeral Generation (b) Temporal Token Generation (c) Continuous Temporal Decoding 
+
+Temporal Head 
+
+> Controlled Temporal
+> Generation
+
+tstart      
+
+> 1.234.56
+
+# tstart 
+
+# tend     
+
+> 1.23
+> 4.56
+> seconds
+> seconds
+
+M-LLM Head         
+
+> Direct Generation
+> Regular Tokens
+> 12345
+> 6789.
+> 0
+
+Vocabulary Library         
+
+> 12345
+> 6789.
+> 0
+
+Vocabulary Library  
+
+> <T 0>
+> Temporal Tokens
+> <T 1><T N><T N-1>……
+> Regular Tokens
+
+MLP Head 
+
+> Hidden States
+
+tend 
+
+# tstart 
+
+# tend      
+
+> 1.23
+> 4.56
+> seconds
+> seconds Temporal
+> Distributions
+
+Figure 1. Overview of three output formulation paradigms for temporal grounding in Video LLMs. After extracting features through shared M-LLM Layers, the architecture diverges into three distinct designs: (a) Text Numeral Generation utilizes the standard M-LLM head to directly generate timestamps as sequences of regular text tokens. (b) Temporal Token Generation introduces specific temporal tokens and a dedicated temporal head, utilizing a restricted vocabulary library for controlled, sequential boundary generation. (c) Continuous Temporal Decoding maps hidden states through a lightweight MLP head to predict continuous temporal distributions, directly decoding boundary coordinates without auto-regressive generation. 
+
+Moreover, these representative systems are all built on 7B-class or larger backbones. As the field moves to-ward practical deployment on resource-constrained plat-forms such as edge devices, mobile applications, and real-time video analytics, it becomes essential to understand how these output paradigms perform when paired with compact models, where computational budget is limited and every architectural choice carries amplified impact. This paper addresses both gaps through a controlled empirical study. We deliberately choose compact back-bones ranging from 0.5B to 8B parameters (SmolVLM2 0.5B/2.2B, FastVLM 1.5B, and Molmo2 4B/8B), cover-ing a spectrum of resource-constrained deployment sce-narios. We implement three representative temporal out-put paradigms under a unified framework, ensuring that backbone, raw data source, optimizer, epoch count, and fine-tuning protocol are identical across all conditions. Each paradigm naturally requires its own data format-ting (e.g., structured event sequences for the generative paradigm, special token annotations for the distribution-based paradigm, and plain-text timestamp strings for the text numeral baseline), but the underlying video-query-annotation triples remain the same. The sole variable is thus the output formulation and its associated training objective. Our contributions are: • Unified fine-tuning comparison. We implement gener-ative structured output (TRACE [5]-style), distribution-based temporal modeling (DisTime [37]-style), and text numeral baseline (VTimeLLM [8]-style) paradigms on the same set of compact backbones, using identical train-ing configurations to isolate the output formulation as the sole experimental variable. • Efficiency-aware analysis. Beyond localization accu-racy, we analyze parameter overhead, training stability, inference determinism, and computational cost, dimen-sions critical for practical deployment yet underexplored in the VTG-MLLM literature [30]. • Empirical insights at compact scale. We report how lo-calization accuracy, training convergence, and inference determinism vary across paradigms when the backbone is scaled from 0.5B to 8B, and identify which output for-mulation offers the best accuracy-efficiency trade-off for deployment on resource-constrained platforms. 
+
+## 2. Related Work 
+
+Traditional video temporal grounding methods employ task-specific architectures with large-scale video-text pre-training, such as Moment-DETR [12], CG-DETR [19], and Table 1. Detailed comparison of existing VTG-MLLM systems. To highlight the extreme heterogeneity, we categorize the setups by LLM backbone, visual encoder, data scale, and optimization pipeline. 1-S , 2-S , and 3-S denote 1-stage, 2-stage, and 3-stage training protocols, respectively.                                                                                       
+
+> Paradigm Method LLM Backbone Visual Encoder Data Size Stages Architectural Additions / Key Designs Text Numeral
+> HawkEye [28] Vicuna v1.5 (7B) CLIP ViT-L/14 1.1M 3-S Recursive search space narrowing SlowFocus [20] Vicuna v1.5 (7B) CLIP ViT-L/14 1.0M 3-S Mixed-frequency sampling mechanism VTimeLLM [8] Vicuna v1.5 (7B) CLIP ViT-L/14 170K 3-S None (Textual boundary format) TimeChat [23] LLaMA-2 (7B) EVA-CLIP ViT-G/14 125K 1-S Sliding video Q-Former GroundingGPT [14] Vicuna v1.5 (7B) CLIP ViT-L/14 1.4M 3-S Modality adapters Chrono [18] BLIP-2 (OPT-2.7B) BLIP-2 ViT-g/14 ∼12K 1-S None (Input sequence blueprint)
+> Temporal Token
+> Momentor [22] LLaMA (7B) CLIP ViT-L/14 10M 3-S TPM (Anchor interpolation) VTG-LLM [6] LLaMA-2 (7B) EVA-CLIP ViT-G/14 217K 1-S Absolute time tokens & slot compression LITA [9] Vicuna (7B) CLIP ViT-L/14 500K 1-S Time tokens; SlowFast visual tokens TRACE [5] Mistral (7B) CLIP ViT-L/14 2.8M 2-S Enc-Dec pairs (time/score/text) SeViLA [35] Flan-T5 XL (3B) ViT-G/14 (1B) 125K+ 2-S Keyframe selection via Localizer-Answerer Grounded-VideoLLM [25] Phi-3.5 / Vicuna CLIP + InternVideo2 2.3M 3-S Two-stream encoding with discrete tokens
+> Continuous Temporal
+> InternVideo2.5 [29] InternLM2.5 (7B) InternViT-6B ∼10M 3-S CG-DETR temporal regression head DisTime [37] InternVL2.5 (8B) InternViT-6B 1.25M 1-S Distribution time Enc & Dec (3-layer MLP) VideoMind [16] Qwen2-VL (7B) InternViT-6B 480K 3-S Timestamp decoder with Chain-of-LoRA TimeRefine [26] Vicuna v1.5 (7B) CLIP ViT-L/14 1.0M 3-S Auxiliary linear regression head + L1 offset
+
+UniVTG [15]. While effective, they are limited to single-task settings and lack zero-shot capability [30]. MLLMs have since enabled unified, end-to-end temporal grounding across multiple tasks, but existing approaches diverge sub-stantially in how temporal predictions are formulated in the output space [30]. We organize related MLLM-based meth-ods along this axis below. 
+
+Text Numeral Generation. The most straightforward formulation represents timestamps as plain-text numerals within the language modality, reusing the LLM’s native vo-cabulary without architectural modification. TimeChat [23] enhances temporal perception by conditioning a Q-Former on frame-level temporal descriptors to capture temporal context during feature extraction. VTimeLLM [8] adopts a multi-stage training pipeline that progressively aligns visual-textual modalities before fine-tuning on boundary-aware tasks. GroundingGPT [14] extends text numeral grounding across image, video, and audio modalities within a unified framework. Chrono [18] demonstrates that careful input-side temporal engineering, such as timestamp mark-ers and video duration context, enables competitive ground-ing using only the standard LLM head with LoRA fine-tuning. While simple and parameter-free, this paradigm entangles temporal semantics with general number tokens, which may limit temporal precision [37]. 
+
+Temporal Token Generation. To address the modal confusion inherent in text numeral approaches, a second line of work introduces dedicated temporal tokens into the vocabulary, creating a separate representational space for time. Momentor [22] injects temporal position encodings via learnable anchor points that define a continuous tem-poral space, enabling granular localization through inter-polation. VTG-LLM [6] introduces zero-initialized abso-lute time embeddings to preserve the semantic integrity of pre-trained visual tokens. LITA [9] adopts a relative time representation, segmenting videos into equal-length chunks and assigning unique temporal tokens to each seg-ment. However, these token-based methods depend heavily on balanced time distributions during training and remain constrained by fixed-granularity binning [37]. TRACE [5] takes a more structured approach via causal event model-ing, employing a character-level vocabulary of 13 tokens and separate encoder-decoder pairs for timestamps, scores, and captions with an adaptive head-switching mechanism, demonstrating that task-specific structured decoding can yield strong multi-task VTG performance. 
+
+Continuous Temporal Decoding. Rather than dis-cretizing time into tokens, a third paradigm maps hidden-state representations directly to continuous temporal tar-gets. The idea originates from CG-DETR [19], which pio-neered cross-modal attention mechanisms that predict tem-poral boundaries via regression heads. In the LLM era, InternVideo2.5 [29] adapts this principle by attaching CG-DETR-style temporal perception heads to an MLLM back-bone, predicting scalar timestamps from cross-modal hid-den states. DisTime [37] moves beyond point regression by introducing a learnable ⟨TIME STAMP ⟩ token whose hidden state is decoded through a lightweight MLP into probability distributions over temporal bins, explicitly cap-turing boundary ambiguity with minimal parameter over-head. Recent advancements further integrate continuous de-coding into multi-step reasoning and iterative optimization frameworks. VideoMind [16] introduces an agentic work-flow where a specialized Grounder role utilizes a dedicated timestamp decoder, processing the hidden state of a ⟨REG ⟩
+
+token through a multi-layer transformer within a Chain-of-LoRA architecture. TimeRefine [26] reformulates localiza-tion as a self-correcting process, employing an auxiliary re-gression head to predict iterative temporal offsets from an initial estimation. By supervising these residuals with an L1 loss, the model progressively sharpens temporal bound-aries, bridging linguistic reasoning and continuous coordi-nate regression. Despite the diversity of these approaches, each has been evaluated under distinct backbones, data, and proto-cols, leaving the relative merits of output formulations un-clear [30]. 
+
+## 3. Paradigm Formulation 
+
+We now formally define the three temporal grounding out-put paradigms. To establish a unified mathematical frame-work, let I denote the textual instruction, F represent the visual input, and h ∈ Rd denote the semantic representa-tion extracted by the VLM at a designated temporal query position. The objective is to predict the ground-truth tem-poral boundaries t∗ = ( t∗ 
+
+> s
+
+, t ∗ 
+
+> e
+
+).
+
+3.1. Temporal Token Generation 
+
+General Formulation. This paradigm abstracts tempo-ral grounding as a structured sequence generation prob-lem. Rather than treating time independently, the tempo-ral boundaries T are decoded alongside associated meta-data M (e.g., action categories, saliency scores) as a co-herent event sequence E = {e1, e 2, . . . , e K }. The genera-tion process is governed by a joint probability distribution, auto-regressively factorized over both the events and their internal structured attributes: 
+
+P (E | I, F ) = 
+
+> K
+
+Y
+
+> k=1
+
+P (ek | e<k , I, F ), (1) where ek = f (Tk, Mk) encapsulates the temporal bound-aries and metadata, and e<k denotes the preceding gener-ated events. By explicitly disentangling temporal coordi-nates from natural language using dedicated tokenizers or heads, this paradigm aims to preserve the inherent structure of video events. 
+
+Specific Instantiation. In our controlled experiments, we instantiate this paradigm following the causal event model-ing framework of TRACE [5]. Specifically, each event is defined as a tuple ek = ( tk, s k, c k), containing timestamps, a saliency score, and a caption. The abstract factorization is concretely implemented as: 
+
+P (ek | e<k , ·) = P (tk | e<k , ·) · P (sk | tk, e <k , ·)
+
+· P (ck | sk, t k, e <k , ·), (2) where · represents the global conditions I and F . To pre-vent interference with standard text generation, timestamps and scores are processed via an independent tokenizer with a specialized vocabulary (e.g., digits, ⟨sep ⟩, ⟨sync ⟩), opti-mized via task-specific cross-entropy losses. 
+
+3.2. Continuous Temporal Decoding 
+
+General Formulation. Instead of regressing determinis-tic coordinates or discrete tokens, this paradigm formulates temporal localization as a probability distribution estima-tion. For a given temporal query, the model predicts a prob-ability density (or mass) function p(τ | h) over the contin-uous or discretized temporal space Γ. The final timestamp prediction ˆt is typically decoded via the expectation over this temporal space: 
+
+ˆt = Eτ ∼p(τ |h)[τ ] = 
+
+Z
+
+> Γ
+
+τ · p(τ | h)dτ,  (3) which naturally models prediction uncertainty and allevi-ates the ambiguity of subjective boundary annotations. 
+
+Specific Instantiation. We realize this paradigm by adopt-ing the architecture from DisTime [37]. The abstract tem-poral space Γ is discretized into reg max + 1 bins. A ded-icated token ⟨TIME STAMP ⟩ is introduced to extract the representation h. A Distribution-based Time Decoder maps 
+
+h to discrete distributions est and eet for start and end times via softmax, where e(i) 
+
+> st
+
+and e(i) 
+
+> et
+
+denote the proba-bility mass at the i-th bin. The expectation integral is im-plemented as a weighted summation over discrete anchor points ai = i/reg max to obtain the start and end predic-tions ˆts and ˆte:
+
+ˆts =
+
+> reg max
+
+X
+
+> i=0
+
+e(i) 
+
+> st
+
+· ai, ˆte =
+
+> reg max
+
+X
+
+> i=0
+
+e(i) 
+
+> et
+
+· ai. (4) The model is optimized using a combination of 1D-IoU re-gression loss and distribution focal loss (DFL). 
+
+3.3. Text Numeral Generation 
+
+General Formulation. As the most direct paradigm, this approach casts temporal grounding strictly as a standard natural language generation (NLG) task. The temporal boundaries T are serialized into a string of discrete text to-kens W = ( w1, w 2, . . . , w L), where each wi belongs to the native LLM vocabulary VLLM , and w<j denotes the previ-ously generated text tokens. The decoding relies solely on the pre-trained causal language modeling head: 
+
+P (T | I, F ) = 
+
+> L
+
+Y
+
+> j=1
+
+P (wj | w<j , I, F ). (5) This paradigm requires no architectural modifications, com-pletely depending on the LLM’s intrinsic numerical reason-ing capabilities. Specific Instantiation. While the original VTimeLLM [8] formulates temporal boundaries as relative frame indices (e.g., from 00 to 99), introducing such temporal scaling would create a confounding variable in our controlled study. To ensure a strictly fair comparison across paradigms, we adapt this representation to directly generate absolute times-tamps in seconds. The target boundaries are formatted into a unified natural language template (e.g., “from 52.0 to 63.0 seconds”). The generation probability strictly follows the standard next-token prediction objective, unified with the overall text generation loss: 
+
+Ltext = −
+
+> L
+
+X
+
+> j=1
+
+log P (wj | w<j , I, F ). (6) 
+
+## 4. Experiments 
+
+4.1. Datasets 
+
+Training data. We compile a multi-source training set of approximately 1.2M temporally annotated samples cover-ing ∼400K unique videos from 11 sources, spanning mo-ment retrieval (66.8%), grounded video question answering (21.5%), and dense video captioning (11.6%) tasks. The de-tailed source-level composition is provided in Table S1 (Ap-pendix). All paradigms share the same underlying video-query-annotation triples; each applies its own formatting pipeline to produce the required training format. Table S3 in the Appendix illustrates how the same annotation is rep-resented under each paradigm. 
+
+Evaluation. We evaluate on three benchmarks. Charades-STA [4] is a moment retrieval benchmark of short indoor activity videos ( ∼30s average duration). QVHighlights [12] provides longer, diverse videos ( ∼150s) annotated with both moment boundaries and frame-level saliency scores. YouCook2 [38] is a dense video captioning benchmark of instructional cooking videos ( ∼320s average duration) with temporally localized procedure steps. For moment retrieval, we report R1@IoU at thresholds 0.5 and 0.7, along with mIoU. For highlight detection on QVHighlights, we addi-tionally report mAP and HIT@1. For dense video caption-ing on YouCook2, we report CIDEr, SODA c, and F1. 
+
+4.2. Implementation Details 
+
+We adopt five compact VLM backbones: the SmolVLM2 series (0.5B and 2.2B scales, equipped with SigLIP vision encoders), FastVLM-1.5B (FastViTHD vision encoder), and Molmo2 series (4B and 8B scales, equipped with SigLIP-SO400M vision encoder). While existing VTG work typically relies on 7B-class models [5, 18, 37], our selection heavily emphasizes compact backbones ( ≤ 4B) suitable for deployment on resource-constrained platforms. The 8B model is deliberately included as a standard-scale control, allowing us to directly benchmark against existing paradigms and rigorously verify if the observed trends hold when scaling down to highly efficient regimes. All three paradigms are implemented as modular addi-tions to each backbone. We freeze the visual encoder and apply LoRA [7] (rank 16, α=32) to the language model. For the distribution-based paradigm, the Time Decoder and Time Encoder are 3-layer MLPs with R=32 temporal bins, trained end-to-end alongside the LoRA-adapted backbone. For the generative paradigm, separate TimeTower, Score-Tower, and SyncTower modules are added, each operat-ing on a dedicated 13-token vocabulary. The text numeral paradigm reuses the LLM’s native vocabulary and language modeling head without additional modules. We train for 1 epoch using AdamW (learning rate 1e-4, cosine schedule, warmup ratio 0.03) with DeepSpeed ZeRO-2 in bfloat16 precision. Videos are uniformly sam-pled at 32 frames. To ensure a fair comparison, we fix vi-sual encoder weights, LoRA configuration, data preprocess-ing, and hardware across all conditions. The only variable is the output head architecture and its associated loss func-tion. We verify robustness by repeating training with 3 ran-dom seeds on SmolVLM2-2.2B and Molmo2-4B; standard deviations are ≤0.5 mIoU (Table S5). 
+
+Efficiency Metrics. Since the three paradigms differ solely in their output modules, we strictly isolate and quantify the computational overhead introduced by each paradigm be-yond the shared LoRA-adapted backbone. For each con-figuration, we report: (1) additional trainable parame-ters strictly introduced by the specific output head (exclud-ing the shared LoRA parameters); (2) training throughput 
+
+(samples per second); (3) inference latency (milliseconds per query); and (4) peak GPU memory usage. To ensure standardized benchmarking, both throughput and latency are profiled on a single NVIDIA H200 GPU with a batch size of 1. These metrics provide a comprehensive perspec-tive on the Efficiency-Accuracy Pareto frontier, allowing practitioners to assess the real-world deployment costs of each output formulation. 
+
+## 5. Results and Analysis 
+
+5.1. Quantitative Comparison on Benchmarks 
+
+To evaluate localization capabilities across paradigms, we benchmark all combinations on three diverse datasets under strictly controlled protocols, reporting standard metrics in Table 2. 
+
+The Dominance of Continuous Representation. As ob-served in Table 2, the output formulation intrinsically dic-tates the upper bound of temporal grounding performance. Under a strictly controlled setting, the Continuous Tempo-ral Decoding (Cont.) paradigm consistently achieves the most robust localization accuracy across all tasks. When scaling to the Molmo2-8B backbone, the Cont. approach Table 2. Quantitative comparison of three temporal output paradigms across diverse video grounding benchmarks. Task abbreviations: MR 
+
+(Moment Retrieval), HD (Highlight Detection), and DVC (Dense Video Captioning). Both mAP and HIT@1 metrics on QVHighlights require native confidence or saliency score outputs for ranking. Because the Text and Cont. paradigms inherently lack such scoring mechanisms, these metrics are exclusively evaluated on the Gen. paradigm via its dedicated ScoreTower. Variance across 3 random seeds for SmolVLM2-2.2B and Molmo2-4B is reported in Table S5 (Appendix). Charades-STA QVHighlights YouCook2 MR MR HD DVC Backbone Para. R1@.5 R1@.7 mIoU R1@.5 R1@.7 mIoU mAP HIT@1 CIDEr SODA c F1 SmolVLM2-0.5B Text 15.1 6.8 16.2 9.0 5.6 12.9 – – 0.9 0.5 5.9 Cont. 41.8 22.5 43.4 46.9 31.0 50.4 – – 1.4 1.0 9.0 Gen. 20.1 9.5 21.9 14.7 9.6 18.6 20.0 21.8 1.2 0.9 7.9 FastVLM-1.5B Text 19.5 8.9 19.9 11.7 7.6 16.5 – – 1.5 0.8 7.5 Cont. 51.3 25.1 46.6 60.9 35.5 54.6 – – 2.2 1.7 10.5 Gen. 26.2 12.3 28.9 18.4 12.3 24.0 25.8 28.0 2.8 1.4 10.3 SmolVLM2-2.2B Text 19.4 8.7 20.8 11.6 7.2 16.5 – – 1.6 0.7 7.6 Cont. 50.8 24.3 46.6 60.1 34.6 54.4 – – 2.5 1.8 11.5 Gen. 25.8 12.2 28.1 18.9 12.3 23.9 25.6 27.9 2.6 1.3 11.4 Molmo2-4B Text 22.3 10.0 23.9 13.3 8.3 19.0 – – 1.9 1.0 8.7 Cont. 65.8 37.6 56.3 69.1 42.8 59.6 – – 5.9 4.1 16.9 Gen. 33.7 16.0 32.3 21.7 14.1 27.5 29.4 32.1 3.0 1.6 13.0 Molmo2-8B Text 25.6 11.5 27.5 15.3 9.5 21.8 – – 2.1 1.1 9.2 Cont. 66.8 39.3 57.1 72.6 46.1 61.2 – – 6.1 4.4 18.2 Gen. 37.1 19.1 35.1 24.9 16.2 31.5 33.8 36.8 3.1 1.6 13.2 
+
+yields an impressive mIoU of 57.1% on Charades-STA and an R1@0.5 of 72.6% on QVHighlights. In stark contrast, the Text Numeral (Text) baseline at the exact same 8B scale plateaus at a mere 27.5% mIoU. This performance gap strongly supports our hypothesis: treating continuous tem-poral boundaries as discrete text tokens introduces quanti-zation errors and constrains the geometric localization ca-pabilities of MLLMs. 
+
+Task-Specific Merits of Token Generation. While the 
+
+Temporal Token Generation (Gen.) paradigm trails behind the continuous approach in strict boundary precision, its specialized architecture (e.g., ScoreTower) uniquely sup-ports native frame-level saliency prediction. It is crucial to note that both the Text and Cont. paradigms inherently pre-dict macroscopic temporal boundaries (spans) and lack the architectural mechanism to assign dense, frame-by-frame continuous saliency scores. Consequently, they cannot na-tively perform the strict Highlight Detection (HD) task on QVHighlights, resulting in missing HIT@1 evaluations (Ta-ble 2). The Gen. paradigm, however, provides robust struc-tured predictions for HD (e.g., HIT@1 of 36.8 on 8B), val-idating the necessity of dedicated architectural heads when fine-grained saliency ranking is explicitly required. 
+
+5.2. The Paradigm Dividend vs. Scaling Law 
+
+To contextualize our findings and investigate the interplay between output paradigms and scaling laws, we compare 
+
+Table 3. Reference comparison with published zero-shot results on Charades-STA. †Our controlled setting on FastVLM-1.5B. Paradigm Method (Backbone) R1@.5 mIoU Text Numeral VTimeLLM (Vicuna-7B) 27.5 31.2 GroundingGPT (Vicuna-7B) 29.6 –TimeChat (LLaMA-2-7B) 32.2 –Chrono-GPT (GPT-4o) 28.8 33.0 HawkEye (Vicuna-7B) 31.4 33.7 Temporal Token Momentor (LLaMA-7B) 26.6 28.5 VTG-LLM (LLaMA-2-7B) 33.8 –Grounded-VideoLLM (Phi3.5) 36.4 36.8 TRACE (Mistral-7B) 40.3 38.7 SeViLA (Flan-T5 XL) 15.0 18.3 Continuous Temporal InternVideo2.5 (InternLM2.5-7B) 43.3 41.7 DisTime (InternVL2.5-8B) 60.3 53.1 VideoMind (Qwen2-VL-7B) 59.1 50.2 TimeRefine (Vicuna-7B) 38.6 36.2 
+
+Ours †
+
+Text (FastVLM-1.5B) 19.5 19.9 Cont. (FastVLM-1.5B) 51.3 46.6 Gen. (FastVLM-1.5B) 26.2 28.9 
+
+our controlled models against published SOTA baselines (Table 3) and track their scaling trajectories (Figure 3a). These results reveal a counter-intuitive phenomenon in the Video-LLM domain. Our carefully controlled Contin-uous Temporal Decoding instantiation on a mere 1.5B pa-rameter backbone (R1@0.5 of 51.3%) significantly outper-forms multiple established 7B-class models utilizing alter-native paradigms, such as TRACE (40.3%) and Grounded-VidLLM (36.4%). This finding introduces a concept we term the 
+
+“Paradigm Dividend” . As depicted in the scaling curves (Figure 3a), the paradigm gap remains structurally persis-tent from 0.5B up to 8B capacities. Strikingly, the Cont. 
+
+model at just 0.5B (mIoU of 43.4%) outperforms the Text 
+
+paradigm scaled all the way up to 8B (mIoU of 27.5%). The Text Numeral approach exhibits a fundamentally flat scaling trajectory, unable to bridge the gap simply by re-lying on the enhanced reasoning capacity of larger LLMs. This demonstrates that optimizing the temporal output for-mulation provides an orthogonal, highly effective path to superior performance, offering a more efficient alternative to brute-force parameter scaling. 
+
+5.3. Efficiency-Accuracy Pareto Trade-off 
+
+For practical deployment on resource-constrained edge de-vices, it is critical to evaluate the system-level efficiency overhead introduced by each paradigm, rather than just their raw parameter counts. We visualize this via the efficiency-accuracy Pareto frontier in Figure 3(b). The Text Numeral paradigm, despite introducing zero additional structural parameters, incurs noticeable infer-ence delays due to the necessity to decode lengthy nu-merical strings auto-regressively. The Temporal Token (Gen.) paradigm introduces minimal trainable parameters (111K) but incurs an extreme inference penalty (e.g., 1379 ms/query at 2.2B). This latency spike is directly attributed to the sequential, auto-regressive decoding of discrete tem-poral tokens interspersed within the semantic outputs. Notably, the Continuous Temporal (Cont.) paradigm dominates the Pareto frontier. By leveraging a lightweight MLP decoder, it predicts boundary distributions in a sin-gle forward pass over the localized hidden states. This non-autoregressive design sharply reduces inference latency (794 ms/query at 2.2B) compared to token generation, achieving the sweet spot between real-time responsiveness and rigorous localization precision. 
+
+Architectural Scaling Properties. Table 4 also reveals a fundamental architectural divergence in how paradigm overheads scale with the LLM backbone. The Continu-ous Temporal (Cont.) paradigm utilizes an MLP decoder, meaning its parameter count scales quadratically, O(D2),with the LLM’s hidden dimension D (growing from 3.8M at 500M to 17.1M at 2.2B). In contrast, the Temporal To-ken (Gen.) paradigm relies on linear embedding and pro-jection heads (Towers), which scale linearly, O(D), lead-ing to much smaller parameter footprints (52K at 500M vs. 111K at 2.2B). However, as demonstrated by our inference latency analysis (Figure 3b), despite the O(D2) parame-                          
+
+> Table 4. Training efficiency profile (single H200 GPU, batch size 1). Extra Params accounts only for paradigm-specific heads.
+> Backbone Paradigm Extra Params Throu. (samp/s) ↑Mem. (GB) ↓
+> SmolVLM2-0.5B Text 04.07 1.8 Cont. 3.8M 4.09 1.8 Gen. 52K 4.12 1.9 SmolVLM2-2.2B Text 04.03 5.5 Cont. 17.1M 4.36 5.8 Gen. 111K 4.41 5.9
+
+ter growth of the Cont. paradigm, its non-autoregressive forward pass completely bypasses the computational bot-tlenecks that plague the lightweight but sequential Gen. 
+
+paradigm. 
+
+Synergy with Visual Compression. An intriguing synergy emerges on the Pareto frontier when comparing FastVLM-1.5B and SmolVLM2-2.2B. Despite possessing 0.7B fewer parameters, the 1.5B Cont. model matches the 2.2B model’s localization accuracy (mIoU of 46.6%) while significantly reducing inference latency (660 ms vs. 794 ms). This effi-ciency stems from the FastViT encoder’s aggressive token downsampling, which couples exceptionally well with our non-autoregressive MLP decoder without degrading tempo-ral boundaries. This finding highlights a critical system-level insight: co-optimizing input visual compression with a compatible continuous output formulation offers a more ef-fective path to deployment efficiency than sheer LLM scal-ing. 
+
+5.4. Qualitative Analysis and Failure Cases 
+
+Figure 2 visualizes predictions on SmolVLM2-2.2B across three difficulty levels. For actions with clear visual cues (Figure 2a), all paradigms successfully localize the ground truth. However, on temporally ambiguous queries (Figure 2b), the Cont. 
+
+paradigm perfectly aligns with the boundaries (IoU of 0.99), as its continuous probability distribution gracefully models temporal uncertainty. Conversely, the Text approach yields a severely bloated window (IoU of 0.66), and the Gen. 
+
+paradigm completely fails by latching onto irrelevant seg-ments (IoU of 0.00). Importantly, all paradigms fail on complex, multi-step actions requiring causal reasoning (Figure 2c, “ person... closes laptop ”). The models mistakenly localize disjointed sub-actions or static background elements rather than the complete temporal logic. This reveals a critical limitation: while optimizing the output paradigm maximizes boundary precision and efficiency, resolving deep temporal causality ultimately demands fundamental innovations in input-side 
+
+video encoding. 
+
+5.5. Ablation Study 
+
+Context Length Robustness. Figure 4(a) shows scaling behavior from 8 to 64 frames. While all paradigms improve (a) Successful                
+
+> 4.8s 10.5s
+> GT:
+> 3.0s 9.0s
+> Text:
+> 4.0s 11.4s
+> Cont:
+> 5.0s 10.0s
+> Gen:
+> a person throws a book on the sofa.
+> (b) Divergent
+> 6.6s 15.5s
+> GT:
+> 18.0s 25.0s
+> Text:
+> 6.7s 15.4s
+> Cont:
+> 13.0s 20.0s
+> Gen:
+> the person takes a couple drinks from a cup.
+> (c) Failure
+> 9.4s 17.0s
+> GT:
+> 22.0s 30.0s
+> Text:
+> 1.4s 8.6s
+> Cont:
+> 0.0s 5.0s
+> Gen:
+> person sitting on top of bed closes laptop.
+> Ground Truth Text Numeral Continuous Temporal Temporal Token
+
+Figure 2. Qualitative comparison on Charades-STA (SmolVLM2-2.2B) across three difficulty levels. Each column shows sampled video frames and temporal predictions from all paradigms against the ground truth. (a) Simple action; (b) Temporally ambiguous query; (c) Com-pound action leading to collective failure. 0.5 2.2 4.0 8.0    
+
+> Backbone Size (B)
+> 20
+> 30
+> 40
+> 50
+> mIoU (Charades-STA)
+> (a) Scaling Curve
+> Text
+> Cont.
+> Gen.
+> 1000 2000 3000 4000
+> Inference Latency (ms)
+> 20
+> 30
+> 40
+> 50
+> (b) Pareto Frontier
+> Pareto Frontier
+
+Figure 3. (a) Scaling behavior: mIoU vs. backbone size for each paradigm. (b) Efficiency-accuracy Pareto frontier across all paradigm-backbone combinations. Both evaluated on Charades-STA. 8 16 32 64   
+
+> Sampled Frames
+> 20
+> 25
+> 30
+> 35
+> 40
+> 45
+> 50
+> mIoU (Charades-STA)
+> (a) Context Length Robustness
+> Text
+> Cont.
+> Gen.
+> 25% 50% 100%
+> Training Data Scale (%)
+> 15
+> 20
+> 25
+> 30
+> 35
+> 40
+> 45
+> (b) Data Efficiency
+> Text
+> Cont.
+> Gen.
+
+Figure 4. Ablation studies evaluated on Charades-STA. (a) Context length robustness evaluated with varying sampled video frames (from 8 to 64). (b) Data efficiency evaluated under varying percentages of the training corpus (25% to 100%). Both studies use the SmolVLM2-2.2B backbone. 
+
+initially, the Text paradigm saturates early and slightly de-grades at 64 frames (mIoU of 20.5%). This indicates that autoregressively aligning discrete numerals with elongated visual sequences leads to severe ”context dilution.” In con-trast, the Cont. paradigm efficiently digests dense visual cues, scaling steeply to 49.8 mIoU. Its non-autoregressive MLP decoder proves immune to sequence dilution. 
+
+Data Efficiency. Figure 4(b) highlights the Cont. 
+
+paradigm’s superior data efficiency. Fine-tuned on merely 25% of the training corpus, it achieves 40.2% mIoU, sub-stantially outperforming the Text (20.8%) and Gen. (28.1%) paradigms trained on 100% of the data. Regressing a con-tinuous temporal distribution is intrinsically more congru-ent with the localization task than coercing LLMs to memo-rize numeral-to-time mappings, thus significantly reducing the reliance on large-scale temporal annotations. 
+
+Invariance to Visual Compression. Beyond tempo-ral length, we investigate spatial compression by con-trasting SmolVLM2-2.2B ( ∼81 visual tokens/frame) and FastVLM-1.5B ( ∼64 tokens/frame). The Text paradigm, reliant on fine-grained spatial details, drops from 20.8% to 19.9% mIoU under FastVLM’s aggressive compression. Remarkably, the Cont. paradigm maintains an identical 46.6% mIoU across both backbones. This confirms that macroscopic distribution regression provides immunity to spatial detail loss. 
+
+## 6. Conclusion 
+
+We present a controlled empirical study comparing three output paradigms for MLLM-based video grounding: text numeral, temporal token, and continuous decoding. By uni-fying visual encoders, training data, and optimization proto-cols across compact backbones (0.5B to 8B), we isolate the output formulation as the sole experimental variable. Re-sults show continuous decoding consistently achieves supe-rior localization accuracy, highest throughput, and the op-timal efficiency-accuracy trade-off. Crucially, optimizing this formulation unlocks a “paradigm dividend” , allowing compact sub-2B models to significantly outperform estab-lished 7B-class baselines and paving an efficient path for resource-constrained edge deployment. While our findings establish the output formulation as a critical design axis, several open questions remain. First, our study fixes the input encoding; investigating how input-side temporal representations, such as learnable position embeddings or interleaved timestamp tokens, interact with each output paradigm is a promising direction. Second, the Continuous paradigm currently lacks native saliency scoring, limiting its applicability to highlight detection. Augmenting the MLP decoder with a lightweight saliency branch that predicts per-frame scores alongside boundary distributions in a single forward pass could unify moment retrieval and highlight detection without sacrificing non-autoregressive efficiency. References 
+
+[1] Lisa Anne Hendricks, Oliver Wang, Eli Shechtman, Josef Sivic, Trevor Darrell, and Bryan Russell. Localizing mo-ments in video with natural language. In Proceedings of the IEEE international conference on computer vision , pages 5803–5812, 2017. 1, 11 [2] Fabian Caba Heilbron, Victor Escorcia, Bernard Ghanem, and Juan Carlos Niebles. Activitynet: A large-scale video benchmark for human activity understanding. In Proceed-ings of the ieee conference on computer vision and pattern recognition , pages 961–970, 2015. 11 [3] Lin Chen, Xilin Wei, Jinsong Li, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Zehui Chen, Haodong Duan, Zhenyu Tang, Li Yuan, et al. Sharegpt4video: Improving video understand-ing and generation with better captions. Advances in Neural Information Processing Systems , 37:19472–19495, 2024. 11 [4] Jiyang Gao, Chen Sun, Zhenheng Yang, and Ram Nevatia. Tall: Temporal activity localization via language query. In 
+
+Proceedings of the IEEE international conference on com-puter vision , pages 5267–5275, 2017. 1, 5 [5] Yongxin Guo, Jingyu Liu, Mingda Li, Qingbin Liu, Xi Chen, and Xiaoying Tang. Trace: Temporal grounding video llm via causal event modeling. arXiv preprint arXiv:2410.05643 ,2024. 1, 2, 3, 4, 5, 14 [6] Yongxin Guo, Jingyu Liu, Mingda Li, Dingxin Cheng, Xi-aoying Tang, Dianbo Sui, Qingbin Liu, Xi Chen, and Kevin Zhao. Vtg-llm: Integrating timestamp knowledge into video llms for enhanced video temporal grounding. In Proceed-ings of the AAAI Conference on Artificial Intelligence , pages 3302–3310, 2025. 1, 3, 14 [7] Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Liang Wang, Weizhu Chen, et al. Lora: Low-rank adaptation of large language models. 
+
+Iclr , 1(2):3, 2022. 5 [8] Bin Huang, Xin Wang, Hong Chen, Zihan Song, and Wenwu Zhu. Vtimellm: Empower llm to grasp video moments. In 
+
+Proceedings of the IEEE/CVF Conference on Computer Vi-sion and Pattern Recognition , pages 14271–14280, 2024. 1, 2, 3, 5, 14 [9] De-An Huang, Shijia Liao, Subhashree Radhakrishnan, Hongxu Yin, Pavlo Molchanov, Zhiding Yu, and Jan Kautz. Lita: Language instructed temporal-localization assistant. In 
+
+European Conference on Computer Vision , pages 202–218. Springer, 2024. 3 [10] Gabriel Huang, Bo Pang, Zhenhai Zhu, Clara Rivera, and Radu Soricut. Multimodal pretraining for dense video cap-tioning. In Proceedings of the 1st Conference of the Asia-Pacific Chapter of the Association for Computational Lin-guistics and the 10th International Joint Conference on Nat-ural Language Processing , pages 470–490, 2020. 11 [11] Ranjay Krishna, Kenji Hata, Frederic Ren, Li Fei-Fei, and Juan Carlos Niebles. Dense-captioning events in videos. In 
+
+Proceedings of the IEEE international conference on com-puter vision , pages 706–715, 2017. 1 [12] Jie Lei, Tamara L Berg, and Mohit Bansal. Detecting mo-ments and highlights in videos via natural language queries. 
+
+Advances in Neural Information Processing Systems , 34: 11846–11858, 2021. 1, 2, 5 [13] KunChang Li, Yinan He, Yi Wang, Yizhuo Li, Wenhai Wang, Ping Luo, Yali Wang, Limin Wang, and Yu Qiao. Videochat: Chat-centric video understanding. Science China Information Sciences , 68(10):200102, 2025. 11 [14] Zhaowei Li, Qi Xu, Dong Zhang, Hang Song, Yiqing Cai, Qi Qi, Ran Zhou, Junting Pan, Zefeng Li, Vu Tu, et al. Ground-inggpt: Language enhanced multi-modal grounding model. In Proceedings of the 62nd Annual Meeting of the Associa-tion for Computational Linguistics (Volume 1: Long Papers) ,pages 6657–6678, 2024. 1, 3, 14 [15] Kevin Qinghong Lin, Pengchuan Zhang, Joya Chen, Shra-man Pramanick, Difei Gao, Alex Jinpeng Wang, Rui Yan, and Mike Zheng Shou. Univtg: Towards unified video-language temporal grounding. In Proceedings of the IEEE/CVF international conference on computer vision ,pages 2794–2804, 2023. 3 [16] Ye Liu, Kevin Qinghong Lin, Chang Wen Chen, and Mike Zheng Shou. Videomind: A chain-of-lora agent for temporal-grounded video reasoning. In NeurIPS 2025 Work-shop on Bridging Language, Agent, and World Models for Reasoning and Planning . 3, 14 [17] Ruipu Luo, Ziwang Zhao, Min Yang, Zheming Yang, Minghui Qiu, Zhongyu Wei, Yanhao Wang, and Cen Chen. Valley: Video assistant with large language model enhanced ability. ACM Transactions on Multimedia Computing, Com-munications and Applications , 2023. 11 [18] Boris Meinardus, Hector Rodriguez, Anil Batra, Anna Rohrbach, and Marcus Rohrbach. Chrono: A simple blueprint for representing time in mllms. arXiv preprint arXiv:2406.18113 , 2024. 3, 5, 14 [19] WonJun Moon, Sangeek Hyun, SuBeen Lee, and Jae-Pil Heo. Correlation-guided query-dependency calibra-tion for video temporal grounding. arXiv preprint arXiv:2311.08835 , 2023. 1, 2, 3 [20] Ming Nie, Dan Ding, Chunwei Wang, Yuanfan Guo, Jian-hua Han, Hang Xu, and Li Zhang. Slowfocus: Enhancing fine-grained temporal understanding in video llm. Advances in Neural Information Processing Systems , 37:81808–81835, 2024. 3 [21] Andreea-Maria Oncescu, Joao F Henriques, Yang Liu, Andrew Zisserman, and Samuel Albanie. Queryd: Avideo dataset with high-quality text and audio narrations. In ICASSP 2021-2021 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) , pages 2265–2269. IEEE, 2021. 11 [22] Long Qian, Juncheng Li, Yu Wu, Yaobo Ye, Hao Fei, Tat-Seng Chua, Yueting Zhuang, and Siliang Tang. Momen-tor: Advancing video large language model with fine-grained temporal reasoning. arXiv preprint arXiv:2402.11435 , 2024. 1, 3, 14 [23] Shuhuai Ren, Linli Yao, Shicheng Li, Xu Sun, and Lu Hou. Timechat: A time-sensitive multimodal large lan-guage model for long video understanding. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pat-tern Recognition , pages 14313–14323, 2024. 3, 14 [24] Yansong Tang, Dajun Ding, Yongming Rao, Yu Zheng, Danyang Zhang, Lili Zhao, Jiwen Lu, and Jie Zhou. Coin: A large-scale dataset for comprehensive instructional video analysis. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 1207– 1216, 2019. 11 [25] Haibo Wang, Zhiyang Xu, Yu Cheng, Shizhe Diao, Yu-fan Zhou, Yixin Cao, Qifan Wang, Weifeng Ge, and Lifu Huang. Grounded-videollm: Sharpening fine-grained tem-poral grounding in video large language models. arXiv preprint arXiv:2410.03290 , 2024. 3, 14 [26] Xizi Wang, Feng Cheng, Ziyang Wang, Huiyu Wang, Md Mohaiminul Islam, Lorenzo Torresani, Mohit Bansal, Gedas Bertasius, and David Crandall. Timerefine: Temporal grounding with time refining video llm. In Proceedings of the IEEE/CVF Winter Conference on Applications of Com-puter Vision , pages 5067–5078, 2026. 3, 4, 14 [27] Yi Wang, Yinan He, Yizhuo Li, Kunchang Li, Jiashuo Yu, Xin Ma, Xinhao Li, Guo Chen, Xinyuan Chen, Yaohui Wang, et al. Internvid: A large-scale video-text dataset for multimodal understanding and generation. arXiv preprint arXiv:2307.06942 , 2023. 11 [28] Yueqian Wang, Xiaojun Meng, Jianxin Liang, Yuxuan Wang, Qun Liu, and Dongyan Zhao. Hawkeye: Training video-text llms for grounding text in videos. arXiv preprint arXiv:2403.10228 , 2024. 3, 14 [29] Yi Wang, Xinhao Li, Ziang Yan, Yinan He, Jiashuo Yu, Xi-angyu Zeng, Chenting Wang, Changlian Ma, Haian Huang, Jianfei Gao, et al. Internvideo2. 5: Empowering video mllms with long and rich context modeling. arXiv preprint arXiv:2501.12386 , 2025. 1, 3, 14 [30] Jianlong Wu, Wei Liu, Ye Liu, Meng Liu, Liqiang Nie, Zhouchen Lin, and Chang Wen Chen. A survey on video temporal grounding with multimodal large language model. 
+
+IEEE Transactions on Pattern Analysis and Machine Intelli-gence , 2025. 1, 2, 3, 4 [31] Weijia Wu, Yuzhong Zhao, Zhuang Li, Jiahong Li, Hong Zhou, Mike Zheng Shou, and Xiang Bai. A large cross-modal video retrieval dataset with reading comprehension. 
+
+Pattern Recognition , 157:110818, 2025. 11 [32] Junbin Xiao, Xindi Shang, Angela Yao, and Tat-Seng Chua. Next-qa: Next phase of question-answering to explaining temporal actions. In Proceedings of the IEEE/CVF con-ference on computer vision and pattern recognition , pages 9777–9786, 2021. 1 [33] Junbin Xiao, Angela Yao, Yicong Li, and Tat-Seng Chua. Can i trust your answer? visually grounded video question answering. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 13204– 13214, 2024. 1 [34] Antoine Yang, Arsha Nagrani, Paul Hongsuck Seo, An-toine Miech, Jordi Pont-Tuset, Ivan Laptev, Josef Sivic, and Cordelia Schmid. Vid2seq: Large-scale pretraining of a vi-sual language model for dense video captioning. In Proceed-ings of the IEEE/CVF conference on computer vision and pattern recognition , pages 10714–10726, 2023. 1 [35] Shoubin Yu, Jaemin Cho, Prateek Yadav, and Mohit Bansal. Self-chained image-language model for video localization and question answering. Advances in Neural Information Processing Systems , 36:76749–76771, 2023. 3, 14 [36] Rowan Zellers, Ximing Lu, Jack Hessel, Youngjae Yu, Jae Sung Park, Jize Cao, Ali Farhadi, and Yejin Choi. Mer-lot: Multimodal neural script knowledge models. Advances in neural information processing systems , 34:23634–23651, 2021. 11 [37] Yingsen Zeng, Zepeng Huang, Yujie Zhong, Chengjian Feng, Jie Hu, Lin Ma, and Yang Liu. Distime: Distribution-based time representation for video large language models. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 21961–21971, 2025. 1, 2, 3, 4, 5, 14 [38] Luowei Zhou, Chenliang Xu, and Jason Corso. Towards automatic learning of procedures from web instructional videos. In Proceedings of the AAAI conference on artificial intelligence , 2018. 5 Appendix Overview 
+
+This supplementary material provides additional details and comprehensive benchmarks omitted from the main text due to space constraints. The contents are organized as follows: • Section A: Details our training data composition, hyper-parameters, data formatting templates, exact inference prompt designs, and statistical variance analysis across multiple random seeds. • Section B: Presents a macro-level survey and zero-shot performance leaderboard of existing VTG-MLLMs. • Section C: Provides extended qualitative visualizations to further illustrate the intrinsic behaviors of different output paradigms. Upon acceptance, we will publicly release the full training and evaluation codebase, including all paradigm implemen-tations, data formatting pipelines, and benchmark configu-rations. 
+
+## A. Additional Implementation Details 
+
+Hardware and Optimization. Training is conducted on 2 nodes, each equipped with 4 NVIDIA H200 GPUs. We use a per-GPU batch size of 4 and a gradient accumulation step of 4, yielding a global effective batch size of 128. For LoRA fine-tuning, we set the rank r = 16 and α = 32 , targeting the q, k, v, o projections in the LLM attention blocks. The learning rate is initialized at 1 × 10 −4 with a cosine decay schedule and a 3% linear warmup ratio. 
+
+Training Data Composition. Table S1 details the source-level composition of our training set. The combined corpus comprises approximately 1.2M temporally annotated sam-ples from ∼400K unique videos across 11 sources, span-ning moment retrieval (66.8%), grounded video question answering (21.5%), and dense video captioning (11.6%) tasks.                           
+
+> Table S1. Training data composition by source. Source Samples Videos InternVid [27] 608K 87K YTTemporal [36] 278K 21K Valley [17] 229K 229K DiDeMo [1] 33K 8K ShareGPT4Video [3] 24K 24K ViTT [10] 8K 5K TextVR [31] 8K 8K COIN [24] 8K 8K ActivityNet [2] 7K 7K QueryD [21] 5K 1K VideoChat [13] 2K 2K
+> Total ∼1.2M ∼400K
+
+Data Formatting Setup. To strictly isolate the output for-mulation as the sole experimental variable, all paradigms share the exact same raw video-text pairs but undergo paradigm-specific prompt and target formatting. We detail these exact input-output formats for a specific training sam-ple in Table S3.                   
+
+> Table S2. Backbone-level specifications. Backbone Vision Enc. LLM d
+> SmolVLM2-0.5B SigLIP-B/16 SmolLM2-360M 960 SmolVLM2-2.2B SigLIP2-SO400M SmolLM2-1.7B 2048 FastVLM-1.5B FastViTHD Qwen2-1.5B 1536 Molmo2-4B SigLIP2-SO400M Qwen3-4B 2560 Molmo2-8B SigLIP2-SO400M Qwen3-8B 4096
+
+Inference Prompt Templates. In the era of Multimodal Large Language Models, the formulation of textual prompts profoundly impacts evaluation performance. To ensure rig-orous reproducibility of our empirical study, we provide the exact inference prompt templates used across the three video temporal grounding tasks. During evaluation, the placeholder {query } is dynamically replaced with the spe-cific textual query from the corresponding dataset. The de-tailed templates are presented in Table S4. 
+
+Module Architectures and Loss. Table S2 summarizes the backbone-level specifications. Let d denote the LLM hid-den dimension. For the Continuous paradigm, the Time De-coder is a 3-layer MLP with ReLU activations ( d → d → d →
+
+2( R+1) , Xavier initialization) that maps the hidden state at the ⟨TIME STAMP ⟩ position to 2×(R+1) distribution logits over R=32 bins. A symmetric Time Encoder con-verts ground-truth timestamps into Gaussian distributions (σ=1 .0) over R+1 anchor points and maps them back to Rd
+
+via an inverse MLP ( 2( R+1) → d → d → d). The total loss is L = LLM + LDFL + LDIoU with equal weights. For the 
+
+Generative paradigm, TimeTower and ScoreTower are each an embedding layer over a 13-token character vocabulary (Embedding (13 , d )), and SyncTower is a single learnable embedding ( Embedding (1 , d )); all three heads use stan-dard cross-entropy. The Text paradigm adds no modules and uses the standard next-token loss. Additional hyperpa-rameters: weight decay 0.01, LoRA dropout 0.05, seed 42, max sequence length 4096. 
+
+Inference Post-Processing. For Continuous , the 2( R+1) 
+
+logits are split into start/end groups, softmax-normalized, and decoded via expectation ˆt = PRi=0 pi · i, then rescaled by duration /R to absolute seconds. For Generative , the head-switching state machine accumulates character-level time tokens, splits by ⟨sep ⟩, and parses floating-point times-tamps; scores are decoded analogously. For Text , times-tamps are extracted from the generated string via pattern matching (e.g., “from X to Y seconds”). Shared annotation: video: split video 7w/RP6nWBaB2K8.mp4 ground truth: [52 .0, 63 .0] s
+
+(a) Text Numeral Generation 
+
+INPUT : <video> \nWith the input: ‘The worker cleans up excess plaster from the ground, ensuring a tidy workspace.’, identify the precise second in the video where this event occurs. OUTPUT : The event happens from 52.0 to 63.0 seconds. SUPERVISION : standard next-token cross-entropy (no additional temporal modules) 
+
+(b) Temporal Token Generation 
+
+INPUT : <video> \nWith the input: ‘The worker cleans up excess plaster from the ground, ensuring a tidy workspace.’, identify the precise second in the video where this event occurs. OUTPUT : <sync><time> · · · <time> | {z }
+
+> 14
+
+<score> The worker cleans up excess plaster from the ground, ensuring a tidy workspace. SUPERVISION : times: [[52.0, 63.0]], scores: [[]] → dedicated 13-token vocabulary 
+
+(c) Continuous Temporal Decoding 
+
+INPUT : <video> \nWith the input: ‘The worker cleans up excess plaster from the ground, ensuring a tidy workspace.’, identify the precise second in the video where this event occurs. OUTPUT : The event happens in <TIME STAMP> .SUPERVISION : times: [[52.0, 63.0]] → distribution-based time decoder 
+
+Table S3. Training data format comparison across the three paradigms for the same moment retrieval annotation. All paradigms share identical video inputs and queries; only the output format and temporal supervision differ. Table S4. Exact inference prompt templates utilized for evaluating the models across three temporal grounding tasks. All paradigms receive the identical text prompt alongside the visual input to ensure fair comparison. 
+
+Task (Dataset) Inference Prompt Template Moment Retrieval 
+
+(Charades-STA) 
+
+Localize the visual content described by the given textual query ’{query }’in the video, and output the start and end timestamps in seconds. 
+
+Highlight Detection 
+
+(QVHighlights) 
+
+Please find the highlight contents in the video described by a sentence query, determining the highlight timestamps and its saliency score on a scale from 1 to 5. Now I will give you the sentence query: ’{query }’. Please return the query-based highlight timestamps and salient scores. 
+
+Dense Video Cap-tioning 
+
+(YouCook2) 
+
+Scrutinize the video and determine multiple occurrences, providing their initial and final timestamps as well as a summary of each action. 
+
+Statistical Variance Analysis. To verify the robustness and reproducibility of our findings, we repeat training with 3 different random seeds on two representative backbones: SmolVLM2-2.2B (a compact model) and Molmo2-4B (a mid-scale model), covering the two primary scales studied in this work. Table S5 reports the mean and standard devi-ation of mIoU on Charades-STA and QVHighlights for all three paradigms. As shown in Table S5, the standard deviations across all configurations are consistently small (typically ≤0.5 mIoU), demonstrating that our conclusions are robust to random initialization. Notably, the performance gap be-tween paradigms (e.g., Cont. vs. Text : ∼26 mIoU on SmolVLM2-2.2B) is an order of magnitude larger than the within-paradigm variance, confirming that the observed dif-ferences are attributable to the output formulation rather than stochastic training variation. 
+
+## B. Comprehensive Survey of VTG-MLLMs 
+
+To situate our empirical findings within the broader land-scape of Video-LLM research, we compile a comprehensive performance leaderboard of existing state-of-the-art mul-timodal large language models capable of video tempo-ral grounding. As presented in Table S6, we detail their Table S5. Variance analysis across 3 random seeds on two representative backbones. We report mean ±std of mIoU. The consistently small standard deviations confirm that the observed paradigm gaps are robust and not attributable to stochastic train-ing variation. Charades-STA QVHighlights Backbone Para. mIoU mIoU SmolVLM2-2.2B Text 20.6 ±0.4 16.3 ±0.3 Cont. 46.8 ±0.3 54.2 ±0.4 Gen. 27.9 ±0.5 23.7 ±0.4 Molmo2-4B Text 24.1 ±0.3 18.8 ±0.4 Cont. 56.1 ±0.2 59.8 ±0.3 Gen. 32.5 ±0.4 27.3 ±0.3 
+
+zero-shot performance across standard benchmarks, strictly grouped by their underlying temporal output paradigms. This macro-level overview highlights the extreme het-erogeneity in current VTG-MLLM evaluation setups, strongly validating the necessity of our controlled, variable-isolating study presented in the main text. 
+
+## C. Extended Failure Taxonomy and Qualita-tive Examples 
+
+To complement the failure case analysis in Section 5.4 of the main paper, we first provide a quantitative taxonomy of error types to systematically dissect paradigm weaknesses, followed by additional visual examples that concretely il-lustrate these behaviors. 
+
+C.1. Quantitative Taxonomy of Errors 
+
+We conduct a systematic diagnosis on the Charades-STA dataset to analyze the failure distribution across the three representative paradigms: DisTime ( Continuous ), TRACE (Temporal Token ), and VtimeLLM ( Text Numeral ). For each paradigm, we collect the failed predictions (i.e., IoU 
+
+< 0.5) and categorize them into three distinct error types: • Type A (Temporal Hallucination): The model predicts a temporal window completely disjoint from the ground truth, often occurring when LLMs fail to ground abstract numerals to continuous video frames. • Type B (Boundary Jitter): The model correctly identi-fies the macroscopic event, but the temporal boundaries are overly bloated or truncated, failing the strict 0.5 IoU threshold. • Type C (Semantic Failure): The model fundamentally misunderstands the query (e.g., confusing ”opening” with ”closing”) or the causal logic of the video. As visually detailed in Figure S1, the text numeral 
+
+VtimeLLM exhibits a staggering 61.4% of its errors stem-ming from Temporal Hallucination (Type A). The token-based TRACE also suffers heavily from hallucinations Text Gen. Cont.   
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Error Distribution (%)
+> 61.4%
+> 34.6%
+> 4.0%
+> 54.1%
+> 42.4%
+> 3.5%
+> 29.3%
+> 66.5%
+> 4.2%
+> Type A (Hallucination) Type B (Boundary Jitter) Type C (Semantic)
+
+Figure S1. Quantitative error taxonomy across representative paradigms on Charades-STA. The composition explicitly breaks down the failure cases (where IoU < 0.5) into three types. The 
+
+Continuous paradigm drastically shifts the error mode from severe hallucinations to minor boundary jitters. 
+
+(54.1%). Conversely, the continuous DisTime model fun-damentally shifts the error distribution: its hallucinations are drastically suppressed to 29.3%, with the majority of its errors (66.5%) being minor Boundary Jitters (Type B). This proves that regressing a continuous distribution prevents the LLM from arbitrarily ”guessing” wild timestamps. 
+
+C.2. Qualitative Visualizations 
+
+Guided by the quantitative taxonomy above, we signifi-cantly expand our qualitative analysis by dedicating three comprehensive figures to concretely illustrate these distinct behavioral patterns. We systematically dissect the perfor-mance of three representative methods, across our proposed error types: Temporal Hallucination (Figure S2), Boundary Jitter (Figure S3), and Semantic Confusion (Figure S4). These exhaustive visual examples highlight a critical di-vergence in underlying failure modes. The Continuous 
+
+paradigm gracefully manages fuzzy action boundaries and naturally suppresses severe temporal hallucinations. As shown in the visualizations, even in challenging scenarios where DisTime fails the strict evaluation threshold (e.g., Figure S3 Bottom), its errors are predominantly benign Type B (Boundary Jitters) , typically manifesting as an overly bloated temporal distribution that still directionally covers the actual event. In stark contrast, constrained by the inherent mismatch between discrete token generation and the continuous tem-poral space, the discrete generative paradigms frequently struggle with strict timestamp regression. Both text-based and token-based approaches are highly susceptible to out-putting confidently incorrect, completely disjoint time-frames ( Type A ) or suffering from fundamental seman-tic misalignments ( Type C ) when reasoning over complex videos. Table S6. Comprehensive performance leaderboard of existing VTG-MLLMs. Metrics represent zero-shot performance reported in their respective papers or official repositories. ”-” indicates the absolute metric was not reported or evaluated by the original authors. Methods are grouped by their temporal output paradigm to facilitate direct comparison. 
+
+Method Backbone Charades-STA QVHighlights YouCook2 
+
+(Moment Retrieval) (Highlight Detection) (Dense Video Captioning) 
+
+R1@0.5 R1@0.7 mIoU mAP HIT@1 CIDEr SODA c F1 
+
+Text Numeral Generation 
+
+TimeChat [23] LLaMA-2-7B 32.2 13.4 – 14.5 23.9 1.2 3.4 12.6 VTimeLLM [8] Vicuna-7B 27.5 11.4 31.2 – – 3.4 0.9 –GroundingGPT [14] Vicuna-7B 29.6 11.9 – – – – – –HawkEye [28] Vicuna-7B 31.4 14.5 33.7 – – – – –Chrono-GPT [18] GPT-4o 28.8 11.0 33.0 – – – – –
+
+Temporal Token Generation 
+
+SeViLA [35] Flan-T5-XL (3B) 15.0 5.8 18.3 – – – – –Momentor [22] LLaMA-7B 26.6 11.6 28.5 7.6 17.0 – – –VTG-LLM [6] LLaMA-2-7B 33.8 15.7 – 16.5 33.5 5.0 1.5 17.5 Grounded-VideoLLM [25] Phi-3.5 (4B) 36.4 19.7 36.8 – – – – –TRACE [5] Mistral-7B 40.3 19.4 38.7 42.7 26.8 8.1 2.2 22.4 
+
+Continuous Temporal Decoding 
+
+TimeRefine [26] Vicuna-7B 38.6 16.4 36.2 – – – – –InternVideo2.5 [29] InternLM2.5-7B 43.3 22.8 41.7 26.5 54.1 – – –VideoMind [16] Qwen2-VL-7B 59.1 31.2 50.2 – – – – –DisTime [37] InternVL2.5-8B 60.3 30.8 53.1 – – 31.0 6.9 26.4 0.0s 1.9s 3.7s 5.6s 7.5s 9.3s 11.2s 13.0s 14.9s 16.8s 
+
+[OTUV7] "person eating from a bag. [DisTime | TRACE (Type A) | VTimeLLM (Type A)]" 
+
+0 2 4 6 8 10 12 14 16 
+
+Time (seconds)             
+
+> Gen. (TRACE)
+> Cont. (DisTime)
+> Text (VTimeLLM)
+> Ground Truth
+> 7.8 15.7s IoU=0.00
+> 1.6 6.8s IoU=0.70
+> 7.0 11.0s IoU=0.00
+> 0.0 6.3s
+> 0.0s 4.0s 7.9s 11.9s 15.8s 19.8s 23.7s 27.7s 31.6s 35.6s
+
+[E5ZF5] "person eats some food. [DisTime | TRACE | VTimeLLM (Type A)]" 
+
+0 5 10 15 20 25 30 35 
+
+Time (seconds)             
+
+> Gen. (TRACE)
+> Cont. (DisTime)
+> Text (VTimeLLM)
+> Ground Truth
+> 1.8 13.8s IoU=0.52
+> 3.5 14.1s IoU=0.59
+> 26.0 35.7s IoU=0.00
+> 6.0 12.3s
+> 0.0s 3.7s 7.4s 11.1s 14.8s 18.5s 22.3s 26.0s 29.7s 33.4s
+
+[3QL7J] "person eats it. [DisTime (Type A) | TRACE (Type A) | VTimeLLM (Type A)]" 
+
+0 5 10 15 20 25 30 
+
+Time (seconds)    
+
+> Gen. (TRACE)
+> Cont. (DisTime)
+> Text (VTimeLLM)
+> Ground Truth
+> 5.4 20.0s IoU=0.00
+> 6.9 22.1s IoU=0.06
+> 4.0 7.0s IoU=0.00
+> 20.9 27.8s
+
+Figure S2. Qualitative comparisons focusing on Type A (Temporal Hallucination) errors. Green bars denote Ground Truth. (Top) 
+
+DisTime successfully localizes the event, whereas both discrete paradigms (TRACE and VTimeLLM) completely hallucinate early time-frames, demonstrating the continuous paradigm’s robustness against blind guessing. (Middle) DisTime and TRACE accurately capture the action, leaving VTimeLLM as the sole model exhibiting a severe Type A hallucination (predicting the very end of the video). This underscores the text-numeral paradigm’s extreme susceptibility to temporal hallucinations. (Bottom) A universally challenging query where all paradigms fail via hallucination, predicting disjoint early segments. This highlights that while continuous decoding mitigates hallucinations, extreme causal complexity can still trigger Type A errors across all architectures. 0.0s 4.0s 7.9s 11.9s 15.8s 19.9s 23.8s 27.8s 31.7s 35.8s 
+
+[9JZO2] "the person walks into the house puts down the food. [DisTime | TRACE (Type B) | VTimeLLM (Type A)]" 
+
+0 5 10 15 20 25 30 35 
+
+Time (seconds)             
+
+> Gen. (TRACE)
+> Cont. (DisTime)
+> Text (VTimeLLM)
+> Ground Truth
+> 0.0 35.8s IoU=0.26
+> 9.6 23.1s IoU=0.68
+> 20.0 31.0s IoU=0.04
+> 11.6 20.8s
+> 0.0s 3.3s 6.6s 10.0s 13.3s 16.6s 19.9s 23.3s 26.6s 29.9s
+
+[QMIKJ] "a person is putting their laptop on their desk. [DisTime | TRACE | VTimeLLM (Type B)]" 
+
+0 5 10 15 20 25 
+
+Time (seconds)             
+
+> Gen. (TRACE)
+> Cont. (DisTime)
+> Text (VTimeLLM)
+> Ground Truth
+> 1.1 8.1s IoU=0.78
+> 1.7 8.0s IoU=0.69
+> 7.0 8.0s IoU=0.11
+> 0.7 9.8s
+> 0.0s 3.3s 6.7s 10.1s 13.4s 16.8s 20.2s 23.5s 26.9s 30.2s
+
+[AB2V6] "person they stand up. [DisTime (Type B) | TRACE (Type B) | VTimeLLM (Type B)]" 
+
+0 5 10 15 20 25 30 
+
+Time (seconds)    
+
+> Gen. (TRACE)
+> Cont. (DisTime)
+> Text (VTimeLLM)
+> Ground Truth
+> 12.5 26.8s IoU=0.32
+> 12.6 23.2s IoU=0.41
+> 15.0 16.0s IoU=0.19
+> 11.9 17.3s
+
+Figure S3. Qualitative comparisons focusing on Type B (Boundary Jitter) errors. (Top) DisTime accurately covers the true temporal window. TRACE, however, exhibits massive “Token Bloat” (a severe Type B error spanning almost the entire video), while VTimeLLM hallucinates entirely (Type A). (Middle) Both DisTime and TRACE successfully localize the action. VTimeLLM identifies the general vicinity but severely truncates the boundary (7.0-8.0s vs. GT 0.7-9.8s), yielding a failing IoU of 0.11. (Bottom) A scenario characterized by ambiguous action boundaries where all models suffer from Type B errors. Notably, DisTime and TRACE regress overly bloated durations (over-extension), whereas the text-based VTimeLLM predicts an extremely narrow window (truncation), reflecting their distinct mechanisms for handling temporal uncertainty. 0.0s 1.3s 2.5s 3.8s 5.1s 6.4s 7.6s 8.9s 10.2s 11.5s 
+
+[P6JGZ] "person opening a cabinet. [DisTime | TRACE (Type C) | VTimeLLM (Type C)]" 
+
+0 2 4 6 8 10 
+
+Time (seconds)             
+
+> Gen. (TRACE)
+> Cont. (DisTime)
+> Text (VTimeLLM)
+> Ground Truth
+> 6.5 10.6s IoU=0.00
+> 1.1 5.2s IoU=0.64
+> 7.0 10.0s IoU=0.00
+> 0.0 4.4s
+> 0.0s 3.8s 7.6s 11.4s 15.2s 19.0s 22.8s 26.6s 30.4s 34.2s
+
+[UKSCV] "another person is eating. [DisTime (Type C) | TRACE (Type C) | VTimeLLM (Type C)]" 
+
+0 5 10 15 20 25 30 
+
+Time (seconds)             
+
+> Gen. (TRACE)
+> Cont. (DisTime)
+> Text (VTimeLLM)
+> Ground Truth
+> 0.3 8.1s IoU=0.02
+> 0.2 6.4s IoU=0.00
+> 1.0 9.0s IoU=0.06
+> 7.7 23.5s
+> 0.0s 3.9s 7.8s 11.6s 15.5s 19.4s 23.3s 27.1s 31.0s 34.9s
+
+[21WN7] "person puts the food on a table. [DisTime (Type B) | TRACE (Type C) | VTimeLLM (Type A)]" 
+
+0 5 10 15 20 25 30 
+
+Time (seconds)   
+
+> Gen. (TRACE)
+> Cont. (DisTime)
+> Text (VTimeLLM)
+> Ground Truth
+> 1.1 16.6s IoU=0.04
+> 8.1 20.5s IoU=0.21
+> 34.9 34.9s IoU=0.00
+> 15.4 32.1s
+
+Figure S4. Qualitative comparisons focusing on Type C (Semantic Confusion) errors. (Top) DisTime perfectly localizes “opening a cabinet”. In contrast, both TRACE and VTimeLLM confuse this action with a semantically similar but chronologically later event, resulting in disjoint predictions (Type C). (Middle) A highly deceptive case where all three paradigms are misled by earlier visual cues of a person eating, completely missing the ground-truth timeframe. This represents a universal semantic failure across current VTG-MLLMs. 
+
+(Bottom) A complex failure case demonstrating diverse error manifestations. DisTime successfully captures the event but fails due to benign boundary jitter ( Type B , IoU=0.21). Meanwhile, TRACE predicts a semantically incorrect early action ( Type C ), and VTimeLLM hallucinates entirely off-target ( Type A ). This perfectly visually encapsulates our taxonomy findings.
