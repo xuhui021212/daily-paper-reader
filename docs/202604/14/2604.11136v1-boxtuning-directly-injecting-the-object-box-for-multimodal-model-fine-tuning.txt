@@ -1,0 +1,346 @@
+Title: BoxTuning: Directly Injecting the Object Box for Multimodal Model Fine-Tuning
+
+URL Source: https://arxiv.org/pdf/2604.11136v1
+
+Published Time: Tue, 14 Apr 2026 02:20:47 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# BoxTuning: Directly Injecting the Object Box for Multimodal Model Fine-Tuning 
+
+Zekun Qian 1 Ruize Han 2† Wei Feng 1 
+
+> 1
+
+School of Computer Science and Technology, Tianjin University, Tianjin, China 
+
+{clarkqian,wfeng}@tju.edu.cn  
+
+> 2
+
+Faculty of Computer Science and Artificial Intelligence, Shenzhen University of Advanced Technology, Shenzhen, China 
+
+hanruize@suat-sz.edu.cn 
+
+Abstract. Object-level spatial-temporal understanding is essential for video question answering, yet existing multimodal large language mod-els (MLLMs) encode frames holistically and lack explicit mechanisms for fine-grained object grounding. Recent work addresses this by serial-izing bounding box coordinates as text tokens, but this text-coordinate paradigm suffers from a fundamental modality mismatch : object infor-mation is inherently visual, yet encoding it as text incurs a high token cost that forces aggressive temporal downsampling. We propose BoxTun-ing , which resolves this mismatch by injecting object spatial-temporal information directly into the visual modality. Colored bounding boxes and trajectory trails are rendered onto video frames as visual prompts, with only a concise color-to-object legend retained as text. This reduces the token cost significantly, achieving 87–93% text token reduction in practice. It also preserves full temporal resolution, where the trajec-tory trails further encode inter-frame motion direction and speed within each keyframe, recovering fine-grained dynamics that text-coordinate methods are forced to discard. Experimental results on five video QA benchmarks (CLEVRER, Perception Test, STAR, NExT-QA, IntentQA) show that BoxTuning surpasses text-coordinate baselines on spatially ori-ented tasks and nearly eliminates the accuracy degradation observed on reasoning-centric tasks, establishing visual prompting as a more natural and efficient paradigm for conveying object information to video MLLMs. 
+
+Keywords: Video question answering · Visual prompting · Multimodal large language models · Object-centric representation 
+
+## 1 Introduction 
+
+Video understanding requires models to jointly reason over appearance, motion, and interaction across time, a challenge that becomes especially acute when the scene contains multiple interacting agents and objects [14, 36, 38, 40]. A broad range of video question answering tasks demand object-level grounding: iden-tifying what objects are present, where they are located, and how they move  
+
+> †
+
+Corresponding author.  
+
+> arXiv:2604.11136v1 [cs.CV] 13 Apr 2026 2Z. Qian et al.
+
+and interact over time. Such understanding goes beyond simple video recogni-tion (classification). For example, answering “ Will the ball hit the red cylinder? ”requires tracking spatial trajectories across frames [40]; answering “ Why did the man pick up the bag? ” requires grounding the agent and object through a causal chain [14]; answering “ What does the person do after sitting down? ” requires localizing the actor and linking actions to objects in sequence [36]. For visual understanding, multimodal large language models (MLLMs) [1, 7, 15, 22] have achieved remarkable progress by bridging vision encoders with large language models. Recent efforts have extended these architectures to video, producing a family of video MLLMs [6,10,18,24,44] that process temporal video sequences. Despite the progress, current MLLMs struggle to handle the above object-level understanding tasks. This is because these models encode each frame 
+
+holistically through a vision encoder ( e.g ., CLIP ViT [27]), producing frame-level feature representations that lack explicit information about individual objects. As a result, the language model must implicitly infer object identities, locations, and movements from distributed visual features, a task that becomes increasingly difficult as the number of objects and the complexity of their interactions grow. In general, a common bottleneck of MLLMs is the lack of an explicit, efficient mechanism to communicate the object-level information to the language decoder. To address this gap, Tang et al . [31] propose ObjectMLLM, which augments the MLLM input with structured bounding box information from an off-the-shelf detector and tracker. Each object’s bounding box coordinates across frames are serialized as text tokens and appended to the prompt ( e.g ., “ Boy: frame 1 [60 58 70 98] frame 2 [57 48 70 95] ... ”). Such a text-coordinate repre-sentation proves highly effective on benchmarks that emphasize spatial-temporal object understanding: ObjectMLLM significantly improves accuracy over the baseline VideoLLaMA2 [6] on synthetic collision reasoning (CLEVRER [40]) and real-world perceptual understanding (Perception Test [25], STAR [36]). The success of ObjectMLLM establishes a clear message: explicit object-level spatial-temporal information is valuable for video understanding .However, the pure text-coordinate representation introduces a fundamental efficiency bottleneck. As shown in the left panel of Fig. 1, the token cost scales as O(N × T × C), where N is the number of tracked objects, T is the num-ber of sampled frames, and C ≈ 16 –22 is the token cost per coordinate entry (e.g ., “ frame 1 [60 58 70 98] ”). To keep the total token count manageable, ObjectMLLM must temporally downsample the bounding box annotations at rates far below the original video frame rate. For instance, on STAR [36] with dense interacting objects, the bounding boxes are sampled at only one frame per 120 original frames (1/120); on NExT-QA [38] the rate is approximately 1/60, and even on the synthetic CLEVRER [40] with relatively few objects the rate reaches 1/25. Such coarse temporal sampling inevitably discards fine-grained mo-tion information that is precisely what the bounding box coordinates are meant to capture. Even after this aggressive downsampling, the text overhead remains prohibitively large. The mean box token count still reaches 1,184 per sample on NExT-QA, roughly 27 × larger than the question tokens (mean 43 tokens). Lim-BoxTuning 3Question: Why did the ball not go inside the goal net near the end? ObjectMLLM 
+
+> (Object 0) adult: frame 0 [73 30 92 100] frame 150 [95 21 100 95] ...; (Object 1) ball: frame 0 [28 69 35 81] frame 277 [72 49 73 56] ...; (Object 14) adult: frame 0 [73 30 92 100] frame 150 [95 21 100 96] ... ;
+
+BoxTuning (Ours)              
+
+> (1) redbox: Adult; (2) bluebox: Elephant; (3) greenbox: Elephant; (4) cyanbox: Ball; (5) magentabox: Adult; ... (14)
+> Orange box: Adult;
+
+... ... ...       
+
+> ①Temporally Sparse & Token-heavy Coordinate ( 1218 tokens) ①Concise Color-Mapped Text Legend ( 182 tokens)
+> ②Original Discrete Keyframes (Missing Intermediate Dynamics)
+
+...   
+
+> . . .
+> 85%
+> TokenSavings
+> ②Keyframes with Spatial-Temporal Box Trajectory (Capturing Continuous Dynamics)
+
+... ... ... ... ... Br idge   
+
+> TemporalGaps
+
+...   
+
+> Ouput: "adjust to comfortable position to hit" Output: "other elephant saved it"
+> (Action Misinterpretation) (Accurate Temporal Reasoning)
+
+Fig. 1: Comparison of object-centric representation strategies for video MLLMs. Left :ObjectMLLM [31] serializes per-frame bounding box coordinates as text tokens ( e.g ., “(Object 0) adult: frame 0 [73 30 92 100] ... ”), producing 1,218 tokens for a sin-gle video. The original keyframes lack intermediate dynamics, leading to action misin-terpretation. Right : BoxTuning renders colored bounding boxes and trajectory trails di-rectly on the video frames, with only a concise color-mapped text legend ( e.g ., “ (1) Red box: Adult; (2) Blue box: Elephant; ... ”, 182 tokens). The trajectory-augmented keyframes capture continuous dynamics, enabling accurate temporal reasoning. Over-all, BoxTuning achieves 85% token savings (in this case) while bridging temporal gaps that text-coordinate methods miss. 
+
+ited by the computing memory budget, the overlong box representation tokens may overflow the context window, and even adversely affect the visual tokens and other text tokens from the question and answer. We identify the root cause of these problems as a modality mismatch : object spatial information, including locations, sizes, and motion trajectories, is inher-ently visual in nature, yet the text-coordinate paradigm forces it through the text modality, where each coordinate consumes precious tokens from the limited context budget. This creates an irreconcilable tension: to provide comprehen-sive object information, the model needs more text tokens, which makes the context window over saturated. Meanwhile, the vision encoder processes every sampled frame in its entirety, yet none of the object spatial knowledge is chan-neled through this visual pathway. Such being the case, why not directly encode the object information into the video (visual modality)? 
+
+Based on this insight, we propose a fundamentally new form of object-centric representation for video MLLMs. Rather than encoding object states as text-based symbolic sequences as in ObjectMLLM [31], we change the representation medium from the text modality to the visual modality itself, and propose Box-Tuning . It addresses both problems identified above simultaneously, i.e ., the excessive text token consumption and the loss of temporal motion information due to downsampling. As illustrated in the right panel of Fig. 1, BoxTuning intro-duces two complementary visual prompts. First, we render colored bounding boxes directly onto each video frame, where each tracked object is assigned a 4 Z. Qian et al. 
+
+distinct color from a predefined palette. The color serves as the bridge between the visual and textual modalities: the only text required is a concise legend mapping colors to object classes ( e.g ., “ (1) Red box: Adult; (2) Blue box: Elephant; ... ”), reducing the text cost from O(N × T × C) to O(N × C′),where C′≈9 tokens per object is far smaller than the per-frame coordinate cost 
+
+C≈18 , and more importantly the temporal factor T is entirely eliminated. Sec-ond, to compensate for the temporal information lost between sampled frames, we draw temporal trajectory trails that connect the bounding box centers of each object over recent frames. This is inspired by Johansson’s classical bi-ological motion experiments [11], which demonstrated that humans can recog-nize complex actions from point-light trajectory displays alone, suggesting that trajectory patterns are a powerful and natural encoding of motion. Our trails explicitly encode motion direction and speed as visual patterns within a single frame, recovering the fine-grained motion cues that the text-coordinate approach is forced to discard through temporal downsampling. This encoding approach yields three concrete advantages over text-coordinate representations: 1) Dramatic token reduction. The text cost drops from 
+
+O(N × T × C) to O(N × C′). In practice, this amounts to an 87%-93% reduc-tion, freeing context window capacity for the visual and question/answer text tokens. 2) Lossless temporal resolution. We can render each object’s motion trajectory across all intermediate frames directly onto the sampled keyframes. This preserves the fine-grained motion cues that text-coordinate approaches are forced to discard through aggressive temporal downsampling. 3) Perceptual naturalness. Colored bounding boxes and trajectory trails mirror how humans annotate video in practice. This representation is intuitive for the vision encoder, which is pretrained on natural images containing similar visual patterns, and for human inspection during debugging. We apply BoxTuning to VideoLLaMA2-7B [6] with LoRA [8], using the same object detection and tracking pipeline as ObjectMLLM [31], ensuring that any performance difference stems solely from the representation rather than the object perception quality. On five benchmarks, CLEVRER [40], Perception Test [25], STAR [36], NExT-QA [38], and IntentQA [14], BoxTuning exceeds ObjectMLLM’s accuracy while consuming only about 10% of the text tokens required by the text-coordinate representation. Our main contributions are: 
+
+– We propose BoxTuning, a brand new visual prompting approach that di-rectly renders spatial-temporal object information on video frames, replacing verbose text-coordinate representations with a visually grounded alternative. To our knowledge, this is the first work to apply anthropomorphic object-level visual prompts to video MLLMs. 
+
+– In BoxTuning, we encode the spatial object bounding boxes and temporal trajectory trails as visual tokens without additional token overhead, and a small number of text legend entries as text tokens. Through systematic anal-ysis of token efficiency, compared to the previous ObjectMLLM, BoxTuning achieves the 87%–93% text token reduction. BoxTuning 5
+
+– Experimental results on five video QA benchmarks demonstrate significant accuracy improvements based on the baseline MLLMs and consistent im-provements compared to ObjectMLLM. Comprehensive ablation studies val-idate the contribution of each component. 
+
+## 2 Related Work 
+
+2.1 Video Understanding with MLLMs 
+
+Large language models have demonstrated remarkable capabilities in text un-derstanding and generation, inspiring a growing body of work that extends these models to the video domain [6, 10, 17, 18, 24, 44]. A central challenge for video MLLMs, compared to their image counterparts [1, 7, 15, 22], is how to effec-tively and efficiently represent the rich spatiotemporal information in videos. Most video MLLMs adopt a frame-level encoding strategy: pretrained image en-coders [27] extract features from sampled frames individually, and these features are concatenated or pooled to form the video representation. Video-ChatGPT [24] applies spatial and temporal pooling over frame features, while Video-LLaMA [44] introduces a Video Q-Former for audio-visual alignment. VideoLLaMA2 [6] fur-ther improves temporal modeling with a spatial-temporal convolution (STC) connector that captures cross-frame dependencies before projecting to the lan-guage space. Video-LLaVA [21] unifies image and video representations into a shared feature space through alignment before projection, enabling joint train-ing across modalities. MVBench [18] proposes a comprehensive temporal under-standing benchmark covering 20 tasks and introduces VideoChat2 with progres-sive multi-modal training. Chat-UniVi [10] handles both images and videos with dynamic visual tokens and spatial merging for efficiency, while LLaMA-VID [20] compresses each frame into two tokens for long-video processing. LLaVA-OneVision [13] demonstrates strong cross-scenario transfer from images to videos within a single model. An orthogonal line of work sidesteps visual encoders entirely and represents videos as text, using captions [34, 43] or structured descriptions that can be directly consumed by LLMs. While such Socratic approaches [43] offer interpretability and data efficiency, they tend to miss fine-grained spatiotem-poral information such as object trajectories [31]. Recent studies [32, 33] also reveal systematic visual shortcomings of current MLLMs, suggesting that vi-sual representation learning remains an open challenge. Despite these advances, most video MLLMs encode frames holistically and lack explicit mechanisms for object-level spatial reasoning, limiting their performance on tasks that require understanding individual object interactions and movements. 
+
+2.2 Object-Level Spatial Representations in MLLMs 
+
+Integrating explicit object information into vision-language models has been studied extensively. Early pretraining methods such as Oscar [19] use object tags detected in images as anchor points to ease cross-modal alignment, and 6 Z. Qian et al. 
+
+VinVL [46] demonstrates that higher-quality region features from stronger ob-ject detectors lead to substantial gains across vision-language tasks. CoVLM [16] advances this direction by composing visual entities and relationships through communication tokens that enable dynamic interaction between the detection and language systems. In the era of MLLMs, Shikra [4] and Kosmos-2 [26] en-code bounding box coordinates as text tokens for referential dialogue, while GPT4RoI [47] extracts region-of-interest features as additional visual inputs. Osprey [42] and GLaMM [28] further extend spatial grounding to pixel-level mask-text alignment. SpatialVLM [3] addresses quantitative spatial reasoning by generating Internet-scale 3D spatial QA data. Karimi Mamaghan et al . [12] conduct an extensive empirical study comparing object-centric representations with foundation model features, finding that applying object-centric inductive biases to foundation models can reduce computational cost while maintaining performance. These text-based spatial encoding methods extend naturally to video: ObjectMLLM [31] serializes per-frame bounding box coordinates as text tokens and demonstrates significant improvements on video QA, particularly on motion-related questions, while Vamos [34] incorporates object state descriptions for versatile video understanding. However, the token cost of text-coordinate approaches scales with both the number of objects and frames, creating the efficiency bottleneck discussed in Sec. 1. An alternative strategy is to modify the visual input itself rather than en-coding spatial information as text. Shtedritski et al . [30] show that drawing a red circle on an image effectively directs a VLM’s attention to a target region without any training. Set-of-Mark [39] overlays numbered markers on image seg-ments for spatial referencing in GPT-4V, and ViP-LLaVA [2] trains an MLLM to understand arbitrary visual prompts such as arrows, boxes, and circles. FO-CUS [49] leverages internal MLLM representations to guide visual cropping for fine-grained VQA; Zhang et al . [45] studied how MLLMs process small visual details through attention patterns; and V ∗ [37] proposes a guided visual search mechanism for efficient querying in high-resolution images. While these visual prompting methods establish that visual modifications can convey spatial in-formation effectively, they focus on static images and single-region highlighting. BoxTuning extends this paradigm to the video domain with multi-object colored overlays and trajectory trails that encode temporal motion patterns, a type of spatiotemporal information that has no natural text-coordinate analogue. 
+
+## 3 Method 
+
+We aim to enhance video MLLMs with explicit object-level spatial-temporal in-formation while avoiding the token overhead of text-coordinate representations. To this end, we propose BoxTuning, a framework that renders object bound-ing boxes and motion trajectories as visual prompts directly on video frames. Fig. 2 illustrates the overall pipeline. We first formulate the problem and con-trast our approach with the text-coordinate paradigm (Sec. 3.1), then describe the object detection and tracking pipeline (Sec. 3.2), the visual prompt construc-BoxTuning 7
+
+tion (Sec. 3.3), the concise text legend (Sec. 3.4), and the fine-tuning procedure (Sec. 3.5). Implementation details are provided in Sec. 3.6. Large Language Model “Kick it up”                  
+
+> Vison Projector
+> Vision Encoder
+> Concise Text Legend Visually Prompted Frames
+> Word Embedding
+> Question : “what did the boy in yellow do before he passed the ball to the boy in blue?”
+> (1) bluebox: Child; (2) greenbox: Toy; (3) redbox: Child; (4) cyanbox: Toy; (5) magentabox: Toy; (6) yellowbox: Baby walker; (7) purplebox: Ball;
+> LoRA Fine-tuning
+
+Fig. 2: Overview of the BoxTuning framework. Visually prompted frames, produced by rendering colored bounding boxes and trajectory trails from an off-the-shelf detector (YOLO-World [5]) and tracker (SAM 2 [29]), are fed into the vision encoder together with a concise text legend mapping colors to object classes and the question. The vision encoder is kept frozen, while the vision projector (STC connector) is fully fine-tuned and the LLM is adapted via LoRA [8]. 
+
+3.1 Problem Formulation 
+
+Consider a video QA task where a multimodal model must produce an answer 
+
+A given an input video V = {v1, v 2, . . . , v T } of T uniformly sampled frames and a text question Q. We enhance the model with explicit object-level spatial infor-mation: an off-the-shelf detector and tracker (Sec. 3.2) provide N tracked objects ,each with a class label li and per-frame bounding boxes. The key design choice is 
+
+through which manner the spatial-temporal information (from the detector and tracker) reaches the multimodal model. ObjectMLLM [31] conveys all spatial-temporal information through text. Each object’s coordinates across frames are serialized into a token sequence: 
+
+li: frame 1 [ x11 y11 x12 y12 ], frame 2 [ x21 y21 x22 y22 ] ...frame T [ xT 
+
+> 1
+
+yT 
+
+> 1
+
+xT 
+
+> 2
+
+yT 
+
+> 2
+
+],
+
+where coordinates are quantized to [0 , 100] . The concatenation of all such strings is appended to the prompt alongside Q, incurring a text cost of O(N × T × C)
+
+tokens (where C denotes the token requirement for the object’s coordinates, 
+
+C≈16 -22 per entry), while the video frames remain unmodified. The proposed BoxTuning instead conveys spatial-temporal information di-rectly through the visual modality. We render colored bounding boxes and trajectory trails directly onto the video frames, producing augmented frames 
+
+ˆV = {ˆv1, . . . , ˆvT }. Compared with ObjectMLLM [31] using V , the computa-tional load of visual embedding does not increase. The only text required is a concise legend D that maps each color to its object class. The model input thus becomes: 
+
+Input =  ˆV ; D; Q, (1) 8 Z. Qian et al.     
+
+> (a) Box only (b) Box + trajectory trail
+> Fig. 3: Visual prompt examples on CLEVRER video frames. (a) Bounding boxes alone provide spatial localization of each object. (b) Adding trajectory trails encodes motion direction and speed across intermediate frames, aiding temporal reasoning. The text legend (not shown) maps each color to its object class.
+
+reducing the text cost from O(N × T × C) to O(N × C′), where C′ denotes the token requirement of D for each object. The following subsections describe the construction of ˆV and D.
+
+3.2 Object Information Acquisition 
+
+To obtain object bounding boxes across video frames, we employ a detect-then-track strategy using two complementary off-the-shelf models, following the same detection and tracking pipeline as ObjectMLLM [31] to ensure a fair comparison. 
+
+Open-vocabulary detection. We use YOLO-World [5], an open-vocabulary object detector that accepts arbitrary category names as text prompts. For each benchmark, we define a category vocabulary covering the object types relevant to that dataset. Detection is performed on uniformly sampled keyframes, followed by non-maximum suppression to remove duplicate detections. 
+
+Mask-based tracking. Initial detections are propagated across all frames using SAM 2 [29] (Segment Anything Model 2), which provides robust mask-based video object segmentation. Given the bounding box prompts from the initial detections, SAM 2 generates per-frame segmentation masks that are robust to occlusions, scale changes, and appearance variations. The per-frame bounding box bti=( xt
+
+> 1
+
+, y t
+
+> 1
+
+, x t
+
+> 2
+
+, y t
+
+> 2
+
+) for object oi in frame vt is derived as the tightest axis-aligned rectangle enclosing the predicted mask. 
+
+Iterative detection for new objects. Objects may enter the scene after the first frame. To handle this, we run YOLO-World on multiple uniformly spaced keyframes throughout the video. For each subsequent keyframe, we compute the IoU between new detections and existing tracks; detections with high IoU against any existing track are discarded as duplicates, and the remaining ones initialize new tracks via SAM 2. This iterative strategy ensures comprehensive object coverage across the entire video. BoxTuning 9
+
+3.3 Visual Prompt Construction 
+
+The core of BoxTuning is the construction of visual prompts that encode ob-ject spatial-temporal information directly on the video frames. We compose two complementary elements: colored bounding boxes for spatial localization and trajectory trails for motion encoding, rendered with a consistent color scheme across all frames. 
+
+Color assignment. Each tracked object oi is assigned a unique color ci from a predefined palette of K maximally distinguishable colors ( e.g ., red, blue, green, orange, purple, cyan, . . . ), as illustrated in Fig. 3(a). The same color is used consistently for a given object across all frames, enabling the model to associate the same object across time through color consistency. 
+
+Bounding boxes for spatial localization. For each object oi visible in frame 
+
+vt, we draw a colored rectangle with color ci around its bounding box bti. The box provides precise per-frame spatial localization, allowing the model to directly ‘see’ where each object is, without parsing coordinate numbers from text. 
+
+Trajectory trails for motion encoding. For the video understanding task, temporal information is critical. Therefore, besides the object box for each frame, next we consider encoding the temporal information of the objects. For video object perception, the motion trajectory is a commonly used representation of temporal information [23]. In classical MLLM-based video understanding meth-ods, only the sampled T frames are used for visual embedding. This way, to encode temporal motion trajectory, we draw a polyline connecting the bounding box centers of object oi over the most recent L consecutive original frames 
+
+trail ti = (¯ xt−Li , ¯yt−Li ), . . . , (¯ xt−1 
+
+> i
+
+, ¯yt−1 
+
+> i
+
+) , (2) where (¯ xti, ¯yti ) denotes the center of bti, as in Fig. 3(b). The trail length L is set equal to the sampling interval between two consecutive model input frames, i.e ., 
+
+L = ⌊Tvideo /T ⌋, where Tvideo is the total number of original video frames and T
+
+is the number of uniformly sampled frames. This design ensures that the trail on each sampled frame covers exactly the temporal gap to the next sampled frame, so consecutive frames have adjacent trails that together reconstruct the complete motion trajectory without gaps. Trajectory trails serve a purpose analogous to motion vectors in video codecs: they encode the direction and speed of object movement as a visual pattern rather than numerical values. This is particularly valuable for causal and pre-dictive reasoning, e.g ., ‘Will the ball hit the cylinder?’, where understanding motion direction is essential. The augmented frame is obtained by compositing all overlays onto the orig-inal frame: 
+
+ˆvt = Render  vt, {(bti, c i, trail ti)}Nt
+
+> i=1
+
+, (3) where Nt is the number of visible objects in frame vt. The trail is drawn in color 
+
+ci from the box bti, making the motion history of each object explicitly visible within a single frame. The rendering is performed to preserve the underlying visual content. 10 Z. Qian et al. 
+
+3.4 Concise Text Legend 
+
+While the visual prompts encode where objects are and how they move, the model still needs to know what each colored object is. We provide this informa-tion through a concise text legend: 
+
+(1) blue box: Child; (2) green box: Toy; (3) red box: Child; ... 
+
+where different colors can indicate the same category. This legend requires only 
+
+∼9 tokens per object (index + color name + class label), compared to the ∼18 
+
+tokens per object per frame required by the text-coordinate format. Tab. 1 pro-vides a concrete breakdown using NExT-QA as an example, with N ≈8 tracked objects. ObjectMLLM requires ∼1,300 text tokens for object spatial-temporal information, while BoxTuning’s color legend requires only ∼72 tokens, a reduc-tion of over 94%. The measured averages across all benchmarks are reported in Tab. 2 in the experiment section. 
+
+Table 1: Token cost breakdown for a representative NExT-QA video ( N ≈8 objects, 
+
+T ≈9 temporally sampled frames per object).                         
+
+> Component ObjectMLLM BoxTuning (Ours) Per-entry cost ∼18 tok (frame + coords) ∼9tok (index + label + color) Entries per video N×T≈8×9 = 72 N≈8
+> Total object text tok ∼18 ×72 = 1,296 ∼9×8 = 72
+
+This token reduction has two practical benefits. 1) Embedding space saving :the token overhead is only marginally larger than the base MLLM without ob-ject input, leaving more capacity for video and question tokens. 2) Temporal downsampling needless : since the text tokens in our prompting manner are not related to the number of frames, we can annotate every sampled frame at full temporal resolution, preserving fine-grained motion cues that text-coordinate methods [31] are forced to discard. 
+
+3.5 Fine-Tuning Strategy 
+
+We adopt VideoLLaMA2-7B [6] as the base model, which consists of a CLIP ViT-L/14 vision encoder, a spatial-temporal convolution (STC) connector (vision projector) that captures cross-frame dependencies, and a Mistral-7B [9] language model. As shown in Fig. 2, we keep the vision encoder frozen and fine-tune the STC connector with full-parameter updates together with the language model via LoRA [8], using the same learning rate for both. This design keeps the visual features intact while allowing the connector and language model to jointly learn to interpret the colored overlays and trajectory trails. The training objective is the standard autoregressive next-token prediction loss on the answer tokens: 
+
+L = −
+
+> |A|
+
+X
+
+> j=1
+
+log Pθ
+
+ aj | ˆV , D, Q, a <j 
+
+, (4) BoxTuning 11 
+
+where A = ( a1, . . . , a |A|) is the ground-truth answer, θ includes the STC connec-tor and LoRA adapter parameters. For fair comparison, we use the same training data splits and evaluation protocols as ObjectMLLM [31] on all benchmarks. 
+
+3.6 Implementation Details Detection and tracking. We use YOLO-World-L [5] for open-vocabulary de-tection with benchmark-specific category vocabularies ( e.g ., geometric shapes for CLEVRER; people, vehicles, and everyday objects for NExT-QA). The confi-dence threshold is set to 0.3, and non-maximum suppression is applied at IoU 0.5. Tracking uses SAM 2 [29] with default hyperparameters. For iterative detection, new detections with IoU > 0.5 against existing tracks are discarded as duplicates. 
+
+Visual prompt settings. The color palette contains K=32 maximally dis-tinguishable colors. Bounding boxes are drawn with a line width of 3 pixels, and trajectory trails with 2 pixels. Since we uniformly sample T =16 frames per video clip, the trail length L = ⌊Tvideo /T ⌋ varies across datasets depending on the original video clip length. 
+
+Training. The STC connector is fully fine-tuned, and LoRA is applied to the query and value projection matrices of the language model with rank r=128 ,scaling factor α=256 , and dropout 0.05. Both share the same learning rate. We train with AdamW (learning rate 2×10 −4, weight decay 0.01, cosine schedule with 100 warmup steps) and batch size 16 on 4 ×A100 80 GB GPUs. 
+
+## 4 Experiments 
+
+4.1 Evaluation Benchmarks 
+
+We include five video QA benchmarks spanning synthetic and real-world data: 
+
+CLEVRER [40] contains synthetic videos of moving objects with questions about existence, motion direction, counting, attributes, and counterfactual infer-ence. Following ObjectMLLM [31], we use the multi-choice subset (CLEVRER-MC) converted by MVBench [18]. 
+
+Perception Test [25] is a diagnostic benchmark evaluating memory, abstrac-tion, physics, and semantics across video and audio. 
+
+STAR [36] tests situated reasoning about interactions, sequences, predictions, and feasibility in real-world activity videos. 
+
+NExT-QA [38] targets causal (why/how), temporal (when/before/after), and descriptive (what) reasoning in videos. The emphasis on causal and temporal inference means that high-level action understanding often matters more than precise object localization. 
+
+IntentQA [14] evaluates understanding of human intent behind actions in videos. Like NExT-QA, it is reasoning-centric, requiring the model to infer why and how 
+
+people act rather than simply locating objects. 12 Z. Qian et al. 
+
+Table 2: Average text tokens for object information per sample. ObjectMLLM [31] serializes bounding box coordinates as text. BoxTuning uses only a concise color legend.                    
+
+> Benchmark ObjectMLLM BoxTuning Reduction CLEVRER 611 61 90.1% Perception Test 1,241 120 90.4% STAR 761 96 87.4% NExT-QA 1,184 77 93.5% IntentQA 1,204 85 93.0% Average 1,000 88 90.8%
+
+4.2 Token Efficiency Analysis 
+
+A central claim of BoxTuning is the reduction in text token cost. Tab. 2 quantifies this across all five benchmarks. ObjectMLLM [31] requires 611-1,241 text tokens per sample for bounding box descriptions even after temporal downsampling, consuming the majority of the available text budget. BoxTuning requires only 61-120 tokens regardless of the number of frames, achieving 87-93% reduction. 
+
+4.3 Main Results: BoxTuning vs. ObjectMLLM 
+
+Tab. 3 presents the main comparison to the base model without object infor-mation, and ObjectMLLM with text-coordinate bounding box encoding. Ob-jectMLLM yields a large gain on CLEVRER (+9.7%), where questions focus on object motion and collision, and modest gains on Perception Test (+0.6%) and STAR (+0.7%). However, it hurts performance on NExT-QA ( −1.3%) and IntentQA ( −1.2%), two reasoning-centric benchmarks where causal and intent inference matters more than precise object localization. As ObjectMLLM [31] notes, these benchmarks focus on human actions and causal reasoning, which are difficult to capture with object bounding boxes alone. We further attribute the degradation to the token overhead: the verbose text coordinates crowd out the question and answer context due to token overflow, actively harming the model’s reasoning capacity. 
+
+Table 3: Accuracy (%) on five video QA benchmarks. All methods use VideoLLaMA2-7B with LoRA fine-tuning. Baseline numbers are from [31]. Best in bold . Green/red indicate change relative to the base model.                      
+
+> Method CLEVRER Perc. Test STAR NExT-QA IntentQA VideoLLaMA2 (base) 67.9 66.0 66.5 79.8 76.7
+> + ObjectMLLM (text coord.) 77.6 +9.7 66.6 +0.6 67.2 +0.7 78.5 -1.3 75.5 -1.2 + BoxTuning (ours) 78.5 +10.6 67.2 +1.2 67.7 +1.2 79.7 -0.1 76.5 -0.2
+
+BoxTuning outperforms ObjectMLLM on all five benchmarks while consum-ing only ∼10% of the text tokens. On the three spatially oriented benchmarks, BoxTuning achieves 78.5% on CLEVRER (+0.9% over ObjectMLLM), 67.2% on Perception Test (+0.6%), and 67.7% on STAR (+0.5%), demonstrating that visual prompts convey object spatial information more effectively than text co-ordinates even with drastically fewer tokens. BoxTuning 13 
+
+On the two reasoning-centric benchmarks, BoxTuning achieves 79.7% on NExT-QA and 76.5% on IntentQA, nearly matching the VideoLLaMA2 base-line (79.8% and 76.7%) with differences of only 0.1% and 0.2%, respectively. In contrast, ObjectMLLM degrades the baseline by 1.3% and 1.2% on these two benchmarks. This gap highlights a key advantage of our approach: BoxTuning’s color legend occupies minimal text tokens, so the context window remains avail-able for the question and reasoning content that these benchmarks demand. The near-parity with the unmodified baseline further demonstrates the general-ization of BoxTuning: injecting object information through visual prompts does not interfere with the model’s reasoning capability, whereas the text-coordinate approach actively harms it by saturating the context budget. 
+
+4.4 Comparison with Existing Video MLLMs 
+
+Tab. 4 places BoxTuning in the broader landscape of video MLLMs. BoxTuning achieves the highest accuracy on all five benchmarks, outperforming not only its direct baseline ObjectMLLM but also other competitive methods such as SeViLA and ViLA. Notably, the zero-shot VideoLLaMA2 and LLaVA-NeXT-Video lag far behind on CLEVRER (45.6% and 38.4%), highlighting the difficulty of spa-tiotemporal object reasoning without explicit object information. BoxTuning closes this gap effectively, reaching 78.5% with the same VideoLLaMA2 back-bone through visual prompting alone. 
+
+Table 4: Comparison with existing video MLLMs. Accuracy (%) is reported.                                            
+
+> Method Size CLEVR. Perc.T. STAR NExT Intent LLaVA-NeXT-Vid. [48] 7B 38.4 ∗† 49.3 ∗–––VideoLLaMA2 [6] 7B 45.6 ∗† 51.4 ∗57.1 ∗† 74.1 ∗† 73.8 ∗†
+> SeViLA [41] 3B –62.0 64.9 73.8 –ViLA [35] 3B ––67.1 75.6 –ObjectMLLM [31] 7B 77.6 66.6 67.2 78.5 75.5 BoxTuning (ours) 7B 78.5 67.2 67.7 79.7 76.5
+> ∗Zero-shot results. †Reproduced by [31].
+
+4.5 Ablation Studies Component-wise Ablation. Tab. 5 isolates the contribution of each Box-Tuning component by progressively adding the text legend and trajectory trails to the bounding box baseline. Bounding boxes alone already achieve accuracy comparable to ObjectMLLM ( e.g ., 77.0% vs . 77.6% on CLEVRER), confirm-ing that visual prompts can convey spatial information nearly as well as text coordinates. Adding the text legend brings a small but consistent improvement across all benchmarks (+0.2–0.4%), as the explicit color-to-class mapping helps the model associate visual cues with object identities. The largest gain comes from trajectory trails: on motion-heavy benchmarks, accuracy jumps by +1.2% on CLEVRER, +0.7% on Perception Test, and +0.5% on STAR, showing that the trails effectively recover inter-frame motion dynamics. On the reasoning-centric NExT-QA and IntentQA, the improvement is smaller (+0.3%) but still 14 Z. Qian et al. 
+
+positive, indicating that trajectory trails do not interfere with causal reasoning while providing modest additional context. 
+
+Table 5: Component-wise ablation. Accuracy (%) is reported.                 
+
+> Variant CLEVRER Perc. Test STAR NExT-QA IntentQA Box only 77.0 66.3 66.8 79.3 76.1 Box + Legend 77.3 66.5 67.2 79.4 76.2 Box + Legend + Trail 78.5 67.2 67.7 79.7 76.5
+
+Effect of Trajectory Length. We vary the trail length using fixed L ∈{10 , 20 , 30 , 40 , 60 } and compare against our adaptive length ( L = ⌊Tvideo /T ⌋) on two motion-sensitive benchmarks: CLEVRER and Perception Test. As shown in Tab. 6, short trails ( L=10 ) lead to a notable accuracy drop as they fail to capture sufficient motion context, while longer trails ( L≥30 ) yield similar performance regardless of the exact value. The adaptive strategy ( L = ⌊Tvideo /T ⌋) outper-forms all fixed lengths, as it aligns the trail length with the actual sampling interval, thereby encoding the complete trajectory between adjacent sampled frames without redundancy or truncation. This demonstrates that the adaptive length obtains the optimal trade-off between motion context gain and visual clutter distraction. 
+
+Table 6: Ablation study on trajectory trail length L. Accuracy (%) is reported.            
+
+> Trail length L10 20 30 40 60 Adaptive CLEVRER 77.6 78.0 78.2 78.1 78.0 78.5
+> Perc. Test 66.5 66.9 67.0 67.0 66.9 67.2
+
+Effect of Line Width. We study the sensitivity to the rendering line width for bounding boxes and trajectory trails, separately, on CLEVRER. As shown in Tab. 7, a box width of 3 and a trail width of 2 achieve the best accuracy. Thinner lines ( w=1 ) are less visible at the model’s input resolution, weakening the spatial signal, while wider lines ( w≥5) occlude the underlying frame content and degrade performance noticeably. 
+
+Table 7: Ablation study on rendering line width on CLEVRER using accuracy (%).            
+
+> Width 12358Box 77.8 78.2 78.5 78.0 77.1 Trail 78.0 78.5 78.3 77.4 76.8
+
+## 5 Conclusion 
+
+We have designed BoxTuning, a visual prompting approach that encodes object bounding boxes and trajectory trails directly on video frames, replacing the text-coordinate paradigm with a visually grounded alternative. By shifting object information from the text modality to the visual modality, BoxTuning reduces text token cost by 87%-93% and eliminates the need for temporal downsampling, BoxTuning 15 
+
+preserving fine-grained motion cues that text-coordinate methods are forced to discard. Experiments on five video QA benchmarks show that BoxTuning ex-ceeds text-coordinate baselines on spatially oriented tasks while nearly eliminat-ing the accuracy degradation on reasoning-centric benchmarks caused by text token overflow. Ablation studies confirm the contribution of trajectory trails for motion-sensitive tasks, validate an adaptive trail length strategy that encodes complete inter-frame trajectories, and show that the rendering hyperparameters are robust within a reasonable range. We hope these findings encourage further exploration of visual prompting as a general strategy for conveying structured information to multimodal models. 
+
+## References 
+
+1. Alayrac, J.B., Donahue, J., Luc, P., Miech, A., Barr, I., Hasson, Y., Lenc, K., Mensch, A., Millican, K., Reynolds, M., et al.: Flamingo: a visual language model for few-shot learning. In: NeurIPS (2022) 2. Cai, M., Liu, H., Mustikovela, S.K., Meyer, G.P., Chai, Y., Park, D., Lee, Y.J.: ViP-LLaVA: Making large multimodal models understand arbitrary visual prompts. In: CVPR (2024) 3. Chen, B., Xu, Z., Kirmani, S., Ichter, B., Driess, D., Florence, P., Sadigh, D., Guibas, L., Xia, F.: SpatialVLM: Endowing vision-language models with spatial reasoning capabilities. In: CVPR (2024) 4. Chen, K., Zhang, Z., Zeng, W., Zhang, R., Zhu, F., Zhao, R.: Shikra: Unleash-ing multimodal LLM’s referential dialogue magic. arXiv preprint arXiv:2306.15195 (2023) 5. Cheng, T., Song, L., Ge, Y., Liu, W., Wang, X., Shan, Y.: YOLO-World: Real-time open-vocabulary object detection. In: CVPR (2024) 6. Cheng, Z., Leng, S., Zhang, H., Xin, Y., Li, X., Chen, G., Zhu, Y., Zhang, W., Luo, Z., Zhao, D., Bing, L.: VideoLLaMA 2: Advancing spatial-temporal modeling and audio understanding in video-LLMs. arXiv preprint arXiv:2406.07476 (2024) 7. Dai, W., Li, J., Li, D., Tiong, A.M.H., Zhao, J., Wang, W., Li, B., Fung, P., Hoi, S.: InstructBLIP: Towards general-purpose vision-language models with instruction tuning. In: NeurIPS (2023) 8. Hu, E.J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., Chen, W.: LoRA: Low-rank adaptation of large language models. In: ICLR (2022) 9. Jiang, A.Q., Sablayrolles, A., Mensch, A., Bamford, C., Chaplot, D.S., Casas, D.d.l., Bressand, F., Lengyel, G., Lample, G., Saulnier, L., et al.: Mistral 7B. arXiv preprint arXiv:2310.06825 (2023) 10. Jin, P., Takanobu, R., Zhang, C., Cao, X., Yuan, L.: Chat-UniVi: Unified visual representation empowers large language models with image and video understand-ing. In: CVPR (2024) 11. Johansson, G.: Visual perception of biological motion and a model for its analysis. Perception & Psychophysics 14 (2), 201–211 (1973) 12. Karimi Mamaghan, A.M., Papa, S., Johansson, K.H., Bauer, S., Dittadi, A.: Ex-ploring the effectiveness of object-centric representations in visual question answer-ing: Comparative insights with foundation models. In: ICLR (2025) 13. Li, B., Zhang, Y., Guo, D., Zhang, R., Li, F., Zhang, H., Zhang, K., Zhang, P., Li, Y., Liu, Z., Li, C.: LLaVA-OneVision: Easy visual task transfer. TMLR (2025) 16 Z. Qian et al. 14. Li, J., Wei, P., Han, W., Fan, L.: IntentQA: Context-aware video intent reasoning. In: ICCV (2023) 15. Li, J., Li, D., Savarese, S., Hoi, S.: BLIP-2: Bootstrapping language-image pre-training with frozen image encoders and large language models. In: ICML (2023) 16. Li, J., Chen, D., Hong, Y., Chen, Z., Chen, P., Shen, Y., Gan, C.: CoVLM: Com-posing visual entities and relationships in large language models via communicative decoding. In: ICLR (2024) 17. Li, K., He, Y., Wang, Y., Li, Y., Wang, W., Luo, P., Wang, Y., Wang, L., Qiao, Y.: VideoChat: Chat-centric video understanding. Science China Information Sciences 
+
+68 (10), 200102 (2025) 18. Li, K., Wang, Y., He, Y., Li, Y., Wang, Y., Liu, Y., Wang, Z., Xu, J., Chen, G., Luo, P., Wang, L., Qiao, Y.: MVBench: A comprehensive multi-modal video understanding benchmark. In: CVPR (2024) 19. Li, X., Yin, X., Li, C., Zhang, P., Hu, X., Zhang, L., Wang, L., Hu, H., Dong, L., Wei, F., Choi, Y., Gao, J.: Oscar: Object-semantics aligned pre-training for vision-language tasks. In: ECCV (2020) 20. Li, Y., Wang, C., Jia, J.: LLaMA-VID: An image is worth 2 tokens in large language models. In: ECCV (2024) 21. Lin, B., Ye, Y., Zhu, B., Cui, J., Ning, M., Jin, P., Yuan, L.: Video-LLaVA: Learning united visual representation by alignment before projection. In: EMNLP (2024) 22. Liu, H., Li, C., Wu, Q., Lee, Y.J.: Visual instruction tuning. In: NeurIPS (2023) 23. Luo, W., Xing, J., Milan, A., Zhang, X., Liu, W., Kim, T.K.: Multiple object tracking: A literature review. Artificial Intelligence 293 , 103448 (2021) 24. Maaz, M., Rasheed, H., Khan, S., Khan, F.S.: Video-ChatGPT: Towards detailed video understanding via large vision and language models. In: ACL (2024) 25. Pătrăucean, V., Smaira, L., Gupta, A., Recasens, A., Markeeva, L., Banarse, D., Koppula, S., Heyward, J., Malinowski, M., Yang, Y., Doersch, C., Matejovicova, T., Sulsky, Y., Miech, A., Frechette, A., Klimczak, H., Koster, R., Zhang, J., Winkler, S., Aytar, Y., Osindero, S., Damen, D., Zisserman, A., Carreira, J.: Perception test: A diagnostic benchmark for multimodal video models. In: NeurIPS (2023) 26. Peng, Z., Wang, W., Dong, L., Hao, Y., Huang, S., Ma, S., Wei, F.: Kosmos-2: Grounding multimodal large language models to the world. In: ICLR (2024) 27. Radford, A., Kim, J.W., Hallacy, C., Ramesh, A., Goh, G., Agarwal, S., Sastry, G., Askell, A., Mishkin, P., Clark, J., Krueger, G., Sutskever, I.: Learning transferable visual models from natural language supervision. In: ICML (2021) 28. Rasheed, H., Maaz, M., Shaji Mullappilly, S., Shaker, A., Khan, S., Cholakkal, H., Anwer, R.M., Xing, E., Yang, M.H., Khan, F.S.: GLaMM: Pixel grounding large multimodal model. In: CVPR (2024) 29. Ravi, N., Gabeur, V., Hu, Y.T., Hu, R., Ryali, C., Ma, T., Khedr, H., Rädle, R., Rolland, C., Gustafson, L., Mintun, E., Pan, J., Alwala, K.V., Carion, N., Wu, C.Y., Girshick, R., Dollár, P., Feichtenhofer, C.: SAM 2: Segment anything in images and videos. In: ICLR (2025) 30. Shtedritski, A., Rupprecht, C., Vedaldi, A.: What does CLIP know about a red circle? visual prompt engineering for VLMs. In: ICCV (2023) 31. Tang, Z., Wang, S., Cho, J., Yoo, J., Sun, C.: How can objects help video-language understanding? In: ICCV (2025) 32. Tong, S., Brown, E., Wu, P., Woo, S., Middepogu, M., Akula, S.C., Yang, J., Yang, S., Iyer, A., Pan, X., Wang, A., Fergus, R., LeCun, Y., Xie, S.: Cambrian-1: A fully open, vision-centric exploration of multimodal LLMs. In: NeurIPS (2024) 33. Tong, S., Liu, Z., Zhai, Y., Ma, Y., LeCun, Y., Xie, S.: Eyes wide shut? exploring the visual shortcomings of multimodal LLMs. In: CVPR (2024) BoxTuning 17 34. Wang, S., Zhao, Q., Do, M.Q., Agarwal, N., Lee, K., Sun, C.: Vamos: Versatile action models for video understanding. In: ECCV (2024) 35. Wang, X., Liang, J., Wang, C.K., Deng, K., Lou, Y., Lin, M., Yang, S.: ViLA: Efficient video-language alignment for video question answering. In: ECCV (2024) 36. Wu, B., Yu, S., Chen, Z., Tenenbaum, J.B., Gan, C.: STAR: A benchmark for situated reasoning in real-world videos. In: NeurIPS (2021) 37. Wu, P., Xie, S.: V ∗: Guided visual search as a core mechanism in multimodal LLMs. In: CVPR (2024) 38. Xiao, J., Shang, X., Yao, A., Chua, T.S.: NExT-QA: Next phase of question-answering to explaining temporal actions. In: CVPR (2021) 39. Yang, J., Zhang, H., Li, F., Zou, X., Li, C., Gao, J.: Set-of-mark prompt-ing unleashes extraordinary visual grounding in GPT-4V. arXiv preprint arXiv:2310.11441 (2023) 40. Yi, K., Gan, C., Li, Y., Kohli, P., Wu, J., Torralba, A., Tenenbaum, J.B.: CLEVRER: Collision events for video representation and reasoning. In: ICLR (2020) 41. Yu, S., Cho, J., Yadav, P., Bansal, M.: Self-chained image-language model for video localization and question answering. In: NeurIPS (2023) 42. Yuan, Y., Li, W., Liu, J., Tang, D., Luo, X., Qin, C., Zhang, L., Zhu, J.: Osprey: Pixel understanding with visual instruction tuning. In: CVPR (2024) 43. Zeng, A., Attarian, M., Ichter, B., Choromanski, K.M., Wong, A., Welker, S., Tombari, F., Purohit, A., Ryoo, M.S., Sindhwani, V., Lee, J., Vanhoucke, V., Flo-rence, P.: Socratic models: Composing zero-shot multimodal reasoning with lan-guage. In: ICLR (2023) 44. Zhang, H., Li, X., Bing, L.: Video-LLaMA: An instruction-tuned audio-visual lan-guage model for video understanding. In: EMNLP (2023) 45. Zhang, J., Khayatkhoei, M., Chhikara, P., Ilievski, F.: MLLMs know where to look: Training-free perception of small visual details with multimodal LLMs. In: ICLR (2025) 46. Zhang, P., Li, X., Hu, X., Yang, J., Zhang, L., Wang, L., Choi, Y., Gao, J.: VinVL: Revisiting visual representations in vision-language models. In: CVPR (2021) 47. Zhang, S., Sun, P., Chen, S., Xiao, M., Shao, W., Zhang, W., Liu, Y., Chen, K., Luo, P.: GPT4RoI: Instruction tuning large language model on region-of-interest. In: ECCV Workshops (2024) 48. Zhang, Y., Li, B., Liu, H., Lee, Y.J., Gui, L., Fu, D., Feng, J., Liu, Z., Li, C.: LLaVA-NeXT: A strong zero-shot video understanding model. https://llava-vl.github.io/blog/2024-04-30-llava-next-video/ (2024) 49. Zhong, L., Rosenthal, F., Sicking, J., Hüger, F., Bagdonat, T., Gottschalk, H., Schwinn, L.: FOCUS: Internal MLLM representations for efficient fine-grained vi-sual question answering. In: NeurIPS (2025)

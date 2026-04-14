@@ -1,0 +1,459 @@
+Title: VideoStir: Understanding Long Videos via Spatio-Temporally Structured and Intent-Aware RAG
+
+URL Source: https://arxiv.org/pdf/2604.05418v2
+
+Published Time: Tue, 14 Apr 2026 01:13:18 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# VideoStir: Understanding Long Videos via Spatio-Temporally Structured and Intent-Aware RAG 
+
+Honghao Fu 1, Miao Xu 1, Yiwei Wang 2, Dailing Zhang 3, Liu Jun 4, Yujun Cai 1,5*
+
+1University of Queensland, 2University of California, Merced 
+
+3Institute of Automation, CAS, 4Lancaster University, 5Ant Group 
+
+{honghao.fu, miao.xu, yujun.cai}@uq.edu.au , yiweiwang2@ucmerced.edu zhangdailing2023@ia.ac.cn , j.liu81@lancaster.ac.uk 
+
+Abstract 
+
+Scaling multimodal large language models (MLLMs) to long videos is constrained by limited context windows. While retrieval-augmented generation (RAG) is a promising remedy by organizing query-relevant visual ev-idence into a compact context, most existing methods (i) flatten videos into independent seg-ments, breaking their inherent spatio-temporal structure, and (ii) depend on explicit semantic matching, which can miss cues that are implic-itly relevant to the query’s intent. To overcome these limitations, we propose VideoStir, a struc-tured and intent-aware long-video RAG frame-work. It firstly structures a video as a spatio-temporal graph at clip level, and then performs multi-hop retrieval to aggregate evidence across distant yet contextually related events. Further-more, it introduces an MLLM-backed intent-relevance scorer that retrieves frames based on their alignment with the query’s reasoning in-tent. To support this capability, we curate IR-600K, a large-scale dataset tailored for learning frame–query intent alignment. Experiments show that VideoStir is competitive with state-of-the-art baselines without relying on auxil-iary information, highlighting the promise of shifting long-video RAG from flattened seman-tic matching to structured, intent-aware reason-ing. Codes and checkpoints are available at 
+
+https://github.com/RomGai/VideoStir .
+
+1 Introduction 
+
+Video understanding has emerged as a core frontier in multimodal intelligence [ 1 ]. While recent Mul-timodal Large Language Models (MLLMs) have achieved remarkable success in interpreting short clips, extending this capability to long videos re-mains a formidable challenge [ 2 ]. The primary difficulty lies not merely in the video’s length, but in its information density and structural complex-ity [ 3]. Unlike short clips that typically encapsulate 
+
+> *
+
+Corresponding Author. Flatten Frames/Clips                                              
+
+> Semantic -based
+> Retrieval
+> Ican’t answer it from current cues .Ionly see
+> someone using aprinter, not why .(Incorrect)
+> MLLM
+> Query: What is the purpose of the person
+> using the printer in the video?
+> …
+> Query
+> Structured Intent -aware
+> Cues missing (could retrieve only “printer”)
+> …
+> Structured Intent -aware
+> Cues with noises from weakly related contexts
+> Intent -aware
+> Retrieval
+> MLLM
+> …
+> Query
+> Structured Intent -aware
+> Clean cues from spatiotemporal contexts
+> Spatiotemporal
+> Graph
+> Flatten Frames/Clips
+> Intent -aware
+> Retrieval
+> MLLM Query
+> It shows him printing test papers and answer
+> sheets to distribute in aclassroom .(Incorrect)
+> It shows him using the printer to produce m-
+> aterials for aposter .(Correct)
+> (Ground Truth: Make a poster.)
+
+Figure 1: Paradigm shift from flat semantic matching to struc-tured, intent-aware long-video RAG. (Top) Semantic-based retrieval relies on explicit semantic overlap, often missing cues that are only implicitly relevant to the query intent. (Middle) 
+
+Intent-aware retrieval utilizes MLLM’s reasoning capability to identify cues that may be relevant to the query intent (de-tailed in Sec. 3.4); however, it can be distracted by noisy cues when operating over flattened contexts scattered across long temporal ranges. (Bottom) VideoStir structures the video as a spatio-temporal graph to retrieve cues from coherent contexts, enabling more reliable evidence aggregation. We further dis-cuss the benefits of structured retrieval in Fig. 3. 
+
+a single event, long videos consist of interleaved narratives where critical cues could be sparsely scattered across the timeline. To handle the exten-sive contexts, state-of-the-art (SOTA) models often resort to expanding context windows to support uniform sampling at second level [ 4 ]. However, such approaches face a trade-off: they could either miss fine-grained details due to temporally sparse sampling or struggle with accurate reasoning when overwhelmed by redundant visual noise. To address the contextual intractability of pro-cessing long videos, Retrieval-Augmented Genera-
+
+> arXiv:2604.05418v2 [cs.CV] 12 Apr 2026
+
+tion (RAG) has emerged as a promising solution by retrieving a small subset of segments to fit within limited context windows [ 5 ]. However, current long-video RAG methods typically flatten a video into a set of independent segments for query-based retrieval [ 6 , 7 ], and rank candidates primarily by embedding similarity computed with contrastive vision–language models (e.g., CLIP) [2, 8, 9]. Yet this flattened semantic matching paradigm leaves two critical gaps that hinder downstream reasoning. The first gap is spatio-temporal structure de-coupling . Flattening a video into ndependent seg-ments disrupts its intrinsic spatio-temporal struc-ture, decoupling contexts that should remain linked. Because text queries may lack the fine-grained cues needed to reconnect dispersed evidence, di-rect matching often struggles to retrieve contexts that are spatio-temporally relevant yet share lit-tle explicit semantic overlap with the query, lim-iting downstream models’ ability to form coher-ent reasoning chains [ 3 , 10 ]. The second gap is insufficient intent modeling . Similarity com-puted from contrastive embeddings is optimized for vision–language alignment and tends to capture “what looks similar” rather than “why it matters” for addressing the query’s reasoning intent [ 11 ]. As shown in Figure 1, the query “For what purpose 
+
+does the recorder use the printer ?” leads a seman-tic retriever to select frames showing the “ printer ”due to high semantic overlap, whereas the actual “purpose ” is revealed in a different event (e.g., mak-ing a poster), which semantic overlap alone fails to surface. In light of these gaps, we advocate two shifts in long-video RAG paradigms: (i) From Flattened to Structured : moving beyond isolated segment retrieval to reconstruct the intrinsic spatio-temporal topology of the video; and (ii) From Semantic to Intent : going beyond surface semantic to model the alignment between query’s intent and visual cues. To realize these shifts, we propose VideoStir , a framework designed to advance long-video RAG from flattened semantic matching to ST ructured, 
+
+Intent-aware Reasoning. Inspired by human episodic memory where recall proceeds coarse-to-fine (locating relevant episodes before exam-ining details), VideoStir operates in two phases, from clips to frames. First, a coarse clip-retrieval phase addresses structure decoupling by represent-ing the video as a spatio-temporal graph, whose nodes are semantically coherent short clips seg-mented by an event boundary detector. Temporal edges preserve narrative continuity, while spatial edges bridge distant yet semantically related clips via inter-clip similarity. Traversing this topology enables multi-hop retrieval from query-matched anchors to their spatio-temporal neighbors, lever-aging intrinsic correlations among semantically dense clips to aggregate dependencies and miti-gate the semantic sparsity of direct query matching. Second, a fine-grained frame-retrieval phase ad-dresses insufficient intent modeling with an Intent-
+
+Relevance scorer trained on our curated IR-600K 
+
+dataset. Rather than considering semantic similar-ity alone, this lightweight MLLM-based scorer es-timates frame–intent alignment, ensuring retrieved frames are not only semantically relevant but also pivotal for downstream reasoning. Consequently, VideoStir provides the down-stream MLLM with spatio-temporally context-coherent and intent-aligned visual cues, enabling more accurate long-video understanding. The scorer and curated IR-600K dataset further pro-vide a reusable foundation for future research on intent-oriented long-video RAG systems. Our con-tributions are summarized as follows: • We propose VideoStir, a novel long-video RAG framework that leverages structured re-trieval to reconstruct video’s spatio-temporal topology and aggregate contextually coher-ent evidence, which overcomes the spatio-temporal decoupling of flattened retrieval. • We introduce an intent-relevance scorer and IR-600K, a large-scale dataset modeling the relevance between frames and query intent. This shifts retrieval from semantic matching to intent awareness, establishing a foundation for intent-oriented long-video RAG. • Extensive experiments show that VideoStir is competitive with SOTA baselines without relying on auxiliary information, highlight-ing the promise of the paradigm shift from flattened semantic matching to structured and intent-aligned reasoning in long-video RAG. 
+
+2 Related Works 
+
+2.1 Video-Language Models 
+
+Long-video understanding has attracted increas-ing attention in multimodal intelligence. Re-cent general-purpose MLLMs such as Gem-ini [ 17 ] and Long-VITA [ 18 ], along with special-ized video models including Video-XL [ 19 ] and LongVLM [ 20 ], extend visual context to enable hour-scale video reasoning via uniform sampling. However, this paradigm faces a major bottleneck: limited context windows necessitate sparse sam-pling across the timeline, which can yield semanti-cally redundant frames while simultaneously risk-ing the loss of fleeting, query-critical cues. In par-allel, contrastive video–language models [ 21 ] (e.g., Video-CLIP [ 22 ], X-CLIP [ 23 ], and PE [ 24 ]) ex-tend CLIP-style contrastive embeddings to video, enabling query-conditioned retrieval of salient clips and frames. Nevertheless, contrastive objectives primarily optimize for semantic similarity and may miss cues that are implicitly relevant to the query intent but lack an explicit semantic match. 
+
+2.2 Agentic Long-Video Understanding 
+
+To alleviate the contextual intractability inherent in processing long-duration videos, a growing body of recent work has shifted towards leveraging ex-ternal systems. These systems are designed to reconstruct and distill extensive long-range con-text into compact, semantically rich cues tailored for downstream MLLMs. A prominent trajec-tory within this domain involves the exploration of agentic frameworks [ 34 , 35 ], which employ (M)LLMs as decision-making policies equipped with advanced modules for captioning, multi-step reasoning, and external memory [ 36 ]. By simulat-ing human-like curation processes [ 37 , 38 ], these agents dynamically filter irrelevant data. For exam-ple, DrVideo [ 39 ] synthesizes disjoint video frames into coherent long-form textual narratives to fa-cilitate precise query answering, while Vgent [ 3]abstracts complex entity interactions into struc-tured symbolic representations to bolster reasoning. However, despite their demonstrated efficacy in enhancing understanding, deploying such sophis-ticated MLLM-based policies incurs substantial inference overhead. 
+
+2.3 RAG for Long-Video Understanding 
+
+To reduce the procedural inference overhead of agentic workflows, another line of work explores long-video retrieval-augmented generation (RAG) frameworks [ 5 , 40 , 41 ], which externally select cues to fit limited context windows [ 7 , 9 , 42 ]. For example, Video-RAG [ 2] retrieves keyframes via semantic similarity, and enriches entity information with external tools like optical character recogni-tion and object detectors. E-VRAG [ 43 ] introduces a retrieval-reranking pipeline, leveraging Qwen3-Reranker-style binary judgments for fine-grained selection. while AKS [ 6 ] selects keyframes by jointly optimizing query-frame semantic similarity and temporal uniformity. However, existing meth-ods often treat videos as independent segments, decoupling intrinsic spatio-temporal structure and limiting coherent reasoning. Moreover, current paradigms favor explicit semantic matching over intent-level alignment, risking the omission of cues implicitly relevant to the query intent. 
+
+3 Method 
+
+3.1 Overview 
+
+We propose VideoStir, a long-video RAG frame-work that explicitly models video spatio-temporal topology and query intent to retrieve pivotal ev-idence, thereby advancing downstream MLLMs’ long-video understanding. As illustrated in Figure 2, VideoStir comprises three phases: (1) Spatio-temporal topology mod-eling. It converts the input video into a struc-tured graph. An event boundary detector parti-tions the video into clip-level nodes connected by temporal edges (chronological adjacency) and spa-tial edges (inter-clip semantic similarity). This design reconstructs the topology of the video’s spatio-temporal context. (2) Graph-based clip re-trieval. It first identifies anchor clips semantically aligned with the query, then expands the context via multi-hop traversal on the spatio-temporal graph. Consequently, the retrieved evidence includes not only query-matched moments but also their spatio-temporally relevant neighbors that are critical for reasoning. (3) Intent-aware frame retrieval. It re-fines evidence at the frame level. Since semantic similarity often fails to capture the query’s underly-ing intent, we introduce an intent-relevance scorer. Specifically, we leverage a lightweight MLLM fine-tuned on our curated IR-600K dataset to assign each frame a relevance score, computed as the weighted expectation over predicted relevance lev-els. It mitigates the loss of implicit cues inherent to explicit semantic matching, yielding an intent-aligned evidence set for downstream MLLMs. 
+
+3.2 Spatio-Temporal Topology Modeling 
+
+To structurally encode a long video’s spatio-temporal topology, we model it as a graph G =(V, E), where each node vk ∈ V corresponds to a clip sk ⊂ S. These clips are obtained via an event boundary detector, which preprocesses the (b) Graph -based Clip Retrieval  Multi -hop 
+
+> Traversal
+> Text Query
+> Video -Language
+> Encoder
+> Event Boundary
+> Detector
+> Input Video
+> Clips
+> Clip -level Emb.
+> ···
+> ···
+> ···
+> ···
+> ···
+> ···
+> Spatio -Temporal
+> Graph
+> Temporal Edges (chronological adjacency)
+> Spatial Edges (inter -clip similarity)
+
+(a) Spatio -Temporal Topology Modeling     
+
+> Video -Language
+> Encoder
+> ··· Query Emb.
+> Retrieved Anchor Node(s):
+> Top -Nquery -matched clip(s)
+> Anchor
+> Retrieval
+> Retrieved Multi -hop Nodes :
+> Anchor neighbors filtered by distance/weight
+
+(c) Intent -aware Frame Retrieval                                   
+
+> Frames
+> Downstream
+> MLLM (Any) Answer
+> Intent -Relevance Scorer
+> Logits + Softmax
+> Relevance Level Tokens
+> Weighted Sum.
+> Relevance
+> Level Prob.
+> Relevance Score
+> Text Query
+> Retrieved
+> Nodes (Clips)
+> Dense Sampling
+> Score -based
+> Filtering
+> Text
+> Query
+> Relevance Scoring Prompt
+> -How intent -relevant this
+> frame is for answering the
+> question :‘{query}’?
+> -Output only one number
+> from 1to 5,where :
+> [1]=Completely Irrelevant
+> [2]=Slightly Relevant
+> [3]=Moderately Relevant
+> [4]=Mostly Relevant
+> [5]=Highly Relevant
+> ··
+> ·
+> ··
+> ·
+> ··
+> ·
+> ··
+> ·
+> ··
+> ·
+> ···
+> ···
+> ···
+> ···
+> ···
+> ··· …
+> …Intent -Aligned
+> Frames
+> Lightweight MLLM
+
+Figure 2: Overview of VideoStir. VideoStir achieves long-video understanding via spatio-temporal structuring and two-stage retrieval. (a) Spatio-Temporal Topology Modeling. An event boundary detector segments input video into semantically coherent clips. Their embeddings are used to construct a spatio-temporal graph with temporal edges linking adjacent clips and spatial edges weighted by inter-clip similarity. (b) Graph-based Clip Retrieval . Input query is embedded in the video-language space to retrieve top-N matched anchor nodes; multi-hop traversal then expands along spatio-temporal links under hop-distance and edge-weight constraints to aggregate contextual clips. (c) Intent-aware Frame Retrieval. Frames densely sampled from the retrieved clips are assessed by an intent-relevance scorer (LoRA-tuned on IR-600K), which outputs a probability distribution over discrete relevance levels. These distributions are then aggregated via probability-weighted expectation to produce a continuous relevance score; high-scoring, intent-aligned frames are retained and fed to a downstream MLLM to produce the final answer. 
+
+long video into semantically coherent segments by identifying event transitions through seman-tic change-point detection. This process is im-plemented by applying PELT [ 54 ] to the frame embeddings for adaptive segmentation. For each clip, we compute an embedding hk = Evl (sk)
+
+with a video–language encoder Evl . The edge set E = {E Temp , ESp } consists of temporal edges 
+
+ETemp = {(vk, v k+1 ) | wk,k +1 = 1 } and spa-tial edges ESp = {(vi, v j ) | wi,j = cos( hi, h j )},where w denotes the edge weight. Here, we refer to the embedding space as the “spatial” dimension of the topology. Temporal edges connect chrono-logically adjacent clips, preserving the video’s tem-poral backbone. Spatial edges are weighted by the similarity between clip embeddings, captur-ing inter-clip correlations when different moments share similar video-level features. By jointly mod-eling these edges, G induces a spatio-temporal topology over clips: temporally adjacent events are linked along timeline, while semantically coherent yet temporally distant events are bridged via spatial edges. This graph re-entangles contextual relations that may be lost in a flattened representation and provides the backbone for multi-hop retrieval. 
+
+3.3 Graph-based Clip Retrieval 
+
+Given a query q and a spatio-temporal graph G, we aim to coarsely retrieve clips that are semantically relevant to q and topologically supported by inter-clip correlations. This design addresses seman-tically sparse query–clip matching: a query may refer to only a small facet of an event (e.g., the main subject), whereas long videos often contain recur-ring scenes/actions/entities and temporally adjacent evidence that constitute critical spatio-temporal contexts for the underlying event, which can be missed by simply computing semantic similarity between the query and individual moments. As shown in Figure 3, with our spatio-temporal graph, these contexts can be recovered via inter-clip sim-ilarity and chronological adjacency encoded by spatio-temporal edges. Specifically, we first compute the query embed-ding hq = Evl (q) using the same video-language encoder as for clips, placing queries and clip nodes in a shared embedding space. We then measure query-node similarity via cos( hq, h k), and select the top-N similar nodes as the anchor set Vanc .While these anchors are matched to the query, they may not fully cover their implicitly contextual de-pendencies. To recover broader context, we expand Vanc along spatio-temporal links in G, traversing edges according to their weights and collecting nodes within L hops of the anchors:              
+
+> Vhop ={vj|d(vj,Vanc )≤L, w ij ≥η},
+
+(1) where d(vj , Vanc ) is the shortest hop distance from 
+
+vj to any anchor in Vanc , and threshold η filters out weak connections. In this way, multi-hop traver-sal yields a coarse spatio-temporal neighborhood around the event hinted by the query, providing contextual candidates for subsequent fine-grained intent-level filtering. 
+
+3.4 Intent-aware Frame Retrieval Intent Relevance Reasoning and Retrieval. 
+
+While multi-hop retrieval yields a set of contex-tually related clips, the candidates may include re-dundant or merely co-occurring frames that are se-mantically relevant but misaligned with the query’s underlying intent. We therefore introduce an intent-relevance scorer Rθ, which filters retrieved clips at frame level using the intent-reasoning capability of a lightweight MLLM backbone πθ. Specifically, 
+
+Rθ estimates frame-query intent relevance, sepa-rating frames that genuinely support the query’s intent from those with only superficial similarity. Given the retrieved node set Vhop = {vk}, where each node represents a video clip, we expand them into a dense frame pool: Fret = S  
+
+> vk∈V hop
+
+{xt |
+
+xt ∈ vk}. For a query–frame pair (q, x t), the scorer outputs a softmax-normalized probability distribution over discrete intent-relevance level to-kens ℓ ∈ { 1, 2, 3, 4, 5}:            
+
+> Pθ(ℓ|q, x t,Pintent ) = exp( πθ(ℓ|q, x t,Pintent ))
+> P5
+> k=1 exp( πθ(k|q, x t,Pintent )) ,
+
+(2) where πθ(·) denotes the logits produced by the MLLM backbone of Rθ, and Pintent (detailed in Appendix E) denotes the prompt that guides the MLLM backbone πθ to reason and score intent rel-evance. The score of frame xt is computed as the weighted expectation over relevance level tokens:           
+
+> rt=Rθ(q, x t,Pintent ) = P5
+> ℓ=1 ℓ·Pθ(ℓ|q, x t,Pintent ).
+
+(3) This converts the model’s internal reasoning into a continuous relevance score, distinguishing frames that provide intent-level support for the query from those that are merely semantically similar. After obtaining scores for Fret , we retain frames exceed-ing a relevance threshold κs. The resulting set 
+
+Fintent = { xt | rt > κ s } provides an intent-aligned visual context for downstream reasoning. 
+
+Distillation-based Scorer Training. To strengthen the scorer’s intent-relevance assessment, we adopt a distillation strategy to fine-tune its MLLM back-bone. Specifically, given a query-frame pair (q, x t)
+
+and the intent-relevance scoring prompt Pintent ,a powerful teacher MLLM T is asked to rate the intent relevance between q and xt on the discrete level (1-5). The resulting pseudo-label 
+
+yt = T (q, x t, Pintent ) serves as supervision for the student scorer Rθ. During fine-tuning, we in-ject low-rank adaptation (LoRA) parameters [ 55 ]into the MLLM backbone of Rθ, enabling effi-cient adaptation without substantially disrupting its pretrained priors. Given the student predic-tion Pθ(ℓ | q, x t, Pintent ), the training objective minimizes the cross-entropy between the student-predicted distribution and the teacher-provided dis-crete label:          
+
+> LCE =−
+> 5X
+> ℓ=1
+> 1[ℓ=yt] log Pθ(ℓ|q, x t,Pintent ).
+
+(4) The LoRA parameters are optimized via gradient descent, enabling the student to inherit the teacher’s relevance-assessment patterns and yield more ac-curate relevance scores, while retaining the compu-tational efficiency of its lightweight backbone. 
+
+4 Experiment 
+
+4.1 Dataset and Implementation Dataset. We curate IR-600K, a dataset designed to enhance small-scale MLLMs’ ability to judge intent relevance between video frames and queries, supporting intent-aware long-video RAG. To the best of our knowledge, IR-600K is the first dataset targeting intent-level frame-query alignment, i.e., whether a frame provides evidence that satisfies the query’s underlying information need. This dif-fers from prior datasets such as TVSum [ 70 ] and QVHighlights [ 71 ], which primarily evaluate the semantic saliency of frames with respect to descrip-tive statements. Specifically, we sample 4,678 videos from three representative video QA datasets (ActivityNet-QA [ 72 ], NExT-QA [ 73 ], and STAR [ 74 ]). For each video, we uniformly extract frames at 3 fps to form query–frame pairs. We then distill supervi-sion from a powerful MLLM: Qwen2.5-VL-72B-Instruct [ 75 ] serves as the teacher to produce frame-level intent-relevance labels. Guided by a carefully Table 1: Comparison with long-video RAG baselines. “Native Input” indicates whether the model processes video directly without relying on external auxiliary text or tools. Bold and underlined numbers indicate the best and second-best accuracies, respectively. ‘–’ indicates not applicable.                                                                                                                                                            
+
+> Model Native Input LV-Bench (Val) MLVU Video-MME-Long (w/o Sub)
+> Overall ↑Gain (%) ↑Overall ↑Gain (%) ↑Overall ↑Gain (%) ↑
+> LLaVA-Video (7B) ✓56.6 -70.8 ---+ Video-RAG ✗58.7 3.7 72.4 2.3 --+ TV-RAG ✗58.8 2.1 72.1 1.8 --
+> + VideoStir (Ours) ✓60.3 6.5 73.1 3.2 --mPLUG-Owl3 (8B) ✓52.1 -63.7 -50.1 -+ Video-RAG ✗54.5 4.6 64.4 1.1 50.6 1.0 + TV-RAG ✗54.8 5.2 64.0 0.5 50.9 1.6
+> + VideoStir (Ours) ✓55.1 5.8 64.6 1.4 51.0 1.8
+> Aria (25B) ✓64.2 -70.6 -58.8 -+ Video-RAG ✗66.4 3.4 72.1 2.1 59.6 1.4
+> + TV-RAG ✗65.5 2.0 71.2 0.8 59.0 0.3
+> + VideoStir (Ours) ✓65.8 2.5 71.7 1.6 59.4 1.0 InternVL-1.5 (26B) ✓51.2 -50.4 -45.6 -+ Video-RAG ✗52.2 2.0 51.8 2.8 46.7 2.4 + TV-RAG ✗52.4 2.3 51.0 1.2 46.3 1.5
+> + VideoStir (Ours) ✓52.7 2.9 51.6 2.4 46.9 2.9
+> LLaVA-Video (72B) ✓61.9 -73.1 -61.5 -+ Video-RAG ✗65.4 5.7 73.8 1.0 62.3 1.3
+> + TV-RAG ✗64.6 4.3 73.4 0.4 61.8 0.5
+> + VideoStir (Ours) ✓66.0 6.6 74.1 1.4 62.1 1.0
+
+Table 2: System-level comparison on EgoSchema’s test set with SOTA methods built upon fixed (M)LLMs. These ap-proaches can be categorized into two groups: one employs video-to-text tools (e.g., captioners or object detectors) to pro-vide auxiliary textual inputs for downstream (M)LLMs, while the other leverages the native multimodal understanding capa-bility (Native Input) of MLLMs without auxiliary text. Bold and underlined numbers indicate the best and second-best ac-curacies, respectively. ‘–’ indicates not applicable. (M)LLM Backbone Method Overall ↑
+
+Methods with Video-to-Text Tools 
+
+GPT-3.5 LLoVi [65] 57.6 DrVideo [39] 62.6 GPT-4 VideoAgent [66] 60.2 LLoVi [65] 61.2 VidAgent [67] 62.8 VideoTree [68] 66.2 DrVideo [39] 66.4 Qwen2-VL-7B Vgent [3] 68.0 
+
+Methods with Native Input 
+
+Qwen2-VL-7B IG-VLM [69] 66.2 VideoStir (Ours) 67.2 
+
+designed system prompt specifying explicit intent-relevance criteria, the teacher assesses intent-level alignment between each frame and the query, yield-ing intent-relevance scores. IR-600K comprises 605,676 training samples and 21,791 validation samples. Further details on the intent-relevance scoring prompt, dataset statistics and annotation format are provided in Appendix D and E. 
+
+Implementation. We adopt Qwen2.5-VL-3B-Instruct [ 75 ] as the backbone of the intent-relevance scorer and fine-tune it with LoRA adapters with a rank of 16, a scaling factor of 32, and a dropout of 0.05. We optimize the LoRA using AdamW with a learning rate of 5 × 10 −5
+
+and a weight decay of 0.05, together with a cosine learning-rate schedule and a warm-up ratio of 0.05. Training is performed for 1 epoch with a batch size of 128 under bf16 precision. For the event boundary detector, we use the vision tower from the Qwen2.5-VL series as the embedding backbone. For spatio-temporal graph construction and multi-hop retrieval, we use the Perception Encoder [ 24 ]as the video-language encoder Evl and set N = 3 ,
+
+L = 2 , η = 0 .4, and κs = 3 .25 ; an ablation study on these retrieval hyperparameters is provided in Appendix C. All training runs and comparative ex-periments are conducted on 8 ×A100 GPUs, while the remaining experiments are conducted on a sin-gle A100 GPU. Unless otherwise specified, results are reported as the median of three trials, and ab-lations are conducted on LLaVA-Video (7B) using LongVideoBench [76]. 
+
+4.2 Comparison Against Other Methods 
+
+Table 1 compares VideoStir with the native MLLM and state-of-the-art (SOTA) long-video RAG baselines on LongVideoBench (LV-Bench) [ 76 ], MLVU [ 77 ], and Video-MME-Long [ 78 ], follow-Table 3: Component-level ablations on the expanded 1k vali-dation set. “Overall” denotes overall accuracy, and “Retrieval Acc.” measures the accuracy of successfully retrieving key cues. “w/o Intent-relevance Scorer” replaces the scorer with similarity-based frame retrieval; “w/o Weighted Expectation” replaces probability-weighted expectation with discrete scores; “w/o Spatio-Temporal Graph” disables structured retrieval, which bypasses the graph and directly selects the top-14 clips by PE-embedding similarity, following the best-performing setting in Table 6. Bold indicates the best results.                     
+
+> Method Overall ↑Retrieval Acc. ↑
+> w/o Intent-relevance Scorer + CLIP L/14 52.8 69.2 + Video-CLIP 56.3 75.4 + PE 58.1 79.8 w/o Weighted Expectation 54.2 71.6 w/o Event-Boundary Detector 62.3 88.2 w/o Spatio-Temporal Graph 56.4 74.8 w/o Spatial Edges 57.2 79.3 w/o Temporal Edges 59.8 83.4
+> Full 64.5 92.2
+
+ing the same experimental setup as Video-RAG [ 2 ]and TV-RAG [ 9 ]. Baseline MLLMs include GPT-4o [ 79 ], LLaVA-Video (7B/72B) [ 80 ], mPLUG-Owl3 (8B) [ 81 ], Aria (25B) [ 82 ], and InternVL-1.5 (26B) [ 83 ]. Results are compiled from the bench-marks’ leaderboards and the original papers, with the remaining results obtained from our reproduc-tions based on their open-sourced codes and origi-nal settings. In most cases, VideoStir outperforms both the native model and prior long-video RAG baselines, demonstrating highly competitive per-formance. Notably, VideoStir preserves the na-tive MLLM input setting by operating solely on retrieved visual evidence: it introduces no auxil-iary text, tool calls, or extra modalities, while still achieving SOTA performance. Table 2 compares VideoStir on EgoSchema against specialized long-video systems built atop fixed (M)LLMs [ 84 ]; baseline results are taken from DrVideo [ 39 ] and Vgent [ 3]. Relying solely on native multimodal inputs without external video-to-text tools (e.g., captioners or object detectors), VideoStir achieves performance comparable to these specialized systems that leverage such auxil-iary tools. 
+
+4.3 Ablation Study Component-level ablations. Table 3 validates the contributions of VideoStir’s key components. Re-placing the intent–relevance scorer with similarity-based frame retrieval results in substantial drops in both overall performance and retrieval accuracy, even when using strong vision–language embed-
+
+Table 4: Ablations of VideoStir’s video-language embed-ding backbones with N = 1000 . “Overall” denotes overall accuracy, and “Retrieval Acc.” refers to the accuracy of suc-cessfully retrieving the key evidence for answering the query. The bold numbers represent the best results.          
+
+> Embedding Backbone Overall ↑Retrieval Acc. ↑
+> Video-CLIP [22] 62.1 88.3 X-CLIP [23] 62.8 89.4
+> PE [24] 64.5 92.2
+
+dings from a powerful encoder such as PE. This indicates that pure semantic similarity matching can overlook the critical evidence required for long-video understanding, underscoring the importance of intent-aware retrieval. Meanwhile, removing the probability-weighted expectation (i.e., directly us-ing discrete relevance levels) significantly degrades performance, suggesting that distributional scoring provides a smoother and better-calibrated ranking signal for discriminating frames. Moreover, dis-abling the spatio-temporal graph (i.e., flattening cues instead of performing structured retrieval), or removing spatial/temporal edges, markedly reduces retrieval accuracy, confirming that multi-hop aggre-gation over structured contexts is essential for ex-tending evidence beyond the semantically matched anchor clips. In addition, replacing the event-boundary detector with uniform sampling that pro-duces the same number of clips slightly degrades performance, suggesting that event-boundary seg-mentation isn’t the main performance driver, but it still improves evidence retrieval accuracy. 
+
+Embedding backbones. Table 4 examines the impact of embedding choices on graph-based clip retrieval. Stronger video–language encoders yield consistent improvements on downstream perfor-mance. However, these gains are comparatively modest relative to the contributions from the frame-work’s core components, suggesting that Video-Stir’s effectiveness is driven primarily by its struc-tured design rather than by reliance on increasingly powerful embedding models. 
+
+Scorer training strategy. Table 5 compares zero-shot inference, LoRA tuning, and full-parameter fine-tuning for the intent-relevance scorer. We eval-uate different student-teacher pairs, including In-ternVL2.5 [ 83 ], Qwen2.5-VL [ 75 ], and Qwen2-VL [ 85 ]. For Qwen2-VL-2B, we increase the LoRA rank to 32 (vs. 16 for others) to align train-able parameter counts for fair comparison. In the zero-shot setting, student’s performance significantly behind teachers. Conversely, LoRA Table 5: Ablations on the intent-relevant scorer’s distillation strategies. “IR-600K CE” and “LV-Bench CE” denote the cross-entropy loss computed on the corresponding datasets. To reduce distributional bias, the student model is distilled using teacher models from the same family. “Retrieval Acc.” refers to the accuracy of successfully retrieving the key evidence.                                                                           
+
+> Base Model Method IR-600K CE ↓LV-Bench CE ↓Overall ↑Retrieval Acc. ↑Trainable Params ↓
+> Teacher Models
+> InternVL2.5-78B Zero-Shot --64.8 92.6 -Qwen2.5-VL-72B Zero-Shot --65.4 95.8 -Qwen2-VL-72B Zero-Shot --64.9 94.7 -
+> Student Models
+> InternVL2.5-4B Zero-Shot 8.8755 8.9423 59.3 82.1 -LoRA 3.4614 3.8151 62.3 87.8 3.7M Full Params 3.0238 3.2578 63.4 90.7 3.0B Qwen2.5-VL-3B Zero-Shot 8.0909 8.1742 61.2 85.8 -LoRA 3.3101 3.6461 64.5 92.2 3.7M Full Params 2.9127 3.1017 64.7 93.2 3.0B Qwen2-VL-2B Zero-Shot 9.3210 9.3872 58.7 80.4 -LoRA 3.8127 4.3093 61.3 86.8 4.4M Full Params 3.1846 3.5204 62.4 88.9 1.5B
+
+tuning markedly reduces validation cross-entropy on IR-600K and consistently improves LV-Bench performance, demonstrating robust generalization. Notably, LoRA captures the majority of full-param tuning gains using only about 4M parameters, in contrast to the billions required for full updates, with the downstream performance of LoRA-tuned Qwen2.5-VL-3B nearly matching the fully fine-tuned model. Consequently, we adopt the Qwen2.5-VL family for both teacher and student roles to max-imize performance. These results confirm that IR-600K provides effective, transferable supervision, while LoRA offers an optimal accuracy–efficiency trade-off for practical long-video RAG systems. 
+
+4.4 Discussion 
+
+Tables 1 and 2 present a comprehensive comparison between VideoStir and SOTA baselines, including those that utilize external expert modules (e.g., cap-tioners, object detectors, and OCR models) to aug-ment video with auxiliary text. Our results indicate that VideoStir achieves superior performance using only video frames as native inputs, effectively by-passing the need for external textual augmentation. This suggests that one of the primary bottlenecks in long-video understanding still lies in the retrieval and organization of pivotal visual evidence. There-fore, refining the selection of visual evidence is es-sential for scaling MLLM’s long-video understand-ing capabilities. VideoStir addresses this by en-hancing both the relevance and spatio-temporal co-herence of retrieved evidence, thereby facilitating more reliable reasoning in downstream MLLMs. 
+
+5 Conclusion 
+
+We propose VideoStir, a novel long-video RAG framework designed to address the limitations of contextual structure decoupling and intent misalign-ment prevalent in current paradigms. VideoStir models long videos as spatio-temporal graphs and utilizes multi-hop traversal to recover the intrin-sic topology of their contexts, thereby aggregating spatio-temporally coherent evidence. Additionally, we introduce an intent-relevance scorer trained on our newly curated IR-600K dataset, which further filters visual content by capturing the query’s under-lying reasoning intent beyond surface-level seman-tics. Both the dataset and the scorer provide a solid foundation for future research into intent-oriented long-video RAG. Extensive experiments show that VideoStir is competitive with SOTA baselines with-out relying on auxiliary information, underscoring the effectiveness of shifting from flattened seman-tic matching to structured, intent-aware reasoning, and further revealing that one of the main bottle-necks in long-video understanding lies in retrieving and organizing pivotal visual evidence. 
+
+Limitations 
+
+As VideoStir introduces an additional step to trans-form long videos into structured representations, it inevitably incurs system latency. Indeed, system latency remains a broad challenge for long-video understanding frameworks that rely on external components like agents or RAG pipelines. We regard further reducing end-to-end latency as a piv-otal direction for future long-video RAG research. References 
+
+[1] K. Li, Y. He, Y. Wang, Y. Li, W. Wang, P. Luo, Y. Wang, L. Wang, and Y. Qiao, “Videochat: Chat-centric video understanding,” Science China In-formation Sciences , vol. 68, no. 10, p. 200102, 2025. [2] Y. Luo, X. Zheng, G. Li, S. Yin, H. Lin, C. Fu, J. Huang, J. Ji, F. Chao, J. Luo et al. , “Video-rag: Visually-aligned retrieval-augmented long video comprehension,” NeurIPS 2025 , 2025. [3] X. Shen, W. Zhang, J. Chen, and M. Elho-seiny, “Vgent: Graph-based retrieval-reasoning-augmented generation for long video understand-ing,” arXiv preprint arXiv:2510.14032 , 2025. [4] G. Comanici, E. Bieber, M. Schaekermann, I. Pasu-pat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen et al. , “Gemini 2.5: Pushing the frontier with advanced reasoning, multimodal-ity, long context, and next generation agentic capa-bilities,” arXiv preprint arXiv:2507.06261 , 2025. [5] X. Ren, L. Xu, L. Xia, S. Wang, D. Yin, and C. Huang, “Videorag: Retrieval-augmented gen-eration with extreme long-context videos,” arXiv preprint arXiv:2502.01549 , 2025. [6] X. Tang, J. Qiu, L. Xie, Y. Tian, J. Jiao, and Q. Ye, “Adaptive keyframe sampling for long video under-standing,” in Proceedings of the Computer Vision and Pattern Recognition Conference , 2025, pp. 29 118–29 128. [7] Z. Zhu, H. Xu, Y. Luo, Y. Liu, K. Sarkar, Z. Yang, and Y. You, “Focus: Efficient keyframe selec-tion for long video understanding,” arXiv preprint arXiv:2510.27280 , 2025. [8] A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark et al. , “Learning transferable visual models from natural language supervision,” in International conference on machine learning .PmLR, 2021, pp. 8748–8763. [9] Z. Cao, Y. He, A. Liu, J. Xie, F. Chen, and Z. Wang, “Tv-rag: A temporal-aware and semantic entropy-weighted framework for long video retrieval and understanding,” in Proceedings of the 33rd ACM International Conference on Multimedia , 2025, pp. 9071–9079. [10] R. Liao, M. Erler, H. Wang, G. Zhai, G. Zhang, Y. Ma, and V. Tresp, “Videoinsta: Zero-shot long video understanding via informative spatial-temporal reasoning with llms,” in Findings of the Association for Computational Linguistics: EMNLP 2024 , 2024, pp. 6577–6602. [11] K. Pan, J. Li, W. Wang, H. Fei, H. Song, W. Ji, J. Lin, X. Liu, T.-S. Chua, and S. Tang, “I3: I ntent-i ntrospective retrieval conditioned on i nstruc-tions,” in Proceedings of the 47th International ACM SIGIR Conference on Research and Devel-opment in Information Retrieval , 2024, pp. 1839– 1849. [12] X. Liu, W. Zhang, and M.-L. Zhang, “Hacsurv: A hierarchical copula-based approach for survival analysis with dependent competing risks,” in Inter-national Conference on Artificial Intelligence and Statistics . PMLR, 2025, pp. 3079–3087. [13] Z. Zhang, S. He, H. Wang, B. Shen, and L. Feng, “Defending multimodal backdoored models by re-pulsive visual prompt tuning,” NeurIPS , 2025. [14] Z. Zhang, Y. Niu, X. Liu, and B. Li, “Tuning vision-language models with candidate labels by prompt alignment,” in DASFAA , 2025. [15] Z. Zhang, J. Zhang, S. Zhou, Q. Wei, S. He, F. Liu, and L. Feng, “Improving generalizability and un-detectability for targeted adversarial attacks on multimodal pre-trained models,” arXiv preprint arXiv:2509.19994 , 2025. [16] L. Mei, S. Liu, Y. Wang, Y. Ge, B. Bi, J. Yao, J. Wan, Z. Yin, J. Guo, and X. Cheng, “Gated differentiable working memory for long-context language modeling,” arXiv preprint arXiv:2601.12906 , 2026. [17] R. Anil, S. Borgeaud, J.-B. Alayrac, J. Yu, R. Soricut, J. Schalkwyk, A. M. Dai, A. Hauth, K. Millican et al. , “Gemini: a family of highly capable multimodal models,” arXiv preprint arXiv:2312.11805 , 2023. [18] Y. Shen, C. Fu, S. Dong, X. Wang, Y.-F. Zhang, P. Chen, M. Zhang, H. Cao, K. Li, S. Lin et al. ,“Long-vita: Scaling large multi-modal models to 1 million tokens with leading short-context accu-racy,” arXiv preprint arXiv:2502.05177 , 2025. [19] Y. Shu, Z. Liu, P. Zhang, M. Qin, J. Zhou, Z. Liang, T. Huang, and B. Zhao, “Video-xl: Extra-long vi-sion language model for hour-scale video under-standing,” in Proceedings of the Computer Vision and Pattern Recognition Conference , 2025, pp. 26 160–26 169. [20] Y. Weng, M. Han, H. He, X. Chang, and B. Zhuang, “Longvlm: Efficient long video under-standing via large language models,” in European Conference on Computer Vision . Springer, 2024, pp. 453–470. [21] H. Luo, L. Ji, M. Zhong, Y. Chen, W. Lei, N. Duan, and T. Li, “Clip4clip: An empirical study of clip for end to end video clip retrieval,” arXiv preprint arXiv:2104.08860 , 2021. [22] H. Xu, G. Ghosh, P.-Y. Huang, D. Okhonko, A. Aghajanyan, F. Metze, L. Zettlemoyer, and C. Feichtenhofer, “Videoclip: Contrastive pre-training for zero-shot video-text understanding,” in Proceedings of the 2021 Conference on Em-pirical Methods in Natural Language Processing ,2021, pp. 6787–6800. [23] Y. Ma, G. Xu, X. Sun, M. Yan, J. Zhang, and R. Ji, “X-clip: End-to-end multi-grained con-trastive learning for video-text retrieval,” in Pro-ceedings of the 30th ACM international conference on multimedia , 2022, pp. 638–647. [24] D. Bolya, P.-Y. Huang, P. Sun, J. H. Cho, A. Madotto, C. Wei, T. Ma, J. Zhi, J. Rajasegaran, H. Rasheed et al. , “Perception encoder: The best visual embeddings are not at the output of the net-work,” arXiv preprint arXiv:2504.13181 , 2025. [25] Y. Gu, S. Chen, X. Sun, J. Ji, Y. Zhou, and R. Ji, “Optical remote sensing image salient object de-tection via bidirectional cross-attention and atten-tion restoration,” Pattern Recognition , vol. 164, p. 111478, 2025. [26] Z. Xiong, Y. Cai, Z. Li, and Y. Wang, “Un-veiling the potential of diffusion large language model in controllable generation,” arXiv preprint arXiv:2507.04504 , 2025. [27] H. Wu, Y. Cai, H. Ge, H. Chen, M.-H. Yang, and Y. Wang, “Refineshot: Rethinking cinematography understanding with foundational skill evaluation,” 
+
+arXiv preprint arXiv:2510.02423 , 2025. [28] Y. Gu, Y. Meng, J. Ji, and X. Sun, “Acl: Activating capability of linear attention for image restoration,” in Proceedings of the Computer Vision and Pattern Recognition Conference , 2025, pp. 17 913–17 923. [29] Z. Li, Y. Wang, B. Hooi, Y. Cai, N. Cheung, N. Peng, and K.-W. Chang, “Think carefully and check again! meta-generation unlocking llms for low-resource cross-lingual summarization,” arXiv preprint arXiv:2410.20021 , 2024. [30] Y. Ge, S. Liu, Y. Wang, L. Mei, B. Bi, X. Zhou, J. Yao, J. Guo, and X. Cheng, “Focusing by con-trastive attention: Enhancing vlms’ visual reason-ing,” arXiv preprint arXiv:2509.06461 , 2025. [31] H. Fu, Y. Wang, W. Yang, A. C. Kot, and B. Wen, “Dp-iqa: Utilizing diffusion prior for blind image quality assessment in the wild,” arXiv preprint arXiv:2405.19996 , 2024. [32] Y. Gu, X. Yan, H. Qin, N. Akhtar, S. Yuan, H. Fu, S. Yang, and A. Mian, “Hdtcnet: A hybrid-dimensional convolutional network for multivari-ate time series classification,” Pattern Recognition ,vol. 168, p. 111837, 2025. [33] Z. Zhang, Q. Tao, J. Lv, N. Zhao, L. Feng, and J. T. Zhou, “Tokenswap: Backdoor attack on the com-positional understanding of large vision-language models,” arXiv preprint arXiv:2509.24566 , 2025. [34] K. Lin, F. Ahmed, L. Li, C.-C. Lin, E. Azarnasab, Z. Yang, J. Wang, L. Liang, Z. Liu, Y. Lu et al. ,“Mm-vid: Advancing video understanding with gpt-4v (ision),” arXiv preprint arXiv:2310.19773 ,2023. [35] L. Zhang, T. Zhao, H. Ying, Y. Ma, and K. Lee, “Omagent: A multi-modal agent framework for complex video understanding with task divide-and-conquer,” in Proceedings of the 2024 Conference on Empirical Methods in Natural Language Pro-cessing , 2024, pp. 10 031–10 045. [36] H. Jin, Q. Wang, W. Zhang, Y. Liu, and S. Cheng, “Videomem: Enhancing ultra-long video un-derstanding via adaptive memory management,” 
+
+arXiv preprint arXiv:2512.04540 , 2025. [37] S. Wang, Q. Zhao, M. Q. Do, N. Agarwal, K. Lee, and C. Sun, “Vamos: Versatile action models for video understanding,” in European Conference on Computer Vision . Springer, 2024, pp. 142–160. [38] J. Min, S. Buch, A. Nagrani, M. Cho, and C. Schmid, “Morevqa: Exploring modular rea-soning models for video question answering,” in 
+
+Proceedings of the IEEE/CVF Conference on Com-puter Vision and Pattern Recognition , 2024, pp. 13 235–13 245. [39] Z. Ma, C. Gou, H. Shi, B. Sun, S. Li, H. Rezatofighi, and J. Cai, “Drvideo: Document retrieval based long video understanding,” in Pro-ceedings of the Computer Vision and Pattern Recognition Conference , 2025, pp. 18 936–18 946. [40] Z. Xue, J. Zhang, X. Xie, Y. Cai, Y. Liu, X. Li, and D. Tao, “Omni-adavideorag: Omni-contextual adaptive retrieval-augmented for effi-cient long video understanding,” arXiv preprint arXiv:2506.13589 , 2025. [41] N. Zeng, H. Hou, F. R. Yu, S. Shi, and Y. T. He, “Scenerag: Scene-level retrieval-augmented gen-eration for video understanding,” arXiv preprint arXiv:2506.07600 , 2025. [42] S. Jeong, K. Kim, J. Baek, and S. J. Hwang, “Vide-orag: Retrieval-augmented generation over video corpus,” arXiv preprint arXiv:2501.05874 , 2025. [43] Z. Xu, J. Zhang, Q. Wang, and Y. Liu, “E-vrag: En-hancing long video understanding with resource-efficient retrieval augmented generation,” arXiv preprint arXiv:2508.01546 , 2025. [44] H. Fu, Y. Ouyang, K.-W. Chang, Y. Wang, Z. Huang, and Y. Cai, “Contextnav: Towards agen-tic multimodal in-context learning,” arXiv preprint arXiv:2510.04560 , 2025. [45] X. Liu, W. Zhang, W. Tang, T. D. Le, J. Li, L. Liu, and M.-L. Zhang, “From correlation to causation: Max-pooling-based multi-instance learning leads to more robust whole slide image classification,” 
+
+arXiv preprint arXiv:2408.09449 , 2024. [46] H. Ge, Y. Wang, K.-W. Chang, H. Wu, and Y. Cai, “Framemind: Frame-interleaved video rea-soning via reinforcement learning,” arXiv preprint arXiv:2509.24008 , 2025. [47] Y. Gu, Y. Meng, S. Chen, J. Ji, X. Sun, W. Ruan, and R. Ji, “Sfir: Optimizing spatial and frequency domains for image restoration,” Pattern Recogni-tion , p. 112188, 2025. [48] Y. Gu, Y. Meng, K. Zheng, X. Sun, J. Ji, W. Ruan, L. Cao, and R. Ji, “An efficient and mixed het-erogeneous model for image restoration,” arXiv preprint arXiv:2504.10967 , 2025. [49] H. Fu, Y. Shen, Y. Liu, J. Li, and X. Zhang, “Sgcn: a multi-order neighborhood feature fusion land-form classification method based on superpixel and graph convolutional network,” International Journal of Applied Earth Observation and Geoin-formation , vol. 122, p. 103441, 2023. [50] L. Mei, S. Liu, Y. Wang, B. Bi, Y. Ge, J. Wan, Y. Wu, and X. Cheng, “a1: Steep test-time scaling law via environment augmented generation,” arXiv preprint arXiv:2504.14597 , 2025. [51] Z. Li, Y. Wang, B. Hooi, Y. Cai, N. Peng, and K.-W. Chang, “Drs: Deep question reformulation with structured output,” in Association for Compu-tational Linguistics ACL, 2025. , 2024. [52] Z. Li, G. Song, Y. Cai, Z. Xiong, J. Yuan, and Y. Wang, “Texture or semantics? vision-language models get lost in font recognition,” in Conference on Language Modeling COLM, 2025. , 2025. [53] J. Chen, Z. Li, Y. Cai, H. Jiang, C. Qian, J. Kang, S. Gao, H. Zhao, T. Mao, and Y. Zhang, “Haif-gs: Hierarchical and induced flow-guided gaussian splatting for dynamic scene,” in NeurIPS 2025 ,2025. [54] R. Killick, P. Fearnhead, and I. A. Eckley, “Opti-mal detection of changepoints with a linear compu-tational cost,” Journal of the American Statistical Association , vol. 107, no. 500, pp. 1590–1598, 2012. [55] E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen et al. , “Lora: Low-rank adaptation of large language models.” ICLR ,vol. 1, no. 2, p. 3, 2022. [56] Y. Gu, H. Xu, Y. Quan, W. Chen, and J. Zheng, “Orsi salient object detection via bidimensional attention and full-stage semantic guidance,” IEEE Transactions on Geoscience and Remote Sensing ,vol. 61, pp. 1–13, 2023. [57] Y. Ge, S. Liu, Y. Wang, L. Mei, L. Chen, B. Bi, and X. Cheng, “Innate reasoning is not enough: In-context learning enhances reasoning large lan-guage models with less overthinking,” arXiv preprint arXiv:2503.19602 , 2025. [58] Y. Gu, Y. Meng, X. Sun, J. Ji, W. Ruan, and R. Ji, “Mixed degradation image restoration via local dy-namic optimization and conditional embedding,” 
+
+arXiv preprint arXiv:2411.16217 , 2024. [59] L. Mei, J. Yao, Y. Ge, Y. Wang, B. Bi, Y. Cai, J. Liu, M. Li, Z.-Z. Li, D. Zhang et al. , “A survey of context engineering for large language models,” 
+
+arXiv preprint arXiv:2507.13334 , 2025. [60] H. Wu, H. Chen, Y. Cai, C. Liu, Q. Ye, M.-H. Yang, and Y. Wang, “Dimo-gui: Advancing test-time scaling in gui grounding via modality-aware visual reasoning,” in EMNLP 2025 , 2025. [61] L. Mei, S. Liu, Y. Wang, B. Bi, R. Yuan, and X. Cheng, “Hiddenguard: Fine-grained safe gener-ation with specialized representation router,” arXiv preprint arXiv:2410.02684 , 2024. [62] Z. Li, Y. Wang, B. Hooi, Y. Cai, Z. Xiong, N. Peng, and K.-W. Chang, “Vulnerability of llms to verti-cally aligned text manipulations,” in Association for Computational Linguistics ACL, 2025. , 2024. [63] J. Chen, Z. Li, Y. Cai, H. Jiang, S. Gao, H. Zhao, T. Mao, and Y. Zhang, “From tokens to nodes: Semantic-guided motion control for dynamic 3d gaussian splatting,” arXiv preprint arXiv:2510.02732 , 2025. [64] L. Mei, S. Liu, Y. Wang, B. Bi, J. Mao, and X. Cheng, “"not aligned" is not" malicious": Be-ing careful about hallucinations of large language models’ jailbreak,” COLING 2025 , 2024. [65] C. Zhang, T. Lu, M. M. Islam, Z. Wang, S. Yu, M. Bansal, and G. Bertasius, “A simple llm frame-work for long-range video question-answering,” in 
+
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 2024, pp. 21 715–21 737. [66] X. Wang, Y. Zhang, O. Zohar, and S. Yeung-Levy, “Videoagent: Long-form video understanding with large language model as agent,” in European Con-ference on Computer Vision . Springer, 2024, pp. 58–76. [67] Y. Fan, X. Ma, R. Wu, Y. Du, J. Li, Z. Gao, and Q. Li, “Videoagent: A memory-augmented mul-timodal agent for video understanding,” in Euro-pean Conference on Computer Vision . Springer, 2024, pp. 75–92. [68] Z. Wang, S. Yu, E. Stengel-Eskin, J. Yoon, F. Cheng, G. Bertasius, and M. Bansal, “Videotree: Adaptive tree-based video representation for llm reasoning on long videos,” in Proceedings of the Computer Vision and Pattern Recognition Confer-ence , 2025, pp. 3272–3283. [69] W. Kim, C. Choi, W. Lee, and W. Rhee, “An im-age grid can be worth a video: Zero-shot video question answering using a vlm,” IEEE Access ,2024. [70] Y. Song, J. Vallmitjana, A. Stent, and A. Jaimes, “Tvsum: Summarizing web videos using titles,” in 
+
+Proceedings of the IEEE conference on computer vision and pattern recognition , 2015, pp. 5179– 5187. [71] J. Lei, T. L. Berg, and M. Bansal, “Detecting mo-ments and highlights in videos via natural lan-guage queries,” Advances in Neural Information Processing Systems , vol. 34, pp. 11 846–11 858, 2021. [72] Z. Yu, D. Xu, J. Yu, T. Yu, Z. Zhao, Y. Zhuang, and D. Tao, “Activitynet-qa: A dataset for under-standing complex web videos via question answer-ing,” in Proceedings of the AAAI Conference on Artificial Intelligence , vol. 33, no. 01, 2019, pp. 9127–9134. [73] J. Xiao, X. Shang, A. Yao, and T.-S. Chua, “Next-qa: Next phase of question-answering to ex-plaining temporal actions,” in Proceedings of the IEEE/CVF conference on computer vision and pat-tern recognition , 2021, pp. 9777–9786. [74] B. Wu, S. Yu, Z. Chen, J. B. Tenenbaum, and C. Gan, “Star: A benchmark for situated rea-soning in real-world videos,” arXiv preprint arXiv:2405.09711 , 2024. [75] S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang et al. ,“Qwen2. 5-vl technical report,” arXiv preprint arXiv:2502.13923 , 2025. [76] H. Wu, D. Li, B. Chen, and J. Li, “Longvideobench: A benchmark for long-context interleaved video-language understanding,” Ad-vances in Neural Information Processing Systems ,vol. 37, pp. 28 828–28 857, 2024. [77] J. Zhou, Y. Shu, B. Zhao, B. Wu, Z. Liang, S. Xiao, M. Qin, X. Yang, Y. Xiong, B. Zhang et al. , “Mlvu: Benchmarking multi-task long video understand-ing,” in Proceedings of the Computer Vision and Pattern Recognition Conference , 2025, pp. 13 691– 13 701. [78] C. Fu, Y. Dai, Y. Luo, L. Li, S. Ren, R. Zhang, Z. Wang, C. Zhou, Y. Shen, M. Zhang et al. ,“Video-mme: The first-ever comprehensive eval-uation benchmark of multi-modal llms in video analysis,” in Proceedings of the Computer Vision and Pattern Recognition Conference , 2025, pp. 24 108–24 118. [79] A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford et al. , “Gpt-4o system card,” 
+
+arXiv preprint arXiv:2410.21276 , 2024. [80] Y. Zhang, J. Wu, W. Li, B. Li, Z. Ma, Z. Liu, and C. Li, “Video instruction tuning with synthetic data,” arXiv preprint arXiv:2410.02713 , 2024. [81] J. Ye, H. Xu, H. Liu, A. Hu, M. Yan, Q. Qian, J. Zhang, F. Huang, and J. Zhou, “mplug-owl3: Towards long image-sequence understand-ing in multi-modal large language models,” arXiv preprint arXiv:2408.04840 , 2024. [82] D. Li, Y. Liu, H. Wu, Y. Wang, Z. Shen, B. Qu, X. Niu, F. Zhou, C. Huang, Y. Li et al. , “Aria: An open multimodal native mixture-of-experts model,” 
+
+arXiv preprint arXiv:2410.05993 , 2024. [83] Z. Chen, W. Wang, H. Tian, S. Ye, Z. Gao, E. Cui, W. Tong, K. Hu, J. Luo, Z. Ma et al. , “How far are we to gpt-4v? closing the gap to commercial multimodal models with open-source suites,” Sci-ence China Information Sciences , vol. 67, no. 12, p. 220101, 2024. [84] K. Mangalam, R. Akshulakov, and J. Malik, “Egoschema: A diagnostic benchmark for very long-form video language understanding,” Ad-vances in Neural Information Processing Systems ,vol. 36, pp. 46 212–46 244, 2023. [85] P. Wang, S. Bai, S. Tan, S. Wang, Z. Fan, J. Bai, K. Chen, X. Liu, J. Wang, W. Ge et al. , “Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution,” arXiv preprint arXiv:2409.12191 , 2024. [86] H. Fu, H. Wang, J. J. Chin, and Z. Shen, “Brain-vis: Exploring the bridge between brain and visual signals via image reconstruction,” in ICASSP 2025-2025 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) . IEEE, 2025, pp. 1–5. [87] J. Ren, G. Zhang, H. Fu, P. Wu, and H. Wang, “Wamo: Wavelet-enhanced multi-frequency trajec-tory analysis for fine-grained text-motion retrieval,” 
+
+arXiv preprint arXiv:2508.03343 , 2025. [88] H. Fu, Y. Gu, Y. Yan, Y. Shen, Y. Wu, and L. Sun, “Sdr-gain: A high real-time occluded pedestrian pose completion method for autonomous driving,” 
+
+IEEE Transactions on Intelligent Transportation Systems , vol. 27, no. 1, pp. 972–982, 2025. [89] Z. Xiong, Y. Cai, Z. Li, J. Yuan, and Y. Wang, “Thinking with sound: Audio chain-of-thought enables multimodal reasoning in large audio-language models,” arXiv preprint arXiv:2509.21749 , 2025. [90] Y. Ge, S. Liu, B. Bi, Y. Wang, L. Mei, W. Feng, L. Chen, and X. Cheng, “Can graph descriptive order affect solving graph problems with llms?” 
+
+ACL 2025 , 2024. [91] H. Fu, J. Ren, Q. Chai, D. Ye, Y. Cai, and H. Wang, “Vistawise: Building cost-effective agent with cross-modal knowledge graph for minecraft,” in 
+
+Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , 2025, pp. 21 895–21 909. [92] Z. Zhang, B. Yang, S. He, W. Chen, W. E. Zhang, O. Maennel, L. Feng, , and M. Xu, “Test-time attention purification for backdoored large vision language models,” in CVPR , 2026. [93] C. Liu, H. Chen, Y. Cai, H. Wu, Q. Ye, M.-H. Yang, and Y. Wang, “Structured attention matters to multimodal llms in document understanding,” 
+
+arXiv preprint arXiv:2506.21600 , 2025. [94] X. Ti, W. Ye, Z. Zhang, J. Zhao, C. Yao, L. Feng, and H. Wang, “Towards reverse engineering of language models: A survey,” in Findings of the As-sociation for Computational Linguistics: EMNLP 2025 , 2025. [95] H. Wu, Y. Cai, Z. Li, H. Ge, B. Sun, J. Yuan, and Y. Wang, “Camreasoner: Reinforcing camera movement understanding via structured spatial rea-soning,” arXiv preprint arXiv:2602.00181 , 2026. [96] H. Ge, Y. Wang, M.-H. Yang, and Y. Cai, “Mrfd: Multi-region fusion decoding with self-consistency for mitigating hallucinations in lvlms,” 
+
+arXiv preprint arXiv:2508.10264 , 2025. 
+
+A The Use of LLMs 
+
+The paper employs LLMs for language polishing. 
+
+B Extended discussion for Structured Retrieval 
+
+In Figure 3, we further illustrate and discuss the advantages of structured retrieval via visualizations. Query: What is the purpose of the person 
+
+> using the printer in the video?
+> Spatiotemporal Contexts are Missing Flatten
+> Clips
+
+··· 
+
+> Spatiotemporal
+> Graph
+> Multi -hop
+> Traversal
+> Anchor
+> Retrieval
+> Semantic -based
+> Retrieval
+> Query
+> Reconstructed Spatiotemporal Context
+> Structured
+> Structured
+> Query
+> (Ground Truth: Make a poster.)
+
+Figure 3: Advantages of structured retrieval over flat clip re-trieval. Flattened retrieval mainly returns clips with explicit se-mantic overlap with the query, while overlooking clips that are contextually relevant but do not contain direct query-matching content. VideoStir structures long videos to reconstruct spatio-temporal context, allowing multi-hop traversal to aggregate contextually related clips around key moments. The resulting evidence is cleaner and more coherent, providing stronger support for subsequent fine-grained retrieval. 
+
+C Hyperparameter Ablations 
+
+We determine the hyperparameters for the graph-based clip retrieval procedure based on the ablation study in Table 6. 
+
+Table 6: Hyperparameter ablations on Graph-based Clip Retrieval. We investigate the impact of the number of anchors 
+
+N , hop distance L, and spatial edge threshold η. “Avg. Clips” denotes the average number of retrieved clips per query. The bold numbers represent the best results.                                       
+
+> Hyperparameter Value Avg. Clips Retrieval Acc. ↑
+> Number of Anchors ( N)
+> (Fixed L= 2 , η = 0 .6)
+> 17.2 88.0
+> 213.6 92.0
+> 321.9 90.5 425.4 90.0
+> Hop Distance ( L)
+> (Fixed N= 2 , η = 0 .6)
+> 18.4 87.0
+> 213.6 92.0
+> 316.6 92.0 418.1 91.0
+> Edge Weight Threshold ( η)
+> (Fixed N= 2 , L = 2 )
+> 0.2 31.4 84.0 0.4 20.6 90.5
+> 0.6 13.6 92.0
+> 0.8 6.8 82.5
+
+D Supplemental Details for IR-600K 
+
+D.1 Annotation Example 
+
+We provide an example annotation below; during training, the text portion of the user content will be substituted into the intent-relevance scoring prompt as {query}. 
+
+Annotation Example 
+
+[{"role": "system", "content": "You are a helpful assis-tant."}, {"role": "user", "content": [{ "type": "image", "im-age": "8480330992/frame_000310.jpg"}, {"type": "text", "text": "why do the ladies tap the children s heads with some soft item"}]}, { "role": "assistant", "content": [{"type": "text","text": "2"}]}] 
+
+D.2 Dataset Distribution Statistics 
+
+We summarize the data distributions of the IR-600K training and validation sets in Figures 4. 1 2 3 4 5
+
+> Intent Relevance Level
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> Proportion of Total  24.2%
+> 8.7%
+> 28.8%
+> 16.8%
+> 21.5%
+> 28.8%
+> 9.8%
+> 28.7%
+> 14.4%
+> 18.4%
+> Intent Relevance Score Distribution: Training vs. Validation
+> Training Set
+> Validation Set
+
+Figure 4: Distribution of Intent Relevance Scores across the IR-600K training and validation sets. The results demonstrate that the validation set maintains a consistent class distribution with the training set across all relevance levels. 
+
+E Intent Relevance Scoring Prompt 
+
+Intent-Relevance Scoring Prompt 
+
+Infer the query’s intent and evaluate how likely it is that this frame is intent-relevant for answering: ‘{query}’. Output only one number from 1 to 5, where: [1] = completely irrelevant — the frame provides no visual or contextual information related to the question or its answer. [2] = slightly relevant — the frame shows general back-ground or context, but it is unlikely to contribute to answer-ing. [3] = moderately relevant — the frame includes partial clues or indirect context that might help infer the answer, but the key evidence is missing. [4] = mostly relevant — the frame provides substantial visual or contextual information that can be used to answer the question, though not fully decisive. [5] = highly relevant — the frame clearly contains the decisive evidence or strong contextual cues that directly or indirectly support the correct answer.
