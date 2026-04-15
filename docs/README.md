@@ -6,108 +6,88 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-14
-- 运行时间：2026-04-14 20:00:15 UTC
+- 最新运行日期：2026-04-15
+- 运行时间：2026-04-15 20:10:37 UTC
 - 运行状态：成功
-- 本次总论文数：29
-- 精读区：17
+- 本次总论文数：22
+- 精读区：10
 - 速读区：12
 
 ### 今日简报（AI）
-今日深度解析 29 篇 AI 论文，重点攻克长视频时空理解与临床技能评估两大核心难题。
-满
-- 详情：[/202604/14/README](/202604/14/README)
+今日精选 22 篇前沿论文，深度解析长视频剧本生成与指令动作理解等核心突破。
+重点关注 OmniScript 实现的长篇电影级音视频剧本生成，以及 InstrAct 在教学视频动作理解上的新进展。
+建议关注视频生成与时空对齐技术的融合，探索大模型在复杂长视频创作中的落地潜力。
+- 详情：[/202604/15/README](/202604/15/README)
 
 ### 精读区论文标签
-1. [VideoStir: Understanding Long Videos via Spatio-Temporally Structured and Intent-Aware RAG](/202604/14/2604.05418v2-videostir-understanding-long-videos-via-spatio-temporally-structured-and-intent-aware-rag)  
+1. [OmniScript: Towards Audio-Visual Script Generation for Long-Form Cinematic Video](/202604/15/2604.11102v1-omniscript-towards-audio-visual-script-generation-for-long-form-cinematic-video)  
    标签：评分：10.0/10、query:lvu
-   evidence：用于问答的结构化和意图感知长视频RAG
-2. [SiMing-Bench: Evaluating Procedural Correctness from Continuous Interactions in Clinical Skill Videos](/202604/14/2604.09037v1-siming-bench-evaluating-procedural-correctness-from-continuous-interactions-in-clinical-skill-videos)  
-   标签：评分：10.0/10、query:medvid
-   evidence：评估临床技能视频中的操作正确性
-3. [LVSum: A Benchmark for Timestamp-Aware Long Video Summarization](/202604/14/2604.10024v1-lvsum-a-benchmark-for-timestamp-aware-long-video-summarization)  
-   标签：评分：10.0/10、query:lvu
-   evidence：具有时间对齐的长视频摘要基准测试
-4. [Mosaic: Cross-Modal Clustering for Efficient Video Understanding](/202604/14/2604.10060v1-mosaic-cross-modal-clustering-for-efficient-video-understanding)  
-   标签：评分：10.0/10、query:lvu
-   evidence：流式长视频理解的高效集群驱动VLM推理
-5. [Data-Efficient Surgical Phase Segmentation in Small-Incision Cataract Surgery: A Controlled Study of Vision Foundation Models](/202604/14/2604.10514v1-data-efficient-surgical-phase-segmentation-in-small-incision-cataract-surgery-a-controlled-study-of-vision-foundation-models)  
-   标签：评分：10.0/10、query:medvid
-   evidence：白内障手术视频中的手术阶段分割
-6. [ReXSonoVQA: A Video QA Benchmark for Procedure-Centric Ultrasound Understanding](/202604/14/2604.10916v1-rexsonovqa-a-video-qa-benchmark-for-procedure-centric-ultrasound-understanding)  
-   标签：评分：10.0/10、query:medvid
-   evidence：以流程为中心的超声理解视频问答基准
-7. [OmniScript: Towards Audio-Visual Script Generation for Long-Form Cinematic Video](/202604/14/2604.11102v1-omniscript-towards-audio-visual-script-generation-for-long-form-cinematic-video)  
-   标签：评分：10.0/10、query:lvu
-   evidence：用于长篇叙事理解和剧本生成的全模态语言模型
-8. [POINTS-Long: Adaptive Dual-Mode Visual Reasoning in MLLMs](/202604/14/2604.11627v1-points-long-adaptive-dual-mode-visual-reasoning-in-mllms)  
-   标签：评分：10.0/10、query:lvu
-   evidence：用于长视频视觉推理和Token缩放的双模式多模态大模型
-9. [Seeing Through the Tool: A Controlled Benchmark for Occlusion Robustness in Foundation Segmentation Models](/202604/14/2604.11711v1-seeing-through-the-tool-a-controlled-benchmark-for-occlusion-robustness-in-foundation-segmentation-models)  
-   标签：评分：10.0/10、query:medvid
-   evidence：手术内窥镜分割中遮挡鲁棒性的基准
-10. [EchoAgent: Towards Reliable Echocardiography Interpretation with "Eyes","Hands" and "Minds"](/202604/14/2604.05541v1-echoagent-towards-reliable-echocardiography-interpretation-with-eyeshands-and-minds)  
-   标签：评分：9.0/10、query:medvid
-   evidence：用于端到端超声心动图解释和推理的智能体系统
-11. [SonoSelect: Efficient Ultrasound Perception via Active Probe Exploration](/202604/14/2604.05933v2-sonoselect-efficient-ultrasound-perception-via-active-probe-exploration)  
-   标签：评分：9.0/10、query:medvid
-   evidence：通过主动探头探索实现高效超声感知
-12. [InstAP: Instance-Aware Vision-Language Pre-Train for Spatial-Temporal Understanding](/202604/14/2604.08337v1-instap-instance-aware-vision-language-pre-train-for-spatial-temporal-understanding)  
+   evidence：用于长篇电影视频理解的全模态语言模型
+2. [InstrAct: Towards Action-Centric Understanding in Instructional Videos](/202604/15/2604.08762v1-instract-towards-action-centric-understanding-in-instructional-videos)  
    标签：评分：9.0/10、query:lvu
-   evidence：用于时空理解的视觉语言预训练
-13. [Long-Horizon Streaming Video Generation via Hybrid Attention with Decoupled Distillation](/202604/14/2604.10103v1-long-horizon-streaming-video-generation-via-hybrid-attention-with-decoupled-distillation)  
-   标签：评分：9.0/10、query:lvu
-   evidence：长视频生成中的长程依赖与高效时间注意力
-14. [Warm-Started Reinforcement Learning for Iterative 3D/2D Liver Registration](/202604/14/2604.10245v1-warm-started-reinforcement-learning-for-iterative-3d2d-liver-registration)  
+   evidence：教学视频中的动作中心表示与时序关系
+3. [SiMing-Bench: Evaluating Procedural Correctness from Continuous Interactions in Clinical Skill Videos](/202604/15/2604.09037v1-siming-bench-evaluating-procedural-correctness-from-continuous-interactions-in-clinical-skill-videos)  
    标签：评分：9.0/10、query:medvid
-   evidence：术中腹腔镜视频的CT与视频配准
-15. [BoxTuning: Directly Injecting the Object Box for Multimodal Model Fine-Tuning](/202604/14/2604.11136v1-boxtuning-directly-injecting-the-object-box-for-multimodal-model-fine-tuning)  
-   标签：评分：9.0/10、query:lvu
-   evidence：视频问答的对象级时空理解
-16. [ConvFormer3D-TAP: Phase/Uncertainty-Aware Front-End Fusion for Cine CMR View Classification Pipelines](/202604/14/2604.11389v1-convformer3d-tap-phaseuncertainty-aware-front-end-fusion-for-cine-cmr-view-classification-pipelines)  
+   evidence：评估全长临床技能视频中操作正确性的基准
+4. [ReXSonoVQA: A Video QA Benchmark for Procedure-Centric Ultrasound Understanding](/202604/15/2604.10916v1-rexsonovqa-a-video-qa-benchmark-for-procedure-centric-ultrasound-understanding)  
    标签：评分：9.0/10、query:medvid
-   evidence：用于电影心脏磁共振视图分类的时空架构
-17. [Reasoning Resides in Layers: Restoring Temporal Reasoning in Video-Language Models with Layer-Selective Merging](/202604/14/2604.11399v1-reasoning-resides-in-layers-restoring-temporal-reasoning-in-video-language-models-with-layer-selective-merging)  
+   evidence：以过程为中心的超声理解视频问答基准
+5. [ReXSonoVQA: A Video QA Benchmark for Procedure-Centric Ultrasound Understanding](/202604/15/2604.10916v2-rexsonovqa-a-video-qa-benchmark-for-procedure-centric-ultrasound-understanding)  
+   标签：评分：9.0/10、query:medvid
+   evidence：针对以程序为中心的超声理解的视频问答基准
+6. [POINTS-Long: Adaptive Dual-Mode Visual Reasoning in MLLMs](/202604/15/2604.11627v1-points-long-adaptive-dual-mode-visual-reasoning-in-mllms)  
    标签：评分：9.0/10、query:lvu
-   evidence：通过层选择性合并恢复视频语言模型中的时间推理
+   evidence：多模态大模型中的长程通用视觉理解与推理
+7. [ViLL-E: Video LLM Embeddings for Retrieval](/202604/15/2604.12148v1-vill-e-video-llm-embeddings-for-retrieval)  
+   标签：评分：9.0/10、query:lvu
+   evidence：用于视频理解和检索的视频大语言模型，具有自适应计算能力
+8. [EgoEsportsQA: An Egocentric Video Benchmark for Perception and Reasoning in Esports](/202604/15/2604.12320v1-egoesportsqa-an-egocentric-video-benchmark-for-perception-and-reasoning-in-esports)  
+   标签：评分：9.0/10、query:lvu
+   evidence：第一人称视频感知与推理基准
+9. [All in One: A Unified Synthetic Data Pipeline for Multimodal Video Understanding](/202604/15/2604.12335v1-all-in-one-a-unified-synthetic-data-pipeline-for-multimodal-video-understanding)  
+   标签：评分：9.0/10、query:lvu
+   evidence：多模态视频理解的统一合成数据流水线
+10. [Detecting and refurbishing ground truth errors during training of deep learning-based echocardiography segmentation models](/202604/15/2604.12832v1-detecting-and-refurbishing-ground-truth-errors-during-training-of-deep-learning-based-echocardiography-segmentation-models)  
+   标签：评分：9.0/10、query:medvid
+   evidence：超声心动图分割与地面真值错误检测
 
 ### 速读区论文标签
-1. [GPAFormer: Graph-guided Patch Aggregation Transformer for Efficient 3D Medical Image Segmentation](/202604/14/2604.06658v1-gpaformer-graph-guided-patch-aggregation-transformer-for-efficient-3d-medical-image-segmentation)  
-   标签：评分：8.0/10、query:medvid
-   evidence：利用图引导补丁聚合进行高效3D医学图像分割
-2. [Energy-based Tissue Manifolds for Longitudinal Multiparametric MRI Analysis](/202604/14/2604.07180v1-energy-based-tissue-manifolds-for-longitudinal-multiparametric-mri-analysis)  
-   标签：评分：8.0/10、query:medvid
-   evidence：序列空间中的纵向多参数MRI分析
-3. [Spatio-Temporal Grounding of Large Language Models from Perception Streams](/202604/14/2604.07592v1-spatio-temporal-grounding-of-large-language-models-from-perception-streams)  
+1. [Efficient Inference for Large Vision-Language Models: Bottlenecks, Techniques, and Prospects](/202604/15/2604.05546v2-efficient-inference-for-large-vision-language-models-bottlenecks-techniques-and-prospects)  
    标签：评分：8.0/10、query:lvu
-   evidence：利用大语言模型对视频日志进行时空对齐与推理
-4. [PanoSAM2: Lightweight Distortion- and Memory-aware Adaptions of SAM2 for 360 Video Object Segmentation](/202604/14/2604.07901v1-panosam2-lightweight-distortion--and-memory-aware-adaptions-of-sam2-for-360-video-object-segmentation)  
+   evidence：处理海量上下文的大型视觉语言模型高效推理技术
+2. [Grounded Forcing: Bridging Time-Independent Semantics and Proximal Dynamics in Autoregressive Video Synthesis](/202604/15/2604.06939v2-grounded-forcing-bridging-time-independent-semantics-and-proximal-dynamics-in-autoregressive-video-synthesis)  
    标签：评分：8.0/10、query:lvu
-   evidence：针对视频对象分割的SAM2内存感知适配
-5. [TAPE: A two-stage parameter-efficient adaptation framework for foundation models in OCT-OCTA analysis](/202604/14/2604.04571v1-tape-a-two-stage-parameter-efficient-adaptation-framework-for-foundation-models-in-oct-octa-analysis)  
+   evidence：用于视频合成中长期语义一致性的双重记忆KV缓存
+3. [Bridging Time and Space: Decoupled Spatio-Temporal Alignment for Video Grounding](/202604/15/2604.08014v2-bridging-time-and-space-decoupled-spatio-temporal-alignment-for-video-grounding)  
+   标签：评分：8.0/10、query:lvu
+   evidence：视频定位中的解耦时空对齐
+4. [Uni-ViGU: Towards Unified Video Generation and Understanding via A Diffusion-Based Video Generator](/202604/15/2604.08121v1-uni-vigu-towards-unified-video-generation-and-understanding-via-a-diffusion-based-video-generator)  
+   标签：评分：8.0/10、query:lvu
+   evidence：视频生成与理解的统一多模态模型
+5. [Geometrical Cross-Attention and Nonvoid Voxelization for Efficient 3D Medical Image Segmentation](/202604/15/2604.05515v1-geometrical-cross-attention-and-nonvoid-voxelization-for-efficient-3d-medical-image-segmentation)  
    标签：评分：7.0/10、query:medvid
-   evidence：针对OCT-OCTA医学图像分割的参数高效适配
-6. [Modality-Aware and Anatomical Vector-Quantized Autoencoding for Multimodal Brain MRI](/202604/14/2604.05171v1-modality-aware-and-anatomical-vector-quantized-autoencoding-for-multimodal-brain-mri)  
+   evidence：3D医学图像分割与空间依赖建模
+6. [Semantic-Topological Graph Reasoning for Language-Guided Pulmonary Screening](/202604/15/2604.05620v1-semantic-topological-graph-reasoning-for-language-guided-pulmonary-screening)  
    标签：评分：7.0/10、query:medvid
-   evidence：用于多模态大脑MRI分析和重建的深度学习架构
-7. [VLA-InfoEntropy: A Training-Free Vision-Attention Information Entropy Approach for Vision-Language-Action Models Inference Acceleration and Success](/202604/14/2604.05323v1-vla-infoentropy-a-training-free-vision-attention-information-entropy-approach-for-vision-language-action-models-inference-acceleration-and-success)  
+   evidence：语言引导的肺部筛查与计算机辅助诊断
+7. [MedLayBench-V: A Large-Scale Benchmark for Expert-Lay Semantic Alignment in Medical Vision Language Models](/202604/15/2604.05738v1-medlaybench-v-a-large-scale-benchmark-for-expert-lay-semantic-alignment-in-medical-vision-language-models)  
+   标签：评分：7.0/10、query:medvid
+   evidence：医学视觉语言模型的大规模基准
+8. [Physics-Aware Video Instance Removal Benchmark](/202604/15/2604.05898v1-physics-aware-video-instance-removal-benchmark)  
    标签：评分：7.0/10、query:lvu
-   evidence：用于多模态模型推理加速的视觉注意力信息熵
-8. [LUMOS: Universal Semi-Supervised OCT Retinal Layer Segmentation with Hierarchical Reliable Mutual Learning](/202604/14/2604.05388v1-lumos-universal-semi-supervised-oct-retinal-layer-segmentation-with-hierarchical-reliable-mutual-learning)  
-   标签：评分：7.0/10、query:medvid
-   evidence：用于OCT视网膜分层分割的医学图像序列时空分析
-9. [Uncertainty-Guided Latent Diagnostic Trajectory Learning for Sequential Clinical Diagnosis](/202604/14/2604.05116v1-uncertainty-guided-latent-diagnostic-trajectory-learning-for-sequential-clinical-diagnosis)  
+   evidence：视频实例移除与物理一致性的基准测试
+9. [CRISP: Rank-Guided Iterative Squeezing for Robust Medical Image Segmentation under Domain Shift](/202604/15/2604.05409v1-crisp-rank-guided-iterative-squeezing-for-robust-medical-image-segmentation-under-domain-shift)  
    标签：评分：6.0/10、query:medvid
-   evidence：序列化临床诊断和随时间变化的证据获取
-10. [Cross-Stage Attention Propagation for Efficient Semantic Segmentation](/202604/14/2604.05431v1-cross-stage-attention-propagation-for-efficient-semantic-segmentation)  
-   标签：评分：6.0/10、query:medvid
-   evidence：利用跨阶段注意力传播实现高效语义分割
-11. [MedLayBench-V: A Large-Scale Benchmark for Expert-Lay Semantic Alignment in Medical Vision Language Models](/202604/14/2604.05738v1-medlaybench-v-a-large-scale-benchmark-for-expert-lay-semantic-alignment-in-medical-vision-language-models)  
-   标签：评分：6.0/10、query:medvid
-   evidence：医学视觉语言模型的大规模多模态基准
-12. [Gated-SwinRMT: Unifying Swin Windowed Attention with Retentive Manhattan Decay via Input-Dependent Gating](/202604/14/2604.06014v2-gated-swinrmt-unifying-swin-windowed-attention-with-retentive-manhattan-decay-via-input-dependent-gating)  
+   evidence：领域偏移下的稳健医学图像分割
+10. [PanopticQuery: Unified Query-Time Reasoning for 4D Scenes](/202604/15/2604.05638v1-panopticquery-unified-query-time-reasoning-for-4d-scenes)  
    标签：评分：6.0/10、query:lvu
-   evidence：具有空间衰减的高效视觉Transformer架构，用于处理长程依赖
+   evidence：动态环境中跨空间和时间的语义对齐
+11. [Probing Intrinsic Medical Task Relationships: A Contrastive Learning Perspective](/202604/15/2604.05651v1-probing-intrinsic-medical-task-relationships-a-contrastive-learning-perspective)  
+   标签：评分：6.0/10、query:medvid
+   evidence：探究医学视觉任务之间的关系
+12. [Gated-SwinRMT: Unifying Swin Windowed Attention with Retentive Manhattan Decay via Input-Dependent Gating](/202604/15/2604.06014v1-gated-swinrmt-unifying-swin-windowed-attention-with-retentive-manhattan-decay-via-input-dependent-gating)  
+   标签：评分：6.0/10、query:lvu
+   evidence：具有空间衰减的高效视觉Transformer架构，用于建模
 
 
 <div class="dpr-home-promo-card">
