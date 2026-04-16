@@ -1,0 +1,671 @@
+Title: Temporally Consistent Long-Term Memory for 3D Single Object Tracking
+
+URL Source: https://arxiv.org/pdf/2604.13789v1
+
+Published Time: Thu, 16 Apr 2026 00:54:14 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# Temporally Consistent Long-Term Memory for 3D Single Object Tracking 
+
+## Jaejoon Yoo, SuBeen Lee, Yerim Jeon, Miso Lee, Jae-Pil Heo *
+
+## Sungkyunkwan University 
+
+{dbwowns10, leesb7426, 1357j, dlalth557, jaepilheo }@skku.edu 
+
+## Abstract 
+
+3D Single Object Tracking (3D-SOT) aims to localize a tar-get object across a sequence of LiDAR point clouds, given its 3D bounding box in the first frame. Recent methods have adopted a memory-based approach to utilize previously ob-served features of the target object, but remain limited to only a few recent frames. This work reveals that their tem-poral capacity is fundamentally constrained to short-term context due to severe temporal feature inconsistency and excessive memory overhead. To this end, we propose a robust long-term 3D-SOT framework, ChronoTrack, which preserves the temporal feature consistency while efficiently aggregating the diverse target features via long-term mem-ory. Based on a compact set of learnable memory tokens, ChronoTrack leverages long-term information through two complementary objectives: a temporal consistency loss and a memory cycle consistency loss. The former enforces fea-ture alignment across frames, alleviating temporal drift and improving the reliability of proposed long-term memory. In parallel, the latter encourages each token to encode di-verse and discriminative target representations observed throughout the sequence via memory-point-memory cyclic walks. As a result, ChronoTrack achieves new state-of-the-art performance on multiple 3D-SOT benchmarks, demon-strating its effectiveness in long-term target modeling with compact memory while running at real-time speed of 42 FPS on a single RTX 4090 GPU. The code is available at 
+
+https://github.com/ujaejoon/ChronoTrack 
+
+## 1. Introduction 
+
+3D Single Object Tracking (3D-SOT) is a fundamental task in computer vision, essential for various applications such as robotics and autonomous driving [1, 9, 22]. Given a target object annotated with a 3D bounding box in the first frame, 3D-SOT aims to predict the corresponding object’s bounding box in subsequent frames of point clouds. Recent methods [11, 12, 18, 21] adopt a memory-based 
+
+> *
+
+Corresponding author (a) Illustration of Feature Space                        
+
+> (b) Temporal Consistency and Performance
+> Temporal Distance
+> 0.70
+> 0.75
+> 0.80
+> 0.90
+> 0.85
+> 0.95
+> 020 40 60 80 100
+> Feature Similarity
+> Memory Temporal Capacity
+> 12832 128
+> 50
+> 53
+> 56
+> 62
+> 59
+> 65
+> Success
+> 55
+> 60
+> 65
+> 75
+> 70
+> 80
+> Precision
+> Ours MBPTrack Success Precision
+> Previous Works Ours
+> Drift Direction FG / BG Features MMemory Feature Memory Readout
+> Memory
+> 𝑡 =0
+> 𝑡 =10
+> 𝑡 =100
+> 𝑡 =1
+> M
+> M
+
+Figure 1. (a) Illustration of the feature space in existing works versus ours. Different shapes and colors represent different parts of the object and different time indices, respectively. In existing methods, target features tend to drift as the target’s appearance changes, resulting in temporal inconsistency that diminishes the utility of earlier features in memory. In contrast, our method en-forces temporal feature consistency across frames, mitigating drift and enabling more reliable memory readout. (b) Quantitative anal-ysis of temporal feature consistency and its correlation with per-formance. We evaluate the temporal consistency by measuring the average cosine similarity between target features from each frame and those from a future frame. Compared to MBPTrack, our method maintains higher feature similarity as the temporal dis-tance increases. This robustness allows our method to take advan-tage of longer context, whereas MBPTrack fails to benefit from in-creased temporal capacity and instead exhibits performance (Suc-cess and Precision) degradation. 
+
+approach, storing point-level representations of a few re-cent frames to propagate the target cue into future frames. By leveraging temporal context from multiple historical frames, they have made significant advances in the field. Despite this progress, they still rely on a short-term context of only two or three recent frames, which motivates us to exploit longer temporal context. 1
+
+> arXiv:2604.13789v1 [cs.CV] 15 Apr 2026
+
+One straightforward approach to capture long-term con-text is simply extending the memory length. However, such na¨ ıve extension presents two fundamental challenges. First, it does not consistently improve tracking performance, as illustrated in Fig. 1. We observe that feature similarity be-tween corresponding target points across frames declines as the temporal gap increases, and incorporating such low-similarity frames into memory leads to degraded perfor-mance. This issue has been underexplored, as existing methods [12, 19, 21] typically have been confined to short temporal windows, where the appearance variations of the target are relatively minor. Furthermore, extending point-level memory leads to a substantial increase in memory cost, as more point features must be stored and processed for prediction, as shown in Fig. 7. This cost grows pro-portionally with the length of memory, making such ap-proaches impractical for real-world applications on edge de-vices. To address these issues, we propose ChronoTrack , a ro-bust long-term 3D-SOT framework that captures diverse as-pects of the target while effectively leveraging long-range temporal cues. Specifically, we construct a compact set of learnable memory tokens that are recurrently updated at each timestep by integrating new observations of the tar-get with previously stored contexts. Moreover, to improve the utility of long-range information captured by our token-level memory, we introduce two complementary objectives: temporal consistency loss and memory cycle consistency loss. Temporal consistency loss enforces feature alignment across time, mitigating feature drift caused by appearance variations and encouraging the effective use of long-term context. Building on these temporally aligned representa-tions, we further aim to encode the diverse appearances of the target observed over time into the memory. To this end, we encourage consistent associations between memory to-kens and semantically distinct target parts through a cyclic walk mechanism. Consequently, our token-level memory provides compact yet expressive representations that con-sistently capture reliable and diverse target cues without in-curring excessive overhead. In summary, our contributions are as follows: • We propose ChronoTrack , a long-term 3D-SOT frame-work where a compact memory module recurrently inte-grates recent observations with accumulated target con-text. • We design a temporal consistency loss that enforces tem-poral feature consistency, thereby improving the reliabil-ity of long-term memory. • We introduce a memory cycle consistency loss that pro-motes diversity among tokens by encouraging each one to represent semantically distinct parts of the object. • Our approach outperforms previous memory-based meth-ods on standard 3D-SOT benchmarks, validating its effec-tiveness in taking advantage of the long-term context. 
+
+## 2. Related Work 
+
+A central challenge in 3D Single Object Tracking (3D-SOT) is how to effectively leverage past observations to propagate the target cue into future frames. Early approaches [4, 6, 7, 13, 16, 24, 26] adopted a template-based strategy, where the target is represented by a cropped point cloud from a single frame. They compute point-wise feature similarity with the template and subse-quently predict multiple bounding box proposals using a 3D region proposal network. Follow-up works extended this framework, such as incorporating background informa-tion [20] and predicting relative motion between consecu-tive frames [25]. However, these methods still rely on a sin-gle reference frame. Therefore, when the target is occluded in that frame, these approaches struggle to maintain reliable tracking due to the lack of sufficient target cues. To overcome these limitations, memory-based meth-ods such as MBPTrack [21], HVTrack [18], M3SOT [11], StreamTrack [12], and MemDisst [19] adopt an external memory to save information from historical frames. They store point-level representations from multiple past frames to localize the target object in the current frame, improving robustness to occlusion and appearance changes. However, they are still confined to short-term memory and often fail to benefit from longer temporal context as memory length increases. We find that this limitation primarily arises from temporal feature inconsistency, where target representations become misaligned across distant frames, reducing the ef-fectiveness of stored contexts. To address this issue, our method promotes temporal consistency across frames, en-abling more reliable use of information accumulated over longer durations. 
+
+## 3. Method 
+
+3.1. Overview 
+
+Task Definition. Given a target object annotated with the 3D bounding box in the first frame, 3D Single Object Track-ing (3D-SOT) aims to estimate the bounding boxes of the target in subsequent frames. At timestep t ∈ [2 , T ], the frame consists of a point cloud Pt ∈ RNt×3 within the search area, where Nt is the number of points, and a bound-ing box Bt ∈ R7 is defined by its center (xt, y t, z t), heading angle around up-axis θt, and size (w, l, h ), which is fixed across frames. 
+
+Overall Pipeline. Our overall pipeline is illustrated in Fig. 2. Unlike existing memory-based methods that rely only on short-term context, our approach captures long-term temporal cues of the target (i.e. foreground) through a compact set of learnable memory tokens. At each timestep, 2• • •  Box E D
+
+Memories 
+
+MFR 
+
+streaming 
+
+Memory Cycle 
+
+Consistency Loss 
+
+update 
+
+Mask 
+
+Temporal Consistency Loss 
+
+Point -level Backbon e Features 
+
+> • • •
+
+transform 
+
+Short -Term 
+
+BG Memory 
+
+Long -Term 
+
+FG Memory 
+
+Memory -based Feature Refiner Figure 2. Overall pipeline of ChronoTrack . The point features Ft of the current point cloud Pt are first extracted by the backbone network 
+
+E. These features are then fed to the Memory-based Feature Refiner (MFR) along with the long-term target memory XFG  
+
+> t−1
+
+and short-term background memory XBG 
+
+> t−1
+
+, injecting long-term target cues and short-term contextual information into the current features, resulting in target-aware features Zt. The decoder D then predicts the 3D bounding box Bt and targetness mask Mt from these enriched features, and the memory is updated based on the predicted mask and current point features. To ensure the reliability of accumulated information in memory and foster memory diversity, two complementary losses are applied: temporal consistency loss LTC and memory cycle consistency loss LMCC .
+
+current point features are transformed into target-aware fea-tures by attending to long-term foreground memory and short-term background memory, and fed into the decoder for prediction. After prediction, foreground memory to-kens are updated by aggregating features of predicted tar-get points, thereby maintaining both recent and past con-text. To enhance the efficacy of this long-term context within tokens, we first enforce temporal feature consistency of the target features. Specifically, we introduce a tempo-ral consistency loss to promote high similarity between cor-responding parts of target points across frames, mitigating temporal drift even under severe appearance changes. Fur-thermore, as the target is naturally observed under diverse appearances throughout long-term, we seek to encode this variability into memory tokens. To achieve this, we propose a memory cycle consistency loss that reinforces the associ-ation between each token and distinct parts of the target by conducting a two-step cyclic walk between memory tokens and point features. 
+
+3.2. Long-Term Memory 
+
+Given a point cloud Pt ∈ RNt×3 at time step t, we ex-tract point-wise features Ft ∈ RNt×D where Nt and D
+
+represent the number of points and the feature dimension, respectively. For simplicity, we omit the notation of point downsampling. Unlike previous works that rely solely on short-term temporal context, we leverage the long-term context of the target object, spanning from the initial frame to the most recent one. To this end, we define a compact set of K learn-able memory tokens XFG  
+
+> 0
+
+∈ RK×D . To initialize these to-kens, we extract ground-truth foreground point features of the first frame ˆF FG  
+
+> 1
+
+∈ R ˆN FG   
+
+> 1×D
+
+at the beginning of each tracking sequence, as follows: 
+
+ˆF FG  
+
+> 1
+
+= {F1,i | ˆM1,i = 1 }, ∀i = 1 , · · · , N 1, (1) where ˆMt ∈ {0, 1}Nt is the ground-truth mask of t-th frame, that 1 indicates target points and 0 denotes back-ground. Then, we compute initial tokens XFG  
+
+> 1
+
+∈ RK×D ,as follows: 
+
+XFG  
+
+> 1
+
+= MU (XFG  
+
+> 0
+
+, ˆF FG  
+
+> 1
+
+, ˆF FG  
+
+> 1
+
+), (2) where MU denotes the memory updater with LMU lay-ers, each comprising cross-attention, self-attention, and MLP. (·, ·, ·) correspond to query , key , and value of cross-attention. Once initialized, foreground memory tokens are recur-rently updated to accumulate target features, aggregating the long-term context of the target. However, these to-kens focus exclusively on the target object, while back-ground contexts are also crucial for accurate target local-ization [20, 21]. To complement this, we introduce a short-term background memory that stores background point fea-tures from the immediately preceding frame. The ini-tial background memory XBG  
+
+> 1
+
+is defined with the ground-3Canonical              
+
+> Coordinate
+> Nearest Neighbor from to
+> Pairing
+> GT Current FG Points
+> GT Future FG Points
+> (a) Temporal Consistency Loss
+> Indexed Feature Pairs
+> (b) Memory Cycle Consistency Loss
+> Suppress to transition by
+> Memory Prob. Feature Prob. Memory
+
+Figure 3. Losses for temporal consistency and token diversity. (a) Target points from distant frames are transformed into canonical coordinates to identify approximate pairs of spatially aligned points that likely belong to the same part of the target object. A temporal consistency loss is then applied to each pair to enforce high feature similarity. (b) On the basis of these temporally aligned features, each memory token undergoes a two-step walk (memory → points → memory). The walk is optimized to simultaneously maximize the probability that each token returns to itself after a two-step walk and the likelihood of transiting through foreground points, thereby encouraging tokens to encode diverse and target-specific semantics. 
+
+truth background point features of the first frame ˆF BG  
+
+> 1
+
+∈
+
+R ˆN BG   
+
+> 1×D
+
+, as follows: 
+
+XBG  
+
+> 1
+
+= {F1,i | ˆM1,i = 0 }, ∀i = 1 , · · · , N 1. (3) By utilizing both foreground memory XFG  
+
+> t−1
+
+and back-ground memory XBG 
+
+> t−1
+
+, the current point features Ft are transformed into target-aware point features Zt ∈ RNt×D ,as follows: 
+
+Zt = MFR (Ft, [XFG 
+
+> t−1
+
+, X BG 
+
+> t−1
+
+], [XFG 
+
+> t−1
+
+, X BG 
+
+> t−1
+
+]) , (4) where MFR is the memory-based feature refiner, compris-ing LMFR layers of cross-attention, self-attention, and an MLP. Here, (·, ·, ·) denotes query , key , and value of cross-attention, and [·, ·] is concatenation along sequence dimen-sion. Next, the decoder receives these transformed features and predicts the point-wise targetness score Mt ∈ RNt and the 3D bounding box Bt ∈ R7. After prediction, the fore-ground memory tokens are updated to integrate both them-selves that encode past contexts and the features of pre-dicted target points F FG  
+
+> t
+
+∈ RN FG   
+
+> t×D
+
+in the current frame as follows: 
+
+F FG  
+
+> t
+
+= {Ft,i | Mt,i ≥ τmask }, ∀i = 1 , · · · , N t, (5) 
+
+XFG  
+
+> t
+
+= MU (XFG 
+
+> t−1
+
+, [XFG 
+
+> t−1
+
+, F FG  
+
+> t
+
+], [XFG 
+
+> t−1
+
+, F FG  
+
+> t
+
+]) , (6) where τmask and XFG  
+
+> t
+
+∈ RK×D denote the mask threshold and the updated foreground memory tokens, respectively. On the other hand, the background memory is substituted by the newly predicted background features, as follows: 
+
+XBG  
+
+> t
+
+= {Ft,i | Mt,i < τ mask }, ∀i = 1 , · · · , N t, (7) where XBG  
+
+> t
+
+∈ RN BG   
+
+> t×D
+
+is the updated background memory. The key advantage of our token-based memory design is the adaptive integration of newly observed and tempo-rally accumulated target features into fixed-sized memory tokens. This allows ChronoTrack to leverage long-term tar-get context even under a limited memory budget, unlike ex-isting point-level memory methods [11, 12, 18, 19, 21]. 
+
+3.3. Temporal Consistency Loss 
+
+To effectively utilize the long-term temporal context of our token-level memory, the feature representations of the target object should be consistent over time, as illustrated in Fig. 1. To achieve this, we propose a temporal consistency loss that explicitly encourages part-level consistency by aligning fea-tures of spatially corresponding target points across time. This enables the model to retain structurally consistent fea-tures despite changes in viewpoint and partial occlusions. Specifically, we first transform ground-truth foreground points ˆP FG  
+
+> t
+
+∈ R ˆN FG   
+
+> t×3
+
+into a canonical coordinate system 
+
+CFG  
+
+> t
+
+∈ R ˆN FG  
+
+> t×3
+
+, as follows: 
+
+CFG  
+
+> t
+
+= ( ˆP FG  
+
+> t
+
+− ˆct) ˆRt, (8) where ˆRt ∈ R3×3 and ˆct ∈ R3 are the rotation matrix derived from the heading angle and the center of the ground-truth bounding box, respectively, and the subtraction by ˆct
+
+is applied row-wise. Based on the canonical coordinates, we establish point-level correspondences by computing the nearest neighbors in each future frame, as follows: 
+
+jt,i,t ′ = arg min   
+
+> 1≤k≤ˆNFG
+> t′
+
+∥CFG  
+
+> t,i
+
+− CFG 
+
+> t′,k
+
+∥2, ∀t′ = t + 1 , . . . , T. 
+
+(9) For each future frame t′ from t+1 to T in the training se-quence, we construct a set of indices with reliable corre-spondences by including only the pairs whose canonical distance is below the threshold τdist , thereby filtering out unreliable matches. 
+
+S =
+
+n
+
+(t, i, t ′) | ∥ CFG  
+
+> t,i
+
+− CFG  
+
+> t′,j t,i,t ′
+
+∥2 < τ dist 
+
+o
+
+. (10) 4By matching points that occupy similar positions in the canonical system, we obtain corresponding point pairs, which represent approximately the same part of the target object across the different frames. As a result, we define the temporal consistency loss to encourage feature consistency over time, as follows: 
+
+LTC = 1
+
+|S|
+
+X
+
+> (t,i,t ′)∈S
+
+SmoothL1 ( ˆF FG  
+
+> t,i
+
+, ˆF FG  
+
+> t′,j t,i,t ′
+
+), (11) where SmoothL1 is smooth L1 loss function [5]. By enforcing feature alignment across frames, we ensure that features from earlier frames encoded in our token-level memory remain semantically consistent over time, as de-picted in Fig. 1. This is particularly crucial in scenarios such as occlusions or viewpoint shifts, where drastic appearance changes cause feature drift for the same object parts. 
+
+3.4. Memory Cycle Consistency Loss 
+
+Building upon temporally aligned features, we further en-hance our memory representation through a memory cycle consistency loss that promotes token-level diversity. While long-term tracking naturally exposes the target under vary-ing views, we aim to render these varied appearances into memory tokens that capture diverse semantics of the target. To this end, we draw inspiration from cyclic walk for-mulation in self-supervised learning [8, 17], and enforce cycle consistency between memory tokens and point-level features to guide the memory update process. This objec-tive encourages each token to establish stable and localized associations with distinct semantic parts of the target. Specifically, we compute the transition probability ma-trix from tokens to points W X→Ft ∈ RK×Nt and from points back to tokens W F →Xt ∈ RNt×K , as follows: 
+
+W X→Ft,i,j = exp( sim (XFG  
+
+> t,i
+
+· Ft,j )/τ cycle )
+
+PNt 
+
+> k=1
+
+exp( sim (XFG  
+
+> t,i
+
+· Ft,k )/τ cycle ) , (12) 
+
+W F →Xt,i,j = exp( sim (Ft,i · XFG  
+
+> t,j
+
+)/τ cycle )
+
+PKk=1 exp( sim (Ft,i · XFG 
+
+> t,k
+
+)/τ cycle ) , (13) where sim (·) refers to the cosine similarity between two vectors and τcycle is the temperature. Then, we derive a two-step cyclic transition matrix W cycle  
+
+> t
+
+∈ RK×K , where each diagonal entry indicates the probability of a memory token returning to itself through the cycle, as follows: 
+
+W cycle  
+
+> t
+
+= W X→Ft W F →Xt . (14) Based on this two-step cyclic walk, we aim to guide each memory token to encode non-redundant and discriminative features of the target. To achieve this, we propose a mem-ory cycle consistency loss LMCC , which is composed of the following two terms: 
+
+Lcycle = 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+CE (W cycle  
+
+> t
+
+, I ), (15) 
+
+Lfg = − 1
+
+T
+
+1
+
+K
+
+> T
+
+X
+
+> t=1
+> K
+
+X
+
+> i=1
+
+log 
+
+ X 
+
+> j∈ˆIFG
+> t
+
+W X→Ft,i,j 
+
+
+
+, (16) 
+
+LMCC = Lcycle + Lfg , (17) where CE (·, ·) denotes the cross-entropy loss, I ∈ RK×K is the identity matrix, and ˆIFG  
+
+> t
+
+denotes the set of ground-truth foreground point indices at time t. Intuitively, Lcycle facili-tates each token returning to itself through a two-step cycle by enforcing that the cyclic walk W cycle  
+
+> t
+
+should be an iden-tity matrix I. To enable such self-return, each token must encode a semantically distinct part of the target. Concur-rently, Lfg encourages the transition path to pass through the foreground regions during the cycle. By jointly mini-mizing both terms, memory tokens are optimized to repre-sent a certain part of the target while emphasizing target-specific semantics over the background, which is crucial for maintaining robust long-term target representations. 
+
+3.5. Training Objective 
+
+We adopt the BPLocNet decoder from MBPTrack [21] and apply its loss formulation without modification. To be spe-cific, the decoder loss comprises five terms: a cross-entropy loss for the predicted point-wise targetness score Lm, an MSE loss for the target center Lc, cross-entropy losses for proposal quality and targetness scores of bbox proposals (Lq, Ls), and a smooth L1 loss for bounding box regression 
+
+Lbbox . The overall decoder loss is given by: 
+
+Ldec = λmLm + λcLc + λqLq + λsLs + Lbbox . (18) Our final training objective consists of the aforementioned decoder loss  Ldec , temporal consistency loss  LTC  and mem-ory cycle consistency loss  LMCC . The overall loss is defined as: 
+
+L = Ldec + LTC + LMCC . (19) 
+
+## 4. Experiments 
+
+4.1. Implementation Details 
+
+4.1.1. Architecture. 
+
+We adopt DGCNN [15] as the backbone, following the se-tups in MBPTrack [21] and CXTrack [20]. It processes 
+
+Nt = 1024  input points through 3 EdgeConv and 3 down-sampling layers, resulting in D = 128 -dimensional fea-tures with an 8× reduction in the number of points. We use BPLocNet as the decoder and follow its original loss 5Table 1. Comparison with the SOTA methods on KITTI. “Mean” denotes the average results weighted by frame numbers. Bold and underline represent the best and second-best results, respectively. 
+
+Method Car Pedestrian Van Cyclist Mean Suc. Prec. Suc. Prec. Suc. Prec. Suc. Prec. Suc. Prec. SC3D [4] 41.3 57.9 18.2 37.8 40.4 47.0 41.5 70.4 31.2 48.5 P2B [13] 56.2 72.8 28.7 49.6 40.8 48.4 32.1 44.7 42.4 60.0 STNet [7] 72.1 84.0 49.9 77.2 58.0 70.6 73.5 93.7 61.3 80.1 M2-Track [25] 65.5 80.8 61.5 88.2 53.8 70.7 73.2 93.5 62.9 83.4 CXTrack [20] 69.1 81.6 67.0 91.5 60.0 71.8 74.2 94.3 67.5 85.3 MBPTrack [21] 73.4 84.8 68.6 93.9 61.3 72.7 76.7 94.3 70.3 87.9 SCVTrack [23] 68.7 81.9 62.0 89.1 58.6 72.8 77.4 94.4 65.1 84.5 StreamTrack [12] 72.6 83.7 70.5 94.7 61.0 76.9 78.1 94.6 70.8 88.1 M3SOT [11] 75.9 87.4 66.6 92.5 59.4 74.7 70.3 93.4 70.3 88.6 HVTrack [18] 68.2 79.2 64.6 90.6 54.8 63.8 72.4 93.7 65.5 83.1 MemDisst [19] 74.1 85.6 69.1 94.1 66.6 79.3 77.2 94.7 71.3 88.9 ChronoTrack 76.0 88.6 68.6 94.0 64.2 77.7 77.7 94.8 71.8 90.1 
+
+> Table 2. Comparison with the SOTA methods on NuScenes.
+
+Method Car Pedestrian Truck Trailer Bus Mean Suc. Prec. Suc. Prec. Suc. Prec. Suc. Prec. Suc. Prec. Suc. Prec. SC3D [4] 22.3 21.9 11.3 12.7 30.7 27.7 35.3 28.1 29.4 24.1 20.7 20.2 P2B [13] 38.8 42.2 28.4 52.2 43.0 41.5 49.0 40.1 33.0 27.4 36.5 45.1 M2-Track [25] 55.9 65.1 32.1 60.9 57.4 59.5 57.6 58.3 51.4 51.4 49.2 62.7 MBPTrack [21] 62.5 70.4 45.3 74.0 62.2 63.3 65.1 61.3 55.4 51.8 57.5 69.9 SCVTrack [23] 58.9 67.7 34.5 61.5 60.6 61.4 59.5 60.1 54.3 53.6 52.1 64.7 StreamTrack [12] 62.1 70.8 38.4 68.6 64.7 66.6 66.7 64.3 60.7 59.7 55.8 69.2 ChronoTrack 64.5 73.0 47.0 76.1 66.2 68.2 67.3 64.0 60.0 57.6 59.7 72.7 
+
+formulation and training strategy from MBPTrack [21]. We set the number of memory tokens to K = 32 each with a dimension of 128 , and use LMU = 3 and LMFR = 2 layers for memory update and target-aware feature transformation, respectively. Ablations on different  K are provided in the supplementary material. 
+
+4.1.2. Training and Inference Details. 
+
+Following [21], we sample 8 consecutive frames from the point cloud sequence to form a training sample. The model is trained using the Adam optimizer with a learning rate of 
+
+1 × 10 −3, and a batch size of 16. The learning rate is de-cayed by a factor of 0.2 every 15 epochs. We adopt bfloat16 mixed-precision training for memory efficiency. All ex-periments are conducted using the PyTorch framework on two RTX 4090 GPUs. Regarding the proposed loss terms, we set the distance threshold τdist = 30 cm for the tem-poral consistency loss, and use a softmax temperature of 
+
+τcycle = 0 .1 in the memory cycle consistency loss. See the supplementary material for ablations on  τdist  and  τcycle .In addition, we apply a binary mask threshold of  τmask =0.5 when filtering foreground or background points. To sta-bilize the tracking under low confidence during testing, we reuse the prediction of the previous frame if the maximum predicted targetness score falls below 0.2, following MBP-Track. 
+
+4.2. Datasets and Metrics 
+
+4.2.1. Datasets 
+
+We evaluate our method on three widely used bench-marks: KITTI [3], NuScenes [2], and Waymo Open Dataset (WOD) [14]. KITTI provides 21 training and 29 testing sequences in 8 categories. Following [13], we split the train set into sequences 0–16 for train, 17–18 for valida-tion, and 19–20 for test, due to the absence of test anno-tations. NuScenes consists of 1,000 scenes with 23 cat-egories, captured using a 32-beam LiDAR. We adopt the standard 700/150/150 split for training, validation, and test-ing. WOD is a large-scale dataset collected across 25 cities. Following [7, 21], we assess the generalization ability of our method on 1,121 tracklets using the KITTI pre-trained model without fine-tuning. The Car and Pedestrian cate-gories in KITTI correspond to the Vehicle and Pedestrian categories in WOD. 64.2.2. Metrics 
+
+We adopt One Pass Evaluation (OPE) [10] to assess the Success and Precision. Success measures Area Under Curve (AUC) of intersection over union (IoU) between pre-dicted and ground-truth bounding box, and Precision is the AUC of their center distance within 2 meters. 
+
+4.3. Comparison with State-of-the-art Methods 
+
+KITTI. In Tab. 1, we compare ChronoTrack with the state-of-the-art methods on the KITTI dataset. Chrono-Track achieves the highest overall performance (Mean col-umn). In particular, ChronoTrack surpasses memory-based approaches such as MBPTrack, StreamTrack, M3SOT, and MemDisst by effectively incorporating long-term memory rather than relying solely on short-term context. Moreover, while MemDisst leverages a pre-trained 2D tracker and a self-supervised 3D backbone, ChronoTrack achieves supe-rior performance without relying on any external supervi-sion. In terms of efficiency, ChronoTrack runs in real-time speed of 42 FPS on a single RTX 4090 GPU while main-taining state-of-the-art performance; see the supplementary material for detailed efficiency measurements. In Fig. 4, we present qualitative results under challeng-ing scenarios, including sparse observations and the pres-ence of multiple distractors. ChronoTrack maintains robust tracking in such cases compared to existing memory-based methods, demonstrating the efficacy of long-term memory. 
+
+NuScenes. Tab. 2 shows the results on the NuScenes dataset. ChronoTrack achieves the best overall performance on the benchmark, surpassing the second-best model, MBP-Track, by 2.2 points in Mean Success and 2.8 points in Mean Precision. Notably, MBPTrack shares the same back-bone and decoder architecture, differing only in memory design. This highlights the effectiveness of our long-term memory in handling complex and diverse sequences. 
+
+WOD. We evaluate the generalization ability of our KITTI pre-trained model on Waymo dataset. Tab. 3 shows that ChronoTrack achieves a significant performance mar-gin over previous SOTA methods. This demonstrates the robustness of our method even in unseen data. 
+
+4.4. Ablation Study 
+
+Component ablation. Tab. 4 presents the component-wise ablation results on the KITTI. We begin with a base-line that adopts the short-term point-level memory used in prior works. Applying our token-level memory to the base-line, which accumulates target features over long tempo-ral spans, results in a performance drop. This highlights that simply increasing the memory capacity is ineffective without addressing temporal feature inconsistency, as de-picted in Fig. 1. Introducing the temporal consistency loss, MBPTrack  ChronoTrack M3SOT Ground Truth 
+
+> Car Pedestrian
+> Time
+> Cyclist  Van
+> Figure 4. Qualitative results on the KITTI dataset. Table 3. Comparison with the SOTA methods on WOD. The mod-els are pre-trained on KITTI and directly tested on the WOD vali-dation set without fine-tuning.
+
+Method Vehicle Pedestrian Mean Suc. Prec. Suc. Prec. Suc. Prec. P2B [13] 52.6 35.4 17.9 29.6 33.0 33.5 M2-Track [25] 61.1 61.6 32.0 67.3 44.6 63.5 CXTrack [20] 57.1 66.1 30.7 49.4 42.2 56.7 MBPTrack [21] 61.9 71.9 33.7 52.7 46.0 61.0 SCVTrack [23] 61.3 69.8 32.2 50.0 44.8 58.6 M3SOT [11] 64.5 74.7 32.8 52.1 46.6 61.9 HVTrack [18] 59.8 69.7 30.0 49.1 43.0 58.1 MemDisst [19] 61.9 71.8 33.6 52.8 45.9 61.1 ChronoTrack 65.5 74.7 35.2 55.6 48.4 63.9                         
+
+> Table 4. Component ablation of ChronoTrack. XFG indicates that token-level memory is used instead of point-level memory. LTC
+> and LMCC denote the temporal consistency loss and memory cycle consistency loss, respectively. Success/Precision metrics are used for evaluation.
+> XFG LTC LMCC Car Pedestrian Van Cyclist Mean
+> ···74.0/86.2 67.9/93.5 63.6/76.1 77.0/94.6 70.5/88.6
+> ✓··73.3/85.7 66.5/90.4 59.4/75.1 75.7/94.6 69.2/87.0
+> ✓✓·76.1 /87.0 67.7/92.8 63.6/77.0 75.4/94.5 71.3/88.8
+> ✓✓✓76.0/ 88.6 68.6 /94.0 64.2 /77.7 77.7 /94.8 71.8 /90.1
+
+which enforces alignment of target features across frames, yields a substantial improvement, demonstrating the effec-tiveness of temporally consistent long-term memory. Addi-tionally, memory cycle consistency loss further boosts per-formance by encouraging memory tokens to encode diverse and target-specific semantics. This is particularly benefi-7Table 5. Performance on various sequence lengths on KITTI and NuScenes. We divide all tracklets into four groups based on sequence lengths, using the 25th, 50th, and 75th percentiles as thresholds, and denote them as S, M, L, and XL. Parentheses indi-cate the number of tracklets per group.                                                  
+
+> Method KITTI S (29) M (28) L (28) XL (27) MBPTrack [21] 78.0 / 91.5 73.2 / 85.3 75.4 / 87.6 72.7 / 83.7 ChronoTrack 81.5 /93.1 77.7 /90.5 78.5 /90.9 74.8 /87.6
+> Improvement +3.5 / +1.6 +4.5 / +5.2 +3.1 / +3.3 +2.1 / +3.9 Method NuScenes S (927) M (966) L (883) XL (884) MBPTrack [21] 71.0 / 77.2 61.4 / 69.3 62.0 / 70.6 62.1 / 69.9 ChronoTrack 72.4 /79.3 63.2 /71.5 62.8 /71.6 65.0 /73.5
+> Improvement +1.4 / +2.1 +1.8 / +2.2 +0.8 / +1.0 +2.9 / +3.6 (a) Token Diversity w/o MCC Loss (b) Token Diversity w/ MCC Loss
+> 0 31
+
+Figure 5. The diversity of the memory token. Color represents the index of the most similar token for each point. 
+
+cial for deformable objects such as Pedestrian and Cyclist, which demand finer part-level representations to capture subtle shape variations. 
+
+Ablation on various sequence lengths. To verify the ef-fectiveness of our framework in long-term scenarios, we an-alyze performance across different temporal scales. Tab. 5 reports the performance for four groups in the Car cate-gory on the KITTI and NuScenes datasets. In the case of KITTI, the sequence length ranges for each group are S (0-15), M (16-27), L (28-50), and XL (51+). For NuScenes, the ranges are S (0-7), M (8-15), L (16-26), and XL (27+). The consistent performance gains of ChronoTrack across all groups highlight its robustness in longer sequences, where temporal inconsistency becomes more pronounced as the token accumulates extended context. 
+
+Design choice of background memory. To validate our short-term design of background memory, we conduct an ablation study on its temporal capacity. While a longer context of the target in memory improves performance, as shown in Fig. 1 (b), extending background memory leads to a performance decline, as shown in Fig. 6. This degrada-tion occurs because the background that surrounds the tar-get continuously changes, diminishing the reliability of pre-viously accumulated background features in future frames. BG Memory Temporal Capacity        
+
+> Success
+> Precision
+> 71.0
+> 70.5
+> 70.0
+> 71.5
+> 69.5
+> 89
+> 88
+> 87
+> 90
+> 86
+> 23456189710
+> Success
+> Precision
+
+Figure 6. Ablation on temporal capacity of background memory. Mean performance on the KITTI is reported. 600      
+
+> 450
+> 300
+> 150
+> 750
+> FG Memory Temporal Capacity
+> GPU (MB)
+> 1416 64 256 1024
+> MBPTrack
+> ChronoTrack
+
+Figure 7. Comparison of GPU memory overhead as the temporal capacity of foreground memory increases. 
+
+Diversity of memory tokens. In Fig. 5, we visualize the diversity of memory tokens, where each token is expected to represent a distinct part of the target object. Each point is assigned to the memory token with the highest cosine simi-larity, and token assignments are color-coded. As shown in Fig. 5, without the Memory Cycle Consistency (MCC) loss, most points are assigned to a single token, whereas with the loss, various tokens are assigned to different parts of the target. This shows that the MCC loss encourages tokens to specialize in semantically distinct regions of the target. 
+
+Scalability. Fig. 7 compares the GPU memory consump-tion of MBPTrack [21] and ChronoTrack as the temporal capacity of memory increases. While MBPTrack exhibits continuous growth in GPU memory usage with larger tem-poral capacity, ChronoTrack achieves superior scalability by maintaining a constant memory footprint. 
+
+## 5. Conclusion 
+
+In this paper, we identified that existing memory-based 3D-SOT methods struggle to scale beyond short-term context due to temporal inconsistency and inefficient memory struc-tures. To overcome this, we proposed ChronoTrack , a ro-bust 3D-SOT framework that employs token-level long-term memory with two complementary losses to enforce temporal consistency and promote token diversity. Exten-sive experiments demonstrate that ChronoTrack effectively leverages long-range temporal cues and achieves state-of-the-art performance across multiple benchmarks. 8Acknowledgements 
+
+This work was supported in part by MSIT/IITP (No. RS-2022-II220680, RS-2020-II201821, RS-2019-II190421, RS-2024-00459618, RS-2024-00360227, RS-2024-00437633, RS-2024-00437102, RS-2025-25442569), MSIT/NRF (No. RS-2024-00357729), and KNPA/KIPoT (No. RS-2025-25393280). 
+
+## References 
+
+[1] Widodo Budiharto, Edy Irwansyah, Jarot Sembodo Suroso, and Alexander Agung Santoso Gunawan. Design of object tracking for military robot using pid controller and computer vision. ICIC Express Letters , 14(3):289–294, 2020. 1 [2] Holger Caesar, Varun Bankiti, Alex H Lang, Sourabh Vora, Venice Erin Liong, Qiang Xu, Anush Krishnan, Yu Pan, Gi-ancarlo Baldan, and Oscar Beijbom. nuscenes: A multi-modal dataset for autonomous driving. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 11621–11631, 2020. 6 [3] Andreas Geiger, Philip Lenz, and Raquel Urtasun. Are we ready for autonomous driving? the kitti vision benchmark suite. In 2012 IEEE conference on computer vision and pat-tern recognition , pages 3354–3361. IEEE, 2012. 6 [4] Silvio Giancola, Jesus Zarzar, Bernard Ghanem, et al. Lever-aging shape completion for 3d siamese tracking. In Proceed-ings of the IEEE/CVF conference on computer vision and pattern recognition , pages 1359–1368, 2019. 2, 6 [5] Ross Girshick. Fast r-cnn. In Proceedings of the IEEE inter-national conference on computer vision , pages 1440–1448, 2015. 5 [6] Le Hui, Lingpeng Wang, Mingmei Cheng, Jin Xie, and Jian Yang. 3d siamese voxel-to-bev tracker for sparse point clouds. Advances in Neural Information Processing Systems ,34:28714–28727, 2021. 2 [7] Le Hui, Lingpeng Wang, Linghua Tang, Kaihao Lan, Jin Xie, and Jian Yang. 3d siamese transformer network for single object tracking on point clouds. In European conference on computer vision , pages 293–310. Springer, 2022. 2, 6 [8] Allan Jabri, Andrew Owens, and Alexei Efros. Space-time correspondence as a contrastive random walk. Advances in neural information processing systems , 33:19545–19560, 2020. 5 [9] Muxi Jiang, Rui Li, Qisheng Liu, Yingjing Shi, and Esteban Tlelo-Cuautle. High speed long-term visual object tracking algorithm for real robot systems. Neurocomputing , 434:268– 284, 2021. 1 [10] Matej Kristan, Jiri Matas, Aleˇ s Leonardis, Tom´ aˇ s Voj´ ıˇ r, Ro-man Pflugfelder, Gustavo Fernandez, Georg Nebehay, Fatih Porikli, and Luka ˇ Cehovin. A novel performance evaluation methodology for single-target trackers. IEEE transactions on pattern analysis and machine intelligence , 38(11):2137– 2155, 2016. 7 [11] Jiaming Liu, Yue Wu, Maoguo Gong, Qiguang Miao, Wen-ping Ma, Cai Xu, and Can Qin. M3sot: Multi-frame, multi-field, multi-space 3d single object tracking. In Proceed-ings of the AAAI Conference on Artificial Intelligence , pages 3630–3638, 2024. 1, 2, 4, 6, 7 [12] Zhipeng Luo, Gongjie Zhang, Changqing Zhou, Zhonghua Wu, Qingyi Tao, Lewei Lu, and Shijian Lu. Modeling con-tinuous motion for 3d point cloud object tracking. In Pro-ceedings of the AAAI Conference on Artificial Intelligence ,pages 4026–4034, 2024. 1, 2, 4, 6 [13] Haozhe Qi, Chen Feng, Zhiguo Cao, Feng Zhao, and Yang Xiao. P2b: Point-to-box network for 3d object tracking in point clouds. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 6329–6338, 2020. 2, 6, 7 [14] Pei Sun, Henrik Kretzschmar, Xerxes Dotiwalla, Aurelien Chouard, Vijaysai Patnaik, Paul Tsui, James Guo, Yin Zhou, Yuning Chai, Benjamin Caine, et al. Scalability in perception for autonomous driving: Waymo open dataset. In Proceed-ings of the IEEE/CVF conference on computer vision and pattern recognition , pages 2446–2454, 2020. 6 [15] Yue Wang, Yongbin Sun, Ziwei Liu, Sanjay E Sarma, Michael M Bronstein, and Justin M Solomon. Dynamic graph cnn for learning on point clouds. ACM Transactions on Graphics (tog) , 38(5):1–12, 2019. 5 [16] Zhoutao Wang, Qian Xie, Yu-Kun Lai, Jing Wu, Kun Long, and Jun Wang. Mlvsnet: Multi-level voting siamese net-work for 3d visual tracking. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 3101– 3110, 2021. 2 [17] Ziyu Wang, Mike Zheng Shou, and Mengmi Zhang. Object-centric learning with cyclic walks between parts and whole. 
+
+Advances in Neural Information Processing Systems , 36: 9388–9408, 2023. 5 [18] Qiao Wu, Kun Sun, Pei An, Mathieu Salzmann, Yanning Zhang, and Jiaqi Yang. 3d single-object tracking in point clouds with high temporal variation. In European Confer-ence on Computer Vision , pages 279–296. Springer, 2024. 1, 2, 4, 6, 7 [19] Qiangqiang Wu, Yan Xia, Jia Wan, and Antoni B Chan. Boosting 3d single object tracking with 2d matching distilla-tion and 3d pre-training. In European Conference on Com-puter Vision , pages 270–288. Springer, 2024. 2, 4, 6, 7 [20] Tian-Xing Xu, Yuan-Chen Guo, Yu-Kun Lai, and Song-Hai Zhang. Cxtrack: Improving 3d point cloud tracking with contextual information. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,pages 1084–1093, 2023. 2, 3, 5, 6, 7 [21] Tian-Xing Xu, Yuan-Chen Guo, Yu-Kun Lai, and Song-Hai Zhang. Mbptrack: Improving 3d point cloud tracking with memory networks and box priors. In Proceedings of the IEEE/CVF International Conference on Computer Vision ,pages 9911–9920, 2023. 1, 2, 3, 4, 5, 6, 7, 8 [22] Tianwei Yin, Xingyi Zhou, and Philipp Krahenbuhl. Center-based 3d object detection and tracking. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 11784–11793, 2021. 1 [23] Jingwen Zhang, Zikun Zhou, Guangming Lu, Jiandong Tian, and Wenjie Pei. Robust 3d tracking with quality-aware shape completion. In Proceedings of the AAAI Conference on Arti-ficial Intelligence , pages 7160–7168, 2024. 6, 7 
+
+9[24] Chaoda Zheng, Xu Yan, Jiantao Gao, Weibing Zhao, Wei Zhang, Zhen Li, and Shuguang Cui. Box-aware feature en-hancement for single object tracking on point clouds. In 
+
+Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 13199–13208, 2021. 2 [25] Chaoda Zheng, Xu Yan, Haiming Zhang, Baoyuan Wang, Shenghui Cheng, Shuguang Cui, and Zhen Li. Beyond 3d siamese tracking: A motion-centric paradigm for 3d single object tracking in point clouds. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 8111–8120, 2022. 2, 6, 7 [26] Changqing Zhou, Zhipeng Luo, Yueru Luo, Tianrui Liu, Liang Pan, Zhongang Cai, Haiyu Zhao, and Shijian Lu. Pttr: Relational 3d point cloud object tracking with transformer. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 8531–8540, 2022. 2 
+
+10 Temporally Consistent Long-Term Memory for 3D Single Object Tracking 
+
+# Supplementary Material 
+
+Table 6. Performance comparison with different numbers of mem-ory tokens K on the KITTI dataset. 
+
+Setting Car Pedestrian Van Cyclist Mean 
+
+K = 16 74.8/86.8 68.6/93.0 62.4/76.7 78.1 /94.8 71.1/88.7 
+
+K = 32 76.0 /88.6 68.6 /94.0 64.2 /77.7 77.7/ 94.8 71.8 /90.1 
+
+K = 64 74.8/86.7 67.7/92.8 63.5/76.4 76.7/94.4 70.8/88.6 
+
+Table 7. Performance comparison with different temperature τcycle 
+
+of memory cycle consistency loss on the KITTI dataset. 
+
+Setting Car Pedestrian Van Cyclist Mean 
+
+τcycle = 0.07 74.9/86.9 68.7 /93.2 59.7/74.4 76.2/94.7 70.9/88.7 
+
+τcycle = 0.1 76.0 /88.6 68.6/ 94.0 64.2 /77.7 77.7 /94.8 71.8 /90.1 
+
+τcycle = 1.0 73.6/86.2 68.2/92.4 63.9/ 78.2 76.5/ 94.8 70.4/88.4 
+
+Table 8. Performance comparison with different distance thresh-olds τdist on the KITTI dataset. 
+
+Setting Car Pedestrian Van Cyclist Mean 
+
+τdist = 10 cm 74.9/86.7 69.4 /93.3 64.1/ 78.0 76.6/94.6 71.6/89.0 
+
+τdist = 30 cm 76.0 /88.6 68.6/ 94.0 64.2 /77.7 77.7 /94.8 71.8 /90.1 
+
+τdist = 70 cm 74.5/86.8 67.9/92.9 63.8/77.6 76.9/ 94.8 70.8/88.8 
+
+Table 9. Comparison of model size and inference time with state-of-the-art methods. 
+
+Mehod # Params Inference Time FPS Suc./Prec. MBPTrack [21] 1.9M 15ms 67 73.4/84.8 M3SOT [11] 4.3M 48ms 21 75.9/87.4 ChronoTrack 2.9M 24ms 42 76.0/88.6 
+
+## 6. Hyperparamter Choices 
+
+We conduct ablation studies on different hyperparameter choices: number of memory tokens K, temperature of memory cycle consistency loss τcycle , and distance thresh-old of temporal consistency loss τdist . In Tab. 6, we find that 
+
+K = 32 is suitable for overall performance. Tab. 7 shows performances for the different temperatures of the memory cycle consistency loss. The temperature τcycle controls the sharpness of the transition probability distribution during the cyclic walk. As shown, τcycle = 0 .1 yields the best per-formance. Tab. 8 varies the distance threshold  τdist  in the temporal consistency loss.  τdist  is used to discard nearest neighbor pairs whose canonical distance exceeds the thresh-old to suppress unreliable matches. We find  τdist = 30 cm 
+
+provides the best overall performance. 
+
+## 7. Model Size and Inference Time 
+
+Tab. 9 compares model size and runtime on the KITTI Car category, evaluated on a single RTX 4090 GPU using offi-cial implementations of the compared state of the art meth-ods. ChronoTrack processes a frame in 24 ms (42 FPS) with 2.9M parameters, achieving real time performance and the highest Success/Precision among the compared methods (76.0/88.6). 1
