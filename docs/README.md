@@ -6,79 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-17
-- 运行时间：2026-04-17 20:09:09 UTC
+- 最新运行日期：2026-04-18
+- 运行时间：2026-04-18 20:08:33 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日深度解析 19 篇视觉 AI 论文，重点攻克长视频理解的极致压缩与临床技能的程序化评估。
-满分推荐 SiMing-Bench 医疗视频评测体系，以及仅需单帧单 Token 即可实现长视频高效理解的突破性方案。
-建议关注视频模型如何从简单的内容识别，转向对复杂医疗操作及长时序逻辑的精准把控。
-- 详情：[/202604/17/README](/202604/17/README)
+今日深度解析 19 篇 AI 论文，聚焦临床技能视频评估与点追踪技术的重大突破。
+满分力作 SiMing-Bench 填补了临床操作连续交互评测的空白，TAPNext++ 则将任意点追踪性能推向新高度。
+建议重点关注多模态大模型在 3D CT 影像分析及视频语义分割中的跨领域迁移应用。
+- 详情：[/202604/18/README](/202604/18/README)
 
 ### 精读区论文标签
-1. [SiMing-Bench: Evaluating Procedural Correctness from Continuous Interactions in Clinical Skill Videos](/202604/17/2604.09037v1-siming-bench-evaluating-procedural-correctness-from-continuous-interactions-in-clinical-skill-videos)  
+1. [SiMing-Bench: Evaluating Procedural Correctness from Continuous Interactions in Clinical Skill Videos](/202604/18/2604.09037v1-siming-bench-evaluating-procedural-correctness-from-continuous-interactions-in-clinical-skill-videos)  
    标签：评分：10.0/10、query:medvid
-   evidence：评估完整临床技能视频中操作正确性的基准
-2. [One Token per Highly Selective Frame: Towards Extreme Compression for Long Video Understanding](/202604/17/2604.14149v2-one-token-per-highly-selective-frame-towards-extreme-compression-for-long-video-understanding)  
-   标签：评分：10.0/10、query:lvu
-   evidence：长视频理解中的极端视频令牌压缩
-3. [Bootstrapping Video Semantic Segmentation Model via Distillation-assisted Test-Time Adaptation](/202604/17/2604.10950v2-bootstrapping-video-semantic-segmentation-model-via-distillation-assisted-test-time-adaptation)  
-   标签：评分：9.0/10、query:medvid
-   evidence：无需标注视频的时序感知视频语义分割
-4. [ASGNet: Adaptive Spectrum Guidance Network for Automatic Polyp Segmentation](/202604/17/2604.14755v1-asgnet-adaptive-spectrum-guidance-network-for-automatic-polyp-segmentation)  
-   标签：评分：9.0/10、query:medvid
-   evidence：利用自适应频谱引导进行结肠镜图像中的息肉自动分割
-5. [UrbanClipAtlas: A Visual Analytics Framework for Event and Scene Retrieval in Urban Videos](/202604/17/2604.15225v1-urbanclipatlas-a-visual-analytics-framework-for-event-and-scene-retrieval-in-urban-videos)  
+   evidence：从全长临床技能视频中评估操作正确性
+2. [TAPNext++: What's Next for Tracking Any Point (TAP)?](/202604/18/2604.10582v1-tapnext-whats-next-for-tracking-any-point-tap)  
    标签：评分：9.0/10、query:lvu
-   evidence：用于长时城市视频事件检索的视觉分析框架
-6. [PinpointQA: A Dataset and Benchmark for Small Object-Centric Spatial Understanding in Indoor Videos](/202604/17/2604.08991v1-pinpointqa-a-dataset-and-benchmark-for-small-object-centric-spatial-understanding-in-indoor-videos)  
+   evidence：用于在长几个数量级的序列中跟踪点的循环Transformer架构
+3. [ClipGStream: Clip-Stream Gaussian Splatting for Any Length and Any Motion Multi-View Dynamic Scene Reconstruction](/202604/18/2604.13746v1-clipgstream-clip-stream-gaussian-splatting-for-any-length-and-any-motion-multi-view-dynamic-scene-reconstruction)  
+   标签：评分：9.0/10、query:lvu
+   evidence：任意长度多视图动态序列的高效重建
+4. [Chain-of-Glimpse: Search-Guided Progressive Object-Grounded Reasoning for Video Understanding](/202604/18/2604.14692v1-chain-of-glimpse-search-guided-progressive-object-grounded-reasoning-for-video-understanding)  
+   标签：评分：9.0/10、query:lvu
+   evidence：视频理解中的渐进式对象落地推理
+5. [Beyond Independent Frames: Latent Attention Masked Autoencoders for Multi-View Echocardiography](/202604/18/2604.15096v1-beyond-independent-frames-latent-attention-masked-autoencoders-for-multi-view-echocardiography)  
+   标签：评分：9.0/10、query:medvid
+   evidence：超声心动图中的时空视图和跨帧信息交换
+6. [STORM: End-to-End Referring Multi-Object Tracking in Videos](/202604/18/2604.10527v1-storm-end-to-end-referring-multi-object-tracking-in-videos)  
    标签：评分：8.0/10、query:lvu
-   evidence：视频空间理解与问答的数据集和基准
-7. [TinyNeRV: Compact Neural Video Representations via Capacity Scaling, Distillation, and Low-Precision Inference](/202604/17/2604.09220v1-tinynerv-compact-neural-video-representations-via-capacity-scaling-distillation-and-low-precision-inference)  
+   evidence：针对视频跟踪的外观、运动和语言的多模态推理
+7. [STGV: Spatio-Temporal Hash Encoding for Gaussian-based Video Representation](/202604/18/2604.10910v2-stgv-spatio-temporal-hash-encoding-for-gaussian-based-video-representation)  
    标签：评分：8.0/10、query:lvu
-   evidence：用于高效部署和帧重建的紧凑型神经视频表示
+   evidence：用于高斯视频表示的时空哈希编码
 
 ### 速读区论文标签
-1. [From Frames to Events: Rethinking Evaluation in Human-Centric Video Anomaly Detection](/202604/17/2604.09327v1-from-frames-to-events-rethinking-evaluation-in-human-centric-video-anomaly-detection)  
-   标签：评分：8.0/10、query:lvu
-   evidence：重新思考视频异常检测的评估方式，从单帧转向连续时间片段
-2. [MedLVR: Latent Visual Reasoning for Reliable Medical Visual Question Answering](/202604/17/2604.09757v1-medlvr-latent-visual-reasoning-for-reliable-medical-visual-question-answering)  
+1. [Adapting 2D Multi-Modal Large Language Model for 3D CT Image Analysis](/202604/18/2604.10233v1-adapting-2d-multi-modal-large-language-model-for-3d-ct-image-analysis)  
    标签：评分：8.0/10、query:medvid
-   evidence：用于可靠医学视觉问答的潜视觉推理
-3. [Rethinking Video Human-Object Interaction: Set Prediction over Time for Unified Detection and Anticipation](/202604/17/2604.10397v1-rethinking-video-human-object-interaction-set-prediction-over-time-for-unified-detection-and-anticipation)  
-   标签：评分：8.0/10、query:lvu
-   evidence：视频中人机交互的统一检测与时间预测
-4. [VCC-DSA: A Novel Vascular Consistency Constrained DSA Imaging Model for Motion Artifact Suppression](/202604/17/2604.10700v1-vcc-dsa-a-novel-vascular-consistency-constrained-dsa-imaging-model-for-motion-artifact-suppression)  
+   evidence：将多模态大模型应用于 3D 医学图像分析和视觉问答
+2. [Uncertainty-quantified Pulse Signal Recovery from Facial Video using Regularized Stochastic Interpolants](/202604/18/2604.10777v1-uncertainty-quantified-pulse-signal-recovery-from-facial-video-using-regularized-stochastic-interpolants)  
    标签：评分：8.0/10、query:medvid
-   evidence：用于运动伪影抑制的血管一致性约束DSA成像
-5. [Weight Group-wise Post-Training Quantization for Medical Foundation Model](/202604/17/2604.07674v1-weight-group-wise-post-training-quantization-for-medical-foundation-model)  
+   evidence：从面部视频中恢复脉搏信号，用于临床应用和不确定性分析
+3. [Bootstrapping Video Semantic Segmentation Model via Distillation-assisted Test-Time Adaptation](/202604/18/2604.10950v1-bootstrapping-video-semantic-segmentation-model-via-distillation-assisted-test-time-adaptation)  
+   标签：评分：8.0/10、query:medvid
+   evidence：将图像模型转换为具有时间感知能力的视频语义分割模型
+4. [rPPG-VQA: A Video Quality Assessment Framework for Unsupervised rPPG Training](/202604/18/2604.11156v1-rppg-vqa-a-video-quality-assessment-framework-for-unsupervised-rppg-training)  
+   标签：评分：8.0/10、query:medvid
+   evidence：用于无监督远程光电容积脉搏波训练的视频质量评估框架
+5. [Adaptive Dual Residual U-Net with Attention Gate and Multiscale Spatial Attention Mechanisms (ADRUwAMS)](/202604/18/2604.08893v1-adaptive-dual-residual-u-net-with-attention-gate-and-multiscale-spatial-attention-mechanisms-adruwams)  
    标签：评分：7.0/10、query:medvid
-   evidence：医学基础模型的训练后量化以提高推理速度
-6. [LPM 1.0: Video-based Character Performance Model](/202604/17/2604.07823v2-lpm-10-video-based-character-performance-model)  
-   标签：评分：7.0/10、query:lvu
-   evidence：基于视频的角色表演中的长时身份稳定性
-7. [BIAS: A Biologically Inspired Algorithm for Video Saliency Detection](/202604/17/2604.08858v1-bias-a-biologically-inspired-algorithm-for-video-saliency-detection)  
-   标签：评分：7.0/10、query:lvu
-   evidence：具有毫秒级延迟的快速生物启发视频显著性检测算法
-8. [UniSemAlign: Text-Prototype Alignment with a Foundation Encoder for Semi-Supervised Histopathology Segmentation](/202604/17/2604.09169v1-unisemalign-text-prototype-alignment-with-a-foundation-encoder-for-semi-supervised-histopathology-segmentation)  
+   evidence：用于医学图像中脑肿瘤自动分割的深度学习模型
+6. [M-IDoL: Information Decomposition for Modality-Specific and Diverse Representation Learning in Medical Foundation Model](/202604/18/2604.08936v1-m-idol-information-decomposition-for-modality-specific-and-diverse-representation-learning-in-medical-foundation-model)  
    标签：评分：7.0/10、query:medvid
-   evidence：用于半监督组织病理学分割的双模态语义对齐
-9. [Adaptive Depth-converted-Scale Convolution for Self-supervised Monocular Depth Estimation](/202604/17/2604.07665v1-adaptive-depth-converted-scale-convolution-for-self-supervised-monocular-depth-estimation)  
-   标签：评分：6.0/10、query:lvu
-   evidence：处理单目视频中用于深度估计的对象尺寸变化
-10. [DP-DeGauss: Dynamic Probabilistic Gaussian Decomposition for Egocentric 4D Scene Reconstruction](/202604/17/2604.07986v1-dp-degauss-dynamic-probabilistic-gaussian-decomposition-for-egocentric-4d-scene-reconstruction)  
-   标签：评分：6.0/10、query:lvu
-   evidence：从第一人称视频进行动态4D场景重建
-11. [A H.265/HEVC Fine-Grained ROI Video Encryption Algorithm Based on Coding Unit and Prompt Segmentation](/202604/17/2604.08047v1-a-h265hevc-fine-grained-roi-video-encryption-algorithm-based-on-coding-unit-and-prompt-segmentation)  
+   evidence：用于多模态医学图像表示学习的医学基础模型
+7. [ACCIDENT: A Benchmark Dataset for Vehicle Accident Detection from Traffic Surveillance Videos](/202604/18/2604.09819v1-accident-a-benchmark-dataset-for-vehicle-accident-detection-from-traffic-surveillance-videos)  
+   标签：评分：7.0/10、query:lvu
+   evidence：用于监控视频中事故时空定位的基准数据集
+8. [SwinTextUNet: Integrating CLIP-Based Text Guidance into Swin Transformer U-Nets for Medical Image Segmentation](/202604/18/2604.10000v1-swintextunet-integrating-clip-based-text-guidance-into-swin-transformer-u-nets-for-medical-image-segmentation)  
+   标签：评分：7.0/10、query:medvid
+   evidence：用于医学图像分割的多模态分割框架
+9. [DSVTLA: Deep Swin Vision Transformer-Based Transfer Learning Architecture for Multi-Type Cancer Histopathological Cancer Image Classification](/202604/18/2604.09468v1-dsvtla-deep-swin-vision-transformer-based-transfer-learning-architecture-for-multi-type-cancer-histopathological-cancer-image-classification)  
    标签：评分：6.0/10、query:medvid
-   evidence：针对医学等敏感领域的细粒度ROI视频加密
-12. [DiV-INR: Extreme Low-Bitrate Diffusion Video Compression with INR Conditioning](/202604/17/2604.08329v1-div-inr-extreme-low-bitrate-diffusion-video-compression-with-inr-conditioning)  
+   evidence：基于深度Swin视觉Transformer的癌症组织病理图像分类架构
+10. [RobustMedSAM: Degradation-Resilient Medical Image Segmentation via Robust Foundation Model Adaptation](/202604/18/2604.09814v1-robustmedsam-degradation-resilient-medical-image-segmentation-via-robust-foundation-model-adaptation)  
+   标签：评分：6.0/10、query:medvid
+   evidence：医学图像分割基础模型的鲁棒性适配
+11. [Is There Knowledge Left to Extract? Evidence of Fragility in Medically Fine-Tuned Vision-Language Models](/202604/18/2604.09841v1-is-there-knowledge-left-to-extract-evidence-of-fragility-in-medically-fine-tuned-vision-language-models)  
+   标签：评分：6.0/10、query:medvid
+   evidence：医学微调视觉语言模型的评估
+12. [YUV20K: A Complexity-Driven Benchmark and Trajectory-Aware Alignment Model for Video Camouflaged Object Detection](/202604/18/2604.09985v1-yuv20k-a-complexity-driven-benchmark-and-trajectory-aware-alignment-model-for-video-camouflaged-object-detection)  
    标签：评分：6.0/10、query:lvu
-   evidence：利用隐式神经表示进行低比特率下的高效视频压缩
+   evidence：视频伪装目标检测中的时间特征对齐
 
 
 <div class="dpr-home-promo-card">
