@@ -1,0 +1,247 @@
+Title: Memory-efficient optimization of implicit neural representations for CT reconstruction
+
+URL Source: https://arxiv.org/pdf/2604.09884v1
+
+Published Time: Tue, 14 Apr 2026 00:15:08 GMT
+
+Number of Pages: 4
+
+Markdown Content:
+# Memory-efficient optimization of implicit neural representations for CT reconstruction 
+
+Mahrokh Najaf, Gregory Ongie 
+
+Abstract —Implicit neural representations (INRs) provide aparameter-efficient and fully differentiable image model for CT reconstruction. However, optimizing INRs for CT recon-struction using standard auto-differentiation techniques can be prohibitively GPU memory-intensive, especially in 3D imaging, due to the large number of INR evaluations needed to simulate ray projections. To address this issue, we propose a memory-efficient stochastic gradient approximation based on decomposing the gradient into a Jacobian–vector product that is amenable to stochastic subsampling. This approximation allows the user to trade-off between GPU memory usage and gradient approxima-tion accuracy. Our experiments on synthetic 2D data demonstrate that gradient approximation uses far less GPU memory than standard INR training, while yielding reconstructions that are comparable in convergence behavior and mean squared error. Finally, we demonstrate that the proposed approach allows for memory-efficient 3D cone beam CT reconstruction in a sparse-view setting. 
+
+Index Terms —Implicit Neural Representations, CT Recon-struction, Memory-efficient Optimization 
+
+I. I NTRODUCTION 
+
+Implicit neural representations (INRs) provide a parameter-efficient, nonlinear, differentiable model for image reconstruc-tion tasks in CT. In an INR, the unknown attenuation image is represented by a small-scale neural network fθ : Rd → R that takes spatial coordinates as input and outputs the correspond-ing grayscale value. Fitting an INR to CT measurements can be viewed as an unsupervised, model-based iterative reconstruc-tion (MBIR) approach, where the unknown is parameterized by the network weights θ rather than by pixels/voxels. Recent work has explored INRs for low-dose and sparse-view CT reconstruction [1], [2], [3], [4], demonstrating that INRs can yield high-quality reconstructions while implicitly regularizing against noise and artifacts. Given measured sinogram data, INR parameters are op-timized to minimize a data-fidelity loss that enforces con-sistency with the forward CT model. While conceptually appealing, this approach introduces a significant computational challenge: training an INR typically requires differentiating through the CT forward operator. When auto-differentiation is used end-to-end, the computational graph must store in-termediate states associated with both the neural network and the projection operator. As a result, peak GPU memory consumption grows rapidly with image resolution, number of views, and dimensionality. These memory constraints force practitioners to either use very small INRs with limited repre-sentational capacity, or to severely restrict the number of ray 
+
+Marquette University, Department of Mathematical and Statistical Sciences, Milwaukee, WI, USA. Corresponding author: gregory.ongie@marquette.edu 
+
+projections simulated per iteration. In 3D cone-beam CT, this limitation is particularly acute: computing and storing the gra-dients associated with even a single view can exceed available GPU memory on typical hardware (e.g., reconstruction of a 
+
+501 3 voxel volume on a 24 GB GPU; see Section IV-B). This motivates the need for alternative optimization strategies that reduce memory usage while preserving reconstruction quality. In this paper, we propose a memory-efficient gradient approximation strategy for training INRs that avoids back-propagation through the CT forward model. Rather than relying on auto-differentiation to compute gradients of the loss with respect to the INR parameters, we explicitly form a Jacobian–vector product that separates the projection operator from the network derivative. This allows the use of effi-cient projection and backprojection routines, combined with stochastic coordinate subsampling, to approximate the gradient with substantially reduced peak GPU memory requirements. We illustrate the proposed approach for sparse-view CT reconstruction on synthetic 2D data and real 3D data with a variety of INR architectures. Our results show that the proposed gradient approximation requires far less peak GPU memory than standard auto-differentiation, and the resulting reconstructions are comparable to auto-differentiation in terms of convergence behavior and final image mean squared error. II. P ROBLEM FORMULATION 
+
+Let y ∈ Rm denote measured CT data (a sinogram in 2D or cone-beam projections in 3D), rearranged as a vector. Let fθ : Rd → R denote an INR with parameters θ ∈ Rp
+
+that maps d-dimensional ( d = 2, 3) spatial coordinates to attenuation values. Also, let P denote the forward projection operator that approximates ray integrals of a continuously defined attenuation function. INR-based CT reconstruction is posed as the optimization problem: 
+
+min  
+
+> θ
+
+L(P{ fθ }, y), (1) where L : Rm×Rm → R is a given loss function. In this work, we focus on two loss functions: the least squares (LS) loss 
+
+LLS (z, y) = 12 ∥z − y∥2 and the filtered least squares (FLS) loss LFLS (z, y) = 12 (z − y)⊤F (z − y), where F ∈ Rm×m is a matrix that represents convolution with a ramp filter along detector columns, as used in filtered back-projection. The FLS loss can be viewed as a preconditioned least squares objective that improves conditioning of the optimization problem. This loss was investigated for INR reconstruction in our prior work [5]. While we focus on the LS and FLS loss in our experiments, we emphasize that the gradient approximation 
+
+> arXiv:2604.09884v1 [eess.IV] 10 Apr 2026
+
+approach proposed below applies to any loss L(·, ·) that is differentiable in its first argument. The most direct approach to minimizing (1) is to use auto-differentiation to obtain gradients of the loss, enabling the use of first-order optimizers such as Adam. However, auto-differentiation requires retaining the computational graph (and saved intermediate outputs) for the forward projector so that gradients can be computed during the backward pass. This can consume substantial GPU memory, and the cost is amplified in 3D due to the larger volume size and the increased number of projection rays. III. P ROPOSED GRADIENT APPROXIMATION 
+
+We now describe our proposed memory-efficient approx-imation to gradients of (1). First, we decompose P(fθ ) = 
+
+P E{ fθ }, where E{ fθ } = [ fθ (x1), ..., f θ (xn)] ⊤ ∈ Rn denotes the evaluation operator that forms an image/volume by sam-pling fθ on a regular grid of coordinates x1, ..., x n ∈ Rd
+
+within a field-of-view (FOV) mask, and P ∈ Rm×n denotes a discrete forward projection operator. Let L(θ) = L(z, y) be the loss function, where z = P(fθ ) = P E{ fθ } is implicitly a function of INR parameters θ, and let r⊤ = ∂z L(z, y). Then by the Jacobian chain rule we have 
+
+∇L(θ)⊤ = ∂L ∂z
+
+∂z
+
+∂θ = r⊤P
+
+ ∂∂θ E{ fθ }
+
+
+
+.
+
+Defining v = P ⊤r, the gradient can be written as 
+
+∇L(θ) = 
+
+ ∂∂θ E{ fθ }
+
+⊤
+
+v =
+
+> n
+
+X
+
+> i=1
+
+vi∇θ fθ (xi).
+
+Our key observation is that the sum structure in the gradient above enables stochastic approximation via subsampling. Let 
+
+I ⊂ [n] denote a random subset of INR evaluation indices (e.g., random coordinate batches within the FOV mask). We approximate the gradient by 
+
+d∇L(θ) = n
+
+|I|
+
+X
+
+> i∈I
+
+vi∇θ fθ (xi). (2) If the index sets I are drawn uniformly at random, this is an unbiased estimator: 
+
+EI
+
+d∇L(θ) = ∇L(θ).
+
+For implementation purposes, observe that if v is treated as constant with respect to θ, then d∇L(θ) = ∇θ ˜L(θ) where 
+
+˜L(θ) = n
+
+|I|
+
+X
+
+> i∈I
+
+vifθ (xi) (3) is a “virtual” loss whose gradient matches the desired stochas-tic gradient estimate. Therefore, auto-differentiation can be applied to the (3) to obtain the gradient approximation d∇L(θ).Algorithm 1 summarizes this approach. Note that for the LS loss, ∂z LLS (z, y) = ( z − y), and for the FLS loss ∂z LFLS (z, y) = F (z − y). Therefore, Step 2 in Algorithm 1 reduces to backprojection of the residual z − y
+
+for the LS loss, and a filtered backprojection of the residual for the FLS loss, which can be efficiently computed outside the computational graph. 
+
+Algorithm 1 Stochastic Gradient Estimation for INR-based CT Reconstruction 
+
+Require: INR parameters θ, measurements y, batch size |I| 
+
+> 1:
+
+Evaluate z = P E{ fθ } {no gradient tracking } 
+
+> 2:
+
+Compute v = P ⊤∂z L(z, y) {no gradient tracking } 
+
+> 3:
+
+Sample random index set I ⊂ [n], |I| ≪ n 
+
+> 4:
+
+Compute virtual loss: ˜L = n
+
+> |I|
+
+P 
+
+> i∈I
+
+vifθ (xi) 
+
+> 5:
+
+return ∇θ ˜L via auto-diff. {gradient tracking on θ only }
+
+Finally, note that the proposed gradient approximation in Algorithm 1 is also compatible with ordered subsets-like approaches where the gradient of the loss is evaluated with respect to a partial subset of views. 
+
+A. Memory and computational considerations 
+
+The memory-requirements of computing gradients of the loss in (1) using auto-differentiation scales proportionally to the total number of INR evaluations used to estimate ray projections. For example, to estimate the projections associated with one view may require millions of INR evaluations, which can lead to large peak GPU memory usage. In contrast, the gradient approximation strategy presented computes the weight vector v with optimized CT operators without gradient tracking, and backpropagates only through the INR evaluated on a coordinate minibatch. Consequently, peak GPU memory usage is dominated by the memory requirements to evaluate the INR over the minibatch, rather than the memory require-ments to compute ray projections.                 
+
+> FFNs SIREN Hash Enc. Auto-differentiation 2.625 3.453 0.869 Proposed gradient approx. 0.708 0.767 0.534 TABLE I PEAK GPU MEMORY USAGE (IN GB) ACROSS DIFFERENT INR
+> ARCHITECTURES FOR 2D RECONSTRUCTIONS
+
+Table I illustrates the peak GPU memory usage for auto-differentiation versus our proposed gradient approximation across INR architectures for our 2D reconstruction experi-ments (see Section IV-A for more details). Observe that the gradient approximation requires far less peak GPU mem-ory than auto-differentiation, allowing for substantially larger problem sizes. IV. E XPERIMENTS 
+
+Here we demonstrate the proposed approach for sparse-view CT reconstruction. We present results for three popular INR architectures: fully-connected ReLU networks with an initial Fourier features encoding (FFNs) [6], fully-connected networks with sinusoidal activation functions (SIREN) [7], and a MLP with an initial multi-resolution hash encoding (Hash Enc.) [8]. We use the LivermorE AI Projector for Computed Tomog-raphy (LEAP) software package 1 for GPU-enabled forward and backward projections and FBP reconstructions [9]. All 
+
+> 1https://github.com/llnl/LEAP FBP  CGLS  ground truth
+
+MSE = 1.08e-6 MSE = 2.68e-6 4.14e-6 6.65e-7 5.86e-7 MSE = 3.16e-6 2.87e-6 5.46e-7 Hash Encoding  SIREN  FFNs MSE = 3.78e-6 MSE = 3.00e-6 3.05e-6 4.94e-7 4.30e-7 LS w/ auto-diff LS w/ grad approx FLS w/ auto-diff FLS w/ grad approx 5.03e-7 Fig. 1. 2D FORBILD sparse-view reconstructions obtained with conjugate gradient least squares (CGLS) and filtered backprojection (FBP), alongside reconstructions produced by training an INR using FFNs, SIREN, and Hash Encoding architectures. All images are shown on the scale [0.0200,0.0220] mm −1.0 1000 2000 3000 4000      
+
+> 10 6
+> 10 5
+> 10 4
+> 10 3
+> 10 2
+
+iterations iterations iterations image MSE FFNs SIREN Hash Encoding FFNs SIREN Hash Encoding                      
+
+> 5000 5000 5000
+> 0200 400 600 800 1000
+> 10 5
+> 10 4
+> 10 3
+> 10 2
+> image MSE
+> FFNs-LS-grad approx FFNs-FLS-grad approx
+> 0200 400 600 800 1000
+> SIREN-LS-grad approx SIREN-FLS-grad approx
+> 0200 400 600 800 1000
+
+iterations iterations iterations                  
+
+> Hash Encoding-LS-grad approx Hash Encoding-FLS-grad approx
+> FFNs-LS-auto diff FFNs-FLS-auto diff FFNs-LS-grad approx FFNs-FLS-grad approx
+> 01000 2000 3000 4000
+> SIREN-LS-auto diff SIREN-FLS-auto diff SIREN-LS-grad approx SIREN-FLS-grad approx
+> 01000 2000 3000 4000
+> Hash Encoding-LS-auto diff Hash Encoding-FLS-auto diff Hash Encoding-LS-grad approx Hash Encoding-FLS-grad approx 01000 2000 3000 4000
+> 10 6
+> 10 5
+> 10 4
+> 10 3
+> 10 2
+
+iterations iterations iterations image MSE FFNs SIREN Hash Encoding FFNs SIREN Hash Encoding            
+
+> 5000 5000 5000
+> 0200 400 600 800 1000
+> 10 5
+> 10 4
+> 10 3
+> 10 2
+> image MSE
+
+FFNs-LS-grad approx FFNs-FLS-grad approx      
+
+> 0200 400 600 800 1000
+
+SIREN-LS-grad approx SIREN-FLS-grad approx      
+
+> 0200 400 600 800 1000
+
+iterations iterations iterations 
+
+Hash Encoding-LS-grad approx Hash Encoding-FLS-grad approx 
+
+FFNs-LS-auto diff FFNs-FLS-auto diff FFNs-LS-grad approx FFNs-FLS-grad approx     
+
+> 01000 2000 3000 4000
+
+SIREN-LS-auto diff SIREN-FLS-auto diff SIREN-LS-grad approx SIREN-FLS-grad approx     
+
+> 01000 2000 3000 4000
+
+Hash Encoding-LS-auto diff Hash Encoding-FLS-auto diff Hash Encoding-LS-grad approx Hash Encoding-FLS-grad approx 
+
+Fig. 2. Top row (2D FORBILD): Image MSE plots for INR training with FFNs, SIREN, and hash encoding, comparing auto-differentiation and gradient approximation (for both LS and FLS). Bottom row (3D Walnut): Image MSE plots for INR training with FFNs, SIREN, and hash encoding using gradient approximation (for both LS and FLS). 
+
+experiments were conducted using a single NVIDIA GeForce RTX 4090 GPU with 24 GB RAM. As baselines, we compute reconstructions using analytical methods, i.e., filtered backprojection for 2D fan-beam and FDK for 3D cone-beam, both referred to as “FBP” in this paper. We also compare against a pixel/voxel-space least squares reconstruction obtained via the conjugate gradients algorithm (CGLS). 
+
+A. 2D FORBILD Phantom 
+
+In our first set of experiments, we synthetically generate a sparse-view 2D fanbeam acquisition of the 2D FORBILD phantom (180 equi-spaced views along a 360 degree arc, with 512 detector pixels). To avoid the inverse crime, we generate projection data from the phantom rasterized to a 2048 × 2048 
+
+pixel grid, and for reconstruction use projection operators acting on a 512 × 512 pixel grid. We compare four training configurations for each INR architecture: (1) LS loss with auto-differentiation (LS w/auto-diff), (2) LS loss with the proposed gradient approximation (LS w/grad-approx), (3) FLS loss with auto-differentiation (FLS w/auto-diff), (4) FLS loss with the proposed gradient approximation (FLS w/grad-approx). For the gradient approx-imation cases, we use a minibatch size of n/ 16 , where n is the number of pixel locations inside the FOV. Figure 1 shows reconstructions obtained after training an INR for 5000 iterations with the Adam optimizer, which are comparable to those produced by CGLS or FBP, while in some cases achieving higher quality. The top panel of Figure 2 plots the pixel-wise mean-squared-error (MSE) of the INR reconstructions versus the ground truth phantom over all iterations. Note that for a given loss function and INR architecture, we see similar convergence behavior with and without the proposed gradient approximation approach. 
+
+B. 3D Walnut Dataset 
+
+We also illustrate the scalability of our approach by re-constructing real cone-beam CT data of a walnut [10]. The original dataset contains 1201 projection views with 972 ×768 
+
+detector pixels, which we retrospectively subsample to 120 views. The reconstructed volume size is 501 3 voxels. We use a CGLS reconstruction obtained from the full set of 1201 views as the ground truth. For this dataset, auto-differentiation using the full set of 120 views was not feasible due to GPU memory constraints. There-fore, we report results only for the proposed memory-efficient gradient approximation approach. We used a minibatch size of n/ 512 , where n is the number of voxel locations inside the FOV. This resulted in the following peak GPU memory usages: 7.96 GB for FFNs, 8.43 GB for SIREN, and 6.36 GB for Hash Encoding. Figure 3 shows reconstructions obtained after training an INR for 1000 iterations using the Adam optimizer. All three INR architectures (FFNs, SIREN, and Hash Encoding) pro-duce reconstructions that are comparable to those from CGLS and FBP. The bottom panel of Figure 2 plots the pixel-wise MSE of the INR reconstructions versus the ground truth phantom over all iterations, which shows stable convergence of the proposed approach. V. C ONCLUSION 
+
+We introduced a GPU memory-efficient gradient approxi-mation strategy for optimizing INRs in CT reconstruction. Our experiments show that the proposed gradient approximation dramatically reduces peak GPU memory while producing reconstructions that are comparable to auto-differentiation in convergence behavior and final MSE. Finally, we also demon-strate that the proposed approach allows for easy scalability to 3D cone beam reconstruction, where the GPU memory demands of auto-differentiation through the CT projector can be prohibitive. REFERENCES [1] Yu Sun, Jiaming Liu, Mingyang Xie, Brendt Wohlberg, and Ulugbek S Kamilov, “CoIL: Coordinate-based internal learning for tomographic imaging,” IEEE Transactions on Computational Imaging , vol. 7, pp. 1400–1412, 2021. FBP  CGLS  ground truth Hash Encoding  SIREN  FFNs LS w/ grad approx FLS w/ grad approx MSE = 2.80e-6 MSE = 1.18e-5 7.46e-6 MSE = 7.72e-6 3.69e-6 MSE = 2.87e-5 MSE = 4.22e-6 6.25e-6  
+
+> Fig. 3.
+
+3D sparse-view cone-beam CT reconstructions obtained with conjugate gradient least squares (CGLS) and filtered backprojection (FBP), alongside reconstructions produced by training an INR using FFNs, SIREN, and Hash Encoding architectures. All images are shown on the scale [0.00,0.08] mm −1.

@@ -1,0 +1,1318 @@
+Title: Enhancing Fine-Grained Spatial Grounding in 3D CT Report Generation via Discriminative Guidance
+
+URL Source: https://arxiv.org/pdf/2604.10437v1
+
+Published Time: Tue, 14 Apr 2026 00:59:56 GMT
+
+Number of Pages: 34
+
+Markdown Content:
+## Enhancing Fine-Grained Spatial Grounding in 3D CT Report Generation via Discriminative Guidance 
+
+Chenyu Wang 1, Weicheng Dai 1, Han Liu 2, Wenchao Li 1, and Kayhan Batmanghelich 1 
+
+> 1
+
+Boston University, Boston, MA, USA 
+
+{chyuwang, wd2119, wenchao, batman}@bu.edu  
+
+> 2
+
+Siemens Healthineers, Princeton, NJ, USA 
+
+han.liu@siemens-healthineers.com 
+
+Abstract. Vision–language models (VLMs) for radiology report gen-eration (RRG) can produce long-form chest CT reports from volumet-ric scans and show strong potential to improve radiology workflow ef-ficiency and consistency. However, existing methods face two key lim-itations: (i) training supervision is often coarse, aligning a whole CT volume with a full free-text report without explicit alignment for fine-grained attributes or pathology locations; and (ii) evaluation is typically holistic (lexical overlap, entity matching, or LLM-as-a-judge scores) and not diagnostic for spatial grounding. We propose Discriminative Cue-Prompting with Prompt Dropout (DCP-PD) , a plug-and-play framework that distills fine-grained cues from free-text reports and uses them to guide report generation while mitigating shortcut reliance via prompt dropout. DCP-PD achieves state-of-the-art performance on CT-RATE, improving macro F1 from = 0 .501 to 0.603 (∼20% relative), and sub-stantially boosts out-of-distribution performance on Rad-ChestCT from F1 = 0 .266 to 0.503 (∼89% relative). Finally, we introduce a hierarchical, location-aware question-set protocol (presence → laterality → lobe) to directly assess pathology-location grounding, showing that fine-grained spatial localization remains challenging even for models that score highly on current benchmarks. 
+
+1 Introduction 
+
+Radiology report generation (RRG) improves clinical workflow efficiency and consistency [31, 37]. Clinical accuracy within these generated reports is criti-cal. However, current vision-language models (VLMs) face two primary gaps. First, VLM performance on specific abnormality detection tasks remains in-ferior to dedicated discriminative models. Second, existing evaluation metrics are too coarse to accurately measure fine-grained spatial grounding. This work introduces a modular approach to address these gaps. We leverage pretrained discriminators to guide VLM generation. Crucially, our framework offers modu-lar extensibility. It allows the discriminator to be updated or replaced without requiring any retraining of the underlying language model. 
+
+> arXiv:2604.10437v1 [cs.CV] 12 Apr 2026 2
+
+Previous methods attempt to improve fine-grained alignment through anatom-ical segmentation [7,36] or auxiliary classifiers [8,24,40]. Segmentation often fails for small, sparse abnormalities. Classifier-based approaches inject diagnostic pre-dictions directly into text prompts to guide generation. Both paradigms share a critical flaw. They tightly couple the VLM to a specific auxiliary model ar-chitecture. Consequently, if the auxiliary segmentation or classification model is updated, the entire VLM requires costly retraining. Standard lexical overlap metrics fail to sufficiently reflect clinical relevance. Recent methods evaluate clinical correctness by parsing reports into specific ab-normalities to compute targeted metrics like precision, recall, and F1 scores [19]. Several 3D CT vision-language works also adopt LLM-as-a-judge evaluations [19, 27, 36]. While these approaches improve upon lexical scores, they remain too coarse. They are not fine-grained enough to rigorously assess the precise spatial localization of an abnormality. Generating structured reports rather than un-structured text can partially address this issue and improve spatial accuracy [11]. Ultimately, a VLM that seamlessly integrates fine-grained discriminative models can directly bridge these localization gaps and substantially improve the clinical accuracy of the generated report. To achieve modular extensibility, we propose Discriminative Cue-Prompting with Prompt Dropout (DCP-PD). During training, our method extracts ground-truth clinical cues directly from actual free-text reports. We format these cues as text prefixes to condition the VLM. Simply adding ground-truth text can cause the VLM to learn a shortcut, where it merely copies the prompt instead of relying on the image. To prevent this, we develop prompt dropout. This tech-nique randomly drops cue entities during training, forcing the model to verify features against the visual tokens and maintain strong visual grounding. This design fully decouples the VLM from the auxiliary model. At inference time, the prompt is dynamically populated by predictions from a pretrained discrimina-tive model. This strategy is highly modular. We can replace the classifier with a better-performing one at any time without requiring any retraining of the VLM. Finally, this flexibility directly addresses the aforementioned localization shortcomings. It allows us to seamlessly incorporate finer-grained discriminative models that detect not only the presence of an abnormality but also its precise spatial location, thereby improving the overall clinical accuracy of the generated report. 
+
+Our contributions are as follows. – We propose DCP-PD, a plug-and-play framework that conditions CT report generation on templated natural-language cues and enables inference-time guidance from arbitrary discriminative models. 
+
+– We train a structured CT report generation VLM with DCP-PD that achieves state-of-the-art performance on CT-RATE across clinical and lexical metrics, and generalizes well to the out-of-distribution Rad-ChestCT benchmark. 
+
+– DCP-PD scales beyond presence/absence of finding labels to include location cues, such as laterality and lobe information for common lung findings. 3
+
+– We introduce a diagnostic question-set protocol to evaluate spatial grounding of generated reports hierarchically (presence → laterality → lobe), and show that fine-grained localization remains challenging. 
+
+2 Related Work 
+
+2.1 Fine-Grained Vision-Text Alignment in CT VLMs 
+
+CT vision–language alignment has recently been improved by moving from global scan–report matching to anatomy/region-level alignment. CT-GLIP aligns organ-level 3D CT features with corresponding organ text via grounded contrastive pre-training [28], while fVLM [36] aligns anatomical region features with anatomy-specific report sentences using fine-grained contrastive learning. Reg2RG [7] and MedRegion-CT [26] incorporate region-centric tokens to condition report gener-ation on anatomical regions. However, these approaches largely rely on anatomy segmentation models [41], so the alignment remains organ/anatomy-level and can be hard to scale to finer-grained or more flexible concepts (e.g., severity, morphology/shape) and small findings where segmentation is noisy or unreli-able. In contrast, we decouple fine-grained concept alignment from the VLM by training concept-specific discriminators on multi-scale frozen CT embeddings with report-distilled labels, and inject their outputs as cue prompts into the VLM, enabling flexible extension to new concepts. 
+
+2.2 Prompt-Guided Report Generation 
+
+Prompt learning has also been explored for radiology report generation. Wang et al. [40] design disease-enriched prompts and further propose an automatic prompt learning mechanism to reduce manual prompt engineering. Building on this direction, PromptMRG [24] converts predictions from an auxiliary disease classifier into diagnosis-driven textual prompts to steer report generation, and Dia-LLaMA [8] injects diagnostic guidance into LLM-based generation to em-phasize clinically salient diseases. However guidance cues from those methods are typically produced by auxiliary models and are largely restricted to predefined presence/absence of finding labels, making them tightly coupled to specific clas-sification architectures. In contrast, we use ground-truth supervision at training time to align diverse, fine-grained cues extracted from free-text reports with multi-scale CT embeddings, enabling richer cue types during training. 
+
+2.3 Evaluation of Radiology Report Generation 
+
+Radiology report generation is commonly evaluated with lexical overlap met-rics [4, 35], but these correlate weakly with clinical correctness and often miss factual errors [44]. To better capture clinical content, RadBERT [19] uses a BERT classifier to compute Micro/Macro F1 over 18 abnormalities from gen-erated and ground-truth reports. LLM-based evaluators further assess faithful-ness: RadFact [5] measures bidirectional sentence-level support between gener-ated and reference reports, while GREEN [34] provides clinically grounded error 4Projector 
+
+Image 
+
+Enc 
+
+Image 
+
+Enc Projector 
+
+L
+
+L
+
+M
+
+L
+
+L
+
+M
+
+Stage 1: CT-Report Alignment 
+
+Stage 2: Discriminative-guided SFT with prompt dropout 
+
+Image Token DCP Token Query Token 
+
+Causal LM Loss         
+
+> Q1: Is there any lung nodule? Yes
+> Q2: Is there any atelectasis? No
+> Q3: Is there any pleural effusion? Yes ….
+> Q1: Is there pleural effusion in the
+> right pleural space? No
+> Q2: Is there a lung nodule in the right
+> lung? Yes ….
+> Q1: Is there ground-glass opacity in the
+> right upper lobe (RUL)? Yes
+> Q2: Is there a lung nodule in the right
+> middle lobe (RML)? No ….
+
+L
+
+L
+
+M
+
+Question Answer Set (QAS 1) 
+
+Question Answer Set 2 (QAS 2) 
+
+Question Answer Set 3 (QAS 3) 
+
+(d) Two-Stage VLM Training 
+
+Please generate comprehensive CT report:     
+
+> Trachea: -------
+> Heart: -------
+> Pleura: --------
+> Trachea: -------
+> Heart: -----------
+> Pleura: ----------
+> There is lung nodule…
+> The Lung nodule is in the
+> right lung…
+> The Lung nodule is not in
+> the right middle lobe…
+> Lung Nodule: 1
+> Pleural effusion: 1
+> Pleural effusion - Right : 0
+> Lung Nodule - Right: 1
+> GGO - RUL: 1
+> Lung Nodule - RML : 0
+> Dropout
+
+Please generate comprehensive CT report: 
+
+Pred 
+
+Pred   
+
+> Bones: -----------
+> Bones: ----------
+
+QAS    
+
+> LoRA
+> Esophagus: --
+> Esophagus: --
+> Lungs: --------
+> Trachea and both main
+> bronchi are open. No
+> occlusive pathology was
+> detected in the trachea and
+> both main bronchi. …
+
+L
+
+L
+
+M    
+
+> Trachea/Bronchi: -----
+> Heart: ------------
+> Pleura: ------------
+> Lungs: ------------
+
+Image 
+
+Enc 
+
+(a) Report Structuring       
+
+> Trachea/Bronchi: -----
+> Heart: -------------
+> Pleura: --------------
+> Lungs: ---------------
+> Mediastinum: --------
+> Esophagus: --------
+> Bones: ---------------
+
+(b) Automatic Label Extraction 
+
+(c) Discriminative Models Training 
+
+Weighted BCE Loss 
+
+Multi-label 
+
+Classifier Pred 
+
+QAS    
+
+> Q1: Is there …? Yes
+> Q2: Is there …? No …
+
+QA GT Labels 
+
+(e) VLM Inference 
+
+Visual Projector 
+
+> Multi-label
+> Classifier
+
+L
+
+L
+
+M
+
+Image 
+
+Enc       
+
+> Trachea: ----
+> Heart: ----
+> Pleura: ----
+> Bones: ------
+> Esophagus: --
+> Lungs: ----------
+
+Please generate comprehensive CT report: Lungs: ----
+
+Fig. 1: Overview of the data preparation, training, and inference pipeline of the DCP-PD framework. (a) Report structuring: we convert free-text CT reports into sectioned, anatomy-aware text using an LLM . (b) Automatic label ex-traction: we define three set of location-aware clinical questions, and use the same 
+
+LLM to extract binary answers from each structured report, forming question–answer sets (QAS1–3). Here, QAS1 targets finding-level presence/absence, while QAS2–3 pro-gressively probe finer localization. (c) Discriminative model training: using Multi-scale CT embeddings from the frozen image backbone, we train lightweight multi-label classifiers with weighted BCE to predict the QA-derived labels, with one classifier trained per question set. (d) Two-stage VLM training: the image encoder is frozen throughout. Stage 1 performs CT Image–Report alignment by tuning the visual projec-tor for report generation. Stage 2 performs discriminative-guided SFT by prepending ground-truth (GT) cue prompts with prompt dropout and jointly tuning the projector and a LoRA-tuned LLM with a causal LM loss. (e) Inference: the trained classifier predicts cue prompts, which are injected through the same prompt interface alongside image tokens (and query tokens) to guide report generation. 
+
+annotations for more interpretable evaluation. However, these metrics remain holistic and are not diagnostic of pathology–location grounding. We therefore complement them with a grounding-oriented protocol that distills location-aware pathology labels from generated and ground-truth reports for fine-grained spatial analysis. 
+
+3 Method 
+
+Our goal is to develop a modular framework for chest CT report generation that supports using discriminative cues to guide a vision-language model toward 5
+
+clinically accurate reports. To achieve this, the framework should satisfy three key requirements: (1) it should provide finer-grained supervision than free-text reports, (2) it should remain decoupled from any specific auxiliary discrimina-tor and enable inference-time guidance from arbitrary discriminative models, and (3) it should naturally extend to finer-grained clinical cues, including both object presence and spatial attributes. Motivated by these requirements, we in-troduce two key designs. (a) Report structuring and Question-driven extraction for fine-grained supervision: we reformulate free-form CT reports into structured, anatomy-aware representations, and use predefined clinical questions to distill binary labels from the structured reports. This yields stronger supervision for both abnormality presence and spatial attributes. (b) Language-based cue in-terface for modular guidance: we define a unified natural-language cue prompt interface. During training, ground-truth labels extracted from reports are tem-plated into cue prompts to condition the VLM. At inference time, the same interface is populated by predictions from a pretrained discriminative model. Because the VLM is trained on the templated format rather than on any spe-cific model’s outputs, it remains decoupled from the discriminator and allows different discriminative models to be swapped in at inference time without re-training the generator. However, training with ground-truth cue prompts may induce shortcuts, where the model copies cue text instead of grounding predic-tions in the visual input. To mitigate this issue, we apply prompt dropout during training by randomly removing cue entities, encouraging the model to rely on visual inputs when cues are incomplete. Together, (a) and (b) naturally satisfy (3): the same framework can extend to finer-grained clinical cues by adding new questions and templating their outputs, without modifying the generator archi-tecture. Fig. 1 illustrates the data preparation, training, and inference pipeline, and Fig. 2 shows the model architecture and test-time flow. 
+
+3.1 Data Pre-processing Structured Reports. We utilize RadExtract [15] to convert raw, unstruc-tured chest CT reports into structured, anatomy-aware representations as shown in Fig. 1(a). RadExtract applies prompt-driven extraction to separate report metadata, clinical findings, and impression content, and organizes findings into section-labeled units with clinical-importance annotations. We run the pipeline with the LLM where few-shot exemplars and explicit JSON constraints in the prompt encourage consistent outputs and robust handling of common edge cases. 
+
+CT Pre-processing. To handle variability in CT resolution and scan length across studies, we (1) resample the volume to a standardized voxel spacing, (2) normalize axial extent by taking a centered crop for longer scans and symmetric center-padding for shorter scans, (3) apply center crop/pad to obtain a fixed in-plane resolution, and (4) To enhance the contrast of different dominant tissue types in chest CT (e.g., lung, mediastinum and bone), we further apply multiple contrast windows, as shown in Fig. 2. Each window corresponds to a specific mapping from Hounsfield Units [12] to intensity values, tailored to the attenua-6
+
+tion range of a particular tissue type, yielding an 11-channel multi-window CT input. 
+
+3.2 Visual Backbone and Vision Projector Visual Backbone. We use the Pillar-0 foundation model with its Atlas vision backbone, built on Multi-Scale Attention (MSA) for efficient long-context im-age modeling [1, 2]. Fig. 2 illustrates the multi-scale token hierarchy and how Atlas processes CT volumes with stacked MSA blocks. Given a pre-processed chest CT volume V ∈ RC×H×W ×D (with C input channels, in-plane size H ×
+
+W , and axial depth D), Atlas applies a 3D convolutional patchification stem with patch size p = (pH , p W , p D ) to obtain a fine-scale token grid h(1) ∈
+
+RCin × HpH × WpW × DpD , where Cin denotes token embedding dimension. Atlas con-structs a multi-scale hierarchy {h(ℓ)}Lℓ=1 via iterative strided pooling: for ℓ =2, . . . , L , h(ℓ) ← StridedPooling( h(ℓ−1) , s H , s W , s D ), yielding 
+
+h(ℓ) ∈ RCin × HpH sℓ−1   
+
+> H
+> ×WpW sℓ−1
+> W
+> ×DpD sℓ−1
+> D
+
+, ℓ = 1 , . . . , L.  (1) Atlas groups MSA blocks into multiple encoder stages and applies progressive scale dropping for efficiency [1]. To track stage outputs, we denote the token grid at scale ℓ after stage u by h(ℓ) 
+
+> u
+
+, with h(ℓ)0 indicating the hierarchy before any stage updates. Instead of using the final coarsest output, we extract an intermediate representation for training our vision-language models and use h(2) 2 ,which provides a favorable trade-off between computational cost and visual detail for chest CT report generation. Full details of MSA are provided in Appendix A. 
+
+Vision Projector. To interface Atlas visual tokens with the LLM , we flatten the selected Atlas token grid into a token sequence and apply cross-attention with a small set of learnable query tokens to pool information from the visual tokens into a fixed-length embedding set. We then map these embeddings to the LLM 
+
+hidden size using a lightweight two-layer MLP with a GELU nonlinearity [21], and use the resulting outputs to condition the LLM .
+
+3.3 Discriminative Modules Automatic label extraction. To obtain supervision beyond coarse report-level alignment, we adopt a question-driven extraction interface. Given a structured report, we prompt an LLM with a predefined set of binary clinical questions and distill yes/no answers, yielding report-derived labels for findings and at-tributes as illustrated in Fig. 1(b). This interface decouples label specification from the model: extending supervision to new concepts only requires adding or editing questions, without changing the architecture. We focus on a three-level diagnostic hierarchy that progresses from finding detection to increas-ingly fine-grained spatial grounding. Specifically, QAS1 probes finding-level pres-ence/absence, QAS2 queries laterality (left/right), and QAS3 further refines lo-calization to lung lobes. 7Lung Mediastinum Bone Raw 
+
+# …
+
+Multi-Window Channel Stack 
+
+> Visual Projector
+
+Image Token 
+
+DCP Token 
+
+Query Token         
+
+> Trachea/Bronchi: Tachea and both main bronchi are open..
+> Heart: Heart contour and size are normal
+> Pleura: No pleural or pericardial effusion was detected.
+> Lungs: There are many scattered nodules …
+> Mediastinum: Mediastinal structures cannot be evaluated…
+> 3D ConvNet
+> Multiscale Initialization
+> LLM
+> Downsample Downsample
+> LayerNorm
+> MSA x2
+> Classifier
+> <Images > The Image contains Lung Nodule, Lung Opacity, … Please generate comprehensive CT Report.
+
+…  
+
+> LayerNorm
+> MSA x2
+> LayerNorm
+> MSA x8
+> Pooling
+> Template
+
+Fig. 2: Detailed inference schematic. The pre-processed multi-channel CT volume is encoded by a 3D convolutional stem to produce a fine-scale token grid, followed by progressive downsampling to construct multi-scale token hierarchies. These token grids are processed by the Atlas visual backbone with stacked MSA blocks to yield hierarchical representations. The aggregated embedding hcls is fed into a linear classifier to produce DCP tokens via templating, while selected intermediate Atlas tokens h(2) 2
+
+are projected into LLM image tokens through a vision projector. The LLM generates the final report conditioned on the concatenation of image tokens, DCP tokens, and query tokens. 
+
+Multi-scale CT embedding. To train the discriminative classifier, we con-struct a multi-scale CT embedding by pooling and concatenating frozen Atlas outputs across stages: 
+
+hemb = Concat 
+
+h
+
+Pool( h(1) 1 ), Pool( h(2) 2 ), . . . , Pool( h(L)
+
+L )
+
+i
+
+∈ RLC in . (2) Here, Pool( ·) aggregates over tokens to produce a Cin -dimensional feature. 
+
+Discriminative models. To obtain discriminative cues, we apply a lightweight multi-label linear probe to the multi-scale embedding hemb to predict the binary labels for each predefined question set. 
+
+3.4 Discriminative Cue Guided Report Generation 
+
+To generate radiology reports from chest CT volumes, we condition the LLM 
+
+on a single input sequence formed by concatenating (i) projected image tokens (Timg ), (ii) a templated prompt that summarizes predicted findings ( Tdisc ), and (iii) a textual instruction ( Tqry ). Concretely, Given P =  Timg ; Tdisc ; Tqry 
+
+,the LLM decodes the report autoregressively. 8
+
+3.5 Training and Evaluation Discriminative Models Training. We train a lightweight multi-label linear probe on the multi-scale embedding hemb using a weighted binary cross-entropy objective to mitigate class imbalance. 
+
+VLM Training. We train our model in two stages and keep the visual backbone frozen throughout. Stage 1 (CT-report alignment). We train only the vision projector with the LLM frozen, aligning projected visual tokens to the LLM to-ken space. Stage 2 (Discriminative-guided SFT with prompt dropout). 
+
+We perform parameter-efficient SFT by jointly training the vision projector and LoRA [23] adapters in the LLM . To prevent the LLM from engaging in shortcut learning by copying discriminative cues from Tdisc , we apply prompt dropout 
+
+during training (Fig 1(d) stage 2). Prompt dropout is applied to the classifier-derived labels before templating: each predicted finding/attribute entity is inde-pendently dropped with probability p, and the remaining entities are converted into a textual prompt for conditioning. 
+
+Evaluation. To better understand the capability of our discriminative-guided 
+
+VLM and its spatial grounding ability. We reuse the same LLM -based question– answer extraction pipeline: we parse each reference report once to cache ground-truth answers, and at evaluation time we parse generated reports under the identical question set to compute agreement. The full question set is provided in Appendix A. 
+
+4 Experiments 
+
+In this section, we conduct experiments to answer the following research ques-tions (RQs). 
+
+RQ1: How do discriminative models compare to a base VLM across different finding detection tasks? 
+
+RQ2: Does DCP-PD boost the Base VLM on report generation quality and clinical correctness? 
+
+RQ3: Is DCP-PD effective in mitigating shortcuts? 
+
+RQ4: How does our DCP-PD trained VLM perform against state-of-the-art baselines on report generation benchmarks? 
+
+RQ5: Can DCP-PD incorporate richer cue types and improve fine-grained lo-calization? Additional implementation details and results are in Appendix B and Appendix D. We also present qualitative case studies in Fig. 8 and Fig. 9. 
+
+4.1 Experimental Setup Datasets. We use CT-RATE [20] as the primary dataset for report generation, and Rad-ChestCT [14] for external validation. For structured report generation and efficient question-set label distillation, we convert the entire CT-RATE cor-pus from raw free-text into structured, sectioned reports using RadExtract and 9
+
+train our VLM on this structured version. Additional dataset and preprocessing details are provided in the Appendix B. 
+
+Models. We run RadExtract with Gemini-2.5-Flash [10] to convert raw CT-RATE reports into structured, sectioned reports, Qwen-30B [38] to parse gener-ated and ground-truth reports into structured answers, and LLaMA-3 Instruct 8B [30] for report generation. Additional implementation, model, and training details are provided in Appendix B. 
+
+Evaluation Metrics. We evaluate report generation quality using standard lexical metrics, including the mean BLEU score over (BLEU-1–4) and METEOR [4,35]. For clinical correctness, following prior work, we report Precision, Recall, and F1 on 18 pathology findings, as well as the distribution-aware CRG [17] score. In addition, to assess fine-grained grounding ability, we evaluate Precision, Recall, and F1 on location-aware question sets, including laterality- and lobe-specific labels for common lung pathologies. Details of the evaluation protocol, question-sets are provided in Appendix C. 
+
+Attention Reliance Score. To quantify how much the decoder relies on dis-criminative cue tokens versus image tokens during generation, we compute an attention-based reliance score from self-attention weights. For each decoding step 
+
+t ∈ { 1, . . . , T }, let at ∈ RS denote the attention distribution from the newly generated token at step t to all S prompt positions, averaged over all heads and layers. Let Rtext and Rimage denote the subsets of prompt positions correspond-ing to DCP tokens and image tokens, respectively. We define the region-averaged attention mass for a token region Rr as 
+
+¯mr = 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+1
+
+|Rr |
+
+X
+
+> i∈Rr
+
+at(i)
+
+!
+
+. (3) We then compute the normalized reliance scores as 
+
+Stext = ¯mtext 
+
+¯mtext + ¯ mimage 
+
+, Simage = 1 − Stext . (4) A larger Stext indicates stronger reliance on DCP tokens, while a larger Simage 
+
+indicates stronger reliance on image tokens. 
+
+4.2 Main Results (RQ1) Discriminative models outperform the base VLM on CT finding classification. We evaluate macro F1 on presence/absence prediction of CT findings under the same image encoder and training data. As shown in Fig. 3, linear-probe discriminative models outperform the base VLM on 17 out of 18 findings, with the remaining category showing comparable performance. Overall, this leads to a 27% relative improvement in macro F1 (0.56 vs. 0.44) over the base VLM. 
+
+(RQ2) DCP-PD improves report generation in a model-agnostic man-ner. As shown in Table 1, training the VLM with our GT DCP-PD 3 yields  
+
+> 3We use a dropout rate of 0.3 in all main-paper experiments; additional dropout ablations are reported in Section 4.3.
+
+10 Cardiomegaly   
+
+> Hiatal hernia
+> Pericardial effusion
+> Medical device
+> Mosaic attenuation
+> Fibrotic sequela
+> Peribronchial thick.
+> Atelectasis
+> Lung opacity
+> Septal thickening
+> Lung nodule
+> Bronchiectasis
+> Emphysema
+> Consolidation
+> Pleural effusion
+> Lymphadenopathy
+> Arterial calcification
+> Coronary calcification
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> F1
+> +0.228
+> +0.189 +0.168
+> +0.161
+> +0.155
+> +0.145
+> +0.133
+> +0.122
+> +0.120
+> +0.109
+> +0.093
+> +0.074
+> +0.068
+> +0.067
+> +0.030
+> +0.026
+> +0.002 -0.022
+> Base VLM
+> Classifier
+
+Fig. 3: Per-pathology detection performance. We report F1 for the Base VLM and a linear discriminative classifier on 18 CT findings. Numbers above bars indicate 
+
+∆F1 (Classifier −Base VLM). For readability, we shorten several long finding names on the x-axis: Arterial calcification (arterial wall calcification), Coronary calcification (coronary artery wall calcification), Septal thickening (interlobular septal thickening), Mosaic attenuation (mosaic attenuation pattern), Peribronchial thick. (peribronchial thickening), and Fibrotic sequela (pulmonary fibrotic sequela). 
+
+Table 1: Report generation performance under different test-time DCP variants. Mod-els are trained without DCP or with our GT DCP-PD and evaluated with different test-time cue sources. DCP-PD consistently improves report quality and is robust to the choice of test-time DCP source, with additional gains when using stronger cue predictors. Training setting Test setting Prec. ↑ Recall ↑ F1 ↑ CRG ↑ BLEU ↑ METEOR ↑
+
+w/o DCP No DCP 0.520 0.423 0.440 0.457 0.293 0.214 
+
+w/ GT DCP-PD DCP-1 0.466 0.681 0.530 0.504 0.305 0.222 DCP-2 0.540 0.700 0.603 0.555 0.306 0.226 Table 2: Effect of cue prompts dropout training on shortcuts. We compare VLMs trained with GT DCP and GT DCP-PD and evaluate them under the No DCP test setting, where cue prompts are removed at inference. The shaded row highlights the shortcut failure case of GT DCP, which collapses when cue prompts are absent. Training setting Test setting Prec. ↑ Recall ↑ F1 ↑ CRG ↑ BLEU ↑ METEOR ↑
+
+w/ GT DCP No DCP 0.393 0.071 0.094 0.349 0.268 0.200 
+
+w/ GT DCP-PD No DCP 0.433 0.373 0.366 0.436 0.288 0.211 
+
+substantial gains over the No-DCP baseline and remains effective when replac-ing oracle cues with predicted cues at test time. In particular, using cues pre-dicted by our discriminative model ( DCP-1 ) improves F1 from 0.440 to 0.530 (∼20% relative), together with consistent improvements in lexical metrics, indi-11 
+
+Table 3: Text and image attention reliance score under the DCP-2 test-time setting. We report mean ±std over 500 validation samples on CT-RATE. Training setting Stext (mean ±std) Simage (mean ±std) 
+
+w/ GT DCP 0.441 ± 0.054 0.559 ± 0.054 
+
+w/ GT DCP-PD 0.316 ± 0.036 0.684 ± 0.036 
+
+cating that better discriminative cues lead to better generation. Importantly, this prompting-based cue interface is model-agnostic : leveraging a stronger discrimi-native model ( DCP-2 )4 further boosts performance to F1  = 0 .603 , corresponding to a  ∼37% relative gain over the No-DCP baseline. 
+
+Table 4: Comparison of report generation performance under different settings on the 
+
+CT-RATE benchmark. We report clinical accuracy metrics (Prec., Recall, F1, CRG) and natural language generation metrics (BLEU(mean), METEOR). Best results per column are shown in bold. ( † show results from [18]; ‡ show results from [39] ). Method Prec. ↑ Recall ↑ F1 ↑ CRG ↑ BLEU(mean) ↑ METEOR ↑                                                                                            
+
+> CT2Rep †[16] 0.435 0.128 0.160 0.359 0.280 0.197 Merlin †[6] 0.295 0.112 0.160 0.352 0.260 0.148 CT-CHAT †[19] 0.450 0.158 0.184 0.368 0.272 0.215 BTB3D-16 †[18] 0.260 0.260 0.258 0.370 0.305 0.223 LLM+S-LMR+CSE ‡[39] 0.468 0.166 0.189 -0.286 0.219 MedVInT-TD ‡[45] 0.408 0.097 0.121 -0.252 0.184 Med-Flamingo ‡[32] 0.422 0.105 0.138 -0.260 0.191 RadFM ‡[42] 0.430 0.122 0.154 -0.267 0.199 CT-GRAPH [25] 0.396 0.248 0.296 -0.353 -MS-VLM [27] 0.222 0.329 0.261 ---CT-AGRG w/ CT-Net [13] 0.457 0.630 0.501 --0.196 Base VLM (Ours) 0.520 0.423 0.440 0.457 0.293 0.214 DCP-PD - DCP1 (Ours) 0.467 0.681 0.530 0.504 0.305 0.222 DCP-PD - DCP2 (Ours) 0.540 0.700 0.603 0.556 0.306 0.226
+
+(RQ3) DCP-PD is both effective and necessary to prevent shortcuts. 
+
+As shown in Table 2, without dropout the GT DCP model collapses when cues are removed at inference, with No DCP F1 dropping to 0.094 . In contrast, GT DCP-PD substantially improves robustness to missing cues, increasing No DCP 
+
+F1 from 0.094 to 0.366 (+0 .272 ). Further, Table 3 shows consistent evidence from attention. We compute the text/image attention reliance score Stext /Simage as defined in Section 4.1. Under the DCP-2 test-time setting, the text attention reliance score Stext decreases from 0.441 (GT DCP) to 0.316 (GT DCP-PD).  
+
+> 4
+
+See Appendix B for details. 12 DCP-PD - DCP2 (Ours)  
+
+> DCP-PD - DCP1 (Ours)
+> Base VLM (Ours)
+> BTB3D-16
+> CT-CHAT
+> Merlin
+> CT2Rep
+> CT-GRAPH
+> MS-VLM
+> Arterial wall calcification
+> (28.5%) Cardiomegaly
+> (10.7%)
+> Pericardial effusion
+> (7.4%)
+> Consolidation
+> (19.1%)
+> Hiatal hernia
+> (13.7%)
+> Coronary artery wall calcification
+> (25.2%)
+> Interlobular septal thickening
+> (8.2%)
+> Emphysema
+> (19.7%)
+> Atelectasis
+> (23.5%) Lung nodule
+> (44.8%)
+> Lung opacity
+> (39.0%)
+> Pulmonary fibrotic sequela
+> (27.3%)
+> Pleural effusion
+> (12.4%)
+> Mosaic attenuation pattern
+> (8.3%)
+> Peribronchial thickening
+> (11.7%)
+> Medical material
+> (10.3%)
+> Bronchiectasis
+> (10.9%)
+> Lymphadenopathy
+> (26.0%)
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+
+Fig. 4: Per-pathology performance on CT-RATE. We compare our Base VLM 
+
+and a DCP-PD -trained generator under two inference-time guidance settings ( DCP-1 
+
+and DCP-2 ) against prior baselines. We report per-pathology F1 for each finding. The value in parentheses next to each label indicates the positive rate (prevalence) in the CT-RATE validation set, and larger radii correspond to higher F1. 
+
+Table 5: Evaluation on Rad-ChestCT demonstrates strong out-of-distribution gen-eralization. As only binary labels are available, text-based metrics are omitted. † show results from [18] .Model Prec. ↑ Recall ↑ F1 ↑
+
+CT2Rep † [16] 0.299 0.139 0.133 Merlin † [6] 0.271 0.149 0.182 CT-CHAT † [19] 0.382 0.171 0.182 BTB3D-16 † [18] 0.272 0.329 0.266 Base VLM (Ours) 0.443 0.418 0.395 DCP-PD - DCP1 (Ours) 0.409 0.704 0.477 DCP-PD - DCP2 (Ours) 0.448 0.694 0.503 13 
+
+This indicates reduced dependence on DCP tokens and a stronger grounding of generation in image tokens. Nodule (L)    
+
+> Nodule (R)
+> Cons (L)
+> Cons (R)
+> GGO (L)
+> GGO (R)
+> PE (L)
+> PE (R)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> F1
+> +0.075
+> +0.057
+> +0.053 +0.031
+> +0.028 +0.003
+> +0.017 +0.037 Base VLM
+> DCP-PD VLM
+> Classifier
+
+Fig. 5: Fine-grained evaluation on Laterality. We report F1 for the Base VLM, DCP-PD VLM, and trained classifier. The x-axis includes four findings: lung nodule (Nodule), consolidation (Cons), ground-glass opacity (GGO), and pleural effusion (PE), each evaluated on left (L) and right (R) sides. Numbers above bars indicate ∆F1 (DCP-PD −Base). Nodule (LLL) 
+
+> Nodule (LUL)
+> Nodule (RLL)
+> Nodule (RML)
+> Nodule (RUL)
+> Cons (LLL)
+> Cons (LUL)
+> Cons (RLL)
+> Cons (RML)
+> Cons (RUL)
+> GGO (LLL)
+> GGO (LUL)
+> GGO (RLL)
+> GGO (RML)
+> GGO (RUL)
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> F1  +0.125
+> +0.103
+> +0.080
+> +0.111
+> +0.027
+> +0.030
+> +0.025
+> +0.009
+> -0.019
+> +0.047
+> +0.064
+> +0.037
+> +0.060
+> +0.122
+> +0.102
+> Base VLM
+> DCP-PD VLM
+> Classifier
+
+Fig. 6: Fine-grained evaluation on Lobe. We report F1 for the Base VLM, DCP-PD VLM, and trained classifier on the lobe-level question set. Lobe labels correspond to standard lung lobes: left upper lobe (LUL), left lower lobe (LLL), right upper lobe (RUL), right middle lobe (RML), and right lower lobe (RLL). Numbers above bars indicate ∆F1 (DCP-PD −Base). 
+
+(RQ4) DCP-PD VLM achieves state-of-the-art performance on in-distribution and out-of-distribution benchmarks. As shown in Table 4, on the in-distribution CT-RATE benchmark, our DCP-based model achieves superior clinical performance compared to prior report generation methods, at-taining the best F1 and CRG while remaining competitive on lexical metrics. In addition, Fig. 4 shows that beyond achieving the best average F1, our model attains the highest F1 across all 18 pathology findings. Furthermore, Table 5 14 
+
+evaluates generalization on the out-of-distribution Rad-ChestCT dataset. Our model maintains state-of-the-art performance on the available metrics compared to prior methods. 
+
+(RQ5) DCP-PD readily supports richer cue types and consistently improves performance. We extend DCP from finding-level cues to attribute-level cues (laterality and lobe locations) by training additional discriminative models and templating their predictions into cue prompts. As shown in Fig. 5 and Fig. 6, DCP-PD consistently improves F1 over the Base VLM across both question sets, narrowing the gap to the standalone classifier and in most cases approaching its performance. One exception is Cons (RML) in S2, where DCP-PD underperforms; this aligns with the weaker classifier performance on that entry compared to the Base VLM, limiting the benefit of cue transfer. Notably, DCP-PD matches or even exceeds the classifier on a few entries (e.g., S1 PE (R) and S2 GGO (RML) ), which points to two potential mechanisms: (i) the model may defer to visual tokens when the cues are incorrect; and (ii) coarse cues may help correct fine-grained localization errors (e.g., GGO (R) guiding 
+
+GGO (RML) ). Further study is encouraged to disentangle these effects. 
+
+4.3 Ablation Studies Structured vs. unstructured reports. We ablate training on structured ver-sus unstructured reports. As shown in Table 6, structured training consistently improves clinical correctness metrics on both CT-RATE and Rad-ChestCT, with a small drop in lexical overlap on CT-RATE. This is consistent with [9], who show that narrative-flow training encourages reliance on linguistic priors over vi-sual evidence. Our anatomy-aware structuring similarly reduces cross-sentence dependencies, yielding more focused supervision. The slight drop in lexical scores likely reflects reduced overfitting to stylistic patterns in the training reports.                               
+
+> Table 6: Effect of report structuring (ID vs. OOD). We compare the Base VLM trained on unstructured vs. structured reports on CT-RATE (ID) and Rad-ChestCT (OOD). Text-based metrics are unavailable for Rad-ChestCT and are marked as “–”. Dataset Training reports Prec. ↑Rec. ↑F1 ↑CRG ↑BLEU ↑MET ↑
+> CT-RATE (ID) Unstructured 0.521 0.374 0.427 0.440 0.323 0.240
+> Structured 0.520 0.423 0.440 0.457 0.293 0.214 Rad-ChestCT (OOD) Unstructured 0.428 0.393 0.381 –––Structured 0.443 0.418 0.395 –––
+
+Effect of Prompt Dropout Ratio. We ablate the prompt-dropout ratio p
+
+used in DCP-PD training. As shown in Table 7, prompt dropout reliably breaks shortcut reliance, even with a small ratio ( p = 0 .1). We also observe a trade-off: increasing p further improves robustness to missing cues, while very large dropout can slightly reduce performance under cue-guided inference. 15 
+
+Table 7: Comparison of report generation performance under different classifier-augmented settings. DCP denotes models trained with a classifier-aware prompt prefix that conditions generation on predicted abnormality labels. GT-guided represents an oracle setting using ground-truth labels. DCP-2 uses an external classifier’s predicted labels, while DCP uses predictions from our trained discriminative model. No DCP 
+
+removes the classifier prompt at inference time. Best results per column are shown in bold. Training setting Test-time setting Prec. ↑ Rec. ↑ F1 ↑ CRG ↑ BLEU ↑ METEOR ↑                                                                                                                             
+
+> Training with GT-DCP
+> w/ GT DCP GT-DCP 0.947 0.943 0.944 0.890 0.332 0.238 DCP-2 0.534 0.716 0.606 0.561 0.294 0.231 DCP-1 0.457 0.718 0.538 0.512 0.296 0.233 No DCP 0.393 0.071 0.094 0.349 0.268 0.200
+> Training with DCP-PD
+> w/ GT DCP-PD (rate=0.1) GT-DCP 0.936 0.938 0.936 0.883 0.322 0.233 DCP-2 0.531 0.712 0.602 0.560 0.299 0.228 DCP-1 0.461 0.724 0.542 0.517 0.296 0.227 No DCP 0.450 0.287 0.310 0.407 0.278 0.206 w/ GT DCP-PD (rate=0.3) GT-DCP 0.920 0.914 0.916 0.844 0.315 0.229 DCP-2 0.540 0.700 0.603 0.555 0.306 0.226 DCP-1 0.466 0.681 0.530 0.504 0.305 0.222 No DCP 0.433 0.373 0.366 0.436 0.288 0.211 w/ GT DCP-PD (rate=0.5) GT-DCP 0.895 0.876 0.881 0.792 0.307 0.225 DCP-2 0.534 0.668 0.585 0.540 0.306 0.222 DCP-1 0.466 0.681 0.530 0.504 0.305 0.222 No DCP 0.471 0.375 0.394 0.437 0.290 0.213 w/ GT DCP-PD (rate=0.7) GT-DCP 0.838 0.834 0.830 0.737 0.306 0.224 DCP-2 0.543 0.649 0.581 0.535 0.306 0.222 DCP-1 0.473 0.658 0.528 0.500 0.302 0.220 No DCP 0.491 0.402 0.410 0.448 0.289 0.213
+
+Ablation on removing image tokens. To understand the role of visual tokens, we perform an ablation where the generator is trained using only discriminative cue prompts without image tokens. Specifically, the cues consist of the pres-ence/absence of 18 pathology findings (S1-level cues). We train a cue-conditioned LLM ( DCP-LLM ) using the same training protocol as the full DCP-PD VLM ,except that visual tokens are removed. At inference time, both models are guided by predicted cues from DCP-2. As shown in Table 8, DCP-LLM performs competitively on standard report-generation benchmarks. Although it does not use image tokens, it still achieves macro F1 and lexical metrics similar to those of DCP-PD VLM .However, when evaluated on fine-grained spatial grounding, the difference becomes evident. Figure 7 shows that DCP-PD VLM consistently outperforms the cue-only model on lobar-level localization questions. Without image tokens, 16 
+
+the generator lacks access to spatial visual evidence and therefore struggles to resolve fine-grained locations. These results highlight two key insights: (i) discriminative cue prompts alone can already drive strong performance on standard report-generation benchmarks, suggesting that such coarse metrics may be partially shortcut by cue-conditioned generation; and (ii) visual tokens remain essential for capturing information be-yond the cue space, especially uncued findings and fine-grained spatial details. Together, this explains the advantage of DCP-PD VLM : it leverages cues for coarse pathology specification while using image tokens for complementary vi-sual grounding, yielding stronger overall synergy. This also underscores the value of our evaluation protocol, as standard coarse-grained benchmarks can be sat-isfied by cue-conditioned generation alone, whereas our fine-grained grounding analysis reveals whether the model truly uses image tokens. 
+
+Table 8: Effect of visual tokens in discriminative-cue conditioned report generation on CT-RATE. We compare a cue-only generator ( DCP-LLM , no image tokens) against the full DCP-PD VLM . We report macro-averaged clinical metrics and report-level generation metrics. Model Prec. ↑ Rec. ↑ F1 ↑ CRG ↑ BLEU ↑ METEOR ↑
+
+DCP-LLM 0.531 0.708 0.600 0.560 0.304 0.225 DCP-PD VLM 0.540 0.700 0.603 0.555 0.306 0.226 Nodule (LLL) 
+
+> Nodule (LUL)
+> Nodule (RLL)
+> Nodule (RML)
+> Nodule (RUL)
+> Cons (LLL)
+> Cons (LUL)
+> Cons (RLL)
+> Cons (RML)
+> Cons (RUL)
+> GGO (LLL)
+> GGO (LUL)
+> GGO (RLL)
+> GGO (RML)
+> GGO (RUL)
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> F1
+> +0.233
+> +0.095
+> +0.114
+> +0.144
+> +0.077
+> +0.062
+> +0.109
+> +0.043
+> +0.110
+> +0.108
+> +0.101
+> +0.046
+> +0.050
+> +0.118
+> +0.130
+> DCP-PD VLM
+> DCP-LLM (no image tokens)
+
+Fig. 7: Effect of visual tokens on fine-grained lobar grounding. We compare the full DCP-PD VLM against the cue-only DCP-LLM without image tokens. The x-axis includes three findings: lung nodule (Nodule), consolidation (Cons), and ground-glass opacity (GGO), each evaluated at the lobar level (LLL, LUL, RLL, RML, RUL). Numbers above bars indicate ∆F1 ( DCP-PD VLM − DCP-LLM ), showing that adding visual tokens consistently improves fine-grained spatial grounding. 
+
+Training-signal ablation: shortcut vs. cue neglect. We find the training cue signal critically shapes how the generator uses prompt cues. Training with 17 
+
+ground-truth prompts without prompt dropout encourages shortcuts, where the model overly relies on cue tokens (Table 2). Table 9 details the effect of the cue signal used during training. Although the standalone DCP-1 classifier is strong (Prec. 0.439, Rec. 0.794, F1 0.544), using its predicted cues for training provides little benefit for report generation: DCP-1-guided training achieves F1 0.438, nearly identical to the Base VLM (0.440). This suggests that predicted cues provide limited effective supervision, and the generator tends to under-utilize them even when the same cue format is given at inference. In contrast, training with oracle ground-truth cues yields a much stronger cue-conditioned generator. When evaluated with DCP-1 cues at test time, it achieves an F1 of 0.538, which is close to the standalone classifier performance of 0.544. Together, these results support our main finding: clean cues can push the VLM close to classifier-level performance, but at the cost of shortcut reliance, whereas noisy predicted cues lead to cue neglect. This trade-off motivates prompt dropout to better balance cue utilization.                                   
+
+> Table 9: Effect of training/testing cue settings on CT-RATE. We report macro-averaged precision, recall, and F1 for the standalone classifier and report gener-ation models under different cue configurations.
+> Method Training setting Testing setting Prec. ↑Rec. ↑F1 ↑
+> DCP-1 classifier --0.439 0.794 0.544 Base VLM w/o DCP w/o DCP 0.520 0.423 0.440 DCP-1-guided training DCP-1 DCP-1 0.531 0.414 0.438 GT-guided training GT DCP-1 0.457 0.718 0.538
+
+4.4 Visualization 
+
+Fig. 8 presents two qualitative examples comparing the Base VLM and our DCP-PD model under different levels of cue guidance. In the first case, the Base VLM misses lung nodules entirely, while DCP-PD with object-level cues correctly identifies them. In the second case, object-level cues alone yield in-complete localization, but fine-grained lobe-level cues produce a more faithful description. Fig. 9 further shows a full report generation comparison between a baseline CT-CHAT model and our DCP-PD model, where DCP-PD produces a structured report with improved pathology–location grounding. 18 <image> 
+
+There is Lung nodules…. Please generate a 
+
+comprehensive 3D CT report: 
+
+Ground Truth Report DCP-PD VLM with 
+
+Object Level Cue Generated Base VLM Generated 
+
+Trachea/Bronchi: 
+
+Trachea and Bronchi: 
+
+Trachea and both main 
+
+bronchi are open. No 
+
+occlusive pathology….. 
+
+Lungs: There are 
+
+millimetric nonspecific 
+
+nodules in both lungs. 
+
+No mass or infiltrative 
+
+lesion was detected in 
+
+both lungs. 
+
+Trachea/Bronchi: Trachea and both main 
+
+bronchi were in the midline and no 
+
+obstructive pathology was detected in the 
+
+lumen. 
+
+Lungs: A few nonspecific parenchymal 
+
+nodules less than 5 mm in diameter were 
+
+observed in both lungs…. 
+
+Right Lung 
+
+<image> 
+
+Please generate a comprehensive 3D CT 
+
+report: 
+
+Left Lung 
+
+Lungs: Ground glass 
+
+areas are observed in 
+
+the upper and lower 
+
+lobes of both lungs 
+
+and in the middle lobe 
+
+of the right lung .
+
+Ground glass areas 
+
+are more prominent in 
+
+peripheral areas. 
+
+LLL RLL 
+
+RUL RML 
+
+Trachea/Bronchi: Trachea and both 
+
+main bronchi are open. No occlusive 
+
+pathology was detected in the trachea 
+
+and both main bronchi. 
+
+Lungs: No mass or infiltrative lesion 
+
+was detected in both lungs.…. 
+
+> <image>
+> Please generate a
+> comprehensive 3D CT report:
+> <image>
+> There is s, ground-glass
+> opacity… Please generate a
+> comprehensive 3D CT report:
+
+Lungs: Consolidation 
+
+areas in which air 
+
+bronchograms are 
+
+observed, forming an 
+
+inverted U shape, 
+
+were observed in the 
+
+lower lobe of the left 
+
+lung,    
+
+> <image>
+> There is ground-glass opacity in the left
+> lower lobe (LLL). (LUL), (RLL), (RML) ,
+> RUL) Please generate a comprehensive
+> 3D CT report:
+
+Base VLM Generated DCP-PD VLM with Object level 
+
+cue Generated 
+
+DCP-PD VLM with 
+
+Location level cue Generated 
+
+Lungs: There are also 
+
+minimal ground glass 
+
+appearances and 
+
+interlobular septal 
+
+thickenings in the left 
+
+lung upper lobe 
+
+apicoposterior 
+
+segment… 
+
+Lungs: Ground glass areas 
+
+are observed in the upper 
+
+lobe of both lungs, the 
+
+middle lobe of the right 
+
+lung , and the lower lobe of 
+
+both lungs. Ground glass 
+
+areas and centriacinar 
+
+nodules in both lungs. 
+
+Ground Truth Report 
+
+Fig. 8: We visualize two examples comparing the Base VLM (no cues) and our DCP-PD model guided at inference by discriminative cue prompts. For each case, we show the ground-truth report (only relevant excerpts due to space), representative CT slices with anatomy overlays from LungMask [22] and pathology masks from ReXGround-ingCT [3], and the generated reports. Top: the Base VLM misses the lung nodules, while DCP-PD with object-level cues correctly identifies nodules consistent with the ground-truth report and highlighted regions. Bottom: the Base VLM fails to capture lung opacity and instead reports consolidation; DCP-PD with object-level cues detects the opacity but provides incomplete localization, whereas DCP-PD with fine-grained lobe-level cues produces a more faithful pathology–location description. 19 FINDINGS: 
+
+Airways: Trachea, both main bronchi are open. 
+
+Mediastinum: Mediastinal main vascular structures 
+
+are normal. 
+
+Heart: Heart contour and size are normal. 
+
+Aorta: Thoracic aorta diameter is normal. 
+
+Pericardium: Pericardial effusion-thickening was 
+
+not observed. 
+
+Esophagus: Thoracic esophageal calibration was 
+
+normal and no significant tumoral wall thickening 
+
+was detected. 
+
+Lymph Nodes: No enlarged lymph nodes in 
+
+prevascular, pre-paratracheal, subcarinal or 
+
+bilateral hilar-axillary pathological dimensions were 
+
+detected. 
+
+Lungs: Ground-glass opacities are observed in both 
+
+lungs, diffuse and predominant in the subpleural 
+
+areas, the largest of which is a large ground glass 
+
+opacity accompanied by minimal consolidation in the 
+
+left lung lower lobe laterobasal segment. The 
+
+outlook is consistent with Covid-19 pneumonia. No 
+
+nodular lesions were detected in both lung 
+
+parenchyma. 
+
+Pleura: Pleural effusion-thickening was not 
+
+detected. 
+
+Abdominal Organs: Upper abdominal organs included 
+
+in the sections are normal. 
+
+Liver: No space-occupying lesion was detected in 
+
+the liver that entered the cross-sectional area. 
+
+Adrenal Glands: Bilateral adrenal glands were 
+
+normal and no space-occupying lesion was detected. 
+
+Bones: Bone structures in the study area are 
+
+natural. Vertebral corpus heights are preserved. 
+
+IMPRESSION: 
+
+Typical-probable Covid-19 pneumonia. 
+
+GT Report (Structured) 
+
+GT Report (Unstructured) 
+
+FINDINGS: 
+
+Trachea, both main bronchi are open . Mediastinal 
+
+main vascular structures, heart contour, size are 
+
+normal. Thoracic aorta diameter is normal. 
+
+Pericardial effusion-thickening was not observed .
+
+Thoracic esophageal calibration was normal and no 
+
+significant tumoral wall thickening was detected . No 
+
+enlarged lymph nodes in prevascular, 
+
+pre-paratracheal, subcarinal or bilateral 
+
+hilar-axillary pathological dimensions were detected. 
+
+When examined in the lung parenchyma window; 
+
+Ground-glass opacities are observed in both lungs, 
+
+diffuse and predominant in the subpleural areas, the 
+
+largest of which is a large ground glass opacity 
+
+accompanied by minimal consolidation in the left lung 
+
+lower lobe laterobasal segment. The outlook is 
+
+consistent with Covid-19 pneumonia. No nodular 
+
+lesions were detected in both lung parenchyma. 
+
+Pleural effusion-thickening was not detected. Upper 
+
+abdominal organs included in the sections are 
+
+normal. No space-occupying lesion was detected in 
+
+the liver that entered the cross-sectional area. 
+
+Bilateral adrenal glands were normal and no 
+
+space-occupying lesion was detected. Bone 
+
+structures in the study area are natural. Vertebral 
+
+corpus heights are preserved. 
+
+IMPRESSION: 
+
+Typical-probable Covid-19 pneumonia .
+
+Generated Report CT-CHAT 
+
+FINDINGS: 
+
+Trachea and both main bronchi are open. No 
+
+occlusive pathology was detected in the trachea and 
+
+both main bronchi. There are millimetric nonspecific 
+
+nodules in both lungs. No mass or infiltrative lesion 
+
+was detected in both lungs. Mediastinal structures 
+
+cannot be evaluated optimally because contrast 
+
+material is not given. As far as can be observed: 
+
+Heart contour and size are normal. No pleural or 
+
+pericardial effusion was detected. The widths of 
+
+the mediastinal main vascular structures are normal. 
+
+No pathologically enlarged lymph nodes were 
+
+detected in the mediastinum and hilar regions. No 
+
+pathological wall thickness increase was observed in 
+
+the esophagus within the sections. No upper 
+
+abdominal free fluid-collection was detected in the 
+
+sections. No enlarged lymph nodes in pathological 
+
+dimensions were detected. In the upper abdominal 
+
+organs within the sections, there is no mass with 
+
+distinguishable borders as far as it can be observed 
+
+within the borders of non-enhanced CT. Thoracic 
+
+vertebral corpus heights, alignments and densities 
+
+are normal. Intervertebral disc distances are 
+
+preserved. The neural foramina are open. No 
+
+lytic-destructive lesions were detected in the bone 
+
+structures within the sections. 
+
+IMPRESSION: 
+
+Millimetric nonspecific nodules in both lungs 
+
+Generated Report DCP-PD (OURS) 
+
+FINDINGS: 
+
+Trachea/Bronchi: Trachea and both main bronchi 
+
+are open. No occlusive pathology was detected in 
+
+the trachea and both main bronchi. 
+
+Lungs: Peripheral and centrally located ground 
+
+glass areas and consolidations and patchy density 
+
+increases were observed in the upper and lower 
+
+lobes of both lungs. The described findings are 
+
+more pronounced in the peripheral regions and in 
+
+the lower lobes. The described manifestations are 
+
+frequently encountered findings in Covid-19 
+
+pneumonia. Therefore, the findings were primarily 
+
+evaluated in favor of viral pneumonia. No mass was 
+
+detected in both lungs. 
+
+Heart: Heart contour and size are normal. 
+
+Pleura/Pericardium: No pleural or pericardial 
+
+effusion was detected. 
+
+Mediastinal Vessels: The widths of the 
+
+mediastinal main vascular structures are normal. 
+
+Lymph Nodes: No pathologically enlarged lymph 
+
+nodes were detected in the mediastinum and hilar 
+
+regions. 
+
+Esophagus: No pathological wall thickness increase 
+
+was observed in the esophagus within the sections. 
+
+Abdomen: No upper abdominal free fluid-collection 
+
+was detected in the sections. 
+
+Thoracic Spine: Thoracic vertebral corpus 
+
+heights, alignments and densities are 
+
+normal.Intervertebral disc distances are 
+
+preserved. The neural foramina are open. 
+
+Bones: No lytic-destructive lesions were detected 
+
+in the bone structures within the sections. 
+
+IMPRESSION: 
+
+Findings evaluated in favor of viral pneumonia in 
+
+both lungs. 
+
+LUL (GGO) 
+
+LLL (GGO) 
+
+LLL (Consolidation) 
+
+Fig. 9: Example of full report generation on a CT-RATE validation case. 
+
+The leftmost panel shows representative CT slices with anatomy overlays and pathol-ogy masks for GGO and consolidation; abnormal regions are highlighted in red and circled for clarity. The two report panels on the middle show the original unstructured ground-truth report and our processed structured ground-truth report. On the right, we compare full-report outputs from a baseline CT-CHAT model trained on unstruc-tured reports and our DCP-PD model conditioned on fine-grained spatial location cues trained on structured reports. Compared with the baseline, DCP-PD produces a structured report with improved pathology–location grounding. 20 
+
+5 Conclusion 
+
+We present DCP-PD , a modular, prompting-based framework for chest CT report generation that integrates discriminative guidance without coupling the 
+
+VLM to a specific auxiliary model. By templating discriminative predictions as natural-language cue prompts, our approach is model-agnostic and allows the discriminator to be upgraded or replaced at inference time without retraining the underlying LLM . To mitigate shortcut learning from strong cue supervi-sion, we introduce prompt dropout , which reduces reliance on cue tokens and strengthens grounding in visual evidence. Experiments on CT-RATE and the out-of-distribution Rad-ChestCT benchmark show consistent gains in clinical correctness and state-of-the-art performance on available metrics. Finally, we demonstrate that DCP-PD naturally scales from finding cues to location cues (laterality and lung lobes) and propose a hierarchical question-set protocol (pres-ence → laterality → lobe) to more diagnostically evaluate spatial grounding, highlighting that fine-grained localization remains challenging. 
+
+6 Disclaimer 
+
+For research purposes only. Not for clinical use. This prototype is still under development and not yet commercially available. Future commercial availability cannot be guaranteed. 21 
+
+References 
+
+1. Agrawal, K.K., Lian, L., Liu, L., Harguindeguy, N., Li, B., Bick, A., Chung, M., Darrell, T., Yala, A.: Atlas: Multi-scale attention improves long context image modeling. arXiv preprint arXiv:2503.12355 (2025) 6, 24 2. Agrawal, K.K., Liu, L., Lian, L., Nercessian, M., Harguindeguy, N., Wu, Y., Mikhael, P., Lin, G., Sequist, L.V., Fintelmann, F., Darrell, T., Bai, Y., Chung, M., Yala, A.: Pillar-0: A new frontier for radiology foundation models. arXiv preprint arXiv:2511.17803 (2025) 6, 27 3. Baharoon, M., Luo, L., Moritz, M., Kumar, A., Kim, S.E., Zhang, X., Zhu, M., Alabbad, M.H., Alhazmi, M.S., Mistry, N.P., et al.: Rexgroundingct: A 3d chest ct dataset for segmentation of findings from free-text reports. arXiv preprint arXiv:2507.22030 (2025) 18 4. Banerjee, S., Lavie, A.: Meteor: An automatic metric for mt evaluation with im-proved correlation with human judgments. In: Proceedings of the acl workshop on intrinsic and extrinsic evaluation measures for machine translation and/or summa-rization. pp. 65–72 (2005) 3, 9 5. Bannur, S., Bouzid, K., Castro, D.C., Schwaighofer, A., Thieme, A., Bond-Taylor, S., Ilse, M., Pérez-García, F., Salvatelli, V., Sharma, H., et al.: Maira-2: Grounded radiology report generation. arXiv preprint arXiv:2406.04449 (2024) 3 6. Blankemeier, L., Cohen, J.P., Kumar, A., Van Veen, D., Gardezi, S.J.S., Paschali, M., Chen, Z., Delbrouck, J.B., Reis, E., Truyts, C., et al.: Merlin: A vision language foundation model for 3d computed tomography. Research Square pp. rs–3 (2024) 11, 12 7. Chen, Z., Bie, Y., Jin, H., Chen, H.: Large language model with region-guided referring and grounding for ct report generation. IEEE Transactions on Medical Imaging (2025) 2, 3 8. Chen, Z., Luo, L., Bie, Y., Chen, H.: Dia-llama: Towards large language model-driven ct report generation. In: International Conference on Medical Image Com-puting and Computer-Assisted Intervention. pp. 141–151. Springer (2025) 2, 3 9. Cheng, S., Subramanian, D.: Rethinking radiology report generation: From narra-tive flow to topic-guided findings. In: The Fourteenth International Conference on Learning Representations 14 10. Comanici, G., Bieber, E., Schaekermann, M., Pasupat, I., Sachdeva, N., Dhillon, I., Blistein, M., Ram, O., Zhang, D., Rosen, E., et al.: Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. arXiv preprint arXiv:2507.06261 (2025) 9 11. Delbrouck, J.B., Xu, J., Moll, J., Thomas, A., Chen, Z., Ostmeier, S., Azhar, A., Li, K.Z., Johnston, A., Bluethgen, C., et al.: Automated structured radiology report generation. In: Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). pp. 26813–26829 (2025) 2 12. DenOtter, T.D., Schubert, J.: Hounsfield unit (2019) 5 13. Di Piazza, T., Lazarus, C., Nempont, O., Boussel, L.: Ct-agrg: Automated abnormality-guided report generation from 3d chest ct volumes. In: 2025 IEEE 22nd International Symposium on Biomedical Imaging (ISBI). pp. 01–05. IEEE (2025) 11 14. Draelos, R.L., Dov, D., Mazurowski, M.A., Lo, J.Y., Henao, R., Rubin, G.D., Carin, L.: Rad-chestct dataset. Zenodo10 5281 (2020) 8 15. Goel, A.: Radextract: Radiology report structuring demo using langextract 5 22 16. Hamamci, I.E., Er, S., Menze, B.: Ct2rep: Automated radiology report generation for 3d medical imaging. In: Linguraru, M.G., Dou, Q., Feragen, A., Giannarou, S., Glocker, B., Lekadir, K., Schnabel, J.A. (eds.) Medical Image Computing and Computer Assisted Intervention – MICCAI 2024. pp. 476–486. Springer Nature Switzerland, Cham (2024) 11, 12 17. Hamamci, I.E., Er, S., Shit, S., Reynaud, H., Kainz, B., Menze, B.: Crg score: A distribution-aware clinical metric for radiology report generation. arXiv preprint arXiv:2505.17167 (2025) 9 18. Hamamci, I.E., Er, S., Shit, S., Reynaud, H., Yang, D., Guo, P., Edgar, M., Xu, D., Kainz, B., Menze, B.: Better tokens for better 3d: Advancing vision-language modeling in 3d medical imaging. arXiv preprint arXiv:2510.20639 (2025) 11, 12, 33 19. Hamamci, I.E., Er, S., Wang, C., Almas, F., Simsek, A., Esirgun, S., Dogan, I., Durugol, O., Hou, B., Shit, S., Dai, W., Xu, M., Reynaud, H., Dasdelen, M., Wittmann, B., Amiranashvili, T., Simsar, E., Simsar, M., Erdemir, E., Menze, B.: Generalist foundation models from a multimodal dataset for 3d computed tomog-raphy. Nature Biomedical Engineering pp. 1–19 (02 2026) 2, 3, 11, 12, 28 20. Hamamci, I.E., Er, S., Wang, C., Almas, F., Simsek, A.G., Esirgun, S.N., Dogan, I., Durugol, O.F., Hou, B., Shit, S., et al.: Generalist foundation models from a multimodal dataset for 3d computed tomography. Nature Biomedical Engineering pp. 1–19 (2026) 8 21. Hendrycks, D., Gimpel, K.: Gaussian error linear units (gelus). arXiv preprint arXiv:1606.08415 (2016) 6 22. Hofmanninger, J., Prayer, F., Pan, J., Röhrich, S., Prosch, H., Langs, G.: Auto-matic lung segmentation in routine imaging is primarily a data diversity problem, not a methodology problem. European Radiology Experimental 4(1) (Aug 2020). 
+
+https://doi.org/10.1186/s41747-020-00173-2 18 23. Hu, E.J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., Chen, W., et al.: Lora: Low-rank adaptation of large language models. Iclr 1(2), 3 (2022) 8, 27 24. Jin, H., Che, H., Lin, Y., Chen, H.: Promptmrg: Diagnosis-driven prompts for medical report generation. In: Proceedings of the AAAI conference on artificial intelligence. vol. 38, pp. 2607–2615 (2024) 2, 3 25. Kalisch, H., Hörst, F., Kleesiek, J., Herrmann, K., Seibold, C.: Ct-graph: Hier-archical graph attention network for anatomy-guided ct report generation. In: Proceedings of the IEEE/CVF International Conference on Computer Vision. pp. 6775–6784 (2025) 11 26. Kyung, S., Seo, J., Lim, H., Kim, D., Park, H., Sung, J., Kim, J., Jo, W., Nam, Y., Kim, N.: Medregion-ct: region-focused multimodal llm for comprehensive 3d ct report generation. arXiv preprint arXiv:2506.23102 (2025) 3 27. Lee, C., Park, S., Shin, C.I., Choi, W.H., Park, H.J., Lee, J.E., Ye, J.C.: Read like a radiologist: Efficient vision-language model for 3d medical imaging interpretation. arXiv preprint arXiv:2412.13558 (2024) 2, 11 28. Lin, J., Xia, Y., Zhang, J., Yan, K., Cao, K., Lu, L., Luo, J., Zhang, L.: Ct-glip: 3d grounded language-image pretraining with ct scans and radiology reports for full-body scenarios. arXiv preprint arXiv:2404.15272 (2024) 3 29. Liu, H., Georgescu, B., Zhang, Y., Yoo, Y., Baumgartner, M., Gao, R., Wang, J., Zhao, G., Gibson, E., Comaniciu, D., et al.: Revisiting 2d foundation models for scalable 3d medical image classification. arXiv preprint arXiv:2512.12887 (2025) 24 23 30. Liu, H., Li, C., Wu, Q., Lee, Y.J.: Visual instruction tuning. Advances in neural information processing systems 36 , 34892–34916 (2023) 9 31. Monshi, M.M.A., Poon, J., Chung, V.: Deep learning in generating radiology re-ports: A survey. Artificial Intelligence in Medicine 106 , 101878 (2020) 1 32. Moor, M., Huang, Q., Wu, S., Yasunaga, M., Dalmia, Y., Leskovec, J., Zakka, C., Reis, E.P., Rajpurkar, P.: Med-flamingo: a multimodal medical few-shot learner. In: Hegselmann, S., Parziale, A., Shanmugam, D., Tang, S., Asiedu, M.N., Chang, S., Hartvigsen, T., Singh, H. (eds.) Proceedings of the 3rd Machine Learning for Health Symposium. Proceedings of Machine Learning Research, vol. 225, pp. 353– 367. PMLR (10 Dec 2023) 11 33. Oquab, M., Darcet, T., Moutakanni, T., Vo, H., Szafraniec, M., Khalidov, V., Fernandez, P., Haziza, D., Massa, F., El-Nouby, A., et al.: Dinov2: Learning robust visual features without supervision. arXiv preprint arXiv:2304.07193 (2023) 24 34. Ostmeier, S., Xu, J., Chen, Z., Varma, M., Blankemeier, L., Bluethgen, C., Md, A.E.M., Moseley, M., Langlotz, C., Chaudhari, A.S., et al.: Green: Generative radiology report evaluation and error notation. In: Findings of the association for computational linguistics: EMNLP 2024. pp. 374–390 (2024) 3 35. Papineni, K., Roukos, S., Ward, T., Zhu, W.J.: Bleu: a method for automatic evaluation of machine translation. In: Proceedings of the 40th annual meeting of the Association for Computational Linguistics. pp. 311–318 (2002) 3, 9 36. Shui, Z., Zhang, J., Cao, W., Wang, S., Guo, R., Lu, L., Yang, L., Ye, X., Liang, T., Zhang, Q., et al.: Large-scale and fine-grained vision-language pre-training for enhanced ct image understanding. arXiv preprint arXiv:2501.14548 (2025) 2, 3 37. Tanno, R., Barrett, D.G., Sellergren, A., Ghaisas, S., Dathathri, S., See, A., Welbl, J., Lau, C., Tu, T., Azizi, S., et al.: Collaboration between clinicians and vision– language models in radiology report generation. Nature Medicine 31 (2), 599–608 (2025) 1 38. Team, Q.: Qwen3 technical report (2025), https://arxiv.org/abs/2505.09388 939. Tian, Y., Song, Y.: Feature decomposition via shared low-rank matrix recovery for ct report generation. IEEE Transactions on Medical Imaging (2025) 11 40. Wang, J., Zhu, L., Bhalerao, A., He, Y.: Can prompt learning benefit radiology report generation? arXiv preprint arXiv:2308.16269 (2023) 2, 3 41. Wasserthal, J., Breit, H.C., Meyer, M.T., Pradella, M., Hinck, D., Sauter, A.W., Heye, T., Boll, D.T., Cyriac, J., Yang, S., et al.: Totalsegmentator: robust segmen-tation of 104 anatomic structures in ct images. Radiology: Artificial Intelligence 
+
+5(5), e230024 (2023) 3 42. Wu, C., Zhang, X., Zhang, Y., Wang, Y., Xie, W.: Towards generalist foundation model for radiology (2023) 11 43. Yan, A., McAuley, J., Lu, X., Du, J., Chang, E.Y., Gentili, A., Hsu, C.N.: Radbert: adapting transformer-based language models to radiology. Radiology: Artificial In-telligence 4(4), e210258 (2022) 28 44. Yu, F., Endo, M., Krishnan, R., Pan, I., Tsai, A., Reis, E.P., Fonseca, E.K.U.N., Lee, H.M.H., Abad, Z.S.H., Ng, A.Y., et al.: Evaluating progress in automatic chest x-ray radiology report generation. Patterns 4(9) (2023) 3 45. Zhang, X., Wu, C., Zhao, Z., Lin, W., Zhang, Y., Wang, Y., Xie, W.: Pmc-vqa: Visual instruction tuning for medical visual question answering. arXiv preprint arXiv:2305.10415 (2023) 11 24 
+
+Appendix Contents 
+
+We provide additional details, analyses, and results for our paper in the following sections. 
+
+– Section A presents additional method details. 
+
+• Subsection A.1 describes the multi-scale attention mechanism. 
+
+• Subsection A.2 provides the architecture details of DCP-2. 
+
+• Subsection A.3 shows the prompt template used for LLM-based parsing. 
+
+• Subsection A.4 lists the pre-defined clinical question sets. 
+
+– Section B presents dataset, training, and implementation details. 
+
+• Subsection B.1 summarizes the dataset split and CT pre-processing set-tings. 
+
+• Subsection B.2 summarizes the model architecture, compute environ-ment, and optimization settings. 
+
+– Section C describes the evaluation protocol. 
+
+• Subsection C.1 details the prior 18-finding evaluation and its consistency with our question-driven protocol. 
+
+• Subsection C.2 reports the class distribution of fine-grained annotations from our evaluation pipeline. 
+
+– Section D reports additional experimental results. 
+
+• Subsection D.1 provides additional results for DCP-1 and DCP-2 on CT-RATE and RadChest-CT. 
+
+A Method Details 
+
+A.1 Multi Scale Attention 
+
+Multi Scale Attention (MSA) builds a multi-scale token hierarchy via simple strided pooling and performs windowed cross-attention to enable bi-directional information flow across scales (fine ↔coarse). This yields efficient long-context image modeling with O (N log N ) runtime complexity while preserving global context (details in Atlas [1]). 
+
+A.2 Architecture of DCP-2 
+
+DCP-2 uses AnyMC3D [29]: a 3D classifier adapted from a frozen 2D foundation model [33] with LoRA and learnable slice aggregation over slices to output multi-label predictions that are templated into cue prompts. 
+
+A.3 Prompt 
+
+Simple prompt template is used for LLM-based binary question answering. 25 
+
+LLM Parsing Prompt (Single-Question Template) 
+
+Based on the following radiology report: {report} {question} Answer Yes or No only. 
+
+Fig. 10: Simple prompt template used for LLM-based binary question answering. 
+
+A.4 Pre-defined Question Sets 
+
+Finding-level Question Set (Chest CT, 18 findings) 
+
+Is there any medical material or device present? Is there arterial wall calcification? Is cardiomegaly or cardiac enlargement suspected based on the imaging findings? Is pericardial effusion present? Is there coronary artery wall calcification? Is there emphysema? Is there any atelectasis? Is there any lung opacity (e.g., ground-glass opacity or other parenchymal opacity)? Is there pulmonary fibrotic sequela? Is there any consolidation in the lung? Is there any lung nodule? Is bronchiectasis present? Is there peribronchial thickening? Is there any mosaic attenuation? Is there any interlobular septal thickening? Is there any pleural effusion? Is there any lymphadenopathy in mediastinum or hila? Is there any hiatal hernia? 
+
+Fig. 11: Finding (QS1) question set used for annotation extraction and report parsing evaluation. 26 
+
+Laterality Question Set (Chest CT) 
+
+Is there pleural effusion in the right pleural space? Is there pleural effusion in the left pleural space? Is there consolidation in the right lung? Is there consolidation in the left lung? Is there ground-glass opacity in the right lung? Is there ground-glass opacity in the left lung? Is there a lung nodule in the right lung? Is there a lung nodule in the left lung? 
+
+Fig. 12: Laterality (QS2) question set used for annotation extraction and report pars-ing evaluation. 
+
+Lobar Question Set (Chest CT) 
+
+Is there consolidation in the right upper lobe (RUL)? Is there consolidation in the right middle lobe (RML)? Is there consolidation in the right lower lobe (RLL)? Is there consolidation in the left upper lobe (LUL)? Is there consolidation in the left lower lobe (LLL)? Is there ground-glass opacity in the right upper lobe (RUL)? Is there ground-glass opacity in the right middle lobe (RML)? Is there ground-glass opacity in the right lower lobe (RLL)? Is there ground-glass opacity in the left upper lobe (LUL)? Is there ground-glass opacity in the left lower lobe (LLL)? Is there a lung nodule in the right upper lobe (RUL)? Is there a lung nodule in the right middle lobe (RML)? Is there a lung nodule in the right lower lobe (RLL)? Is there a lung nodule in the left upper lobe (LUL)? Is there a lung nodule in the left lower lobe (LLL)? 
+
+Fig. 13: Lobar (QS3) question set used for annotation extraction and report parsing evaluation. 27 
+
+B Training and Implementation Details 
+
+B.1 Dataset and Preprocessing Data pre-processing. We use the official CT-RATE train/test split, but re-move studies corresponding to head-only CT cases, resulting in the exclusion of approximately 800 training samples. For Rad-ChestCT, we use all available data as an external validation set. 
+
+CT pre-processing. All chest CT volumes are first resampled to a standardized voxel spacing of 1.25 ×1.25 ×1.25 mm. Each CT volume is normalized to 256 axial slices and an in-plane resolution of 256 ×256 . The input is then represented using the raw channel together with multiple tissue-specific CT windows, including lung, mediastinum, abdomen, liver, bone, brain, subdural, stroke, temporal bone, and soft tissue. Detailed window definitions follow [2]. The final input to the Atlas encoder therefore has shape 11 × 256 × 256 × 256 .
+
+B.2 Training and Implementation Details Atlas visual backbone. The pre-processed CT volume is encoded by the Atlas visual backbone from Pillar-0 with a 3D patchification stem of patch size (8 , 8, 4) .The initial multi-scale hierarchy before encoder-stage updates is given by h(1) 0 ,
+
+h(2) 0 , and h(3) 0 , with spatial sizes 32 × 32 × 64 , 4 × 4 × 64 , and 1 × 1 × 16 , respec-tively, and embedding dimension 384 at each scale. For report generation, h(2) 2
+
+is used as the visual representation and flattened into a sequence of 1024 tokens with dimension 384. For discriminative prediction, a multi-scale embedding hemb 
+
+is constructed by pooling over the token dimension at each scale and concate-nating the resulting three 384-dimensional vectors, yielding a 1152-dimensional representation. 
+
+Visual projector. Attention pooling with 256 learnable query tokens of di-mension 384 is applied to aggregate the flattened visual tokens. The resulting pooled features are then projected to the language-token embedding dimension 768 with an MLP. 
+
+VLM training. The VLM is trained in two stages on 4 H200 GPUs using a per-device batch size of 8. Stage 1 trains only the vision projector for 1 epoch with the LLM frozen, and takes about 1 hour. Stage 2 initializes from the Stage 1 checkpoint and performs 5 epochs of supervised fine-tuning with LoRA [23] applied to the LLM (rank 128, scaling factor 256), while jointly optimizing the visual projector; this stage takes about 7 hours. 
+
+Discriminative models training. Three multi-label linear classifiers are trained on the frozen multi-scale image embedding hemb ∈ R1152 , corresponding to the three question sets with 18, 8, and 15 questions, respectively. Each classifier is implemented as a single fully connected layer, nn.Linear (1152 , C ), where C
+
+is the number of questions in the corresponding set. Training uses Adam with learning rate 10 −3, batch size 8192, and 1000 epochs. The loss is class-balanced binary cross-entropy, with per-class positive weights set to Nneg /N pos computed from the training split. 28 
+
+C Evaluation Protocol 
+
+C.1 Evaluation Protocol for 18 Pathology Findings 
+
+Following prior work [19], we evaluate 18 predefined pathology findings using a RadBERT-based report classifier. In that work, 1,000 reports were manually annotated for 18 abnormalities by combining the Findings and Impression sec-tions. The annotated set was split into 800 training reports and 200 validation reports. A RadBERT-RoBERTa-4m model [43], pretrained on more than 4 mil-lion radiology reports, was fine-tuned on this set and then used to classify the remaining reports. Our question-driven protocol can also support this evaluation. However, we use the RadBERT-based protocol here for direct comparison with prior work. DCP-1 is trained with labels from our LLM-based parsing pipeline. For evalua-tion, we use pathology labels extracted with RadBERT-RoBERTa-4m to assess both DCP-1 and report generation performance. On the CT-RATE validation set, our protocol achieves 0.957 overall agree-ment with the RadBERT-based evaluation. This shows strong consistency be-tween the two extraction protocols. 
+
+C.2 Class Distribution of Fine-Grained Annotations                                       
+
+> Table 10: Class distribution (Pos/Neg) of the global finding question set (S1) on the CT-RATE validation set.
+> Set Question Pos Neg
+> S1 Bronchiectasis 340 2699 S1 Cardiomegaly 309 2730 S1 Pericardial effusion 214 2825 S1 Atelectasis 809 2230 S1 Consolidation 567 2472 S1 Hiatal hernia 421 2618 S1 Interlobular septal thickening 242 2797 S1 Lung nodule 1372 1667 S1 Lung opacity 1392 1647 S1 Lymphadenopathy 218 2821 S1 Medical material / device 326 2713 S1 Mosaic attenuation pattern 244 2795 S1 Pleural effusion 367 2672 S1 Arterial wall calcification 801 2238 S1 Coronary artery wall calcification 620 2419 S1 Emphysema 581 2458 S1 Peribronchial thickening 361 2678 S1 Pulmonary fibrotic sequela 401 2638
+
+29 
+
+Table 11: Class distribution (Pos/Neg) of the laterality-aware question set (S2) on the CT-RATE validation set. 
+
+Set Question Pos Neg 
+
+S2 Pleural effusion (R) 303 2736 S2 Pleural effusion (L) 296 2743 S2 Consolidation (R) 457 2582 S2 Consolidation (L) 419 2620 S2 Ground-glass opacity (R) 883 2156 S2 Ground-glass opacity (L) 838 2201 S2 Lung nodule (R) 1144 1895 S2 Lung nodule (L) 979 2060 
+
+Table 12: Class distribution (Pos/Neg) of the lobar question set (S3) on the CT-RATE validation set. 
+
+Set Question Pos Neg 
+
+S3 Lung nodule (RUL) 314 2725 S3 Lung nodule (RML) 180 2859 S3 Lung nodule (RLL) 282 2757 S3 Lung nodule (LUL) 229 2810 S3 Lung nodule (LLL) 315 2724 S3 Consolidation (RUL) 143 2896 S3 Consolidation (RML) 90 2949 S3 Consolidation (RLL) 224 2815 S3 Consolidation (LUL) 129 2910 S3 Consolidation (LLL) 220 2819 S3 Ground-glass opacity (RUL) 262 2777 S3 Ground-glass opacity (RML) 128 2911 S3 Ground-glass opacity (RLL) 393 2646 S3 Ground-glass opacity (LUL) 245 2794 S3 Ground-glass opacity (LLL) 413 2626 30 
+
+D Additional Experimental Results 
+
+D.1 Additional Results of DCP1 and DCP2 CT-RATE. 
+
+Table 13: Per-question performance of DCP-1 on the global finding question set (S1) on the CT-RATE validation set . We report Precision (Prec), Recall (Rec), F1, and AUROC. 
+
+Set Question Prec. ↑ Rec. ↑ F1 ↑ AUROC ↑
+
+S1 Bronchiectasis 0.266 0.688 0.383 0.789 S1 Cardiomegaly 0.412 0.890 0.564 0.937 S1 Pericardial effusion 0.250 0.790 0.380 0.858 S1 Atelectasis 0.538 0.693 0.606 0.805 S1 Consolidation 0.539 0.882 0.669 0.926 S1 Hiatal hernia 0.267 0.698 0.386 0.759 S1 Interlobular septal thickening 0.249 0.860 0.386 0.892 S1 Lung nodule 0.719 0.674 0.696 0.794 S1 Lung opacity 0.829 0.757 0.791 0.885 S1 Lymphadenopathy 0.237 0.821 0.368 0.883 S1 Medical material / device 0.462 0.831 0.594 0.934 S1 Mosaic attenuation pattern 0.270 0.762 0.398 0.873 S1 Pleural effusion 0.774 0.935 0.847 0.982 S1 Arterial wall calcification 0.655 0.858 0.743 0.914 S1 Coronary artery wall calcification 0.597 0.900 0.718 0.930 S1 Emphysema 0.402 0.673 0.504 0.811 S1 Peribronchial thickening 0.279 0.715 0.402 0.814 S1 Pulmonary fibrotic sequela 0.249 0.599 0.351 0.706 
+
+Average 0.444 0.779 0.544 0.861 31 
+
+Table 14: Per-question performance of DCP-2 on the CT-RATE validation set 
+
+for the global finding question set (S1). We report Precision (Prec), Recall (Rec), F1, and AUROC. 
+
+Set Question Prec. ↑ Rec. ↑ F1 ↑ AUROC ↑
+
+S1 Medical material / device 0.545 0.741 0.628 0.932 S1 Arterial wall calcification 0.685 0.943 0.793 0.946 S1 Cardiomegaly 0.608 0.686 0.645 0.947 S1 Pericardial effusion 0.571 0.659 0.612 0.920 S1 Coronary artery wall calcification 0.709 0.916 0.799 0.952 S1 Hiatal hernia 0.525 0.571 0.547 0.847 S1 Lymphadenopathy 0.517 0.676 0.586 0.788 S1 Emphysema 0.490 0.662 0.563 0.836 S1 Atelectasis 0.440 0.805 0.569 0.819 S1 Lung nodule 0.488 0.977 0.651 0.774 S1 Lung opacity 0.634 0.890 0.741 0.883 S1 Pulmonary fibrotic sequela 0.423 0.771 0.546 0.752 S1 Pleural effusion 0.840 0.851 0.845 0.967 S1 Mosaic attenuation pattern 0.521 0.581 0.550 0.928 S1 Peribronchial thickening 0.373 0.600 0.460 0.841 S1 Consolidation 0.569 0.850 0.682 0.924 S1 Bronchiectasis 0.414 0.633 0.501 0.869 S1 Interlobular septal thickening 0.385 0.687 0.494 0.911 
+
+Average 0.541 0.750 0.623 0.880 Table 15: Per-question performance of DCP-1 on the laterality-aware question set (S2) on the CT-RATE validation set . We report Precision (Prec), Recall (Rec), F1, and AUROC. 
+
+Set Question Prec. ↑ Rec. ↑ F1 ↑ AUROC ↑
+
+S2 Pleural effusion (R) 0.680 0.931 0.786 0.982 S2 Pleural effusion (L) 0.667 0.936 0.779 0.978 S2 Consolidation (R) 0.461 0.860 0.600 0.922 S2 Consolidation (L) 0.445 0.905 0.596 0.923 S2 Ground-glass opacity (R) 0.687 0.804 0.741 0.898 S2 Ground-glass opacity (L) 0.655 0.796 0.719 0.893 S2 Lung nodule (R) 0.641 0.718 0.677 0.800 S2 Lung nodule (L) 0.544 0.702 0.613 0.779 
+
+Average 0.598 0.832 0.689 0.897 32 
+
+Table 16: Per-question performance of DCP-1 on the lobar question set (S3) on the CT-RATE validation set . We report Precision (Prec), Recall (Rec), F1, and AUROC. 
+
+Set Question Prec. ↑ Rec. ↑ F1 ↑ AUROC ↑
+
+S3 Lung nodule (RUL) 0.214 0.666 0.324 0.768 S3 Lung nodule (RML) 0.154 0.694 0.252 0.795 S3 Lung nodule (RLL) 0.201 0.684 0.311 0.762 S3 Lung nodule (LUL) 0.166 0.664 0.265 0.747 S3 Lung nodule (LLL) 0.239 0.686 0.355 0.783 S3 Consolidation (RUL) 0.172 0.818 0.285 0.903 S3 Consolidation (RML) 0.113 0.856 0.200 0.896 S3 Consolidation (RLL) 0.240 0.830 0.373 0.895 S3 Consolidation (LUL) 0.150 0.876 0.257 0.897 S3 Consolidation (LLL) 0.249 0.868 0.387 0.905 S3 Ground-glass opacity (RUL) 0.212 0.790 0.334 0.811 S3 Ground-glass opacity (RML) 0.113 0.789 0.197 0.825 S3 Ground-glass opacity (RLL) 0.302 0.763 0.433 0.818 S3 Ground-glass opacity (LUL) 0.188 0.727 0.298 0.798 S3 Ground-glass opacity (LLL) 0.317 0.772 0.450 0.820 
+
+Average 0.202 0.766 0.315 0.828 33 
+
+Rad-Chest CT. Due to annotation mismatch between CT-RATE and Rad-ChestCT, we follow prior work [18] and report 16-label predictions derived from the original 18-label outputs. S1 ∗ denotes the 16-label evaluation protocol on Rad-ChestCT derived from the original 18-label prediction space. 
+
+Table 17: Per-question performance of DCP-1 on Rad-ChestCT for the global finding question set (S1 ∗). We report Precision (Prec), Recall (Rec), F1, and AUROC. 
+
+Set Question Prec. ↑ Rec. ↑ F1 ↑ AUROC ↑
+
+S1 ∗ Medical material 0.489 0.896 0.633 0.834 S1 ∗ Calcifications 0.838 0.879 0.858 0.802 S1 ∗ Cardiomegaly 0.341 0.759 0.470 0.870 S1 ∗ Pericardial effusion 0.255 0.744 0.380 0.758 S1 ∗ Hiatal hernia 0.238 0.609 0.342 0.745 S1 ∗ Lymphadenopathy 0.275 0.855 0.416 0.807 S1 ∗ Emphysema 0.421 0.957 0.585 0.910 S1 ∗ Atelectasis 0.398 0.832 0.538 0.732 S1 ∗ Lung nodule 0.913 0.735 0.814 0.802 S1 ∗ Lung opacity 0.680 0.609 0.642 0.694 S1 ∗ Pulmonary fibrotic sequela 0.196 0.856 0.319 0.738 S1 ∗ Pleural effusion 0.518 0.945 0.669 0.956 S1 ∗ Peribronchial thickening 0.125 0.763 0.214 0.698 S1 ∗ Consolidation 0.313 0.822 0.454 0.834 S1 ∗ Bronchiectasis 0.214 0.887 0.344 0.736 S1 ∗ Interlobular septal thickening 0.164 0.825 0.273 0.826 
+
+Average 0.399 0.811 0.497 0.796 34 
+
+Table 18: Per-question performance of DCP-2 on Rad-ChestCT for the global finding question set (S1 ∗). We report Precision (Prec), Recall (Rec), F1, and AUROC. Mosaic attenuation pattern is omitted because no positive samples are present in this evaluation set. 
+
+Set Question Prec. ↑ Rec. ↑ F1 ↑ AUROC ↑
+
+S1 ∗ Medical material 0.615 0.706 0.658 0.814 S1 ∗ Calcifications 0.803 0.920 0.857 0.818 S1 ∗ Cardiomegaly 0.399 0.716 0.512 0.897 S1 ∗ Pericardial effusion 0.586 0.538 0.561 0.849 S1 ∗ Hiatal hernia 0.368 0.668 0.475 0.828 S1 ∗ Lymphadenopathy 0.205 0.858 0.331 0.729 S1 ∗ Emphysema 0.391 0.970 0.558 0.932 S1 ∗ Atelectasis 0.358 0.927 0.517 0.732 S1 ∗ Lung nodule 0.823 0.973 0.892 0.744 S1 ∗ Lung opacity 0.621 0.801 0.700 0.680 S1 ∗ Pulmonary fibrotic sequela 0.119 0.743 0.206 0.422 S1 ∗ Pleural effusion 0.800 0.794 0.797 0.943 S1 ∗ Peribronchial thickening 0.159 0.711 0.259 0.733 S1 ∗ Consolidation 0.343 0.634 0.445 0.801 S1 ∗ Bronchiectasis 0.289 0.835 0.430 0.824 S1 ∗ Interlobular septal thickening 0.202 0.825 0.324 0.855 
+
+Average 0.443 0.789 0.533 0.788
