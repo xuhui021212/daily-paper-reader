@@ -1,0 +1,721 @@
+Title: Ride the Wave: Precision-Allocated Sparse Attention for Smooth Video Generation
+
+URL Source: https://arxiv.org/pdf/2604.12219v1
+
+Published Time: Wed, 15 Apr 2026 00:25:46 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# Ride the Wave: Precision-Allocated Sparse Attention for Smooth Video Generation 
+
+# Wentai Zhang 
+
+zhangwentai720@bupt.edu.cn Beijing University of Posts and Telecommunications Beijing, China 
+
+# RongHui Xi 
+
+xironghui1@bupt.edu.cn Beijing University of Posts and Telecommunications Beijing, China 
+
+# Shiyao Peng 
+
+pengshiyao@bupt.edu.cn Beijing University of Posts and Telecommunications Beijing, China 
+
+# Jiayu Huang 
+
+jyxhuangjiayu@bupt.edu.cn Beijing University of Posts and Telecommunications Beijing, China 
+
+# Haoran Luo 
+
+haoran.luo@ieee.org Nanyang Technological University Singapore, Singapore 
+
+# Zichen Tang 
+
+tangzichen@bupt.edu.cn Beijing University of Posts and Telecommunications Beijing, China 
+
+# HaiHong E ∗
+
+ehaihong@bupt.edu.cn Beijing University of Posts and Telecommunications Beijing, China Full Attention                                    
+
+> Latency=121s
+> PISA
+> PSNR=23.80
+> Latency=71s(1.70×
+> SVG2
+> PSNR=24.56
+> Latency=106s (1.14 ×))
+> PASA(ours)
+> PSNR=24.77
+> Latency=71s(1.70×)
+> Prompt:Warmcolorsdominatetheroom,withafocusonthetabbycatsittingcontentlyinthecenter....FullAttention
+> Latency=121s
+> PISA
+> PSNR=18.85
+> Latency=71s(1.70×
+> SVG2
+> PSNR=20.04
+> Latency=105s (1.15 ×))
+> PASA(ours)
+> PSNR=20.09
+> Latency=71s(1.70×)
+> Prompt:Afair-skinnedEasternbeautystandinginamisty,rainyJiangnan-stylecourtyard....
+
+Figure 1: Visual and quantitative comparison on Wan 2.1-T2V-1.3B (quality vs. efficiency). PASA (ours) matches the end-to-end speedup of PISA ( Piecewise Sparse Attention ) while improving PSNR over other sparse attention baselines. Left: PASA preserves continuous strap geometry; other sparse methods show discontinuities. Right: PASA avoids the anatomical distortion present in competing sparse methods. 
+
+## Abstract 
+
+Video Diffusion Transformers have revolutionized high-fidelity video generation but suffer from the massive computational bur-den of self-attention. While sparse attention provides a promising acceleration solution, existing methods frequently provoke severe visual flickering caused by static sparsity patterns and deterministic block routing. To resolve these limitations, we propose Precision-
+
+Allocated Sparse Attention (PASA), a training-free framework de-signed for highly efficient and temporally smooth video generation. First, we implement a curvature-aware dynamic budgeting mech-anism. By profiling the generation trajectory acceleration across 
+
+> ∗
+
+Corresponding author 
+
+timesteps, we elastically allocate the exact-computation budget to secure high-precision processing strictly during critical semantic transitions. Second, we replace global homogenizing estimations with hardware-aligned grouped approximations, successfully cap-turing fine-grained local variations while maintaining peak com-pute throughput. Finally, we incorporate a stochastic selection bias into the attention routing mechanism. This probabilistic approach softens rigid selection boundaries and eliminates selection oscilla-tion, effectively eradicating the localized computational starvation that drives temporal flickering. Extensive evaluations on leading video diffusion models demonstrate that PASA achieves substantial inference acceleration while consistently producing remarkably fluid and structurally stable video sequences. 
+
+> arXiv:2604.12219v1 [cs.CV] 14 Apr 2026 Wentai Zhang, RongHui Xi, Shiyao Peng, Jiayu Huang, Haoran Luo, Zichen Tang, and HaiHong E
+
+## CCS Concepts 
+
+• Computing methodologies → Computer vision ; Parallel algorithms .
+
+## Keywords 
+
+Sparse Attention, Video Generation, Training-free, Smoothness 
+
+## 1 Introduction 
+
+With the rapid advancement of Artificial Intelligence Generated Content (AIGC) technologies, video generation, e.g., Text-to-Video (T2V) [ 3, 15 , 17 ] and Image-to-Video (I2V) [ 18 , 31 ], has emerged as a prominent research frontier, enabling automatic synthesis of realistic videos from textual descriptions or static images. The Dif-fusion Transformer (DiT) [ 12 , 13 ] architecture has demonstrated exceptional performance. However, for high-resolution or long-duration videos, the token sequence length ( 𝑛 ) grows exceedingly large. A five-second 720p video comprises 75,600 tokens in Wan 2.1-14B [ 16 ]. Since standard self-attention computes pairwise relation-ships across all tokens, it exhibits 𝑂 (𝑛 2) computational and memory complexity and accounts for over 70% of end-to-end latency [ 1], thus emerging as the primary bottleneck for efficient DiT inference. To mitigate the quadratic computational complexity of atten-tion in Diffusion Transformers, recent studies have actively ex-plored sparse attention mechanisms. These existing approaches can be broadly categorized into two paradigms: selection-based and compensation-based methods. Selection-based methods [ 1 , 20 , 23 ,27 ] typically employ a binary “keep-or-drop” strategy. They dynam-ically identify critical token blocks to compute at a fine-grained level while entirely discarding the remaining non-critical blocks. Although hardware-friendly, this hard truncation inevitably leads to severe information loss and visual degradation under high spar-sity. To alleviate this, recent compensation-based methods [ 2, 6,7, 10 ] propose to preserve contextual information instead of out-right discarding it. Rather than completely omitting non-critical blocks, these approaches utilize lightweight, coarse-grained com-putations—such as hierarchical pooling, statistical reshaping, or block-wise approximation—to compensate for the omitted attention weights. 
+
+Limitation 1: Sub-optimal uniform sparsity across the denois-ing steps. Existing methods [ 1, 20 , 27 ] typically apply a fixed top-𝑘 or top-𝑝 block budget uniformly across all inference timesteps. However, from the perspective of flow matching, the generation trajectory exhibits varying degrees of curvature and velocity ac-celeration. During highly non-linear phase transitions, the model requires dense contextual information to ensure semantic fidelity, whereas during stable, near-linear phases, a high computation bud-get is largely redundant. A static sparsity constraint fails to capture this temporal dynamic, leading to either wasted computation or severe quality degradation during critical timesteps. 
+
+Limitation 2: Temporal flickering induced by deterministic block routing. Current dynamic sparse attention mechanisms rely on strictly deterministic scoring functions to select critical blocks. In the context of video generation, even microscopic varia-tions in latent features across continuous frames can trigger abrupt, discontinuous shifts in the selected top-𝑘 indices—a phenomenon we term "selection oscillation." This rigid, deterministic bound-ary causes sudden alterations between adjacent frames, which in-evitably manifest as noticeable temporal flickering and jagged visual transitions, severely degrading the smoothness of the generated videos. 
+
+Limitation 3: The dilemma between approximation granu-larity and hardware efficiency. To avoid the memory-bound bottleneck of computing per-block statistics, the compensation-based method Piecewise Sparse Attention (PISA) [ 6] substitutes the exact block-wise first-order Taylor compensation term with a sin-gle global statistic 𝐻 . While this global substitution ensures high hardware throughput, it excessively homogenizes the non-critical regions, washing out the diverse local representations. Crucially, this global approach overlooks the inherent grouped execution patterns of modern GPU kernels, thereby missing a critical "sweet spot" that could balance local approximation fidelity with hardware efficiency. To address these limitations, we present PASA , a training-free sparse attention mechanism that adaptively aligns computational resources with the inherent dynamics of video generation. In-spired by the continuous trajectory of flow matching, we introduce 
+
+Curvature-aware dynamic budgeting to quantify per-timestep velocity acceleration via the L1 distance between adjacent noise pre-dictions, and we reallocate the exact top-𝑘 budget across timesteps. 
+
+Stochastic selection bias injects controlled noise into block scor-ing to soften rigid deterministic routing, attenuating selection os-cillation and temporal flicker across consecutive frames. Grouped first-order approximation aggregates per-block Taylor compen-sation statistics (the 𝐻 𝑗 terms in Section 3.3) within coalesced memory-access groups, retaining finer locality than a single global substitute without reverting to costly per-block materialization. Figure 1 previews a representative quality–efficiency comparison on Wan 2.1-T2V-1.3B. We summarize our contributions as follows: 
+
+• We propose a novel temporal allocation strategy that adjusts the exact-computation budget (top-𝑘 ) across varying infer-ence timesteps. By utilizing the L1 distance of predicted velocity fields to profile the trajectory acceleration, our method precisely invests computational resources during critical semantic transitions while maximizing inference speed during stable phases. 
+
+• We introduce a grouped approximation scheme that calcu-lates and shares Taylor expansion compensation statistics strictly within coalesced memory-access groups. This de-sign successfully bridges the gap between memory-bound fine-grained computation and over-smoothed global com-pensation, delivering high local representational fidelity with optimal hardware throughput. 
+
+• We design a stochastic selection mechanism to eradicate the temporal flickering caused by rigid deterministic block rout-ing. By injecting a controlled random bias into the attention scoring function, we soften the selection boundaries and effectively prevent selection oscillation, ensuring highly fluid and temporally consistent visual transitions across continuous video frames. Ride the Wave: Precision-Allocated Sparse Attention for Smooth Video Generation 
+
+• Extensive experiments on leading video generation models, including Wan 2.1 and HunyuanVideo, validate the superi-ority of our method. Our approach achieves substantial in-ference speedups while establishing superior performance in temporal consistency and visual quality metrics on the VBench [ 4 ] benchmark. Ablation studies further demon-strate that each design choice contributes to video quality improvements. 
+
+## 2 Related Work 
+
+Existing sparse attention for video generation can be broadly bi-furcated into two trajectories: training-free and training-based ap-proaches. 
+
+## 2.1 Training-free Sparse Attention 
+
+Training-free methods accelerate inference by directly harnessing attention sparsity, ostensibly without incurring additional training overhead. Our work is in this scope. In practice, these approaches typically adopt a coarse-to-fine hierarchical pipeline: partitioning tokens into localized blocks, dynamically estimating block-wise importance, and subsequently restricting exact attention compu-tation exclusively to the identified critical blocks [ 11 ]. Within this paradigm, methods vary primarily in their mask generation strate-gies. Early explorations frequently employ pre-defined static sparse patterns. For instance, STA [ 29 ] introduces a hardware-friendly sliding-tile attention to supersede conventional global 3D attention, whereas Radial Attention [ 8 ] applies a prior-driven multi-band mask featuring radially decaying attention windows and tempo-ral sampling frequencies. To enhance adaptability across diverse visual contents, subsequent research has pivoted towards dynamic sparse attention. SpargeAttn [ 27 ] and DraftAttention [ 14 ] perform online block importance estimation by aggregating token activa-tions, thereby bypassing low-relevance blocks. Similarly, XAtten-tion [ 22 ] utilizes an antidiagonal-sum proxy coupled with dynamic programming for adaptive thresholding. To address the specific spatio-temporal redundancies in video sequences, AdaSpa [ 21 ]leverages cross-step invariance for precise online pattern searching, while Sparse VideoGen2 (SVG2) [ 23 ] employs K-means clustering to organize semantically cohesive tokens into contiguous memory layouts, thereby optimizing hardware utilization. Furthermore, to mitigate the attention distribution distortion that typically emerges at high sparsity regimes, methods like Rectified SpaAttn [ 10 ] and Re-ttention [ 2] statistically reshape and reallocate pooled attention weights to correct systematic biases. 
+
+## 2.2 Training-based Sparse Attention 
+
+Conversely, training-based approaches inject sparsity constraints directly into the pre-training or fine-tuning phases. By explicitly optimizing the model weights to accommodate sparse attention layers, these methods unlock the potential for extreme sparsity levels [ 25 ]. Initial explorations, such as VSA [ 28 ] and VMoBA [ 19 ], attempt to incorporate fully learnable sparse attention mechanisms during training. More recently, hybrid architectures that seamlessly integrate sparse and linear attention have emerged as the prevailing standard. For example, SLA [ 25 ] stratifies attention weights into crit-ical, marginal, and negligible tiers. It allocates dense computation to critical weights, applies O( 𝑁 ) linear attention to marginal ones, and prunes the negligible connections entirely. Through lightweight fine-tuning, SLA drastically amplifies sparsity while preserving generation fidelity. Its successor, SLA2 [ 26 ], further advances this by introducing a differentiable routing mechanism. Concurrently, to sustain end-to-end performance under ultra-sparse conditions, SpargeAttention2 [ 24 ] proposes a hybrid top-𝑘 and top-𝑝 dynamic masking criterion. This is coupled with a velocity-level distillation fine-tuning objective, which utilizes a frozen full-attention model as a supervisory signal to robustly prevent behavioral drift during adaptation. 
+
+## 3 Preliminaries 
+
+In this section, we formalize scaled dot-product attention in Video Diffusion Transformers and recall sparse attention via a per-query active key set. We then summarize PISA [ 6]: exact attention on se-lected blocks plus Taylor-based correction on the remainder, which our method extends. 
+
+## 3.1 Self-Attention in Video Diffusion Transformers. 
+
+In diffusion-based video generation with Transformers (Video DiTs), a video clip is first encoded into a compressed latent tensor using a pre-trained Variational Autoencoder (VAE). The input to a Trans-former block is 𝑋 ∈ R𝐵 ×𝑁 ×𝑆 ×𝐷 , with 𝐵 the batch size, 𝑁 the number of attention heads, 𝑆 the length of sequence, and 𝐷 the embedding dimension. Given 𝑋 , linear projections produce the Query ( 𝑄 ), Key (𝐾 ), and Value ( 𝑉 ) matrices. With 𝑁 attention heads, each head attends over 𝑆 tokens; for clarity we omit batch size and head di-mensions in the equations below. The output 𝑂 is computed via scaled dot-product attention (with softmax applied row-wise): 
+
+𝑂 = softmax 
+
+ 𝑄𝐾 𝑇 
+
+√𝐷 
+
+
+
+𝑉 (1) The dominant computational bottleneck arises from the 𝑄𝐾 ⊤
+
+matrix multiplication (forming the 𝑆 × 𝑆 attention logits) and the 
+
+𝑃𝑉 matrix multiplication, where 𝑃 denotes the row-normalized attention weights from the softmax, both incurring O( 𝑆 2) time and memory complexity. 
+
+## 3.2 Sparse Attention. 
+
+Sparse attention avoids materializing full 𝑆 × 𝑆 interactions by selecting, for each query index 𝑖 ∈ { 1, . . . , 𝑆 }, a small active set of key indices I𝑖 ⊆ { 1, . . . , 𝑆 }. A common construction assigns a routing score 𝑟 𝑖,𝑗 for each candidate key 𝑗 and takes the top-𝑘 keys: 
+
+I𝑖 = 𝑘 
+
+arg top   
+
+> 𝑗 ∈ { 1,...,𝑆 }
+
+(𝑟 𝑖,𝑗 ) (2) The attention output for query row 𝑖 uses only keys and values indexed by I𝑖 :
+
+𝑂 𝑖, : = softmax 𝑄 𝑖, :𝐾 ⊤I𝑖 
+
+√𝐷 
+
+!
+
+𝑉 I𝑖 (3) where 𝑄 𝑖, : is the 𝑖 -th row of 𝑄 , and 𝐾 I𝑖 , 𝑉 I𝑖 stack the corresponding rows of 𝐾 and 𝑉 .Wentai Zhang, RongHui Xi, Shiyao Peng, Jiayu Huang, Haoran Luo, Zichen Tang, and HaiHong E Row-wise             
+
+> Top-K Selection
+> skip skip
+> Outer Loop
+> Inner Loop
+> Per-token Exact Attention
+> skip skip
+> skip skip
+> Row-wise Softmax
+> Group-wise
+> Mean
+> skip skip skip
+> skip
+> Offline Calibration
+> Online Inference
+> Mean Aggregation Noise Prediction L1 Diff
+> Density
+> Time steps
+> In Each Timestep
+> Block Mask skip
+> skip
+> ...
+> Prepare Phase Phase 1 Phase 2
+> Calibration Dataset
+> Random Bias
+> §Curvature-Aware
+> Dynamic Budgeting
+> §Stochastic Selection Bias
+> §Grouped 1st-Order
+> Approximation Per-token Exact Attention
+
+Figure 2: Overview of PASA: dynamic top-𝑘 budgeting along the denoising trajectory, stochastic block scoring, and grouped first-order compensation for blocks in the unselected set. 
+
+Keys outside I𝑖 are typically skipped with coarse approximations. When each query attends to at most 𝑘 keys, cost drops from O( 𝑆 2)
+
+to O( 𝑆𝑘 ) relative to full attention. 
+
+## 3.3 Taylor Expansion Approximation for Sparse Attention 
+
+Instead of discarding unselected attention blocks as in conventional sparse attention, there is another approach [ 6] that approximates their contribution through a piecewise formulation that combines exact computation and analytical approximation. Given query, key, and value matrices 𝑄, 𝐾, 𝑉 ∈ R𝐿 ×𝑑 , the se-quence is partitioned into blocks of size 𝐵 . For each query block, a scoring function estimates the importance of all key blocks. The top-𝑘 blocks that form the selected set are computed exactly. The selected set is denoted as S, and the remaining blocks form the un-selected set U. For the remaining blocks in U, PISA approximates the attention contribution using a Taylor expansion around the block centroid. Let ¯𝐾 𝑗 denote the mean key vector of block 𝑗 , and let 𝛼 𝑡,𝑗 = exp (𝑄 𝑡 ¯𝐾 ⊤ 
+
+> 𝑗
+
+) represent the approximate attention weight between query 𝑄 𝑡 and block 𝑗 . The zeroth-order approximation aggregates value vectors within the block: ∑︁  
+
+> 𝑗 ∈ U
+
+𝛼 𝑡,𝑗 
+
+> 𝐵
+
+∑︁ 
+
+> 𝑛 =1
+
+𝑉 𝑗,𝑛 
+
+!
+
+(4) To further improve approximation accuracy, PISA introduces a first-order correction term based on the covariance between key and value vectors. Let 
+
+𝐻 𝑗 =
+
+> 𝐵
+
+∑︁ 
+
+> 𝑛 =1
+
+(𝐾 𝑗,𝑛 − ¯𝐾 𝑗 )⊤𝑉 𝑗,𝑛 (5) Directly computing 𝐻 𝑗 for every block results in a memory-bound operation. PISA therefore replaces block-wise statistics with a shared global statistic 
+
+¯𝐻 = 1
+
+𝑁 𝐵 𝑁 𝐵 ∑︁ 
+
+> 𝑗 =1
+
+𝐻 𝑗 (6) where 𝑁 𝐵 is the total number of blocks. The final attention numerator combines exact sparse computation, block-wise zeroth-order approximation, and global first-order correction: 
+
+𝑁 𝑡 =∑︁  
+
+> 𝑗 ∈ S
+> 𝐵
+
+∑︁ 
+
+> 𝑛 =1
+
+exp (𝑄 𝑡 𝐾 ⊤ 
+
+> 𝑗,𝑛
+
+)𝑉 𝑗,𝑛 +∑︁  
+
+> 𝑗 ∈ U
+
+𝛼 𝑡,𝑗 
+
+> 𝐵
+
+∑︁ 
+
+> 𝑛 =1
+
+𝑉 𝑗,𝑛 
+
+!
+
++ 𝑄 𝑡 ¯𝐻 ∑︁  
+
+> 𝑗 ∈ U
+
+𝛼 𝑡,𝑗 
+
+(7) This formulation preserves the contribution of long-tail attention blocks while avoiding quadratic complexity. The approximation is integrated into the online softmax computation so that the normal-ization of attention weights remains consistent with full attention. To determine the top-𝑘 membership for the selected set S, PISA employs a covariance-aware routing mechanism. Rather than eval-uating block importance solely based on the centroid distance, the selection score integrates the semantic relevance with an approxi-mation error prior, formulated as: Score 𝑡,𝑗 = softmax 𝑄 𝑡 ¯𝐾 ⊤
+
+> 𝑗
+
+√𝐷 + log (|| 𝐻 𝑗 − ¯𝐻 || 2 + 𝜖 )
+
+!
+
+(8) where || 𝐻 𝑗 − ¯𝐻 || 2 quantifies the structural heterogeneity of the key-value pairs within block 𝑗 based on the norm of its internal covariance matrix, and 𝜖 represents a small constant for numerical stability. Our method is built on top of PISA, and we introduce the improvements in detail in Section 4. 
+
+## 4 Methodology 
+
+This section presents PASA ( Precision-Allocated Sparse Attention), a training-free extension of PISA (Section 3). We depart from uni-form per-step block budgets, deterministic top-𝑘 routing, and a single global first-order correction for skipped blocks. Our method combines ( i) curvature-aware dynamic budgeting , reallocating exact attention along the denoising trajectory in response to variability in the predicted velocity field; ( ii ) stochastic routing , perturbing block scores with lightweight randomness to mitigate persistent under-selection of background and boundary content and improve tem-poral stability; and ( iii ) grouped first-order approximation , sharing Taylor compensation statistics within memory-coalesced groups to preserve local fidelity while avoiding both global homogenization Ride the Wave: Precision-Allocated Sparse Attention for Smooth Video Generation 
+
+and fragmented per-block statistics. Figure 2 depicts the pipeline; the subsections below detail each module. 
+
+## 4.1 Curvature-Aware Dynamic Budgeting 
+
+Mainstream open-source video generation models, e.g., Wan 2.1 and HunyuanVideo, follow the flow-matching [ 9] formulation. The generation process dictates how a noise distribution transforms into the data distribution along a continuous probability flow trajec-tory. Our fundamental insight is that the generation trajectory does not evolve at a uniform pace. Instead, it exhibits varying curvature and velocity acceleration. To motivate the design, we first visualize trajectory variability using five randomly selected prompts (sepa-rate from the calibration set below): for each prompt and model, we compute the L1 distance between predicted velocity fields 1 at adjacent timesteps, shown in Figure 3. 
+
+Insight. The generation process distinctly partitions into three phases. During the initial stage, which corresponds to approxi-mately the first 10 timesteps, the magnitude of the velocity field variations is remarkably high and exhibits substantial variance across different prompts. This pronounced fluctuation indicates rapid, diverse macroscopic semantic construction. Consequently, this empirical observation provides a rigorous mathematical justifi-cation for prior studies, which typically mandate full dense atten-tion computation during the initial 20% to 25% of the generation process to secure the global structural foundation. Following this turbulent initial phase, the generation trajectory transitions into a prolonged stable regime. Throughout the intermediate timesteps, the rate of change in the velocity fields diminishes significantly. This consensus indicates that the probability flow follows a near-linear path, rendering a high computational budget largely redundant. Finally, as the generative process approaches the final 5 timesteps, the variation in the velocity fields experiences a distinct resurgence. Because each distinct prompt necessitates unique textural and spa-tial polishing, the generation trajectories correspondingly diverge into prompt-specific refinement directions. 
+
+Solution. We use 10 calibration prompts (see Appendix A) pro-duced by a large language model. Following prior setups, we keep full attention on the first 20% of denoising timesteps. For the remain-ing 80% timesteps Tsparse , we record the mean L1 distance between velocity fields at consecutive timesteps for each calibration prompt, yielding 10 curves; we average them into one curve that tracks global acceleration along the trajectory (combined with the bud-geting pipeline in Figure 2). Let ℓ𝑡 denote the prompt-averaged L1 signal at sparse timestep 𝑡 . PISA fixes a baseline top-𝑘 density 𝜌 
+
+(fraction of blocks computed exactly). We summarize curvature along the sparse segment by the mean L1: 
+
+¯ℓ = 1
+
+|T sparse |∑︁ 𝑡 ∈ T sparse 
+
+ℓ𝑡 (9) Mean-normalized scaling factors 𝛼 𝑡 with unit mean over Tsparse are then 
+
+𝛼 𝑡 = ℓ𝑡 
+
+¯ℓ (10)   
+
+> 1The noise_pred tensor in the model codebase.
+
+Finally, we multiply the baseline density to obtain the effective per-step density 
+
+𝜌 𝑡 = 𝜌 · 𝛼 𝑡 (11) Equation 11 defines the effective per-step density and thus the sparse attention budget at 𝑡 . Because the 𝛼 𝑡 average to one over 
+
+Tsparse , Í𝑡 ∈ T sparse 𝜌 𝑡 = 𝜌 |T sparse |, matching the total budget of a uniform 𝜌 ; overall sparse attention compute is unchanged and only reallocated across timesteps. 
+
+## 4.2 Stochastic Routing for Temporal Smoothness 
+
+Insight. We begin by investigating the root cause of temporal flicker-ing in dynamic sparse attention. We hypothesize that compensation-based sparse methods partially mitigate video flickering specifically because they reduce the representational gap between the fully computed blocks and the approximated blocks. However, a severe structural imbalance persists. A standard video diffusion process typically passes the latent features through dozens of transformer layers across approximately fifty denoising timesteps. Under a strictly deterministic scoring mechanism, high-attention blocks, which predominantly capture moving subjects and salient fore-grounds, are consistently selected for exact computation. Conse-quently, mid-attention and low-attention blocks, which typically comprise the background environment and the boundary regions between subjects, are persistently relegated to approximated com-putation. We hypothesize that this extremely skewed allocation of the computational budget between the primary subjects and the background context is a fundamental driver of temporal flickering, causing visual instability specifically within the background and along semantic boundaries. As visualized in Figure 4, because the random bias is indepen-dently sampled across different layers and consecutive timesteps, the specific subset of mid-attention blocks upgraded to exact compu-tation constantly shifts. This mechanism acts as a spatial-temporal multiplexer, ensuring that the entire background region receives periodic, fine-grained refinement rather than enduring continu-ous, coarse approximation. As demonstrated in our ablation studies (Section 5.3), introducing this stochastic bias significantly improves objective metrics for both temporal flickering and motion smooth-ness. 
+
+## 4.3 Grouped First-Order Approximation 
+
+Insight. Prior work compensates unselected attention blocks with a global first-order Taylor term ¯𝐻 over the full unselected region, preserving subquadratic cost. This design is hardware-motivated: a single ¯𝐻 (about 32 KB) fits in fast on-chip SRAM on Hopper-class GPUs. The trade-off is representational: one global statistic ho-mogenizes diverse non-critical content, blurring local background texture and fine spatial structure. Per-block exact statistics restore locality but trigger fragmented DRAM traffic that stalls the pipeline. We attribute the bottleneck less to storing localized statistics than to how those statistics are fetched—misaligned access patterns relative to the accelerator’s asynchronous load-compute scheduling. 
+
+Solution. We propose grouped first-order approximation: com-pute and share the Taylor compensation matrix within memory-coalesced groups of key and value tensors, avoiding both a lone Wentai Zhang, RongHui Xi, Shiyao Peng, Jiayu Huang, Haoran Luo, Zichen Tang, and HaiHong E   
+
+> (a) Wan 2.1-T2V-1.3B. (b) Wan 2.1-T2V-14B. (c) HunyuanVideo-T2V-13B.
+
+Figure 3: Mean L1 distance between predicted velocity fields at consecutive timesteps, averaged over prompts (per model). 
+
+Figure 4: Distribution of exact-computation selection counts across all blocks during the complete inference process of the Wan 2.1-T2V-1.3B model. Introducing a stochastic selection bias effectively redistributes the computational budget from the over-selected primary blocks located in the left region to the under-selected intermediate and background blocks located in the middle and right regions. 
+
+global statistic and fully fragmented per-block updates. Triton-based operator profiling indicates that using 32 blocks per group better balances locality and throughput than coarser choices (e.g., 64). During the forward pass, our kernel streams each group’s ¯𝐻 
+
+from high-bandwidth memory together with the corresponding Key and Value tensors. We exploit warp specialization so compute warps execute attention arithmetic while load warps prefetch grouped statistics, overlapping fetch latency with computation. In practice, end-to-end latency matches the global baseline while improving attention fidelity; Appendix B provides a formal error analysis with tightened bounds. 
+
+## 5 Experiments 5.1 Setup 
+
+5.1.1 Hardware and Software. All experiments were conducted on 8 NVIDIA H800 GPUs with CUDA 12.8. The Python version is 3.12.9. The Triton version is 3.4.0. 
+
+5.1.2 Models. We conduct our experiments on three state-of-the-art open-weights Diffusion Transformer (DiT) models for text-to-video generation: Wan 2.1-T2V-1.3B and Wan 2.1-T2V-14B [16 ]and HunyuanVideo-T2V-13B [5]. Wan 2.1-T2V-1.3B is a leading DiT-based model with 1.3 billion parameters, utilizing a 3D-VAE for spatiotemporal compression to achieve high-fidelity motion dynam-ics. Wan 2.1-T2V-14B is a leading DiT-based model with 14 billion parameters, utilizing a 3D-VAE for spatiotemporal compression to achieve high-fidelity motion dynamics. HunyuanVideo-T2V-13B is another representative large-scale baseline. In Table 1, we use com-pact names ( Hunyuan-13B ; Wan 2.1-1.3B / Wan 2.1-14B omitting the T2V tag) to save column space. 
+
+5.1.3 Benchmarks. To comprehensively evaluate video generation performance, we adopt VBench [ 4] to assess both visual quality and temporal consistency. Additionally, we employ SSIM, PSNR, and LPIPS [ 30 ] to quantify the fidelity of our generated content com-pared to the full-attention baseline. Regarding efficiency, we priori-tize practical end-to-end latency over purely theoretical throughput estimates, as the latter often diverge from real-world performance. Consequently, we report the actual end-to-end latency and the relative speedup ratio against the full attention implementation. Prompts for all experiments are from the Penguin Benchmark pro-vided by the VBench team. 
+
+5.1.4 Baseline. We compare against SVG2 [23 ] and PISA [ 6] ( Sparse VideoGen2 and Piecewise Sparse Attention ), chosen as strong repre-sentatives of the two dominant sparse-attention paradigms. Among selection-based (keep-or-drop) methods, SVG2 attains the best agreement with full-attention outputs under pixel-level fidelity metrics such as PSNR (and related similarity measures to dense-attention videos), making it the most competitive hard-pruning baseline. SVG2 improves block-sparse attention through a semantic-aware permutation strategy: tokens are first clustered via k-means and then permuted so that semantically similar tokens become contiguous in memory, enabling more accurate block-level atten-tion approximation; cluster centroids are further used to estimate block importance and a top-𝑝 policy selects the blocks for exact computation. Among compensation-based methods, PISA currently yields the strongest VBench video-quality scores in this line of work; PASA extends PISA as described in Section 3.3 and Section 4. 
+
+## 5.2 Main Results. 
+
+Overall Performance Trends. As demonstrated in the main quan-titative results in Table 1, our Precision-Allocated Sparse Atten-tion consistently establishes the optimal equilibrium between com-putational efficiency and generation quality across all evaluated video diffusion models. Compared to the dense attention baseline, our approach achieves substantial inference acceleration, reaching speedups up to 2.36 times on the formidable Hunyuan-13B archi-tecture. Furthermore, when compared directly to existing highly sparse mechanisms, our method universally outperforms the PISA baseline across all structural similarity and pixel-level distortion Ride the Wave: Precision-Allocated Sparse Attention for Smooth Video Generation 
+
+Model Method Sparsity VBench (%) ↑ Similarity Efficiency T.F. M.S. A.Q. SSIM ↑ PSNR ↑ LPIPS ↓ Latency ↓ Speedup ↑
+
+Wan 2.1-1.3B 
+
+Text-to-Video 
+
+480P Dense 0.00% 97.36 98.27 66.34 – – – 121 s 1.00 ×
+
+SVG2 84.5% 96.78 98.04 65.52 0.7765 21.52 0.1598 86 s 1.40 ×
+
+PISA 85% 97.00 98.08 65.17 0.7286 19.66 0.2246 71 s 1.70 ×
+
+PASA (Ours) 85% 97.06 98.12 65.33 0.7510 20.51 0.2028 71 s 1.70 ×
+
+Wan 2.1-14B 
+
+Text-to-Video 
+
+720P Dense 0.00% 98.47 98.95 65.08 – – – 2786 s 1.00 ×
+
+SVG2 79.5% 98.46 98.92 64.17 0.8166 22.81 0.1345 1521 s 1.83 ×
+
+PISA 85% 98.45 98.93 67.21 0.7794 21.20 0.1805 1252 s 2.23 ×
+
+PASA (Ours) 85% 98.48 98.93 64.83 0.8003 22.07 0.1601 1270 s 2.19 ×
+
+Hunyuan-13B 
+
+Text-to-Video 
+
+720P Dense 0.00% 98.99 99.25 62.29 – – – 2415 s 1.00 ×
+
+SVG2 80.2% 99.03 99.24 62.45 0.8691 25.88 0.1039 1032 s 2.34 ×
+
+PISA 85% 99.26 99.38 66.88 0.7907 23.74 0.1257 1004 s 2.40 ×
+
+PASA (Ours) 85% 99.32 99.42 67.78 0.8012 25.24 0.1168 1020 s 2.36 ×
+
+Table 1: Quantitative comparison of our proposed Precision-Allocated Sparse Attention against state-of-the-art sparse methods across diverse video diffusion models. The abbreviated metrics represent Temporal Flickering (T.F.), Motion Smoothness (M.S.), and Aesthetic Quality (A.Q.). Bolded numerical values indicate the best results, while underlined values denote the second-best results. 
+
+metrics. Simultaneously, our framework maintains an aggressive 85% sparsity constraint, with end-to-end latency remaining close to the fastest sparse baselines per model (Table 1). This overarching trend confirms that our precision-allocation strategy successfully recovers critical visual details without sacrificing the raw hardware throughput gained from coarse mathematical approximations. 
+
+Detailed Phenomenon Analysis. Analyzing the fine-grained performance metrics reveals several distinct phenomena regarding temporal consistency and resource distribution. First, our method consistently achieves the highest scores in Temporal Flickering and Motion Smoothness among all sparse competitors, occasionally even surpassing the dense baseline on the Hunyuan-13B archi-tecture. This pronounced temporal stability is a direct physical consequence of our stochastic routing mechanism, which guar-antees periodic exact computation for intermediate background regions, thereby structurally eliminating the selection oscillation that plagues deterministic methods. Second, while SVG2 occasion-ally registers higher raw similarity scores on specific models, it relies on a significantly lower sparsity threshold, dynamically drop-ping to 79.5% on the Wan 2.1-14B configuration. This lower sparsity directly translates to vastly inferior inference speedups. In stark contrast, our framework strictly enforces an 85 percent sparsity limitation yet effectively closes the visual fidelity gap. This phe-nomenon explicitly demonstrates that intelligently distributing a limited computational budget according to the generative trajectory curvature is fundamentally more effective than blindly retaining a larger volume of uniform attention blocks. 
+
+## 5.3 Ablation Studies. 
+
+To rigorously evaluate the individual contributions and the syner-gistic effects of our proposed modules, we conduct comprehensive incremental and subtractive ablation studies utilizing the Wan 2.1-T2V-1.3B model, summarized in Figure 5. The incremental study originates from the PISA baseline, progressively integrating our modules to isolate their additive benefits. Conversely, the subtrac-tive study begins with our complete PASA, systematically removing individual components to expose structural vulnerabilities. We mea-sure the generated videos across eight multidimensional criteria: Subject Consistency, Background Consistency, Temporal Flickering, Motion Smoothness, Aesthetic Quality, Imaging Quality, Overall Consistency, and Video Consistency (quantified via the PSNR). To construct the comparative radar charts, we apply min–max normal-ization to the raw numerical outcomes of each metric, anchoring the minimum observed value at zero and the maximum at one. The resulting radar charts reveal several highly pronounced experi-mental phenomena, which we systematically analyze and explain below: 
+
+Observation 1: Grouped Approximation Rescues Background Fi-delity. In the incremental ablation chart, integrating the grouped first-order approximation into the baseline dramatically elevates Background Consistency and Overall Consistency to the maximum normalized score of one. Conversely, the subtractive chart reveals that removing the grouped first-order approximation from our complete framework causes Background Consistency to plummet directly to zero. Explanation: The baseline algorithm relies on a single sequence-wide global statistic that entirely homogenizes the non-critical regions. This mathematical over-smoothing effectively washes out localized environmental textures. By calculating the Taylor expansion compensation strictly within memory-coalesced groups, our hardware-aligned grouped approximation preserves fine-grained local variations. This directly validates our theoreti-cal claim that localized group statistics prevent the severe textural degradation of the background environment. Wentai Zhang, RongHui Xi, Shiyao Peng, Jiayu Huang, Haoran Luo, Zichen Tang, and HaiHong E 0
+
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1
+> Subject Consistency
+> Background Consistency
+> Temporal Flickering
+> Motion Smoothness
+> Aesthetic Quality
+> Imaging Quality
+> Overall Consistency
+> Video Consistency
+
+Quantitative Validation of Incremental Ablations    
+
+> PISA PISA+Dynamic PISA+Random PISA+Group 0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1
+> Subject Consistency
+> Background Consistency
+> Temporal Flickering
+> Motion Smoothness
+> Aesthetic Quality
+> Imaging Quality
+> Overall Consistency
+> Video Consistency
+
+Quantitative Validation of Subtractive Ablations    
+
+> PASA(Ours) PASA wo Dynamic PASA wo Random PASA wo Group
+
+Figure 5: Quantitative validation of incremental and sub-tractive ablation studies evaluated on the Wan 2.1-T2V-1.3B model. The performance is assessed across eight distinct dimensions of video generation quality. Notably, Video Con-sistency explicitly represents the PSNR. To facilitate a clear and unified comparative visualization across disparate mea-surement scales, all raw metric scores are normalized us-ing min–max scaling. In the legend, “Dynamic” denotes the curvature-aware dynamic budgeting; “Random” signifies the stochastic selection bias; and “Group” represents the grouped first-order approximation. 
+
+Observation 2: Stochastic Routing Dictates Motion Fluidity. The incremental addition of the random bias provides a massive en-hancement to Motion Smoothness and Video Consistency. Corrobo-rating this, the subtractive study demonstrates that eliminating the random bias heavily degrades Motion Smoothness and violently exacerbates Temporal Flickering. Explanation: Deterministic rout-ing mechanisms force the attention operation to abruptly toggle intermediate-attention blocks on and off across continuous tem-poral frames due to microscopic latent feature fluctuations. This selection oscillation severely disrupts temporal coherence. The in-jected stochastic bias functions as a probabilistic temporal low-pass filter, granting mid-attention blocks periodic and spatially shifting exact-computation refinement. This effectively resolves the local-ized computational starvation, translating directly into the observed fluidity in motion and the suppression of jarring structural shifts. 
+
+Observation 3: Dynamic Budgeting Governs Structural Stability. 
+
+The charts indicate that applying the dynamic budgeting compre-hensively improves Temporal Flickering and Aesthetic Quality in the incremental study. Furthermore, removing it from the full frame-work severely cripples Subject Consistency and Temporal Flick-ering. Explanation: The continuous probability flow trajectory involves distinct phases of rapid semantic transitions and stable linear evolution. A static computation budget dangerously under-allocates resources during critical high-curvature transitions. Our curvature-aware dynamic budgeting precisely identifies these accel-eration phases utilizing the absolute distance of predicted velocity fields, strategically investing heavy computation exactly when the global structural foundation is being constructed. This dynamic alignment prevents the degradation of primary subjects and en-sures robust aesthetic formulation throughout the turbulent stages of the generation trajectory. 
+
+Observation 4: The Necessity of Synergistic Integration. The sub-tractive ablation radar chart clearly illustrates that our complete Precision-Allocated Sparse Attention framework universally domi-nates the outer perimeter across nearly all evaluation dimensions. 
+
+Explanation: The three proposed mechanisms address fundamen-tally orthogonal limitations of sparse attention optimization. The grouped approximation restores spatial details, the stochastic rout-ing ensures temporal fluidity, and the dynamic budgeting aligns resource allocation with the physical generation trajectory. Remov-ing any single component creates a critical structural vulnerability that cannot be compensated for by the remaining modules. This comprehensive dominance proves that state-of-the-art generation quality relies strictly on their highly synergistic integration. 
+
+## 6 Conclusion 
+
+This work focus on the tension between sparse attention and tem-poral stability in Video Diffusion Transformers by introducing Precision-Allocated Sparse Attention (PASA), a training-free frame-work that includes curvature-aware dynamic budgeting, hardware-aligned grouped approximations, and stochastic attention routing. Together, these components concentrate exact computation on semantically critical trajectory segments, preserve fine-grained spa-tial detail without sacrificing throughput, and suppress the selection oscillation that causes flicker. Experiments on leading text-to-video models show that PASA delivers substantial speedups at high spar-sity while improving or matching prior sparse methods on temporal consistency, motion smoothness, and overall video quality. Ride the Wave: Precision-Allocated Sparse Attention for Smooth Video Generation 
+
+## References 
+
+[1] Pengtao Chen, Xianfang Zeng, Maosen Zhao, Peng Ye, Mingzhu Shen, Wei Cheng, Gang Yu, and Tao Chen. 2025. Sparse-vDiT: Unleashing the Power of Sparse Attention to Accelerate Video Diffusion Transformers. arXiv preprint arXiv:2506.03065 (2025). [2] Ruichen Chen, Keith G. Mills, Liyao Jiang, Chao Gao, and Di Niu. 2025. Re-ttention: Ultra Sparse Visual Generation via Attention Statistical Reshape. arXiv:2505.22918 [cs.CV] https://arxiv.org/abs/2505.22918 [3] Wenyi Hong, Ming Ding, Wendi Zheng, Xinghan Liu, and Jie Tang. 2022. Cogvideo: Large-scale pretraining for text-to-video generation via transformers. 
+
+arXiv preprint arXiv:2205.15868 (2022). [4] Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si, Yuming Jiang, Yuanhan Zhang, Tianxing Wu, Qingyang Jin, Nattapol Chanpaisit, Yaohui Wang, Xinyuan Chen, Limin Wang, Dahua Lin, Yu Qiao, and Ziwei Liu. 2024. VBench: Comprehensive Benchmark Suite for Video Generative Models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition .[5] Weijie Kong, Qi Tian, Zijian Zhang, Rox Min, Zuozhuo Dai, Jin Zhou, Jiangfeng Xiong, Xin Li, Bo Wu, Jianwei Zhang, et al . 2024. Hunyuanvideo: A systematic framework for large video generative models. arXiv preprint arXiv:2412.03603 
+
+(2024). [6] Haopeng Li, Shitong Shao, Wenliang Zhong, Zikai Zhou, Lichen Bai, Hui Xiong, and Zeke Xie. 2026. PISA: Piecewise Sparse Attention Is Wiser for Efficient Diffusion Transformers. arXiv:2602.01077 [cs.CV] https://arxiv.org/abs/2602. 01077 [7] Xiaolong Li, Youping Gu, Xi Lin, Weijie Wang, and Bohan Zhuang. 2025. PSA: Pyramid Sparse Attention for Efficient Video Understanding and Generation. arXiv:2512.04025 [cs.CV] https://arxiv.org/abs/2512.04025 [8] Xingyang Li, Muyang Li, Tianle Cai, Haocheng Xi, Shuo Yang, Yujun Lin, Lvmin Zhang, Songlin Yang, Jinbo Hu, Kelly Peng, et al . 2025. Radial Attention: 
+
+𝑂 (𝑛 \𝑙𝑜𝑔𝑛 ) Sparse Attention with Energy Decay for Long Video Generation. 
+
+arXiv preprint arXiv:2506.19852 (2025). [9] Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. 2023. Flow Matching for Generative Modeling. arXiv:2210.02747 [cs.LG] https://arxiv.org/abs/2210.02747 [10] Xuewen Liu, Zhikai Li, Jing Zhang, Mengjuan Chen, and Qingyi Gu. 2025. Rec-tified SpaAttn: Revisiting Attention Sparsity for Efficient Video Generation. arXiv:2511.19835 [cs.CV] https://arxiv.org/abs/2511.19835 [11] Jiayi Luo, Jiayu Chen, Jiankun Wang, Cong Wang, Hanxin Zhu, Qingyun Sun, Chen Gao, Zhibo Chen, and Jianxin Li. 2026. Training-Free Sparse Attention for Fast Video Generation via Offline Layer-Wise Sparsity Profiling and Online Bidirectional Co-Clustering. arXiv:2603.18636 [cs.CV] https://arxiv.org/abs/ 2603.18636 [12] Xin Ma, Yaohui Wang, Gengyun Jia, Xinyuan Chen, Ziwei Liu, Yuan-Fang Li, Cunjian Chen, and Yu Qiao. 2024. Latte: Latent diffusion transformer for video generation. arXiv preprint arXiv:2401.03048 (2024). [13] William Peebles and Saining Xie. 2023. Scalable diffusion models with transform-ers. In Proceedings of the IEEE/CVF international conference on computer vision .4195–4205. [14] Xuan Shen, Chenxia Han, Yufa Zhou, Yanyue Xie, Yifan Gong, Quanyi Wang, Yiwei Wang, Yanzhi Wang, Pu Zhao, and Jiuxiang Gu. 2025. DraftAttention: Fast Video Diffusion via Low-Resolution Attention Guidance. arXiv preprint arXiv:2505.14708 (2025). [15] Ruben Villegas, Mohammad Babaeizadeh, Pieter-Jan Kindermans, Hernan Moraldo, Han Zhang, Mohammad Taghi Saffar, Santiago Castro, Julius Kunze, and Dumitru Erhan. 2022. Phenaki: Variable length video generation from open domain textual description. arXiv preprint arXiv:2210.02399 (2022). [16] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianxiao Yang, et al . 2025. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 (2025). [17] Jiuniu Wang, Hangjie Yuan, Dayou Chen, Yingya Zhang, Xiang Wang, and Shiwei Zhang. 2023. Modelscope text-to-video technical report. arXiv preprint arXiv:2308.06571 (2023). [18] Xiang Wang, Hangjie Yuan, Shiwei Zhang, Dayou Chen, Jiuniu Wang, Yingya Zhang, Yujun Shen, Deli Zhao, and Jingren Zhou. 2023. Videocomposer: Composi-tional video synthesis with motion controllability. Advances in Neural Information Processing Systems 36 (2023), 7594–7611. [19] Jianzong Wu, Liang Hou, Haotian Yang, Xin Tao, Ye Tian, Pengfei Wan, Di Zhang, and Yunhai Tong. 2025. VMoBA: Mixture-of-Block Attention for Video Diffusion Models. arXiv preprint arXiv:2506.23858 (2025). [20] Haocheng Xi, Shuo Yang, Yilong Zhao, Chenfeng Xu, Muyang Li, Xiuyu Li, Yujun Lin, Han Cai, Jintao Zhang, Dacheng Li, et al . 2025. Sparse Video-Gen: Accelerating Video Diffusion Transformers with Spatial-Temporal Sparsity. In 
+
+International Conference on Machine Learning . PMLR, 68208–68224. [21] Yifei Xia, Suhan Ling, Fangcheng Fu, Yujie Wang, Huixia Li, Xuefeng Xiao, and Bin Cui. 2025. Training-free and adaptive sparse attention for efficient long video generation. arXiv preprint arXiv:2502.21079 (2025). [22] Ruyi Xu, Guangxuan Xiao, Haofeng Huang, Junxian Guo, and Song Han. 2025. XAttention: Block Sparse Attention with Antidiagonal Scoring. arXiv:2503.16428 [cs.CL] https://arxiv.org/abs/2503.16428 [23] Shuo Yang, Haocheng Xi, Yilong Zhao, Muyang Li, Jintao Zhang, Han Cai, Yujun Lin, Xiuyu Li, Chenfeng Xu, Kelly Peng, et al . 2025. Sparse VideoGen2: Acceler-ate Video Generation with Sparse Attention via Semantic-Aware Permutation. 
+
+Advances in Neural Information Processing Systems (2025). [24] Jintao Zhang, Kai Jiang, Chendong Xiang, Weiqi Feng, Yuezhou Hu, Haocheng Xi, Jianfei Chen, and Jun Zhu. 2026. SpargeAttention2: Trainable Sparse Attention via Hybrid Top-k+Top-p Masking and Distillation Fine-Tuning. arXiv:2602.13515 [cs.CV] https://arxiv.org/abs/2602.13515 [25] Jintao Zhang, Haoxu Wang, Kai Jiang, Shuo Yang, Kaiwen Zheng, Haocheng Xi, Ziteng Wang, Hongzhou Zhu, Min Zhao, Ion Stoica, Joseph E. Gonzalez, Jun Zhu, and Jianfei Chen. 2025. SLA: Beyond Sparsity in Diffusion Transformers via Fine-Tunable Sparse-Linear Attention. arXiv:2509.24006 [cs.LG] https://arxiv. org/abs/2509.24006 [26] Jintao Zhang, Haoxu Wang, Kai Jiang, Kaiwen Zheng, Youhe Jiang, Ion Sto-ica, Jianfei Chen, Jun Zhu, and Joseph E. Gonzalez. 2026. SLA2: Sparse-Linear Attention with Learnable Routing and QAT. arXiv:2602.12675 [cs.LG] https://arxiv.org/abs/2602.12675 [27] Jintao Zhang, Chendong Xiang, Haofeng Huang, Haocheng Xi, Jun Zhu, Jianfei Chen, et al . 2025. SpargeAttention: Accurate and Training-free Sparse Attention Accelerating Any Model Inference. In Forty-second International Conference on Machine Learning .[28] Peiyuan Zhang, Yongqi Chen, Haofeng Huang, Will Lin, Zhengzhong Liu, Ion Stoica, Eric Xing, and Hao Zhang. 2025. VSA: Faster Video Diffusion with Trainable Sparse Attention. arXiv:2505.13389 [cs.CV] https://arxiv.org/abs/2505. 13389 [29] Peiyuan Zhang, Yongqi Chen, Runlong Su, Hangliang Ding, Ion Stoica, Zhengzhong Liu, and Hao Zhang. 2025. Fast video generation with sliding tile attention. arXiv preprint arXiv:2502.04507 (2025). [30] Richard Zhang, Phillip Isola, Alexei A Efros, Eli Shechtman, and Oliver Wang. 2018. The unreasonable effectiveness of deep features as a perceptual metric. In Proceedings of the IEEE conference on computer vision and pattern recognition .586–595. [31] Shiwei Zhang, Jiayu Wang, Yingya Zhang, Kang Zhao, Hangjie Yuan, Zhiwu Qin, Xiang Wang, Deli Zhao, and Jingren Zhou. 2023. I2vgen-xl: High-quality image-to-video synthesis via cascaded diffusion models. arXiv preprint arXiv:2311.04145 
+
+(2023). Wentai Zhang, RongHui Xi, Shiyao Peng, Jiayu Huang, Haoran Luo, Zichen Tang, and HaiHong E 
+
+## A Calibration Prompts 
+
+We used the GPT 5.3 LLM to generate 10 diverse text-to-video strings used solely to calibrate the budgeting curve in Section 4.1. 
+
+• A golden sunrise over a quiet mountain lake, mist float-ing above the water, birds flying across the sky, cinematic lighting, ultra-realistic, gentle camera pan, 4K. 
+
+• A bustling street café in Paris on a sunny morning, people chatting, waiters serving coffee and croissants, light breeze moving umbrellas, warm cinematic atmosphere. 
+
+• A small robot watering plants in a cozy greenhouse, sun-light streaming through glass panels, colorful flowers ev-erywhere, soft depth of field, whimsical mood. 
+
+• A surfer riding a large ocean wave at sunset, glowing orange sky reflecting on the water, slow motion splash, cinematic wide shot, dramatic lighting. 
+
+• A peaceful Japanese garden in spring, cherry blossoms falling slowly, koi fish swimming in a clear pond, stone lanterns and wooden bridge, tranquil atmosphere. 
+
+• A futuristic city skyline at night, flying cars moving be-tween glowing skyscrapers, neon reflections on wet streets, cyberpunk aesthetic, smooth aerial camera movement. 
+
+• A group of friends hiking through a lush forest trail, sun-light filtering through tall trees, laughter and conversation, natural documentary style. 
+
+• A cozy winter cabin in the mountains, snow gently falling outside, warm fireplace glowing inside, steam rising from a cup of hot chocolate, cinematic interior shot. 
+
+• A colorful hot air balloon festival at sunrise, dozens of balloons slowly lifting into the sky above rolling hills, soft morning light, drone shot. 
+
+• A playful golden retriever running across a green field, chasing a red ball, bright blue sky with fluffy clouds, joyful and energetic slow motion. 
+
+## B Error Analysis 
+
+In this section, we relate the grouped first-order surrogate in PASA to the global ¯𝐻 used in PISA (Section 3.3). We separate a standard 
+
+within-group optimality statement (sum of squared matrix devia-tions) from a weighted residual bound; we do not claim a pointwise ordering of per-block deviations from group versus global means, which would be false in general. 
+
+Mathematical Formulation and Notation. Let 𝐻 𝑗 ∈ R𝑑 ×𝑑 
+
+denote the first-order Taylor statistic for block 𝑗 as in Section 3.3. The PISA global surrogate averages over all 𝑁 𝐵 blocks: ¯𝐻 global =
+
+> 1
+> 𝑁 𝐵
+
+Í𝑁 𝐵  
+
+> 𝑗 =1
+
+𝐻 𝑗 , matching ¯𝐻 there. We partition the 𝑁 𝐵 blocks into 𝐾 disjoint hardware groups 
+
+G1, . . . , G𝐾 and set 
+
+¯𝐻 (𝑔 ) 
+
+> group
+
+= 1
+
+|G 𝑔 |∑︁ 𝑗 ∈ G 𝑔 
+
+𝐻 𝑗 (12) Fix a query row 𝑞 𝑡 . Let U𝑡 be the set of unselected blocks for that query, U (𝑔 ) 
+
+> 𝑡
+
+= U𝑡 ∩ G 𝑔 , and let 𝛼 𝑡,𝑗 = exp (𝑄 𝑡 ¯𝐾 ⊤ 
+
+> 𝑗
+
+) denote the same block-centroid weights as in Section 3.3 (pre-softmax). The exact first-order numerator contribution from unselected blocks is 
+
+N (1) 
+
+> exact
+
+= 𝑞 𝑡 𝐾 ∑︁ 
+
+> 𝑔 =1
+
+∑︁ 𝑗 ∈ U (𝑔 )
+
+> 𝑡
+
+𝛼 𝑡,𝑗 𝐻 𝑗 (13) and the grouped surrogate uses ¯𝐻 (𝑔 ) 
+
+> group
+
+inside each group: 
+
+˜N (1) 
+
+> group
+
+= 𝑞 𝑡 𝐾 ∑︁ 
+
+> 𝑔 =1
+
+©«∑︁ 𝑗 ∈ U (𝑔 )
+
+> 𝑡
+
+𝛼 𝑡,𝑗 
+
+ª®®¬
+
+¯𝐻 (𝑔 ) 
+
+> group
+
+(14) 
+
+Lemma 1 (Weighted group residual). Define the matrix resid-ual 
+
+𝑅 𝑡, group =
+
+> 𝐾
+
+∑︁ 
+
+> 𝑔 =1
+
+∑︁ 𝑗 ∈ U (𝑔 )
+
+> 𝑡
+
+𝛼 𝑡,𝑗 
+
+ 𝐻 𝑗 − ¯𝐻 (𝑔 )
+
+> group
+
+ (15) Let 
+
+𝑀 group := max  
+
+> 𝑔
+
+max   
+
+> 𝑗 ∈ U (𝑔 )
+> 𝑡
+
+𝐻 𝑗 − ¯𝐻 (𝑔 )  
+
+> group F
+
+(16) where ∥ · ∥ F is the Frobenius norm. By the triangle inequality for 
+
+∥ · ∥ F,
+
+∥𝑅 𝑡, group ∥F ≤ 𝑀 group ∑︁  
+
+> 𝑗 ∈ U 𝑡
+
+𝛼 𝑡,𝑗 (17) 
+
+Proposition 1 (Within-group sum of squares). For each group 𝑔 , the group mean ¯𝐻 (𝑔 ) 
+
+> group
+
+minimizes the aggregate squared Frobenius deviation over blocks in that group: for any matrix 𝐶 ,∑︁  
+
+> 𝑗 ∈ G 𝑔
+
+𝐻 𝑗 − ¯𝐻 (𝑔 ) 
+
+> group
+> 2F
+
+≤∑︁  
+
+> 𝑗 ∈ G 𝑔
+
+𝐻 𝑗 − 𝐶 2F (18) In particular, with 𝐶 = ¯𝐻 global ,∑︁  
+
+> 𝑗 ∈ G 𝑔
+
+𝐻 𝑗 − ¯𝐻 (𝑔 ) 
+
+> group
+> 2F
+
+≤∑︁  
+
+> 𝑗 ∈ G 𝑔
+
+𝐻 𝑗 − ¯𝐻 global 2F (19) 
+
+Remark. The maximum per-block deviation max 𝑗 ∥𝐻 𝑗 − ¯𝐻 (𝑔 ) 
+
+> group
+
+∥F
+
+need not be smaller than ∥𝐻 𝑗 − ¯𝐻 global ∥F for the same 𝑗 ; Proposition 1 is the correct “variance reduction” statement. Translating Lemma 1 and Proposition 1 into a bound on the final attention output requires tracking softmax normalization and the zeroth-order term; we omit that bookkeeping here and treat Lemma 1 as a direct handle on the first-order matrix residual. 
+
+## C Online Resources 
+
+Our code is available at https://anonymous.4open.science/r/D28D/. 
+
+## D visualization of the generated videos 
+
+For qualitative visualization, we randomly select 5 videos generated by Wan2.1-T2V-1.3B; each sample is a 5-second clip at 480p resolu-tion. Due to file size limits, the displayed images are compressed. 
+
+Received 20 February 2007; revised 12 March 2009; accepted 5 June 2009 Ride the Wave: Precision-Allocated Sparse Attention for Smooth Video Generation Dense 
+
+## Attention 
+
+## PASA 
+
+## (Ours) 
+
+(a) Visualization for dense attention and our method with prompt A benevolent dragon circles above an ancient temple as dawn light illuminates the sky, and the camera slowly zooms in on this dreamlike scene. Dense 
+
+## Attention 
+
+## PASA 
+
+## (Ours) 
+
+(b) Visualization for dense attention and our method with prompt The camera pans through cherry blossoms to a Japanese street, then follows a tram under a pink-blue sky with warm evening lights. Dense 
+
+## Attention 
+
+## PASA 
+
+## (Ours) 
+
+(c) Visualization for dense attention and our method with prompt A plush teddy bear and a blue frisbee play on a sunny lawn, ending with the bear resting by a tree in a warm, playful scene. Dense 
+
+## Attention 
+
+## PASA 
+
+## (Ours) 
+
+(d) Visualization for dense attention and our method with prompt A butterfly is fluttering. Dense 
+
+## Attention 
+
+## PASA 
+
+## (Ours) 
+
+(e) Visualization for dense attention and our method with prompt At the entrance of the village at night, five farmers are warming themselves by the fire. 
+
+Figure 6: Visualization results of the generated videos.
