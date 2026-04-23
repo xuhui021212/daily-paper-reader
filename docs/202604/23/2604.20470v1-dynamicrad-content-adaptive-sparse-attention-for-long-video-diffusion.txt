@@ -1,0 +1,770 @@
+Title: DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion
+
+URL Source: https://arxiv.org/pdf/2604.20470v1
+
+Published Time: Thu, 23 Apr 2026 00:57:24 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# DYNAMIC RAD : C ONTENT -A DAPTIVE SPARSE ATTENTION FOR 
+
+# LONG VIDEO DIFFUSION 
+
+A P REPRINT 
+
+Yongji Long 1,2, Shijun Liang 3, Jintao Li 1,2∗, Yun Li 1,2∗ 
+
+> 1
+
+University of Electronic Science and Technology of China  
+
+> 2
+
+Shenzhen Institute for Advanced Study, UESTC  
+
+> 3
+
+Computational Mathematics, Science, & Engineering at Michigan State University (MSU)  
+
+> ∗
+
+Corresponding authors: j.t.li@i4ai.org yunli@ieee.org 
+
+April 23, 2026 
+
+# ABSTRACT 
+
+Leveraging the natural spatiotemporal energy decay in video diffusion offers a path to efficiency, yet relying solely on rigid static masks risks losing critical long-range information in complex dynamics. To address this issue, we propose DynamicRad , a unified sparse-attention paradigm that grounds adaptive selection within a radial locality prior. DynamicRad introduces a dual-mode strategy: 
+
+static-ratio for speed-optimized execution and dynamic-threshold for quality-first filtering. To ensure robustness without online search overhead, we integrate an offline Bayesian Optimization (BO) pipeline coupled with a semantic motion router . This lightweight projection module maps prompt embeddings to optimal sparsity regimes with minimal runtime overhead . Unlike online profiling methods, our offline BO optimizes attention reconstruction error (MSE) on a physics-based proxy task, ensuring rapid convergence. Experiments on HunyuanVideo and Wan2.1-14B demonstrate that DynamicRad pushes the efficiency–quality Pareto frontier, achieving 1.7 ×–2.5 × inference speedups 
+
+with over 80% effective sparsity . In some long-sequence settings, the dynamic mode even matches or exceeds the dense baseline, while mask-aware LoRA further improves long-horizon coherence. Code is available at https://github.com/Adamlong3/DynamicRad .
+
+# 1 Introduction 
+
+Recent diffusion-based video generators achieve strong visual fidelity and temporal coherence, yet scaling them to long horizons and high resolution remains difficult because self-attention grows quadratically with the spatiotemporal token count [Ho et al., 2020, Song et al., 2021, Rombach et al., 2022, Peebles and Xie, 2023, Singer et al., 2022, Hong et al., 2022, Bar-Tal et al., 2024, OpenAI, 2024, Vaswani et al., 2017]. Even with optimized kernels, attention-side compute and memory bandwidth remain major bottlenecks [Dao et al., 2022, Dao, 2024, Bolya et al., 2023, Ma et al., 2024]. A natural remedy is sparsity. Prior efficient attention methods mainly fall into two categories: static sparse patterns, which are hardware-friendly but rigid, and dynamic sparsification, which is adaptive but often introduces extra overhead or instability under heterogeneous and long-video settings [Child et al., 2019, Beltagy et al., 2020, Zaheer et al., 2020, Kitaev et al., 2020, Wang et al., 2020, Choromanski et al., 2021, Roy et al., 2021, Tay et al., 2022]. Recent evidence further suggests a spatiotemporal locality structure in video diffusion attention [Li et al., 2025, Zhang et al., 2025b, Ding et al., 2025], where post-softmax attention mass decays with spatial and temporal distance, motivating sparse masks that preserve near-field interactions while pruning long-range pairs [Li et al., 2025, Zhang et al., 2025b]. However, purely static sparsification remains brittle under complex motion, whereas fully dynamic schemes may be costly or unstable at scale. In this work, we propose DynamicRad , a unified sparse-attention framework for long video diffusion that combines structured sparsity with content adaptivity. DynamicRad uses a shared block-sparse candidate set with two modes: 
+
+> arXiv:2604.20470v1 [cs.CV] 22 Apr 2026
+
+DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+static-ratio for throughput-first deployment and dynamic-threshold for quality-first filtering. To avoid online search overhead, we pair this design with offline BO-based configuration, a lightweight semantic motion router, and an optional mask-aware LoRA for robustness under aggressive sparsity. 
+
+Contributions We summarize our contributions as follows: (1) Core Framework: We propose DynamicRad, a unified sparse-attention framework that combines a shared kernel-friendly candidate set with two selection modes, bridging rigid-prior methods such as Radial Attention [Li et al., 2025] and higher-overhead dynamic methods such as SVG [Xi et al., 2025] and STA [Zhang et al., 2025b]. We further introduce a multi-dimensional parameterization, including a continuous long-range factor λ, that unifies static efficiency and dynamic flexibility without auxiliary networks. (2) Robust Deployment: We introduce an offline BO-driven configuration pipeline coupled with a lightweight 
+
+Semantic Motion Router . By optimizing Attention MSE on a physics-based proxy task , the search process can be completed in minutes, while the router maps prompt embeddings to optimal regimes in < 2ms without fragile manual tuning. (3) Empirical Gains: Integrating DynamicRad into HunyuanVideo-241f and Wan2.1-14B [Nan et al., 2025, Kong et al., 2025, Wang et al., 2025, Huang et al., 2023], we achieve up to 2.54 × speedup and show that the dynamic mode can even outperform dense attention in quality under long sequences. A mask-aware LoRA add-on further improves temporal coherence under aggressive sparsity. 
+
+# 2 Related Work 
+
+Evolution of Video Generation Backbones. Video generation has shifted from U-Net backbones [Singer et al., 2022] to DiT-style architectures [Peebles and Xie, 2023] due to superior scalability. Representative models such as Latte [Ma et al., 2025], CogVideoX [Yang et al., 2024], VideoPoet [Kondratyuk et al., 2024], and long-context systems [Henschel et al., 2025] extend generation length and quality, but also amplify the attention bottleneck. 
+
+Sparse Attention & Efficiency Paradigms. Scaling diffusion models to long horizons is hindered by the quadratic 
+
+O(N 2) cost of attention [Vaswani et al., 2017, Dao et al., 2022]. Prior works typically bifurcate into static patterns 
+
+that impose fixed locality priors [Child et al., 2019, Li et al., 2025] and dynamic routing that adapts to content [Roy et al., 2021, Xi et al., 2025, Zhang et al., 2025b]. While Radial Attention [Li et al., 2025] is hardware-friendly, it lacks adaptivity. Conversely, SVG [Xi et al., 2025] enables dynamic routing but adds online overhead. To address these gaps, recent works have introduced novel structural efficiencies. Dynamic Diffusion Transformer (DyDiT) [Zhao et al., 2024] dynamically adjusts computation in diffusion transformers along timestep and spatial dimensions, while training-free baselines such as PowerAttention (PA) [Chen et al., 2025], SVG [Xi et al., 2025], and 
+
+Radial Attention [Li et al., 2025] improve efficiency from different design perspectives. 
+
+Learning-based Efficiency. Recent approaches like VORTA [Sun et al., 2025] and VSA [Zhang et al., 2025a] propose learning sparsity policies directly via gating networks. While effective, they require expensive retraining or per-step routing inference. In contrast, DynamicRad achieves adaptivity in a training-free manner (for the attention mechanism itself) by leveraging physical motion priors and reusing pre-computed text embeddings, avoiding the need for invasive architectural changes. 
+
+Deployment Optimization Strategies. Our work integrates several orthogonal efficiency techniques. Similar to TeaCache [Liu et al., 2024] and DeepCache [Ma et al., 2024] which skip layers to save compute, we reduce the intra-layer attention cost. To ensure temporal coherence under aggressive pruning, we employ Parameter-Efficient Fine-Tuning (PEFT) akin to LoRA [Hu et al., 2022], but specifically target projection layers sensitive to sparsity. Finally, instead of costly online neural architecture search (NAS) [Snoek et al., 2012], we utilize an offline Bayesian Optimization pipeline to pre-compile a lightweight lookup table, enabling instantaneous adaptation at runtime. 
+
+# 3 Method 
+
+Radial Attention reduces attention cost via a static energy-decay mask [Li et al., 2025], but its fixed sparsity pattern can be brittle under long horizons and complex motion where long-range dependencies become critical. To resolve these limitations, we propose DynamicRad , a unified sparse-attention paradigm summarized in Figure 1. The framework combines offline BO-based configuration, prompt-conditioned regime routing, and a shared candidate set with two selection modes: static-ratio for throughput-first deployment and dynamic-threshold for quality-first deployment. An optional mask-aware LoRA further compensates for sparsity-induced degradation. Both modes share the same kernel-friendly block aggregation logic, and the following subsections present the formulation. 2DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+Figure 1: Overview of DynamicRad. Offline BO builds a lookup table of motion-regime-specific sparsity configurations. At inference time, a semantic router selects a regime from the prompt embedding, which determines either static-ratio 
+
+or dynamic-threshold selection within a shared structured candidate set to produce the final block-sparse mask. An optional mask-aware LoRA compensates for sparsity-induced information loss. 
+
+3.1 Dynamic Neighborhood Partitioning and Parameter Space 
+
+To ground the decisions of our Semantic Router within a mathematically rigorous framework, we formalize a multi-dimensional parameter space that governs the attention connectivity. Rather than treating these as static hyperparameters, we expose them as dynamic control variables—specifically decay factor γ, block size Bs, mask threshold θm, column density threshold θc, and long-range factor λ. This formulation allows the Offline BO engine to precisely tailor the locality decay and long-range allocation for varying motion regimes. 
+
+Notation. Let Nf be the number of frames and Nt the number of tokens per frame. The total token count is 
+
+S = Nf Nt. We use Bs ∈ { 32 , 64 , 128 } to denote the block size, aligning with hardware granularity. The sequence is padded such that S′ = ⌈S/B s⌉ · Bs.
+
+Radial window width via logarithmic grouping. Our construction aligns with the intuition that temporal dependency decays exponentially. For a frame pair (i, j ) with temporal distance t = |i − j|, we define a logarithmic group index 
+
+B(t) and a base spatial span L0. We rigorously define the grouping for temporal neighbors ( t ≥ 1): 
+
+B(t) = ⌊log 2 t⌋ + 1 (for t ≥ 1) ,L0 = 2 ⌈log 2 Nt⌉. (1) Here, L0 represents the hyper-cube size covering the spatial domain (the next power of 2 relative to Nt). Note that for the self-attention case ( t = 0 ), we default to dense attention. The decay length L(t) is then formulated as an inverse power-law scaled by γ:
+
+L(t) = L0
+
+2B(t) · γ ≈ L0
+
+t · γ. (2) The window width w(i, j ) is discretized to block boundaries: 
+
+w(i, j ) = 
+
+Nt, t ≤ 1 (intra & adjacent) 
+
+max  Bs, ⌊L (t)⌉, t > 1. (3) 
+
+Long-range split rule controlled by the long-range factor λ. To capture periodic long-range dependencies (e.g., repetitive motion), we introduce a secondary decay schedule for the "split" stride, controlled by λ:
+
+Lsplit (t) = L0
+
+2B(t) · λ. (4) 3DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+The split stride factor sf( t) determines the sampling frequency of long-range frames: 
+
+sf( t) = max 
+
+
+
+1,
+
+ Bs
+
+Lsplit (t) + ϵ
+
+ 
+
+. (5) A frame pair (i, j ) is retained only if 
+
+t mod sf( t) = 0 , (6) where t = |i − j| denotes the temporal distance. This rule implies that as t increases, Lsplit (t) decreases and the stride 
+
+sf( t) increases, thereby sparsifying long-range temporal connections. Let u, v ∈ [0 , N t − 1] denote the local spatial token indices within frame i and frame j, respectively. For retained frame pairs, we define the candidate token-pair set as 
+
+P(i, j ) = {(u, v ) : |u − v| ≤ w(i, j )}, (7) and set P(i, j ) = ∅ otherwise. In this way, the radial window w(i, j ) controls local spatial connectivity, while the split rule in Eq. 6 sparsifies distant frame pairs along the temporal dimension. 
+
+Density control within blocks. The parameters θc and θm control the aggregation of token-level links into a block-level mask. For each block, we first mark a column as active if its retained-token ratio exceeds θc; the block is then activated if the fraction of active columns exceeds θm. Thus, θc suppresses noisy columns, while θm controls the final block retention for kernel efficiency. 
+
+3.2 Two-Mode Intra-Candidate Selection 
+
+Given the candidate set P(i, j ) for each inter-frame pair ( t > 0), DynamicRad selects a subset using one of two mutually exclusive modes. For t = 0 (intra-frame) we do not prune and keep dense attention. 
+
+Static-ratio mode (static_ratio). Designed for throughput-first deployment, this mode avoids the overhead of content-dependent scoring. We choose a retention ratio based on the decay state: 
+
+ρ(i, j ) = 
+
+
+
+1.0, t ≤ 1,ρ1, t > 1 and L(t) ≥ Bs,ρ2, t > 1 and L(t) < B s,
+
+(8) and uniformly sample k = max(1 , ⌊|P (i, j )| · ρ(i, j )⌋) pairs from P(i, j ) using a deterministic seed. 
+
+Dynamic-threshold mode (dynamic_threshold). Designed for quality-first deployment, this mode uses attention logits as lightweight importance proxies. For each candidate pair (u, v ) ∈ P (i, j ), we compute a proxy score by averaging pre-softmax logits over a small set of fused heads Hf :
+
+s(u, v ) = 1
+
+HfHf
+
+X
+
+> h=1
+
+Q(h) 
+
+> u
+
+· (K(h) 
+
+> v
+
+)⊤
+
+√dk
+
+. (9) 
+
+Score normalization. To make global thresholds more transferable across layers and prompts, we normalize scores within each candidate set P(i, j ):
+
+˜s(u, v ) = s(u, v ) − μij 
+
+σij + ϵ , (10) where μij and σij are the mean and std of {s(u′, v ′) : ( u′, v ′) ∈ P (i, j )}. We compute ˜s(u, v ) at the token-pair level and then aggregate token links to a block mask via (θc, θ m) to preserve kernel-friendly block sparsity. 
+
+Global thresholding with safeguards. We keep pairs whose normalized score exceeds a decay-state-dependent threshold: 
+
+τ (i, j ) = 
+
+
+
+−∞ , t ≤ 1,τ1, t > 1 and L(t) ≥ Bs,τ2, t > 1 and L(t) < B s.
+
+(11) where τ1 and τ2 correspond to near_frame_threshold and far_frame_threshold, respectively. In our evaluated settings, pre-norm and scaled dot-product attention yield an empirically stable score scale across layers and denoising steps, 4DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+Algorithm 1 DynamicRad: Candidate Construction and Dual-Mode Selection 
+
+Require: Q, K, N f , N t, B s, mode, configuration x
+
+Ensure: Block-sparse mask Mb ∈ { 0, 1}Sb×Sb 
+
+> 1:
+
+Initialize Mb ← 0 
+
+> 2:
+
+for each frame pair (i, j ) do  
+
+> 3:
+
+t ← | i − j| 
+
+> 4:
+
+if t = 0 then  
+
+> 5:
+
+Mark diagonal blocks in Mb ▷ dense intra-frame attention  
+
+> 6:
+
+continue  
+
+> 7:
+
+end if  
+
+> 8:
+
+Compute w(i, j ) by Eq. 3 and sf( t) by Eq. 5  
+
+> 9:
+
+if t mod sf( t)̸ = 0 then  
+
+> 10:
+
+continue  
+
+> 11:
+
+end if  
+
+> 12:
+
+Build P(i, j ) by Eq. 7  
+
+> 13:
+
+if mode = static_ratio then  
+
+> 14:
+
+Sample k = max(1 , ⌊|P (i, j )|ρ(i, j )⌋) pairs  
+
+> 15:
+
+else  
+
+> 16:
+
+Compute ˜s(u, v ) and keep pairs with ˜s(u, v ) ≥ τ (i, j ) 
+
+> 17:
+
+if no pair is kept then  
+
+> 18:
+
+Keep the highest-scoring pair  
+
+> 19:
+
+end if  
+
+> 20:
+
+end if  
+
+> 21:
+
+Aggregate selected pairs into blocks using (θm, θ c) and merge into Mb 
+
+> 22:
+
+end for  
+
+> 23:
+
+return Mb
+
+making shared thresholds practical; using a small fused-head set ( Hf = 2 ) further reduces overhead while preserving rank-order utility for filtering. To avoid fragile per-layer calibration, we use global thresholds (τ1, τ 2) shared across blocks, together with two safeguards: (i) per-candidate-set score normalization (Eq. 10); (ii) if no pair passes the threshold, we retain the highest-scoring pair as a fallback. The overall selection procedure is summarized in Algorithm 1, while the detailed definitions of w(i, j ), P(i, j ), score normalization, and thresholding are given in Eqs. 3–11. 
+
+3.3 Parameter-Efficient Fine-Tuning for Mask-Aware Refinement 
+
+Similar to adaptive rank allocation strategies like AdaLoRA [Zhang et al., 2023], our Mask-Aware LoRA selectively refines projections that are most sensitive to the sparsity pattern. While sparse selection reduces computation, aggressive sparsity may impair temporal consistency for long-horizon generation. We adopt a parameter-efficient fine-tuning strategy that adapts only mask-related components while freezing the diffusion backbone. 
+
+Where to adapt. Let the attention logits be 
+
+A = QK ⊤
+
+√dk
+
+∈ RS′×S′
+
+, (12) and let Mb ∈ { 0, 1}Sb×Sb denote the final block-sparse mask. We expand Mb to a token-level mask fM ∈ { 0, 1}S′×S′
+
+by broadcasting each block to its corresponding token region. The masked attention is computed as Attn (Q, K, V) = Softmax 
+
+
+
+A + log( fM + ϵ)
+
+
+
+V (13) where ϵ is a small constant. In DynamicRad, the dynamic threshold mode computes approximate scores (Eq. 9) and applies adaptive thresholds (Eq. 11). We apply LoRA adapters to (i) the selector-related projections (if implemented) and (ii) the Q/K projection layers that shape the score geometry under sparsity, while freezing the rest of the backbone. 
+
+3.4 Automated Configuration: Semantic-Aware Motion Routing 
+
+Since text prompts inherently encode semantic motion priors (e.g., ’reading’ vs. ’running’) [Wang et al., 2024, Guo et al., 2024], we leverage the prompt embedding to predict the global motion regime. Optimal sparsity relies heavily on 5DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+the motion dynamics implied by the text prompt. Naive heuristic rules often fail to capture semantic nuances (e.g., “a fast snail” implies low motion despite the word “fast”)[Wu et al., 2023]. To address this, we introduce a Semantic Motion Router that maps prompt embeddings directly to the optimal configuration regime. 
+
+Optimization Objective and Efficiency. Since running full video generation for parameter search is computationally prohibitive, we perform BO on the lightweight Proxy Task defined in Appendix C . The objective is to minimize the 
+
+Mean Squared Error (MSE) between the sparse approximation and the dense proxy attention, subject to a sparsity budget: 
+
+L(x) = ∥Adense − Asparse (x)∥2
+
+> F
+
+∥Adense ∥2
+
+> F
+
++ α · ReLU  T − S (x) (14) where T is the target sparsity (e.g., 80% ) and S(x) is the achieved sparsity under configuration x. Thanks to the low-dimensional search space and the smoothness of the proxy landscape, the TPE optimizer typically converges within 30 trials , completing the profiling in < 15 minutes. This ensures that DynamicRad can be rapidly adapted to new resolutions or aspect ratios. 
+
+Architecture and Inference. Since modern video diffusion models (e.g., HunyuanVideo) utilize heavy text encoders (e.g., LLM or CLIP) for conditioning, we can reuse the pre-computed text embeddings etext to guide sparsity. We append a lightweight 2-layer MLP projection head ϕ(·) to predict a motion intensity score: 
+
+smotion = ϕ(Pool (etext )) ∈ [0 , 1] . (15) This score is discretized to select the motion regime c ∈ { Low , Mid , High } (e.g., s < 0.3 → Low ), which indexes the offline BO lookup table. Crucially, this router introduces negligible overhead . Since etext is pre-computed, the router implies a single MLP pass taking <2ms, negligible compared to the generation latency. At inference time, we encode the prompt, predict a motion regime, retrieve the corresponding sparsity configuration from the lookup table, and run generation with the selected mode. 
+
+Training with Optical Flow Proxy. To supervise ϕ(·) without expensive human annotation, we employ a physics-grounded proxy task. We construct a dataset Dtrain from a subset of OpenVid-1M [Nan et al., 2025]. For each video-text pair, we calculate the average optical flow magnitude between adjacent frames as the ground-truth motion label yflow .The projection head is trained to minimize the regression loss L = ∥smotion − Norm (yflow )∥22. This aligns the semantic understanding of the router with the physical motion priors used in our offline BO optimization. 
+
+# 4 Experiments 
+
+4.1 Experimental Setup Implementation & Hardware. We implement DynamicRad using FlashInfer kernels ( Bs = 32 ) on NVIDIA H100 GPUs . Standard inference uses a single H100, while HunyuanVideo-241f ( >200k tokens) employs an 8×H100 cluster 
+
+(sequence parallelism) to prevent OOM. The Semantic Motion Router is frozen during inference; its parameter search follows the offline BO pipeline (Sec. 3.4). Mask-Aware LoRA ( r = 16 ) is fine-tuned for 1k steps on a subset of OpenVid-1M using the standard diffusion denoising loss under the selected sparse mask, while keeping the backbone frozen. Detailed hyperparameters, overhead quantification, and proxy-task analysis are provided in the supplementary material. 
+
+Baselines & Protocols. We compare DynamicRad against state-of-the-art training-free sparse attention baselines compatible with standard FlashAttention kernels . Specifically, we evaluate PowerAttention (PA) [Chen et al., 2025], 
+
+SVG [Xi et al., 2025], and Radial Attention [Li et al., 2025], which are also reported in Table 1. Exclusion of other methods: We explicitly exclude learning-based sparsity methods (e.g., MOD-DiT, BSA) as they require expensive 
+
+backbone retraining . Similarly, we exclude LLM-centric pruners (e.g., LiteAttention, BLASST) as they rely on custom kernels or softmax-thresholding that are not optimized for the spatiotemporal complexity of high-resolution video diffusion. Following [Li et al., 2025], we fine-tune HunyuanVideo and Wan2.1-14B on a subset of OpenVid-1M [Nan et al., 2025] for the long-context settings (241f and 145f), while the standard-length settings are evaluated in a training-free manner. The Semantic Motion Router was trained on 20k video-text pairs from OpenVid-1M using RAFT optical flow ground truth (taking < 1h on a single H100). For evaluation, we report VBench scores [Huang et al., 2023] for structural consistency and VisionReward [Xu et al., 2026] for human-aligned aesthetic quality. 6DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+Table 1: Quality–Efficiency Comparison. All videos are generated at 768p resolution (1280 × 768 ). HunyuanVideo-241f uses an 8×H100 cluster ; other settings use a single H100 . Speedups are relative to the Original baseline per setting. 
+
+> ‡
+
+: Fine-tuned backbone for long context. †: Evaluated training-free (w/o LoRA) to demonstrate pure algorithmic gain. 
+
+Bold : best; underline: best baseline.                                                                                                                                                   
+
+> Model #Frames Method Quality ↑Efficiency VisionReward VBench S.C. VBench A.Q. VBench I.Q. Sparsity (%) Latency (s) ↓Speedup
+> HunyuanVideo 120 Original 0.141 0.962 0.645 0.675 0.0 1705 1.00 PA 0.138 0.956 0.637 0.662 70.5 1024 1.67 SVG 0.144 0.965 0.651 0.679 78.2 872 1.96 Radial Attention 0.140 0.961 0.646 0.673 76.6 884 1.93 Ours (Static) †0.138 0.959 0.642 0.668 84.8 861 1.98
+> Ours (Dynamic) †0.146 0.969 0.659 0.687 81.6 917 1.86 241 ‡
+> Original (LoRA) ‡0.116 0.948 0.592 0.597 0.0 824 1.00 Radial Attention 0.125 0.961 0.626 0.659 80.6 351 2.34 Ours (Static) †0.118 0.951 0.612 0.668 86.8 324 2.54
+> Ours (Dynamic) †0.131 0.969 0.659 0.687 83.6 378 2.17 Wan2.1-14B 72 Original 0.136 0.958 0.620 0.650 0.0 1680 1.00 PA 0.126 0.944 0.594 0.620 66.3 1040 1.62 SVG 0.116 0.938 0.580 0.605 70.2 990 1.70 Radial Attention 0.129 0.952 0.610 0.641 70.4 945 1.78 Ours (Static) †0.127 0.949 0.606 0.637 78.8 875 1.92
+> Ours (Dynamic) †0.134 0.959 0.621 0.656 74.3 980 1.71 145 ‡
+> Original (LoRA) ‡0.098 0.921 0.573 0.585 0.0 5160 1.00 Radial Attention 0.142 0.972 0.602 0.661 73.3 2560 2.02 Ours (Static) †0.137 0.969 0.606 0.647 81.6 2289 2.25
+> Ours (Dynamic) †0.148 0.979 0.621 0.686 77.0 2850 1.81
+
+4.2 Main Results Efficiency Dominance. Table 1 demonstrates that DynamicRad significantly advances the efficiency–quality Pareto frontier. Our static-ratio mode establishes a new throughput ceiling. On HunyuanVideo-241f, it achieves a 2.54 ×
+
+speedup (324s), surpassing Radial Attention (351s). Similarly, on Wan2.1-14B (145f), we achieve a 2.25 × speedup 
+
+(vs. Radial Attention’s 2.02 ×), effectively halving the inference time compared to the dense baseline. 
+
+Quality & "Denoising" Effect. The dynamic-threshold mode proves sparsity need not compromise fidelity. On HunyuanVideo-241f, it outperforms even the dense baseline (VisionReward 0.131 vs. 0.116). We hypothesize that this is partly attributable to the noise-filtering property of our semantic routing, which prevents "quality collapse" in long sequences by pruning irrelevant OOD tokens. 
+
+Robustness Across Architectures. The gains are consistent across the DiT-based HunyuanVideo and the VAE-based Wan2.1. On Wan2.1-14B (72f), our static mode maintains a 1.92 × speedup with 78.8% sparsity , while the dynamic mode is on par with the dense model’s temporal consistency (VBench S.C. 0.959 vs. 0.958), verifying that our Router-guided paradigm generalizes effectively to different spatiotemporal tokenization strategies. 
+
+4.3 Ablation Study Configurable Parameters & Dual-Mode Selection. The introduction of configurable knobs ( λ, B s, θ ) is crucial for stability across resolutions. On top of this, the selection mode serves as the primary trade-off lever: Static-ratio mode acts as an efficiency-first option. Compared to a naive configurable baseline, our static optimization (Dual-mode pruning) reduces latency to 338s . Dynamic-threshold mode utilizes attention scores (Eq. 9) to filter tokens. Although it introduces a slight overhead (385s), it recovers fine-grained details (VisionReward stabilizes around 0.119), validating the necessity of content-aware filtering. 
+
+Regime-Aware Adaptivity (Offline Predictor). The key contribution of DynamicRad is the Offline BO Predictor 
+
+(Sec. 3.4). As shown in Table 3 , the predictor identifies optimal sparsity regimes for the specific motion context, effectively reducing latency further (Static mode: 338 s → 324s ) while improving quality (VisionReward 0.117 →
+
+0.122 ). Table 2 and Figure 2 visually confirm this: the system assigns aggressive static masking ( γ = 2 .0, 86.6% 
+
+7DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+Table 2: BO-Optimized Configurations. Results confirm physical intuition: low-motion regimes permit high sparsity (86.6% ), whereas high-motion requires denser long-range connectivity (higher λ). Param denotes retention ratios ρ
+
+(Static) or thresholds τ (Dynamic). Green shading highlights speed-oriented regimes, while red shading highlights quality-oriented regimes.                                                                     
+
+> Scenario Mode Decay Long Mask Th. Col Th. Near Param Far Param Best Design Rationale
+> (γ)(λ)(θm)(θc)(ρ1/τ 1)(ρ2/τ 2)Sparsity Low Static 2.0 0.3 0.75 0.20 0.25 0.55 86.6% Max Speed: High decay & sparse long-range. Dynamic 1.3 0.4 0.70 0.45 -1.2 2.4 82.7% Balanced profile.
+> Mid Static 1.3 0.7 0.60 0.15 0.75 0.55 84.0% Target met exactly. Dynamic 1.4 0.7 0.70 0.45 -1.5 2.0 80.6% Target met exactly.
+> High Static 1.6 0.8 0.65 0.15 0.55 0.50 81.7% Quality First: Denser local budget. Dynamic 1.6 0.9 0.55 0.40 -2.0 2.4 77.9% Quality First: Higher λ& loose thresholds.
+
+Variant (HunyuanVideo, 241f, 768p, 8×H100 ) Sparsity ↑ Latency(s) ↓ VisionReward ↑ VBench S.C. ↑
+
+Radial Attention + Configurable params 81.3% 351 0.123 0.956 + Dual-mode pruning (Ours, Static mode) 85.5% 338 0.117 0.946 + Dual-mode pruning (Ours, Dynamic mode) 82.3% 385 0.119 0.948 + Offline predictor (auto config, Static mode) 86.8 % 324 0.122 0.956 + Offline predictor (auto config, Dynamic mode) 83.6% 378 0.127 0.963 + LoRA (mask-aware, applied on Dynamic mode) 83.6% 389 0.143 0.977 
+
+Table 3: Component ablations on long-horizon generation . Latency is measured on an 8 ×H100 cluster to align with the setup in Tab. 1. The offline predictor identifies optimal sparsity regimes, effectively reducing latency (e.g., Static mode: 338s → 324s) while maintaining quality. Mask-aware LoRA further boosts temporal consistency (VBench S.C.) with minimal overhead. sparsity) to low-motion prompts (e.g., reading) while automatically switching to dynamic selection with denser long-range connections for high-motion inputs. 
+
+Mask-Aware LoRA. Finally, integrating Mask-Aware LoRA (Sec. 3.3) provides the final boost in temporal con-sistency (VBench S.C. reaches 0.977 ). By refining the logit distribution to accommodate the sparse structure, LoRA compensates for aggressive pruning with minimal overhead (latency increases marginally from 378s to 389s). 
+
+Micro-Benchmark of Routing Overhead. To validate our claim of negligible overhead, we conduct a layer-wise micro-benchmark on an NVIDIA H100 GPU (detailed in Appendix B ). The Semantic Motion Router evaluates the text prompt strictly once per video ( < 2ms total), amortizing to 0ms per layer. Within the dynamic mode, our proxy QK-scoring computes in merely 0.37 ms per layer. The mask aggregation adds minimal latency ( ∼0.5 ms theoretically with fused kernels). In contrast, the sparse formulation saves over 15 ms of dense GEMM computation per layer under the 264K sequence length, yielding a highly favorable net speedup. 
+
+# 5 Conclusion 
+
+We presented DynamicRad , a unified paradigm reconciling kernel-friendly sparsity with content adaptivity for long video diffusion. By implementing a dual-mode strategy via an offline BO-driven router, DynamicRad achieves 1.7 ×–2.5 × speedups with >80% sparsity on HunyuanVideo and Wan2.1-14B, significantly advancing inference efficiency. Crucially, we demonstrated that a lightweight mask-aware LoRA preserves temporal coherence under aggressive pruning. 
+
+Limitations and Future Work. DynamicRad still has several boundary conditions. (1) Extreme Fast Motion: 
+
+Under highly dynamic prompts (e.g., FPV drone racing), minor artifacts may still appear because localized block-sparse patterns cannot fully capture highly dispersed attention. (2) Ambiguous or Multi-Phase Prompts: The Semantic Motion Router predicts a global motion regime from text; for ambiguous prompts or videos with temporal phase shifts, a single fixed regime may be suboptimal, although dynamic fallbacks mitigate this issue. (3) Hardware Generalization: 
+
+Because the method relies on specific block sizes ( Bs), non-server GPUs may require local tuning and LUT recalibration. Future work will study frame-level dynamic routing and extend the regime-aware design to image-to-video generation. 8DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+Prompt (Low-Motion): “A high-quality portrait of an elderly woman reading a book by a window, static camera, minimal movement, sunlight gently illuminating her face, cinematic lighting.”          
+
+> Frame t= 0 Frame t= 60 Frame t= 120
+
+⇒ Static Mask (86.6%) 
+
+> (Local & Diagonal Only)
+
+Prompt (High-Motion): “FPV drone shot flying extremely fast through a narrow cyberpunk canyon, chasing a futuristic racing car, neon lights, motion blur, rapid camera movement.”          
+
+> Frame t= 0 Frame t= 60 Frame t= 120
+
+⇒ Dynamic Mask (80.4%) 
+
+> (Captures Long-Range)
+
+Figure 2: Regime-aware adaptivity. For low-motion prompts, the router selects static-ratio , yielding a highly sparse near-diagonal mask. For high-motion prompts, it switches to dynamic-threshold , preserving off-diagonal long-range connections useful for fast motion. 
+
+# Acknowledgments 
+
+This work was supported by the National Natural Science Foundation of China under Grant W2431044. 
+
+# References 
+
+Omer Bar-Tal, Hila Chefer, Omer Tov, Charles Herrmann, Roni Paiss, Shiran Zada, Ariel Ephrat, Junhwa Hur, Guanghui Liu, Amit Raj, Yuanzhen Li, Michael Rubinstein, Tomer Michaeli, Oliver Wang, Deqing Sun, Tali Dekel, and Inbar Mosseri. Lumiere: A space-time diffusion model for video generation. In SIGGRAPH Asia 2024 Conference Papers , SA ’24, New York, NY, USA, 2024. Association for Computing Machinery. ISBN 9798400711312. doi:10.1145/3680528.3687614. URL https://doi.org/10.1145/3680528.3687614 .Iz Beltagy, Matthew E. Peters, and Arman Cohan. Longformer: The long-document transformer. arXiv preprint arXiv:2004.05150 , 2020. Daniel Bolya, Cheng-Yang Fu, Xiaoliang Dai, Peizhao Zhang, Christoph Feichtenhofer, and Judy Hoffman. Token merging: Your vit but faster. In International Conference on Learning Representations (ICLR) , 2023. Lida Chen, Dong Xu, Chenxin An, Xintao Wang, Yikai Zhang, Jiangjie Chen, Zujie Liang, Feng Wei, Jiaqing Liang, Yanghua Xiao, et al. Powerattention: Exponentially scaling of receptive fields for effective sparse attention. arXiv preprint arXiv:2503.03588 , 2025. Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. Generating long sequences with sparse transformers. In 
+
+Advances in Neural Information Processing Systems (NeurIPS) , 2019. Krzysztof Choromanski, Valerii Likhosherstov, David Dohan, Xingyou Song, Andreea Gane, Tamas Sarlos, Peter Aida, Jared Colmenarejo, et al. Rethinking attention with performers. In International Conference on Learning Representations (ICLR) , 2021. Tri Dao. Flashattention-2: Faster attention with better parallelism and work partitioning. In International Conference on Learning Representations (ICLR) , 2024. Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. Flashattention: Fast and memory-efficient exact attention with io-awareness. In Advances in Neural Information Processing Systems (NeurIPS) , 2022. 9DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+Hangliang Ding, Dacheng Li, Runlong Su, Peiyuan Zhang, Zhijie Deng, Ion Stoica, and Hao Zhang. Efficient-vdit: Efficient video diffusion transformers with attention tile, 2025. URL https://arxiv.org/abs/2502.06155 .Yuwei Guo, Ceyuan Yang, Anyi Rao, Zhengyang Liang, Yaohui Wang, Yu Qiao, Maneesh Agrawala, Dahua Lin, and Bo Dai. Animatediff: Animate your personalized text-to-image diffusion models without specific tuning, 2024. URL 
+
+https://arxiv.org/abs/2307.04725 .Roberto Henschel, Levon Khachatryan, Hayk Poghosyan, Daniil Hayrapetyan, Vahram Tadevosyan, Zhangyang Wang, Shant Navasardyan, and Humphrey Shi. Streamingt2v: Consistent, dynamic, and extendable long video generation from text, 2025. URL https://arxiv.org/abs/2403.14773 .Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. In Advances in Neural Information Processing Systems (NeurIPS) , 2020. Wenyi Hong, Ming Ding, Wendi Zheng, Xinghan Liu, and Jie Tang. Cogvideo: Large-scale pretraining for text-to-video generation via transformers, 2022. URL https://arxiv.org/abs/2205.15868 .Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. Lora: Low-rank adaptation of large language models. In International Conference on Learning Representations (ICLR) , 2022. Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si, Yuming Jiang, Yuanhan Zhang, Tianxing Wu, Qingyang Jin, Nattapol Chanpaisit, Yaohui Wang, Xinyuan Chen, Limin Wang, Dahua Lin, Yu Qiao, and Ziwei Liu. Vbench: Comprehensive benchmark suite for video generative models. 2023. URL https://arxiv.org/abs/2311.17982 .Nikita Kitaev, Łukasz Kaiser, and Anselm Levskaya. Reformer: The efficient transformer. In International Conference on Learning Representations (ICLR) , 2020. Dan Kondratyuk, Lijun Yu, Xiuye Gu, José Lezama, Jonathan Huang, Rachel Hornung, et al. Videopoet: A large language model for zero-shot video generation. 2024. URL https://arxiv.org/abs/2312.14125 .Weijie Kong, Qi Tian, Zijian Zhang, Rox Min, Zuozhuo Dai, Jin Zhou, Jiangfeng Xiong, et al. Hunyuanvideo: A systematic framework for large video generative models. 2025. URL https://arxiv.org/abs/2412.03603 .Xingyang Li, Muyang Li, Tianle Cai, Haocheng Xi, et al. Radial attention: O(n log n) sparse attention with energy decay for long video generation. arXiv preprint arXiv:2506.19852 , 2025. Feng Liu, Shiwei Zhang, Xiaofeng Wang, Yujie Wei, Haonan Qiu, Yuzhong Zhao, Yingya Zhang, Qixiang Ye, and Fang Wan. Timestep embedding tells: It’s time to cache for video diffusion model, 2024. URL https: //arxiv.org/abs/2411.19108 .Xin Ma, Yaohui Wang, Xinyuan Chen, Gengyun Jia, Ziwei Liu, Yuan-Fang Li, Cunjian Chen, and Yu Qiao. Latte: Latent diffusion transformer for video generation, 2025. URL https://arxiv.org/abs/2401.03048 .Xinyin Ma, Gongfan Fang, and Xinchao Wang. Deepcache: Accelerating diffusion models for free. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2024. Kepan Nan, Rui Xie, Penghao Zhou, Tiehan Fan, Zhenheng Yang, Zhijie Chen, Xiang Li, Jian Yang, and Ying Tai. Openvid-1m: A large-scale high-quality dataset for text-to-video generation. 2025. URL https://arxiv.org/ abs/2407.02371 .OpenAI. Video generation models as world simulators. OpenAI technical report / research webpage, 2024. URL 
+
+https://openai.com/index/video-generation-models-as-world-simulators/ . Accessed 2026-04-01. William Peebles and Saining Xie. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , 2023. Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer. High-resolution image synthesis with latent diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2022. Aurko Roy, Mohammad Saffar, Ashish Vaswani, and David Grangier. Routing transformer. Transactions of the Association for Computational Linguistics , 9:507–524, 2021. Uriel Singer, Adam Polyak, Thomas Hayes, Xi Yin, Jie An, Songyang Zhang, Qiyuan Hu, Harry Yang, et al. Imagen video: High definition video generation with diffusion models. arXiv preprint arXiv:2210.02303 , 2022. Jasper Snoek, Hugo Larochelle, and Ryan P. Adams. Practical bayesian optimization of machine learning algorithms. In Advances in Neural Information Processing Systems (NeurIPS) , 2012. Yang Song, Jascha Sohl-Dickstein, Diederik P. Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole. Score-based generative modeling through stochastic differential equations. In International Conference on Learning Representations (ICLR) , 2021. 10 DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+Wenhao Sun, Rong-Cheng Tu, Yifu Ding, Zhao Jin, Jingyi Liao, Shunyu Liu, and Dacheng Tao. Vorta: Efficient video diffusion via routing sparse attention. 2025. URL https://arxiv.org/abs/2505.18809 .Yi Tay, Mostafa Dehghani, Dara Bahri, and Donald Metzler. Efficient transformers: A survey, 2022. URL https: //arxiv.org/abs/2009.06732 .Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Information Processing Systems (NeurIPS) , 2017. Ang Wang, Baole Ai, Ziyu Liu, et al. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 , 2025. Sinong Wang, Belinda Z Li, Madian Khabsa, Han Fang, and Hao Ma. Linformer: Self-attention with linear complexity. 
+
+arXiv preprint arXiv:2006.04768 , 2020. Zhouxia Wang, Ziyang Yuan, Xintao Wang, Tianshui Chen, Menghan Xia, Ping Luo, and Ying Shan. Motionctrl: A unified and flexible motion controller for video generation, 2024. URL https://arxiv.org/abs/2312.03641 .Jay Zhangjie Wu, Yixiao Ge, Xintao Wang, Stan Weixian Lei, Yuchao Gu, Yu Qiao Shi, Ying Shan, and Mike Zheng Shou. Tune-a-video: One-shot tuning of image diffusion models for text-to-video generation. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , 2023. Haocheng Xi, Shuo Yang, Yilong Zhao, Chenfeng Xu, Muyang Li, Xiuyu Li, Yujun Lin, Han Cai, Jintao Zhang, Dacheng Li, Jianfei Chen, Ion Stoica, Kurt Keutzer, and Song Han. Sparse videogen: Accelerating video diffusion transformers with spatial-temporal sparsity. arXiv preprint arXiv:2502.01776 , 2025. Jiazheng Xu, Yu Huang, Jiale Cheng, Yuanming Yang, Jiajun Xu, Yuan Wang, Wenbo Duan, Shen Yang, Qunlin Jin, Shurun Li, Jiayan Teng, Zhuoyi Yang, Wendi Zheng, Xiao Liu, Dan Zhang, Ming Ding, Xiaohan Zhang, Xiaotao Gu, Shiyu Huang, Minlie Huang, Jie Tang, and Yuxiao Dong. Visionreward: Fine-grained multi-dimensional human preference learning for image and video generation, 2026. URL https://arxiv.org/abs/2412.21059 .Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng Xu, et al. Cogvideox: Text-to-video diffusion models with an expert transformer. arXiv preprint arXiv:2408.06072 , 2024. Manzil Zaheer, Guru Guruganesh, Kumar Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Ontanon, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, et al. Big bird: Transformers for longer sequences. In Advances in Neural Information Processing Systems (NeurIPS) , 2020. Peiyuan Zhang, Yongqi Chen, Haofeng Huang, Will Lin, Zhengzhong Liu, Ion Stoica, Eric Xing, and Hao Zhang. Faster video diffusion with trainable sparse attention. arXiv preprint arXiv:2505.13389 , 2025a. Peiyuan Zhang, Yongqi Chen, Runlong Su, Hangliang Ding, Ion Stoica, Zhengzhong Liu, and Hao Zhang. Fast video generation with sliding tile attention. arXiv preprint arXiv:2502.04507 , 2025b. Qingru Zhang, Minshuo Chen, Alexander Bukharin, Nikos Karampatziakis, Pengcheng He, Yu Cheng, Weizhu Chen, and Tuo Zhao. Adalora: Adaptive budget allocation for parameter-efficient fine-tuning, 2023. URL https: //arxiv.org/abs/2303.10512 .Wangbo Zhao, Yizeng Han, Jiasheng Tang, Kai Wang, Yibing Song, Gao Huang, Fan Wang, and Yang You. Dynamic diffusion transformer, 2024. URL https://arxiv.org/abs/2410.03456 .11 DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+# A Computational Complexity Analysis 
+
+In this section, we formally analyze the computational complexity of DynamicRad compared to standard dense attention. Let Nf denote the number of frames, Nt the number of tokens per frame, and D the feature dimension. The total sequence length is S = Nf Nt.
+
+A.1 Standard Dense Attention 
+
+The standard self-attention mechanism computes the similarity between all pairs of tokens. The computational cost consists of two parts: the matrix multiplication QK ⊤ and the attention-value aggregation AV .
+
+Cdense = O(S2D) = O(N 2 
+
+> f
+
+N 2 
+
+> t
+
+D). (16) The memory complexity for storing the attention map is O(S2), which is quadratic with respect to the frame count Nf .
+
+A.2 DynamicRad Complexity 
+
+DynamicRad sparsifies the attention matrix based on a temporal decay window w(i, j ). The effective number of attended tokens for a query token at frame i, denoted as Ωi, is the sum of window widths over all temporal distances 
+
+t = |i − j|:
+
+Ωi = 
+
+> Nf−1
+
+X
+
+> j=0
+
+w(i, j ) ≈
+
+> Nf
+
+X
+
+> t=1
+
+L0
+
+t · γ ≈ L0γ ln( Nf ). (17) Unlike the linear growth ( Nf ) in dense attention, the receptive field size in DynamicRad grows logarithmically ( ln Nf )due to the exponential decay of the window width. Consequently, the total computational complexity is: 
+
+Cours = O(S · Ωavg · D) = O(Nf Nt · (Nt ln Nf ) · D). (18) Comparing the two, the ratio Cours /Cdense ≈ (ln Nf )/N f approaches 0 as Nf increases, showing the asymptotic advantage of DynamicRad under the radial-decay approximation, while ignoring the additional sparsification introduced by the split rule and block aggregation constants. 
+
+# B Implementation Details: Efficiency and Robustness 
+
+A common concern for dynamic sparse attention is the trade-off between implementation overhead and stability. In this section, we detail how DynamicRad minimizes computational costs via proxy scoring and ensures robustness via fallback mechanisms. 
+
+Head Fusion Proxy (Method). Instead of computing scores across all heads (e.g., H = 32 ), we hypothesize that attention structures are shared. We compute filtering logits using only the first Hf = 2 heads: 
+
+Sproxy  
+
+> ij
+
+= 1
+
+HfHf
+
+X
+
+> h=1
+
+Qi,h K⊤
+
+> j,h
+
+√d . (19) 
+
+Theoretical Overhead Analysis. While we do not provide hardware-specific latency breakdowns due to cluster variances, the theoretical overhead is strictly bounded: • Selection Cost Reduction: By using Hf = 2 out of H = 32 heads, the logit computation cost is reduced by a factor of 16 ×. The subsequent sorting and thresholding are performed on this reduced subset, ensuring the selection overhead remains a small fraction of the full O(N 2) attention. • Router Efficiency: The Semantic Motion Router uses a lightweight MLP on pre-computed embeddings. Its complexity is O(1) relative to the video length Nf , incurring negligible cost compared to the quadratic attention mechanism. 
+
+Robustness and Fallback Mechanisms. For ambiguous prompts where the Semantic Router predicts low confidence (or classifies incorrectly), DynamicRad employs two safeguards to prevent quality collapse: 1. Score-Based Fallback: In the dynamic-threshold mode, if the threshold filters out all tokens in a candidate block (resulting in an empty mask), we force-retain the top-k pairs with the highest logits. This ensures continuity even if the router suggests an overly aggressive threshold. 12 DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+Table 4: Hyperparameter Settings and Optimization Bounds. Fixed system parameters are constant across all experiments. For mode-specific parameters, we report the Search Range [min, max ] explored by the Bayesian Optimizer.                                     
+
+> I. Fixed System Parameters Parameter Value Description
+> Block Size ( Bs)128/64/32 Fixed granularity for FlashInfer/Sage kernels. Fused Heads ( Hf)2Fixed proxy for fast dynamic scoring.
+> II. Adaptive Mode Parameters (Search Ranges) Mode Parameter Optimization Range (via BO) Description
+> Common
+> Decay Factor ( γ)[1 .0,3.0] Controls radial window width. Long Factor ( λ)[0 .1,1.0] Controls long-range split density. Col Density Thresh ( θc)[0 .1,1.0] Minimal density to consider a column “active”. Mask Threshold ( θm)[0 .1,1.0] Range for block activation threshold.
+> Static-ratio topk_ratio1 [0 .3,1.0] For near-field blocks. topk_ratio2 [0 .1,0.8] For far-field blocks.
+> Dynamic-threshold near_frame_thresh [−10 .0,5.0] Logit threshold for adjacent frames. far_frame_thresh [−5.0,8.0] Logit threshold for long-range frames.
+
+2. Conservative Default: If the router output is out-of-distribution (e.g., gibberish prompts), the system defaults to the Static-ratio (Mid-Motion) profile, providing a safe baseline performance similar to standard sparse attention. 
+
+# C Offline Bayesian Optimization Details 
+
+To ensure DynamicRad adapts robustly to varying video dynamics without incurring online tuning costs, we utilize a rigorous offline Bayesian Optimization (BO) strategy. This section details the proxy task formulation, provides theoretical error bounds, and analyzes the optimization convergence. 
+
+C.1 Detailed Hyperparameter Configuration 
+
+To support reproducibility, Table 4 summarizes the fixed system parameters and the search ranges explored by the Bayesian optimizer. Structural parameters are fixed to match hardware-aware kernel constraints, whereas sparsity-related filtering parameters are optimized offline within the ranges listed below. 
+
+C.2 Mathematical Formulation of the Proxy Task 
+
+Running full diffusion generation loops for hyperparameter search is computationally prohibitive. Instead, we construct a lightweight proxy task that simulates the feature drift inherent in video attention. Let ht ∈ RD denote the hidden state (Key/Query feature) of a token at frame t. We model the temporal evolution of features as an auto-regressive process governed by a drift rate δ ∈ [0 , 1] :
+
+ht = p1 − δ2 · ht−1 + δ · ϵt, ϵt ∼ N (0, I), (20) where ϵt represents new semantic information entering the frame. • Low Motion ( δ = 0 .02 ): Features remain highly correlated ( ht ≈ ht−1), mimicking static backgrounds. • Mid Motion ( δ = 0 .15 ): Features exhibit moderate drift, representing standard character movements or slow camera pans. • High Motion ( δ = 0 .40 ): Features drift rapidly, simulating fast-moving objects or rapid scene changes. 
+
+Alignment with Semantic Router. Crucially, these simulation parameters are calibrated to align with the physical motion priors used to train our Semantic Router (Section 3.4). Empirically, the simulated feature drift δ ≈ 0.02 
+
+corresponds to a normalized optical flow magnitude of < 0.1 (static scenes), while δ ≈ 0.40 corresponds to flow magnitude > 0.3 (dynamic scenes). This alignment ensures that the optimal parameters found by BO on the proxy task are physically valid for the regimes predicted by the router during inference. 13 DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+Algorithm 2 Offline Parameter Profiling via TPE 
+
+Require: Proxy Simulator P(δ), Search Space Ω, Trials N = 30 .
+
+Ensure: Optimal configs {x∗
+
+> low
+
+, x∗
+
+> mid
+
+, x∗
+
+> high
+
+}. 
+
+> 1:
+
+for regime r ∈ { Low , Mid , High } defined in Sec. 3.4 do  
+
+> 2:
+
+Set drift rate δr (0.02, 0.15, or 0.40).  
+
+> 3:
+
+Initialize trial history H ← ∅ . 
+
+> 4:
+
+for i = 1 to N do  
+
+> 5:
+
+Sample xi from Ω using TPE acquisition function based on H. 
+
+> 6:
+
+Generate features Q, K using P(δr ). 
+
+> 7:
+
+Compute Sparse Mask M(xi). 
+
+> 8:
+
+Calculate Loss ℓi = L(xi) via Eq. (22).  
+
+> 9:
+
+Update history H ← H ∪ { (xi, ℓ i)}. 
+
+> 10:
+
+end for  
+
+> 11:
+
+x∗ 
+
+> r
+
+← arg min x∈H L(x) 
+
+> 12:
+
+end for  
+
+> 13:
+
+return Lookup Table T ▷ Indexed by Semantic Router outputs The proxy attention matrix Aproxy is then computed as Aij ∝ exp( h⊤ 
+
+> i
+
+hj /√D).
+
+C.3 Theoretical Error Bound 
+
+Based on the proxy model above, we establish an error bound for our sparsity strategy. Let A be the ground truth attention and ˆA be our sparse approximation. The error is bounded by the attention mass discarded by the mask. Under the AR process assumption, the expected attention weight decays exponentially: aij ≈ Ce −μ|i−j|.• Radial Truncation Error: For the Static-ratio mode, applying a window w results in a residual error bounded by the distribution tail: Eresid ≤ R ∞ 
+
+> w
+
+Ce −μt dt = Cμ e−μw . Our BO predictor minimizes this by matching γ
+
+(which controls w) to the regime’s drift μ.• Dynamic Recovery: In the Dynamic-threshold mode, we explicitly retain high-scoring pairs that violate the decay assumption (outliers). The error is strictly reduced to: 
+
+|| A − ˆA|| 1 ≤ Cμ e−μw − X
+
+> (u,v )∈Outliers
+
+I(s(u, v ) > τ ) · auv . (21) This derivation theoretically justifies why our Dynamic mode outperforms static pruning in high-motion regimes where outliers (e.g., object re-appearance) occur frequently. 
+
+C.4 Optimization Objective 
+
+We search for the optimal parameter vector x = [ γ, λ, θ m, θ c] that minimizes a hybrid loss function L(x). The objective balances the reconstruction fidelity (approximating the dense attention matrix) and computational efficiency (sparsity target): 
+
+L(x) = || Adense − Asparse (x)|| 2
+
+> F
+
+|| Adense || 2
+
+> F
+
+| {z }
+
+> Normalized MSE
+
++α · ReLU (τ − S (x)) 
+
+| {z }
+
+> Sparsity Penalty
+
+(22) where S(x) is the sparsity ratio, τ = 0 .80 is the target sparsity, and α = 10 .0 is a penalty coefficient. 
+
+C.5 Optimization Algorithm and Efficiency 
+
+We employ the Tree-structured Parzen Estimator (TPE) algorithm to explore the non-differentiable search space efficiently. The complete offline profiling procedure is summarized in Algorithm 2. 
+
+Efficiency Analysis. While our proxy task requires computing dense attention baselines for loss calculation, it remains significantly faster than standard hyperparameter tuning on video diffusion models. Conducting a reliable search (30 trials) using full video generation—assuming a minimal validation batch of 16 prompts per trial to mitigate stochastic 14 DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+Figure 3: BO Convergence Analysis. The optimization process (simulated on proxy tasks) typically converges within 30 trials. Left: Static mode struggles with High Motion (red line stays high), necessitating a mode switch. Right: 
+
+Dynamic mode successfully minimizes reconstruction error for High Motion scenes, validating its capability to capture complex dynamics. variance—would require approximately 5 GPU-hours on a single NVIDIA H100 (based on Wan2.1-14B inference latency). In contrast, our proxy-based optimization completes the entire calibration process in approximately 15 minutes . This represents a ∼20 × reduction in computational cost , allowing for rapid adaptation to new resolutions or aspect ratios without the latency of iterative video sampling. 
+
+C.6 Convergence Analysis and Qualitative Validation Convergence Behaviors (Figure 3). We first analyze the optimization trajectories to validate the necessity of our dual-mode design. As shown in Figure 3: • Static Mode Limitation: For High Motion scenes (red line, Left), the loss stagnates near 1.0 regardless of parameter tuning. This mathematically confirms that rigid static masks fundamentally lack the capacity to model rapid feature drift. • Dynamic Mode Recovery: In contrast, the Dynamic mode (red line, Right) successfully drives the loss down to ∼0.30. By adaptively retaining off-diagonal outliers, the optimizer recovers the long-range dependencies lost by the static prior. 
+
+Validation of Proxy Alignment (Figure 4). Crucially, does this reduction in Proxy MSE (from 1.0 to 0.30) translate to better video quality? While a quantitative correlation study is computationally expensive, our visual ablation results provide strong qualitative evidence of this alignment. • High MSE → Artifacts: As shown in Figure 4(a), the high reconstruction error in static mode directly corresponds to visual artifacts (flickering neon rings) and geometric distortion. • Low MSE → Fidelity: Conversely, Figure 4(b) demonstrates that when the BO pipeline minimizes the Proxy MSE, the visual fidelity is restored. This empirically validates that our physics-based proxy task is a reliable surrogate: optimizing for lower Proxy MSE effectively translates to improved perceptual quality in the final generation. 
+
+# D Detailed Micro-Benchmark and Overhead Analysis 
+
+To substantiate the claim that the routing and dynamic sparsification modules in DynamicRad introduce negligible overhead, we conduct a layer-wise micro-benchmark. 
+
+Experimental Setup. We evaluate the latency on a single NVIDIA H100 GPU, simulating the extreme long-sequence regime of Wan2.1-14B at 768p resolution (72 frames, resulting in approximately 264K tokens per layer). The tests utilize a block size of 32 and sequence configurations typical of large-scale diffusion inference. We isolate the execution time of each sub-module using synchronized CUDA events over 100 iterations to eliminate system noise. 15 DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT         
+
+> Test Prompt (High Motion): “FPV drone shot flying through a futuristic sci-fi tunnel at high speed. Repeating neon ring lights, metallic walls, motion blur, symmetrical composition, cinematic lighting, 4k.”
+> (a) Untuned (Static Mode): γ=3 .0, λ =0 .1, θ m=0 .75 ,r=[ 0.2,0.1]
+> (b) BO-Optimized (Dynamic Mode): γ=1 .6, λ =0 .9, θ m=0 .55 ,τ=[ −2.0,2.4]
+
+Figure 4: Visual Ablation of Parameter Tuning and Mode Selection. (a) The Static-ratio mode with naive heuristic parameters ( rnear = 0 .2, high decay γ = 3 .0) imposes a rigid sparsity pattern. In this high-speed FPV scene, it restricts the temporal receptive field too aggressively, causing the repeating neon rings to flicker and the tunnel geometry to distort across frames. (b) The Dynamic-threshold mode configured by our pipeline. The Semantic Router correctly classifies this as a high-motion regime, triggering the retrieval of BO-optimized parameters (relaxed τnear = −2.0,denser λ = 0 .9) which are required for high-optical-flow fidelity, perfectly preserving the symmetrical structure and smooth motion blur while satisfying the sparsity constraint. (Notation: r = [ rnear , r far ] denotes retention ratios; 
+
+τ = [ τnear , τ far ] denotes attention score thresholds). Table 5: Micro-Benchmark of Single Layer Latency (H100). Time breakdown for a single transformer layer under long-sequence generation (Wan2.1-14B, 768p, ∼264K tokens). The Semantic Router runs only once per video, amortizing to 0 ms per layer. Our Dynamic QK-Scoring incurs an ultra-low overhead of 0.37 ms . (†The static block-mask is pre-computed offline and cached, incurring no runtime cost. ∗The dynamic mask indexing overhead shown assumes standard CUDA kernel fusion, abstracting away our prototype’s Python-level loop overhead.)                              
+
+> Attention Mode Text Router Dynamic QK Mask Gen (Algorithmic) Attention GEMM Total Time
+> Dense (Original) ---∼25.0 ms ∼25.0 ms Ours (Static-Ratio) ≈0 ms -Cached (0 ms) †∼4.8 ms ∼4.8 ms
+> Ours (Dynamic-Threshold) ≈0 ms 0.37 ms ∼0.5 ms ∗∼5.9 ms ∼6.8 ms
+
+Overhead Breakdown. As detailed in Table 5, the end-to-end latency of a single attention layer is decomposed into four primary components: • Text Router: The Semantic Motion Router evaluates the text prompt embeddings strictly once per video generation process. Taking less than 2 ms in total, this amortizes to effectively 0 ms per transformer layer. • Dynamic QK-Scoring: In the Dynamic-Threshold mode, computing the proxy scores across a small fused subset of heads requires an ultra-low overhead of just 0.37 ms . This validates that our lightweight scoring mechanism avoids the severe computational bottlenecks of standard full-attention QK calculations. • Mask Generation (Algorithmic): For the Static-Ratio mode, the block-mask strictly depends on the rigid spa-tiotemporal resolution and is pre-computed offline, incurring 0 ms runtime overhead. For the Dynamic-Threshold mode, the theoretical latency for thresholding and index generation is estimated at ∼0.5 ms. This estimation assumes standard CUDA kernel fusion (or integration into the sparse planner) to bypass the memory-bound (HBM read/write) overheads typically present in unfused Python prototypes. • Attention GEMM: By reducing the sequence interactions to over 80% sparsity, the core GEMM computation time drops drastically from approximately 25.0 ms (Dense) to 5.9 ms (Dynamic). Ultimately, the minor 0.37 ms investment in dynamic scoring yields a net latency reduction of roughly 73% per layer, confirming that the adaptivity in DynamicRad does not compromise its efficiency-first design. 16 DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+# E Additional Qualitative Results 
+
+In this section, we provide a comprehensive gallery of generated samples to demonstrate the robustness of DynamicRad across two state-of-the-art video diffusion backbones: Wan2.1-14B and HunyuanVideo. To ensure a rigorous comparison, we benchmark the 1× speed Original (Dense + LoRA) baseline against our 
+
+∼2.5 × accelerated DynamicRad (Dynamic + LoRA) . Both models utilize identical random seeds, prompts, and LoRA fine-tuning on the OpenVid-1M subset. This setup verifies that our method maintains the visual fidelity of the computationally heavy baseline while delivering a >2× throughput gain .
+
+Generation Configuration. To validate performance stability across varying temporal horizons, we generate samples at High Definition ( 1280 × 720 ) resolution using 50 sampling steps and a CFG scale of 5.0. Specifically, we evaluate both models under standard and long-context settings: • HunyuanVideo: Evaluated at both 120 frames (Standard) and 241 frames (Long-Context, >200k tokens). • Wan2.1-14B: Evaluated at both 72 frames (Standard) and 145 frames (Long-Context). These settings correspond to the comprehensive results in Table 1, confirming that DynamicRad generalizes effectively across different sequence lengths. Each strip below contains 5 frames sampled uniformly from the generated video to visualize the temporal progression. 17 DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+E.1 Results on Wan2.1-14B 
+
+Case 1 (Fluid Dynamics): “Close-up of a raging campfire at night, sparks flying upwards, dynamic flames flickering, realistic texture, cinematic lighting, 4k, high frame rate.” 
+
+> Original (Dense):
+> DynamicRad (Ours):
+
+Case 2 (Fast Motion): “A majestic white horse galloping through a field of golden wheat, wind blowing through its mane, dynamic camera angle tracking the horse, sunlight breaking through clouds, 4k, slow motion.” 
+
+> Original (Dense):
+> DynamicRad (Ours):
+
+Case 3 (Stylized/Anime): “Anime style, Makoto Shinkai style, a young girl standing on a train station platform, cherry blossoms falling, vibrant blue sky with fluffy clouds, high quality animation.” 
+
+> Original (Dense):
+> DynamicRad (Ours):
+
+18 DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+Case 4 (Complex Scene): “Cyberpunk city street at night, neon lights reflecting on wet pavement, a mysterious figure walking through steam and rain, cinematic lighting, volumetric fog, highly detailed, 8k.” 
+
+> Original (Dense):
+> DynamicRad (Ours):
+
+E.2 Results on HunyuanVideo 
+
+Case 5 (Portrait/Low Motion): “A cinematic close-up of an elderly craftsman carving wood, detailed wrinkles, focused expression, warm workshop lighting, 4k, slow camera movement.” 
+
+> Original (Dense):
+> DynamicRad (Ours):
+
+Case 6 (High Motion/Water): “A professional surfer riding a massive blue wave, water spray, dynamic camera tracking, high speed, sunlight reflection, 4k.” 
+
+> Original (Dense):
+> DynamicRad (Ours):
+
+19 DynamicRad: Content-Adaptive Sparse Attention for Long Video Diffusion A P REPRINT 
+
+Case 7 (Sci-Fi/Texture): “A spaceship fleet engaging in a battle near a nebula, lasers firing, explosions, colorful gas clouds, high detail, sci-fi movie style.” 
+
+> Original (Dense):
+> DynamicRad (Ours):
+
+Case 8 (Urban/Timelapse): “Time-lapse of a busy City intersection at night, car trails, crowds moving fast, neon signs flashing, 4k, high quality.” 
+
+> Original (Dense):
+> DynamicRad (Ours):
+
+20
