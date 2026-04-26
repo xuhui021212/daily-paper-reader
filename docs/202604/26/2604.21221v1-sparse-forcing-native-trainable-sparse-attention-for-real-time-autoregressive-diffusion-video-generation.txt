@@ -1,0 +1,982 @@
+Title: Sparse Forcing: Native Trainable Sparse Attention for Real-time Autoregressive Diffusion Video Generation
+
+URL Source: https://arxiv.org/pdf/2604.21221v1
+
+Published Time: Fri, 24 Apr 2026 00:26:23 GMT
+
+Number of Pages: 24
+
+Markdown Content:
+# Sparse Forcing: Native Trainable Sparse Attention for Real-time Autoregressive Diffusion Video Generation 
+
+Boxun Xu 1,2,∗, Yuming Du 1, Zichang Liu 1, Siyu Yang 1, Ziyang Jiang 1, Siqi Yan 1, Rajasi Saha 1, Albert Pumarola 1, Wenchen Wang 1, Peng Li 21Meta Superintelligence Labs, 2University of California, Santa Barbara 
+
+> ∗
+
+Work done at Meta 
+
+We introduce Sparse Forcing, a training-and-inference paradigm for autoregressive video diffusion models that improves long-horizon generation quality while reducing decoding latency. Sparse Forcing is motivated by an empirical observation in autoregressive diffusion rollouts: attention concentrates on a persistent subset of salient visual blocks, forming an implicit spatiotemporal memory in the KV cache, and exhibits a locally structured block-sparse pattern within sliding windows. Building on this observation, we propose a trainable native sparsity mechanism that learns to compress, preserve, and update these persistent blocks while restricting computation within each local window to a dynamically selected local neighborhood. To make the approach practical at scale for both training and inference, we further propose Persistent Block-Sparse Attention (PBSA), an efficient GPU kernel that accelerates sparse attention and memory updates for low-latency, memory-efficient decoding. Experiments show that Sparse Forcing improves the VBench score by +0.26 over Self-Forcing on 5-second text-to-video generation while delivering a 1.11–1.17 × decoding speedup and 42% lower peak KV-cache footprint. The gains are more pronounced on longer-horizon rollouts, delivering improved visual quality with +0.68 and +2.74 VBench improvements, and 1.22 × and 1.27 × speedups on 20-second and 1-minute generations, respectively.  
+
+> Date:
+
+January 20, 2026  
+
+> Correspondence:
+
+Boxun Xu( boxunxu@ucsb.edu ) 
+
+> Project Page:
+
+https://boxunxu.top/SparseForcing 
+
+## 1 Introduction 
+
+The pursuit of high-fidelity multi-modal content generation has become a cornerstone of spatial intelligence and general-purpose AI, pushing the boundaries of how models perceive, predict, and simulate temporal dynamics. Among these modalities, video stands out as particularly demanding: it requires coherent long-range dynamics, fine-grained spatial fidelity, and efficient inference under rapidly growing context lengths. Diffusion models have recently revolutionized text-to-video generation (Blattmann et al., 2023; Ho et al., 2022b; Jin et al., 2025; Polyak et al., 2024; Yang et al., 2025c; Zheng et al., 2024). Many state-of-the-art systems adopt the Diffusion Transformer (DiT) architecture (Bao et al., 2022; Peebles and Xie, 2023), which typically applies bidirectional attention across the full spatiotemporal token sequence. While effective, full-sequence attention incurs quadratic complexity in context length, making long-form video generation increasingly expensive in both latency and memory footprint. To scale video diffusion to longer durations, autoregressive diffusion has emerged as a compelling alternative. Cauvid (Yin et al., 2025) and self-forcing(Huang et al., 2025) introduce a causal diffusion transformer with frame-wise dependencies, enabling sample-efficient training by leveraging supervision from all input frames at each iteration and accelerating inference via key-value (KV) caching, analogous to decoder-only large language models (Brown et al., 2020; Radford et al., 2019). Autoregressive formulations are attractive for long-horizon synthesis and interactive settings, yet they introduce a fundamental challenge: during rollouts the model must condition on its own imperfect predictions, leading to compounding errors over time. Meanwhile, as the 1  
+
+> arXiv:2604.21221v1 [cs.CV] 23 Apr 2026 Self Forcing
+> Vbench: 78.93%
+> Latency: 70.07s
+> Sparse Forcing
+> (Ours)
+> Vbench: 81.67%
+> Latency: 55.70s
+
+0 20s      
+
+> Self Forcing
+> Vbench: 82.09%
+> Latency: 22.38s
+> Sparse Forcing
+> (Ours)
+> Vbench: 82.77%
+> Latency: 18.12s
+> Prompt: A serene scene of a kitchen counter with a single bowl placed at its center. The bowl is made of ceramic, with a simp le yet elegant design,
+> and is filled halfway with fresh fruit pieces such as apples and oranges….
+> Prompt: A person is enthusiastically air drumming, their arms moving rapidly and energetically as they mimic playing drums. T hey have a joyful,
+> intense expression on their face, fully engaged in the performance. The person is standing in a room with dim lighting…
+
+0 1min Self Forcing 
+
+> Sparse Forcing
+> Local Memory
+> Persistent Memory
+
+Figure 1 (Left) Illustration: Sparse Forcing keeps local context with persistent moments, preserving long-term generation stability with lower latency and alleviating drift and instability over time. (Right) Sparse Forcing leverages persistent spatiotemporal implicit memory and trainable native sparsity to improve long-horizon generation quality while reducing decoding latency. 
+
+context grows, naively attending to all historical tokens remains computationally prohibitive. A natural question is whether we can address quality and efficiency simultaneously. Existing efficiency techniques for video diffusion, such as quantization (Zhao et al., 2025) and few-step sampling or distillation (Yin et al., 2024b,a; Kim et al., 2025), primarily aim to reduce computation across multiple diffusion steps. Another promising direction is to exploit sparsity. Recent works explore sparse video generation and sparse attention mechanisms (Xi et al., 2025; Zhang et al., 2025b), as well as structured designs such as sliding or tiled attention. In language modeling, native sparse attention has been studied as a principled approach that can be trained end-to-end and yields test-time acceleration (Yuan et al., 2025). However, for autoregressive video diffusion, it remains unclear how to design sparsity that is both trainable and rollout-compatible, and whether such sparsity can improve long-horizon quality beyond merely saving memory and compute. Importantly, sparsity is not only a computational optimization. Under autoregressive rollouts, the attention pattern reshapes the dependency graph through which prediction errors propagate over time. Dense attention provides abundant pathways for early mistakes to influence future frames, amplifying compounding errors. In contrast, a structured sparse conditioning mechanism can control the topology and gain of error propagation by limiting how far and how strongly uncertain tokens can affect subsequent generations. This perspective argues that well-designed sparsity can improve generation quality and inference efficiency in a coupled manner. Motivated by this insight, we begin with an empirical observation: autoregressive diffusion rollouts exhibit a strong persistent clustering effect, where a compact subset of visual tokens persistently captures salient blocks across time, forming an implicit spatiotemporal memory . Building on this structure, we propose Sparse Forcing , a novel trainable sparse attention for autoregressive video diffusion models. Sparse Forcing learns to 
+
+compress, preserve, and update persistent clustered blocks while restricting local computation to a compact dynamically-selected neighborhood. To make the approach practical at scale for both training and inference, we further develop Persistent Block-Sparse Attention (PBSA) , an efficient GPU kernel that accelerates sparse attention and memory updates for low-latency and memory-efficient decoding. 
+
+“We do not remember days, we remember moments.” 1 Time cannot be carried in full; we move through it with only a few sparsely luminous points in spacetime. 
+
+> 1
+
+Cesare Pavese, This Business of Living: Diaries 1935–1950 .
+
+2Our main contributions are threefold. (1) We identify an empirical phenomenon in long-horizon autoregressive video diffusion models: blockified tokens exhibit strong spatiotemporal persistence in KV cache, yet are discarded by naive recency-based conditioning, leading to compounding errors during rollouts. (2) We introduce Sparse Forcing, a trainable native sparsity paradigm that leverages persistent spatiotemporal implicit memory and block-structured sparse attention to simultaneously improve long-horizon generation quality and reduce decoding latency. Sparse Forcing consistently improves short-video generation quality, and its gains persist when scaling to long, minute-level videos. (3) To make the approach practical and efficient, we develop Persistent Block-Sparse Attention (PBSA) kernels that accelerate sparse attention and memory updates, delivering end-to-end speedups for both training and inference with reduced memory footprint. 
+
+## 2 Related Work  
+
+> Bidirectional Video Generation Models.
+
+Video generation has advanced rapidly in recent years, with modern approaches mostly adopting the paradigms of denoising diffusion. Video diffusion has been explored in both pixel space(Ho et al., 2022a; Singer et al., 2022) and latent space(Blattmann et al., 2023), with architectures evolving from U-Nets(Rombach et al., 2022; Hong et al., 2023) to DiTs(Peebles and Xie, 2023; Gupta et al., 2024). Significant multi-billion parameter industrial investment has driven the development, including open-sourced models(Wan et al., 2025; Kong et al., 2024) and closed-source models(Polyak et al., 2024; Brooks et al., 2024). These models operate bidirectionally: each frame can attend to both past and future frames during denoising. While this bidirectional context enables high-quality synthesis for offline generation, it is incompatible with the causality required for real-time video generation.  
+
+> Autoregressive Diffusion Models and Long Video Generation.
+
+Diffusion has become the driving force behind video synthesis, where a central challenge is length scaling. Training-free length-extension methods [43, 44, 48, 49, 84] reschedule noise or re-balance temporal frequency to stretch pretrained models beyond their training horizon. A complementary thread blends diffusion with causal prediction: Diffusion Forcing(Chen et al., 2024) and HistoryGuidance(Song et al., 2025) enable variable horizon conditioning and stable long rollouts by noise injection. These approaches are adapted in industrial systems such as SkyReels-V2 (Chen et al., 2025a) and MAGI-1(Teng et al., 2025). StreamDiT(Kodaira et al., 2025) combines multi-step distillation with a moving frame buffer and mixed partition training to generate results in real-time. To mitigate error accumulation during AR generation, Self-Forcing(Huang et al., 2025) simulates AR rollout during training, while its extensions(Cui et al., 2025; Liu et al., 2025; Yang et al., 2025a) further improve length generalization.  
+
+> Efficient Video Generation.
+
+As we scale video generation to long horizons, large context windows become a bottleneck, driving a wave of efficient computational designs. Kernel advances such as FlashAttention(Dao et al., 2022; Dao, 2024) improve throughput. Another line of work leverages compressing the latent space or token sequence: token merging(Wu et al., 2025) and patch scaling (Lee et al., 2024), compact/variablerate tokenizers (Bachmann et al., 2025), highly compressed latent space(HaCohen et al., 2024), or multiscale pyramids with re-noising(Jin et al., 2025). Meanwhile, linear attention(Katharopoulos et al., 2020) is also widely used in video generation, SANA(Xie et al., 2024, 2025) introduced linear attention diffusion transformers, while SANA-Video (Chen et al., 2025b) further extends this with block-linear attention and constant-size KV cache on video generation.  
+
+> Sparse Attention and its Nativity.
+
+There has been a lot of research and discussion about the useful of sparse attention for Large Language Models (LLMs). Sparse attention for LLMs falls into two categories: memory-efficient and compute-efficient. Memory-efficient methods(Xiao et al., 2024b, 2025; Zhang et al., 2023; Tang et al., 2024; Liu et al., 2023) reduce memory load to accelerate decoding. Compute-efficient methods (Jiang et al., 2024; Xiao et al., 2024a; Han et al., 2024; Li et al., 2025b) focus on processing only critical tokens. As the long context, the exploration of sparse attention mechanisms for accelerating DiTs fall into two categories: static and dynamic, depending on whether to select critical tokens dynamically during runtime or statically offline. Static methods(Xi et al., 2025; Zhang et al., 2025c) predefine sparse patterns offline, such as identifying recent tokens as critical. These methods lack adaptability to diverse sparsity patterns, leading to suboptimal performance. Dynamic methods(Zhang et al., 2025a; Yang et al., 2025b; Xu et al., 2025; Xia et al., 2025; Zhang et al., 2025e,b) determine sparse patterns at runtime, selecting critical tokens through an additional identification step. However, on one hand, the prior work still focuses on fixed-length 3…                 
+
+> …
+> Vertically clustered
+> persistent anchors
+> Contextual History
+> 0
+> 1K
+> 2K
+> 3K
+> 4K
+> 5K 20K 40K 60K 120K 140K
+> Query
+> Token
+> Key Token
+> Local Window
+> Key Block
+> Query
+> Block
+> 0
+> 0
+> 100
+> 50 100150 200
+> Locally diagonal
+> block sparsity
+> TopK=12.5%: 0.52 ±0.13
+> TopK=25%: 0.65 ±0.11 Figure 2 Vertically clustered persistent anchors and local diagonal block sparsity.
+
+Across the contextual history in self-forcing(Huang et al., 2025), attention concentrates on a few vertically clustered persistent anchors ( 1 – 4 ), whereas the local window exhibits a locally diagonal block-sparse pattern ( 5 ). Attention recall at Top-K=25% is 0.65 ± 0.11 
+
+(mean ±std over heads and layers). 
+
+(e.g., 5-second) video generation and don’t consider the unique memory tracing in visual autoregressive models for video generation and have no corresponding optimization in KV caching. The native feature of large-scale models have been explored(Yuan et al., 2025), demonstrates that sparse attention not only show better hardware efficiency but also have better generation quality. However, the sparsity emergence for such a complex dynamic memory system under long-context video generation scenario is unexplored but very important. 
+
+## 3 Methodology 
+
+3.1 Autoregressive Video Diffusion Models 
+
+Autoregressive video diffusion models combine sequential factorization with diffusion-based conditional generation. Instead of modeling a full video jointly, they produce it step by step, where each prediction depends on the previously generated context. Formally, for a video sequence x1: N = ( x1, x 2, . . . , x N ), the distribution can be written as 
+
+p(x1: N ) = 
+
+> N
+
+Y
+
+> i=1
+
+p(xi | x<i ). (1) Each conditional term p(xi | x<i ) is implemented with a diffusion generator: the next frame is sampled by progressively denoising Gaussian noise while conditioning on preceding frames. In practice, one autoregressive step may generate a short chunk of consecutive frames rather than a single frame; for simplicity, we refer to that prediction unit as a “frame” throughout the paper. There are two common ways to train such models: learning the autoregressive diffusion model directly from data, or distilling it from a pretrained bidirectional video diffusion model. In the former case, training usually follows either Teacher Forcing (TF)(Gao et al., 2025; Jin et al., 2025; Zhang et al., 2025d) or Diffusion Forcing (DF)(Chen et al., 2024; Gu et al., 2025). With TF, the model conditions on clean ground-truth history frames. With DF, it still conditions on ground-truth history, but each historical frame is perturbed with an independently sampled noise level. While these strategies make optimization easier, they also create a mismatch between training and inference: during training the history is oracle-provided, whereas at test time the model must condition on its own past predictions. This mismatch is commonly referred to as exposure bias (Schmidt, 2019). Reducing exposure bias in autoregressive diffusion is challenging because the denoising objective would ideally require supervision under the model’s own sampled rollout states, and such paired targets are generally unavailable. Recent approaches therefore try to narrow the train–test gap by explicitly modeling rollout conditions during training or otherwise improving robustness to self-generated history(Yin et al., 2025; Huang et al., 2025). 4Height   
+
+> Width
+> Local Window
+> Implicit memory in KV Cache in Sparse Forcing
+> Query
+
+Lpersist Llocal     
+
+> Lcurrent
+> Persistent Block Sparse Attention(PBSA) Persistent Memory
+
+Q
+
+Kpersist Klocal                        
+
+> KV
+> Cache
+> 12345678
+> 112345678
+> Persistent Attention Local Block Sparse Attention
+> Time
+> Compress
+> Compress Compress
+> Select with Capacity CEvict
+> Restore
+> Y= PBSA(Q current , K persist , V persist , K local , V local )
+> Sink Blocks in
+> Persistent Memory
+> Query blocks
+> Local Blocks
+> Preserved Blocks in
+> Persistent Memory
+> Compressed
+> Block Reps Evicted Blocks
+> Ignored Block -wise
+> Attention
+> Block -wise
+> Attention
+
+# /Figure 3 Overview of Sparse Forcing. 
+
+3.2 Observation: Emergent Clustered Persistency and Local Block Sparse Attention 
+
+We observe two consistent attention patterns in autoregressive video diffusion rollouts that motivate Sparse Forcing. First, emergent persistency : over long horizons, attention concentrates on a small subset of historical blocks, forming vertically clustered persistent anchors that carry global context such as subject identity and scene layout. Second, locally diverse block sparsity : even within the recent window, attention allocation is highly structured and content-dependent, exhibiting a locally diagonal block-sparse pattern, as shown in Figure 2. These patterns suggest that long-horizon generation can benefit from retaining a compact set of persistent anchors while sparsifying attention within the local window. 
+
+Why Selective Preserving is Necessary. Full KV caching over the entire past context does not scale to the current long-horizon autoregressive video generation. For a 1.3B model generating a 1-minute video, the FP16 KV cache reaches 44.9 GB, i.e., 17 .26 × the parameter memory even at batch size 1. This necessitates a memory-bounded yet effective KV selective preserving mechanism for long-horizon rollouts. 
+
+Vertically Clustered Persistent Anchors. Figure 2 shows vertically clustered anchor regions in the contextual history ( 1 – 4 ): a small number of historical columns consistently receive substantial attention mass, while most past blocks contribute marginally. This observation indicates that preserving a limited anchor block set may be sufficient for stability under long-horizon rollouts. 
+
+Diverse Local Block Sparsity. Zooming into the local window in Figure 2, attention exhibits locally diagonal 
+
+block sparsity ( 5 ), reflecting structured short-term dependencies and leaving room to remove redundant dense computation. Using block-level scoring to select Top-K blocks, we achieve an attention token recall of 
+
+0.65 ± 0.11 at Top-K=25% over heads and layers, suggesting that a moderate budget already recovers most important blocks. 
+
+3.3 Autoregressive Video Generation in Sparse Forcing 
+
+A Structured Memory Decomposition. At autoregressive step t and diffusion timestep k, Sparse Forcing maintains an implicit memory in KV caches: 
+
+Mkt = Pt ∪ L kt , (2) where Pt is a discrete set of persistent and fully denoised spatiotemporal blocks extracted at k=0 that carry long-range semantic anchors at t, and Lkt is a local window containing the most recent spatiotemporally-contiguous blocks. Pt is shared across diffusion steps k to provide stable long-range anchors, and is updated by coarse-grained scoring over compressed block representations, whereas Lkt is updated by a sliding window as t advances, and partially refreshed at each (t, k ) by only updating current denoising blocks. Based on the 5emergence of persistence and block clustering discussed in Section 3.2, for Pt, we treat evicted blocks from Lkt
+
+as candidates and maintain Pt via Top-C retention.  
+
+> Persistent Block Sparse Attention (PBSA) in Sparse Forcing.
+
+Sparse Forcing maintains a bounded KV memory consisting of a persistent set of spatiotemporal blocks and a streaming local window, as shown in Figure 3. Concretely, at each autoregressive step we keep a persistent memory Pt with capacity |P t| ≤ C, which includes (i) sink blocks St as global anchors and (ii) a dynamic subset Dt selected from generation history, together with a local window Lt that stores the most recent blocks. Given current queries Qcur ∈ RNq ×d, persistent keys/values (KP , VP ) ∈ RNp×d, and local keys/values 
+
+(KL, VL) ∈ RNℓ×d, PBSA computes a single masked attention over concatenated keys/values: 
+
+K = [ KP ; KL], V = [ VP ; VL] (3) 
+
+Ycur = Softmax 
+
+ Qcur K⊤
+
+√d + M
+
+
+
+V (4) The mask M ∈ RNq ×(Np+Nℓ) enforces dense access to persistent anchors and block-sparse access within the local window: 
+
+M = 0Nq ×Np ML
+
+, ML[q, ℓ ] = log I[ℓ ∈ Ω( q)] (5) where log I[·] equals 0 for visible blocks and −∞ otherwise, and Ω( q) specifies visible local blocks for query block q. 
+
+> Blockified Compression.
+
+To enable efficient block-level scoring for maintaining the persistent set Pt while preserving spatiotemporal locality, we first blockify the latent into contiguous blocks and then compute compact block representatives. 
+
+Blockify and locality-preserving layout. Given a latent tensor X ∈ RT ×H×W ×d, we partition it into spatiotem-poral blocks of size (Bt, B h, B w), where each block contains B = BtBhBw tokens. This induces a two-level indexing: block indices (tb, h b, w b) and in-block indices (∆ t, ∆h, ∆w). We then reshape and permute X into a block-contiguous layout Xblk ∈ RNb×B×d, as elaborated in Section G, so that tokens within each block are stored contiguously in memory, enabling coalesced access and efficient block-level routing. 
+
+Block representatives. We use the superscript (·)c to denote compressed block representatives. On top of Xblk ,we compute compact block representatives for both queries and keys: 
+
+Qct = ϕQ(Qblk  
+
+> t
+
+), Kc 
+
+> :t
+
+= ϕK(Kblk :t ) (6) Here ϕQ(·) and ϕK(·) operators compress all B tokens in a block into a single representative, such as pooling, reducing the sequence length by a factor of B. As a result, Qct ∈ RN blk   
+
+> q×d
+
+and Kc 
+
+> :t
+
+∈ RN blk  
+
+> k×d
+
+, where 
+
+N blk  
+
+> q
+
+= Nq /B and N blk  
+
+> k
+
+= Nk/B . These block representatives are used only for coarse scoring and masking, while fine-grained attention operates on unmasked tokens. 
+
+> Coarse Scoring and Top-
+
+C Persistent Update. Using the compressed block representatives, we perform coarse routing to estimate the long-range relevance of historical blocks to the current generation step. Specifically, we compute a block-level attention matrix 
+
+At = Softmax Qct (Kc
+
+> :t
+
+)⊤
+
+√d
+
+!
+
+∈ RN cq ×N ck (7) where At[i, j ] measures how much the i-th query block attends to the j-th key block at the coarse level. To obtain a single importance score per key block, we aggregate attention weights across all query blocks: 
+
+st = 1
+
+N cqN cq
+
+X
+
+> i=1
+
+At[i, :] (8) yielding st ∈ RN ck that ranks historical blocks by their relevance to the current step. 6Algorithm 1 Autoregressive Diffusion Inference in Sparse Forcing  
+
+> Require:
+
+Local window size Llocal , Top-K 
+
+> Require:
+
+Persistent Memory Capacity C 
+
+> Require:
+
+Denoise timesteps {t1, . . . , t T } 
+
+> Require:
+
+Number of generated frames M 
+
+> Require:
+
+AR diffusion model Gθ (updates KV via GKV θ ) 
+
+> 1:
+
+Initialize model output Xθ ← [ ]  
+
+> 2:
+
+Initialize persistent memory P ← [ ] ▷ Capacity C 
+
+> 3:
+
+Initialize local window L ← [ ] ▷ Capacity Llocal   
+
+> 4: for
+
+i = 1 , . . . , M do  
+
+> 5:
+
+Initialize xitT ∼ N (0 , I )  
+
+> 6: for
+
+j = T, . . . , 1 do  
+
+> 7:
+
+Set ˆxi 
+
+> 0
+
+← Gθ (xitj ; tj , P, L) ▷ Apply PBSA with Top-K  
+
+> 8: if
+
+j = 1 then  
+
+> 9:
+
+Xθ .append(ˆ xi
+
+> 0
+
+) 
+
+> 10:
+
+(P, L) ← GKV θ (ˆ xi
+
+> 0
+
+; 0 , P, L) ▷ updates P, L  
+
+> 11: else
+> 12:
+
+Sample ϵ ∼ N (0 , I ) 
+
+> 13:
+
+Set xitj−1 ← Ψ(ˆ xi
+
+> 0
+
+, ϵ, t j−1)     
+
+> 14: end if
+> 15: end for
+> 16: end for
+> 17: return
+
+Xθ
+
+We maintain a bounded persistent memory by applying Top-C retention over candidate blocks. Let Et denote the set of candidate blocks recently evicted from the local window Lt. We update the persistent set by 
+
+Pt = Top -C Pt−1 ∪ E t; st
+
+, |P t| ≤ C (9) where Top -C(·) retains the C blocks with the highest aggregated scores. 2 This demand-driven update promotes blocks that consistently receive high coarse relevance to become long-range anchors, while evicting less useful history to enforce a fixed memory budget. 
+
+Block-Sparse Attention in Local Window. We maintain a sliding local window Lt and apply block sparsity only within Lt to reduce computation while preserving recent details. 
+
+Row-wise Top-K Block Selection. To instantiate the local sparsity pattern in Equation (4), we derive Ω( q) via lightweight coarse routing within Lt. Using compressed block representatives (Qc
+
+> cur
+
+, Kc
+
+> L
+
+), we compute 
+
+AL = Softmax 
+
+ Qc
+
+> cur
+
+(Kc
+
+> L
+
+)⊤
+
+√d
+
+
+
+(10) Then, we define the routed key-block set for each query block q by row-wise Top-K selection: 
+
+Ω( q) = arg TopK j AL[q, j ], |Ω( q)| = N blk  
+
+> ℓ
+
+× K (11) This induces a block-sparse local mask ML while keeping Pt fully visible and densely attended by all queries in Qcur .
+
+3.4 The Customized Kernels for Sparse Forcing 
+
+Sparse Forcing requires an efficient block-sparse attention kernel with persistent implicit KV memory, supporting both forward and backward execution. Most existing customized sparse-attention kernels for video generation are primarily developed for diffusion models, where the sparsity pattern is largely static (Li et al., 2025a; Xi et al., 2025) and the attention geometry is typically regular (e.g., fixed sequence length and a square QK ⊤ geometry with Lq = Lk) (Zhang et al., 2025b; Yang et al., 2025b). In contrast, Sparse Forcing 
+
+> 2Sink blocks are always retained as global anchors and are excluded from eviction.
+
+7Table 1 Comparison with relevant baselines. We compare Sparse Forcing with representative open-source video generation models of comparable scale and resolution. Best results are in bold and second-best results are underlined .
+
+> ♦
+
+: with pretraining; ⋄: without pretraining; ♠: [3,4,4] block size; ♣: [1,8,8] block size.                                                                         
+
+> Model #Params Resolution Throughput (FPS) ↑
+> Latency (s) ↓
+> Evaluation scores ↑
+> Total Quality Semantic
+> Diffusion models
+> LTX-VideoHaCohen et al. (2024) 1.9B 768 ×512 8.98 13.5 80.00 82.30 70.79 Wan2.1Wan et al. (2025) 1.3B 832 ×480 0.78 103 84.26 85.30 80.09
+> Chunk-wise autoregressive models
+> SkyReels-V2Chen et al. (2025a) 1.3B 960 ×540 0.49 112 82.67 84.70 74.53 MAGI-1Teng et al. (2025) 4.5B 832 ×480 0.19 282 79.18 82.04 67.74 CausVidYin et al. (2025) 1.3B 896 ×512 17.0 0.69 82.69 83.73 78.49 Self ForcingHuang et al. (2025) 1.3B 896 ×512 17.0 0.69 83.88 84.60 81.01 Sparse Forcing ⋄♠ 1.3B 896 ×512 19.9 0.59 83.99 84.65 81.36 Sparse Forcing ⋄♣ 1.3B 896 ×512 18.8 0.63 83.91 84.58 81.24 Sparse Forcing ♦♠1.3B 896 ×512 19.9 0.59 84.14 84.84 81.39
+> Table 2
+
+Comparison with baselines on long-horizon generation. ♦: with pretraining; ♠: [3,4,4] block size; ♣: [1,8,8] block size. Model FPS ↑ Latency/s ↓ VBench ↑(T/Q/S) 
+
+20-second length video 
+
+Self Forcing 14.4 0.83 82.09 / 82.48 / 80.51 Sparse Forcing ♦♠ 18.3 0.65 82.68 / 83.13 / 80.87 
+
+Sparse Forcing ♦♣ 17.9 0.67 82.31 / 82.64 / 81.01 
+
+1-minute length video 
+
+Self Forcing 13.9 0.87 78.93 / 79.48 / 76.70 Sparse Forcing ♦♠ 18.0 0.66 81.96 / 82.25 / 80.82 
+
+Sparse Forcing ⋄♣ 17.6 0.66 81.67 / 82.17 / 79.67 
+
+maintains a persistent implicit memory that is carried across autoregressive steps with bounded capacity, while attending to a dynamically selected set of blocks within local windows conditioned on the current context. Such a globally persistent and locally dynamic block sparse attention structure is not directly supported by prior GPU kernels, which typically assume limited sparsity layouts and lack primitives for persistent KV carry-over and selective updates. To bridge this gap, we implement Persistent Block-Sparse Attention (PBSA) kernel using ThunderKittens (Spec-tor et al., 2024), tailored for the coarse and fine stage of Sparse Forcing. PBSA supports persistent-block carry-over, dynamic block selection over the non-persistent region, enabling efficient end-to-end training and inference. Consequently, PBSA substantially reduces the runtime overhead of Sparse Forcing, making its training and inference practical at scale. 
+
+3.5 Training for Sparse Forcing 
+
+Sparse Forcing distills a pretrained bidirectional video diffusion model into a few-step causal autoregressive generator using the distribution matching distillation (DMD) loss. The full training procedure is provided in Section B. A training-free application of Sparse Forcing at inference introduces a train–test mismatch: the base model is optimized under a non-rolling cache and dense local attention assumption, whereas decoding operates with a dynamic cache and adaptive local attention, which can amplify compounding errors and manifest as visual artifacts. To close this gap, we enable dynamically updated cache and adaptive local attention during training, faithfully mitigating the mismatch and stabilizing rollouts beyond the training horizon. 85376 10752 21504                              
+
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> Speedup over FA2
+> Top-K = 6.25%
+> NL/Nc= 1
+> NL/Nc= 2
+> NL/Nc= 4
+> NL/Nc= 8
+> NP/NL= 0%
+> NP/NL= 25%
+> NP/NL= 50%
+> NP/NL= 100%
+> 5376 10752 21504
+> Block Sequence Length Nc
+> Top-K = 12.5%
+> NL/Nc= 1
+> NL/Nc= 2
+> NL/Nc= 4
+> NL/Nc= 8
+> NP/NL= 0%
+> NP/NL= 25%
+> NP/NL= 50%
+> NP/NL= 100%
+> 5376 10752 21504
+> Top-K = 25%
+> NL/Nc= 1
+> NL/Nc= 2
+> NL/Nc= 4
+> NL/Nc= 8
+> NP/NL= 0%
+> NP/NL= 25%
+> NP/NL= 50%
+> NP/NL= 100%
+
+Figure 4 End-to-end speedup of PBSA over FA2. 
+
+## 4 Experiments 
+
+4.1 Training and Evaluation Settings 
+
+Training. We train Sparse Forcing variants and baselines on 5-second video clips using 8 × NVIDIA H100 GPUs. We build Sparse Forcing on top of Wan2.1-T2V-1.3B (Wan et al., 2025) as the base text-to-video diffusion model. Following CausVid (Yin et al., 2025) and Self-Forcing (Huang et al., 2025), we initialize the base model under a causal attention mask using 16K ODE solution pairs sampled from the base model. Then, we use 4-step diffusion sampling during training and perform chunk-wise denoising, where each chunk contains 3 temporal latent frames. We adopt distribution matching distillation (DMD) with text prompts drawn from a filtered and LLM-extended version of VidProM (Wang and Yang, 2024). We train Sparse Forcing for 1200 steps with a batch size of 64 using AdamW. For memory compression, we use average pooling as the compression operator, and we set the persistent-memory capacity C = 6 frames and the local-window length to Llocal = 6 frames as well. We set Top-K = 25% for row-wise block sparse selection within local windows. The training dynamics and implementation details are in Sections A and C. 
+
+Evaluation. We evaluate 4,730 generated videos (946 prompts × 5 samples per prompt) using VBench (Huang et al., 2024) to assess both semantic alignment and perceptual quality. VBench reports 16 metrics including 9 semantic dimensions (e.g., spatial relationship and object class) and 7 perceptual-quality dimensions (e.g., aesthetic quality and imaging quality). Following (Huang et al., 2025), we rewrite text prompts with Qwen2.5-7B-Instruct. We additionally observe that dynamic degree and color metrics are particularly prone to degradation in long-horizon generation. 
+
+4.2 Quantitative Comparison 
+
+We evaluate Sparse Forcing on both short- and long-horizon video generation. Across all horizons, Sparse Forcing consistently improves generation quality while reducing peak memory and inference latency. Notably, when scaling to 20-second and 1-minute videos, 4 to 12 × longer rollouts than training, these gains hold without any extrapolation-specific optimization, yielding a dominant quality–efficiency profile over baselines. 
+
+Evaluation on Short Video. On 5-second short clips, Self Forcing degenerates to full attention since the window covers the entire sequence. Table 1 shows that Sparse Forcing achieves higher quality across evaluation metrics with a faster decoding speed and 42% less peak KV cache, compared with full attention. Notably, even when training-free, Sparse Forcing also improves generation quality over the baseline in a plug-and-play setting. A comprehensive evaluation of the VBench metrics is provided in Section D. 
+
+When adapted onto Long videos. Table 2 shows that, when extended to long-video generation, Sparse Forcing consistently outperforms the baseline in both semantic alignment and overall video quality, while achieving higher throughput and lower peak memory. This indicates favorable test-time scaling of Sparse Forcing beyond the training horizon. Additional generation examples are provided in Section F. 
+
+4.3 Qualitative Comparison 
+
+Figure 1 shows that Sparse Forcing sustains visually consistent long-horizon rollouts, largely preserving color tone and appearance coherence, whereas self forcing exhibits pronounced drift and accumulating artifacts. 9Figure 5 Qualitative long-horizon rollouts in a gallery scene. Sparse Forcing (trained, full) best preserves appearance consistency (color tone, stability, and identity consistency). 
+
+Figure 5 further diagnoses these failure modes and clarifies the roles of persistent memory and train–test alignment. Self forcing with a sliding window progressively compounds errors, leading to geometric distortion and color drift; Sparse Forcing using sink frames as persistent memory under the same KV budget, partially stabilizes the rollout, but flickering and ghosting remain. Meanwhile, Sparse Forcing with training-free dynamic persistent memory can introduce semantic rewrites, revealing a mismatch between learned retrieval dynamics and the imposed memory update rule. In contrast, the full Sparse Forcing model learns to dynamically update memory during training, substantially improving long-horizon appearance consistency and temporal coherence. Additional examples are provided in Section E. 
+
+4.4 Kernel Performance 
+
+We benchmark an end-to-end execution latency of the PBSA kernel on NVIDIA H100 96GB GPUs, and report the speedup over FlashAttention-2 (FA2) (Dao, 2024) in Figure 4. Detailed evaluations of the forward and backward passes are provided in Section I. Figure 4 brings a comprehensive understanding on the sparsity level (top-k block ratio), the local-window expansion ratio ( NL/N c), the persistent-to-local ratio ( NP /N L), and the per-block sequence length Nc. Across all evaluated settings, PBSA achieves consistent speedups over FA2, ranging from 1.16 × to 11 .11 ×. 
+
+> Impact of Sparsity, Local Window, and Persistence.
+
+PBSA yields larger gains under stronger local sparsity. As top-K decreases from 25% to 12 .5% and 6.25% , the peak speedup rises from 4.34 × to 7.29 × and 11 .11 ×.Meanwhile, speedups further improve with longer sequences and larger local windows, where block-level sparsity better amortizes attention cost and memory movement. Finally, PBSA is most effective when the persistent portion is compact, guiding effective hyperparameter settings in Sparse Forcing and further model design. A detailed latency breakdown is provided in Section H. 
+
+4.5 Ablation Study 
+
+We disentangle the impact of three core components in Sparse Forcing: (i) maintaining a persistent memory 
+
+P, (ii) applying block-sparse attention within the local window L, and (iii) with continuous pretraining. The results in Table 3 show that each component contributes meaningfully to long-horizon quality and/or decoding throughput, while the full model achieves the best overall trade-off between VBench dimensions and throughput. 10 Table 3 Ablation Study on Sparse Forcing. VBench dimension scores and throughput (FPS) on 20s generation.  
+
+> Method Dynamic Degree
+
+↑ Color ↑ FPS ↑
+
+Self Forcing 56.67 82.07 14.4    
+
+> Sparse Forcing 66.39 89.47
+
+18.3 w/o P 47.22 80.88 22.8 
+
+w/o BSA in L 50.93 87.45 17.6 w/o Cont. Pretrain 63.06 87.68 18.3 
+
+## 5 Conclusion 
+
+We provide an empirical characterization of long-horizon attention in autoregressive video diffusion rollouts, revealing emergent persistency and locally diagonal block sparsity. Guided by these findings, we propose Sparse Forcing, a trainable sparse-attention mechanism for autoregressive–diffusion hybrid video generation that improves long-range visual consistency while reducing decoding cost, together with an optimized kernel that supports irregular sparsity patterns for efficient training and deployment. 11 References 
+
+Roman Bachmann, Jesse Allardice, David Mizrahi, Enrico Fini, Oğuzhan Fatih Kar, Elmira Amirloo, Alaaeldin El-Nouby, Amir Zamir, and Afshin Dehghan. Flextok: Resampling images into 1d token sequences of flexible length. In Forty-second International Conference on Machine Learning , 2025. Fan Bao, Chongxuan Li, Yue Cao, and Jun Zhu. All are worth words: a vit backbone for score-based diffusion models. In NeurIPS 2022 Workshop on Score-Based Methods , 2022. Andreas Blattmann, Tim Dockhorn, Sumith Kulal, Daniel Mendelevitch, Maciej Kilian, Dominik Lorenz, Yam Levi, Zion English, Vikram Voleti, Adam Letts, et al. Stable video diffusion: Scaling latent video diffusion models to large datasets. arXiv preprint arXiv:2311.15127 , 2023. Tim Brooks, Bill Peebles, Connor Holmes, Will DePue, Yufei Guo, Li Jing, David Schnurr, Joe Taylor, Troy Luhman, Eric Luhman, et al. Video generation models as world simulators. OpenAI Blog , 1(8):1, 2024. Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. Language models are few-shot learners. Advances in neural information processing systems , 33:1877–1901, 2020. Boyuan Chen, Diego Martí Monsó, Yilun Du, Max Simchowitz, Russ Tedrake, and Vincent Sitzmann. Diffusion forcing: Next-token prediction meets full-sequence diffusion. Advances in Neural Information Processing Systems ,37:24081–24125, 2024. Guibin Chen, Dixuan Lin, Jiangping Yang, Chunze Lin, Junchen Zhu, Mingyuan Fan, Hao Zhang, Sheng Chen, Zheng Chen, Chengcheng Ma, et al. Skyreels-v2: Infinite-length film generative model. arXiv preprint arXiv:2504.13074 ,2025a. Junsong Chen, Yuyang Zhao, Jincheng Yu, Ruihang Chu, Junyu Chen, Shuai Yang, Xianbang Wang, Yicheng Pan, Daquan Zhou, Huan Ling, et al. Sana-video: Efficient video generation with block linear diffusion transformer. 
+
+arXiv preprint arXiv:2509.24695 , 2025b. Justin Cui, Jie Wu, Ming Li, Tao Yang, Xiaojie Li, Rui Wang, Andrew Bai, Yuanhao Ban, and Cho-Jui Hsieh. Self-forcing++: Towards minute-scale high-quality video generation. arXiv preprint arXiv:2510.02283 , 2025. Tri Dao. Flashattention-2: Faster attention with better parallelism and work partitioning. In The Twelfth International Conference on Learning Representations , 2024. Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. Flashattention: Fast and memory-efficient exact attention with io-awareness. Advances in neural information processing systems , 35:16344–16359, 2022. Kaifeng Gao, Jiaxin Shi, Hanwang Zhang, Chunping Wang, Jun Xiao, and Long Chen. Ca2-vdm: Efficient autoregressive video diffusion model with causal generation and cache sharing. In Forty-second International Conference on Machine Learning , 2025. Yuchao Gu, Weijia Mao, and Mike Zheng Shou. Long-context autoregressive video modeling with next-frame prediction. 
+
+arXiv preprint arXiv:2503.19325 , 2025. Agrim Gupta, Lijun Yu, Kihyuk Sohn, Xiuye Gu, Meera Hahn, Fei-Fei Li, Irfan Essa, Lu Jiang, and José Lezama. Photorealistic video generation with diffusion models. In European Conference on Computer Vision , pages 393–411. Springer, 2024. Yoav HaCohen, Nisan Chiprut, Benny Brazowski, Daniel Shalem, Dudu Moshe, Eitan Richardson, Eran Levin, Guy Shiran, Nir Zabari, Ori Gordon, et al. Ltx-video: Realtime video latent diffusion. arXiv preprint arXiv:2501.00103 ,2024. Chi Han, Qifan Wang, Hao Peng, Wenhan Xiong, Yu Chen, Heng Ji, and Sinong Wang. Lm-infinite: Zero-shot extreme length generalization for large language models. In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) ,pages 3991–4008, 2024. Jonathan Ho, William Chan, Chitwan Saharia, Jay Whang, Ruiqi Gao, Alexey Gritsenko, Diederik P Kingma, Ben Poole, Mohammad Norouzi, David J Fleet, et al. Imagen video: High definition video generation with diffusion models. arXiv preprint arXiv:2210.02303 , 2022a. Jonathan Ho, Tim Salimans, Alexey Gritsenko, William Chan, Mohammad Norouzi, and David J Fleet. Video diffusion models. Advances in neural information processing systems , 35:8633–8646, 2022b. 
+
+12 Wenyi Hong, Ming Ding, Wendi Zheng, Xinghan Liu, and Jie Tang. Cogvideo: Large-scale pretraining for text-to-video generation via transformers. In The Eleventh International Conference on Learning Representations , 2023. Xun Huang, Zhengqi Li, Guande He, Mingyuan Zhou, and Eli Shechtman. Self forcing: Bridging the train-test gap in autoregressive video diffusion. arXiv preprint arXiv:2506.08009 , 2025. Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si, Yuming Jiang, Yuanhan Zhang, Tianxing Wu, Qingyang Jin, Nattapol Chanpaisit, et al. Vbench: Comprehensive benchmark suite for video generative models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 21807–21818, 2024. Huiqiang Jiang, Yucheng Li, Chengruidong Zhang, Qianhui Wu, Xufang Luo, Surin Ahn, Zhenhua Han, Amir H Abdi, Dongsheng Li, Chin-Yew Lin, et al. Minference 1.0: Accelerating pre-filling for long-context llms via dynamic sparse attention. Advances in Neural Information Processing Systems , 37:52481–52515, 2024. Yang Jin, Zhicheng Sun, Ningyuan Li, Kun Xu, Hao Jiang, Nan Zhuang, Quzhe Huang, Yang Song, Yadong MU, and Zhouchen Lin. Pyramidal flow matching for efficient video generative modeling. In The Thirteenth International Conference on Learning Representations , 2025. Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and François Fleuret. Transformers are rnns: Fast autoregressive transformers with linear attention. In International conference on machine learning , pages 5156–5165. PMLR, 2020. Yeongmin Kim, Sotiris Anagnostidis, Yuming Du, Edgar Schönfeld, Jonas Kohler, Markos Georgopoulos, Albert Pumarola, Ali Thabet, and Artsiom Sanakoyeu. Autoregressive distillation of diffusion transformers. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 15745–15756, 2025. Akio Kodaira, Tingbo Hou, Ji Hou, Markos Georgopoulos, Felix Juefei-Xu, Masayoshi Tomizuka, and Yue Zhao. Streamdit: Real-time streaming text-to-video generation. arXiv preprint arXiv:2507.03745 , 2025. Weijie Kong, Qi Tian, Zijian Zhang, Rox Min, Zuozhuo Dai, Jin Zhou, Jiangfeng Xiong, Xin Li, Bo Wu, Jianwei Zhang, et al. Hunyuanvideo: A systematic framework for large video generative models. arXiv preprint arXiv:2412.03603 ,2024. Seon-Ho Lee, Jue Wang, Zhikang Zhang, David Fan, and Xinyu Li. Video token merging for long-form video understanding. In Proceedings of the 38th International Conference on Neural Information Processing Systems ,pages 13851–13871, 2024. Xingyang Li, Muyang Li, Tianle Cai, Haocheng Xi, Shuo Yang, Yujun Lin, Lvmin Zhang, Songlin Yang, Jinbo Hu, Kelly Peng, et al. Radial attention: O(nlogn) sparse attention with energy decay for long video generation. arXiv preprint arXiv:2506.19852 , 2025a. Yucheng Li, Huiqiang Jiang, Chengruidong Zhang, Qianhui Wu, Xufang Luo, Surin Ahn, Amir H Abdi, Dongsheng Li, Jianfeng Gao, Yuqing Yang, et al. Mminference: Accelerating pre-filling for long-context vlms via modality-aware permutation sparse attention. arXiv preprint arXiv:2504.16083 , 2025b. Kunhao Liu, Wenbo Hu, Jiale Xu, Ying Shan, and Shijian Lu. Rolling forcing: Autoregressive long video diffusion in real time. arXiv preprint arXiv:2509.25161 , 2025. Zichang Liu, Aditya Desai, Fangshuo Liao, Weitao Wang, Victor Xie, Zhaozhuo Xu, Anastasios Kyrillidis, and Anshumali Shrivastava. Scissorhands: Exploiting the persistence of importance hypothesis for llm kv cache compression at test time. Advances in Neural Information Processing Systems , 36:52342–52364, 2023. William Peebles and Saining Xie. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF international conference on computer vision , pages 4195–4205, 2023. Adam Polyak, Amit Zohar, Andrew Brown, Andros Tjandra, Animesh Sinha, Ann Lee, Apoorv Vyas, Bowen Shi, Chih-Yao Ma, Ching-Yao Chuang, et al. Movie gen: A cast of media foundation models. arXiv preprint arXiv:2410.13720 ,2024. Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, Ilya Sutskever, et al. Language models are unsupervised multitask learners. OpenAI blog , 1(8):9, 2019. Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer. High-resolution image synthesis with latent diffusion models. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 10684–10695, 2022. Florian Schmidt. Generalization in generation: A closer look at exposure bias. In Proceedings of the 3rd Workshop on Neural Generation and Translation , pages 157–167, 2019. 
+
+13 Uriel Singer, Adam Polyak, Thomas Hayes, Xi Yin, Jie An, Songyang Zhang, Qiyuan Hu, Harry Yang, Oron Ashual, Oran Gafni, et al. Make-a-video: Text-to-video generation without text-video data. arXiv preprint arXiv:2209.14792 ,2022. Kiwhan Song, Boyuan Chen, Max Simchowitz, Yilun Du, Russ Tedrake, and Vincent Sitzmann. History-guided video diffusion. In Forty-second International Conference on Machine Learning , 2025. Benjamin F Spector, Simran Arora, Aaryan Singhal, Daniel Y Fu, and Christopher Ré. Thunderkittens: Simple, fast, and adorable ai kernels. arXiv preprint arXiv:2410.20399 , 2024. Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. Quest: Query-aware sparsity for efficient long-context llm inference. In Forty-first International Conference on Machine Learning , 2024. Hansi Teng, Hongyu Jia, Lei Sun, Lingzhi Li, Maolin Li, Mingqiu Tang, Shuai Han, Tianning Zhang, WQ Zhang, Weifeng Luo, et al. Magi-1: Autoregressive video generation at scale. arXiv preprint arXiv:2505.13211 , 2025. Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianxiao Yang, et al. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 , 2025. Wenhao Wang and Yi Yang. Vidprom: A million-scale real prompt-gallery dataset for text-to-video diffusion models. 
+
+Advances in Neural Information Processing Systems , 37:65618–65642, 2024. Haoyu Wu, Jingyi Xu, Hieu Le, and Dimitris Samaras. Importance-based token merging for efficient image and video generation. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 4983–4995, 2025. Haocheng Xi, Shuo Yang, Yilong Zhao, Chenfeng Xu, Muyang Li, Xiuyu Li, Yujun Lin, Han Cai, Jintao Zhang, Dacheng Li, et al. Sparse video-gen: Accelerating video diffusion transformers with spatial-temporal sparsity. In 
+
+Forty-second International Conference on Machine Learning , 2025. Yifei Xia, Suhan Ling, Fangcheng Fu, Yujie Wang, Huixia Li, Xuefeng Xiao, and Bin Cui. Training-free and adaptive sparse attention for efficient long video generation. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , pages 15982–15993, October 2025. Chaojun Xiao, Pengle Zhang, Xu Han, Guangxuan Xiao, Yankai Lin, Zhengyan Zhang, Zhiyuan Liu, and Maosong Sun. Infllm: Training-free long-context extrapolation for llms with an efficient context memory. Advances in Neural Information Processing Systems , 37:119638–119661, 2024a. Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. In The Twelfth International Conference on Learning Representations , 2024b. Guangxuan Xiao, Jiaming Tang, Jingwei Zuo, Shang Yang, Haotian Tang, Yao Fu, Song Han, et al. Duoattention: Efficient long-context llm inference with retrieval and streaming heads. In The Thirteenth International Conference on Learning Representations , 2025. Enze Xie, Junsong Chen, Junyu Chen, Han Cai, Haotian Tang, Yujun Lin, Zhekai Zhang, Muyang Li, Ligeng Zhu, Yao Lu, et al. Sana: Efficient high-resolution image synthesis with linear diffusion transformers. arXiv preprint arXiv:2410.10629 , 2024. Enze Xie, Junsong Chen, Yuyang Zhao, Jincheng YU, Ligeng Zhu, Yujun Lin, Zhekai Zhang, Muyang Li, Junyu Chen, Han Cai, et al. Sana 1.5: Efficient scaling of training-time and inference-time compute in linear diffusion transformer. In Forty-second International Conference on Machine Learning , 2025. Ruyi Xu, Guangxuan Xiao, Haofeng Huang, Junxian Guo, and Song Han. Xattention: Block sparse attention with antidiagonal scoring. In Forty-second International Conference on Machine Learning , 2025. Shuai Yang, Wei Huang, Ruihang Chu, Yicheng Xiao, Yuyang Zhao, Xianbang Wang, Muyang Li, Enze Xie, Yingcong Chen, Yao Lu, et al. Longlive: Real-time interactive long video generation. arXiv preprint arXiv:2509.22622 , 2025a. Shuo Yang, Haocheng Xi, Yilong Zhao, Muyang Li, Jintao Zhang, Han Cai, Yujun Lin, Xiuyu Li, Chenfeng Xu, Kelly Peng, et al. Sparse videogen2: Accelerate video generation with sparse attention via semantic-aware permutation. 
+
+arXiv preprint arXiv:2505.18875 , 2025b. Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng Xu, Yuanming Yang, Wenyi Hong, Xiaohan Zhang, Guanyu Feng, et al. Cogvideox: Text-to-video diffusion models with an expert transformer. In The Thirteenth International Conference on Learning Representations , 2025c. 
+
+14 Tianwei Yin, Michaël Gharbi, Taesung Park, Richard Zhang, Eli Shechtman, Fredo Durand, and Bill Freeman. Improved distribution matching distillation for fast image synthesis. Advances in neural information processing systems , 37:47455–47487, 2024a. Tianwei Yin, Michaël Gharbi, Richard Zhang, Eli Shechtman, Fredo Durand, William T Freeman, and Taesung Park. One-step diffusion with distribution matching distillation. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 6613–6623, 2024b. Tianwei Yin, Qiang Zhang, Richard Zhang, William T Freeman, Fredo Durand, Eli Shechtman, and Xun Huang. From slow bidirectional to fast autoregressive video diffusion models. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 22963–22974, 2025. Jingyang Yuan, Huazuo Gao, Damai Dai, Junyu Luo, Liang Zhao, Zhengyan Zhang, Zhenda Xie, Yuxing Wei, Lean Wang, Zhiping Xiao, et al. Native sparse attention: Hardware-aligned and natively trainable sparse attention. In 
+
+Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 23078–23097, 2025. Jintao Zhang, Chendong Xiang, Haofeng Huang, Jia Wei, Haocheng Xi, Jun Zhu, and Jianfei Chen. Spargeattn: Accurate sparse attention accelerating any model inference. arXiv preprint arXiv:2502.18137 , 2025a. Peiyuan Zhang, Yongqi Chen, Haofeng Huang, Will Lin, Zhengzhong Liu, Ion Stoica, Eric P Xing, and Hao Zhang. Faster video diffusion with trainable sparse attention. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025b. Peiyuan Zhang, Yongqi Chen, Runlong Su, Hangliang Ding, Ion Stoica, Zhengzhong Liu, and Hao Zhang. Fast video generation with sliding tile attention. In Forty-second International Conference on Machine Learning , 2025c. Tianyuan Zhang, Sai Bi, Yicong Hong, Kai Zhang, Fujun Luan, Songlin Yang, Kalyan Sunkavalli, William T Freeman, and Hao Tan. Test-time training done right. arXiv preprint arXiv:2505.23884 , 2025d. Yuechen Zhang, Jinbo Xing, Bin Xia, Shaoteng Liu, Bohao Peng, Xin Tao, Pengfei Wan, Eric Lo, and Jiaya Jia. Training-free efficient video generation via dynamic token carving. arXiv preprint arXiv:2505.16864 , 2025e. Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, et al. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Processing Systems , 36:34661–34710, 2023. Tianchen Zhao, Tongcheng Fang, Haofeng Huang, Rui Wan, Widyadewi Soedarmadji, Enshu Liu, Shiyao Li, Zinan Lin, Guohao Dai, Shengen Yan, et al. Vidit-q: Efficient and accurate quantization of diffusion transformers for image and video generation. In The Thirteenth International Conference on Learning Representations , 2025. Zangwei Zheng, Xiangyu Peng, Tianji Yang, Chenhui Shen, Shenggui Li, Hongxin Liu, Yukun Zhou, Tianyi Li, and Yang You. Open-sora: Democratizing efficient video production for all. arXiv preprint arXiv:2412.20404 , 2024. 
+
+15 Appendix 
+
+## A Evaluation across training Steps 
+
+Figure 6 qualitatively visualizes how Sparse Forcing evolves over training, using three representative video prompts and three snapshots of the model state. At step 0 (regression-only), the model typically collapses to low-frequency, over-smoothed predictions, and temporal details are weakly grounded, resulting in blurred frames and unstable motion. As causal distillation training proceeds, we observe a consistent coarse-to-fine refinement: by step 300, the model begins to recover object boundaries and salient appearance cues, while motion becomes more coherent across frames. By step 600, Sparse Forcing produces sharp spatial details and temporally consistent dynamics across all three examples. This suggests that, even under the sparse-memory regime enforced during training, causal distillation still enables the model to gradually adapt and improve temporal modeling capability. Training Step = 0                
+
+> (Regression Only) Training Step = 300 Training Step = 600 Training Step = 0
+> (Regression Only) Training Step = 300 Training Step = 600 Training Step = 0
+> (Regression Only) Training Step = 300 Training Step = 600
+> Figure 6
+
+Qualitative results at different training steps on three video samples in Sparse Forcing. 
+
+## B Training Algorithm for Sparse Forcing 
+
+The training algorithm is given in Algorithm 2. During training, we only enable gradient computation at a stochastic diffusion timestep to make training faster, following the training process in (Huang et al., 2025). 
+
+## C Implementation Details 
+
+Training hyperparameters. The training hyperparameters are listed in Table 4. 
+
+## D Full VBench Evaluations 
+
+Table 5 reports a full breakdown over all 16 VBench dimensions, comparing Sparse Forcing against the Self Forcing baseline across 5-second, 20-second, and 1-minute generation. On 5-second short videos, Sparse 16 Algorithm 2 Sparse Forcing Training  
+
+> Require:
+
+Local window size Llocal , Top-K 
+
+> Require:
+
+Persistent Memory Capacity C 
+
+> Require:
+
+Denoise timesteps {t1, . . . , t T } 
+
+> Require:
+
+Number of video frames N 
+
+> Require:
+
+AR diffusion model Gθ (Updates KV via GKV θ )  
+
+> 1: loop
+> 2:
+
+Initialize model output Xθ ← [ ]  
+
+> 3:
+
+Initialize persistent memory P ← [ ] ▷ Capacity C 
+
+> 4:
+
+Initialize local window L ← [ ] ▷ Capacity Llocal  
+
+> 5:
+
+Sample s ∼ Uniform(1 , 2, . . . , T )  
+
+> 6: for
+
+i = 1 , . . . , N do  
+
+> 7:
+
+Initialize xitT ∼ N (0 , I )  
+
+> 8: for
+
+j = T, . . . , s do   
+
+> 9: if
+
+j = s then  
+
+> 10:
+
+Enable gradient comp.  
+
+> 11:
+
+Set ˆxi 
+
+> 0
+
+← Gθ (xitj ; tj , P, L) ▷ Apply PBSA with Top-K 
+
+> 12:
+
+Xθ .append(ˆ xi
+
+> 0
+
+) 
+
+> 13:
+
+Disable gradient comp.  
+
+> 14:
+
+Cache P, L ← GKV θ (ˆ xi
+
+> 0
+
+; 0 , P, L) ▷ Apply PBSA with Top-K and Update P and L  
+
+> 15: else
+> 16:
+
+Disable gradient comp.  
+
+> 17:
+
+Set ˆxi 
+
+> 0
+
+← Gθ (xitj ; tj , P, L) ▷ Apply PBSA with Top-K 
+
+> 18:
+
+Sample ϵ ∼ N (0 , I ) 
+
+> 19:
+
+Set xitj−1 ← Ψ(ˆ xi
+
+> 0
+
+, ϵ, t j−1)    
+
+> 20: end if
+> 21: end for
+> 22: end for
+> 23:
+
+Update θ via Distribution matching distillation loss  
+
+> 24: end loop
+
+Forcing generally improves semantic alignment and generation quality. It yields higher subject and background consistency, better overall consistency, and stronger temporal style. Notably, the gains are most pronounced on semantics-heavy dimensions, including human action, object class, multiple objects, and scene, suggesting more faithful prompt-following and more stable object-level representations even at short horizons. As the rollout length increases, the advantage of Sparse Forcing becomes more evident. On 1-minute generation, Sparse Forcing substantially reduces long-horizon drift, improving subject/background consistency, and color fidelity, while also strengthening compositional metrics such as multiple objects and spatial relationship. We also observe that motion-oriented scores such as temporal flickering and motion smoothness can be slightly lower for Sparse Forcing in some settings, which is consistent with a trade-off where maintaining richer dynamics may introduce mild temporal artifacts. Overall, the full-metric evaluation supports that Sparse Forcing improves semantic correctness and long-horizon consistency, with the largest gains emerging as generation extends to the minute scale. 
+
+## E Ablated Comparison 
+
+Figure 7 shows a comparison for different Sparse Forcing models and the baseline. The prompts used for generated videos are in the following: “A modern art museum featuring a vibrant array of colorful abstract paintings. The walls are white, providing a stark contrast to the bright, expressive artworks hanging on them. Various artists’ works are displayed, showcasing a mix of styles including geometric shapes, splashes of paint, and bold brushstrokes. Visitors move 17 Table 4 Implementation details and training hyperparameters.  
+
+> Item Value
+
+Real score network (DMD) Wan2.1-T2V-14B 
+
+CFG weight 3.0
+
+Critic initialization Wan2.1-T2V-1.3B 
+
+Batch size 64 
+
+Optimizer ( Gθ ) AdamW Optimizer ( fψ ) AdamW AdamW β1 / β2 0 / 0.999 
+
+AdamW ϵ 10 −8
+
+Weight decay 0.01 
+
+Learning rate ( Gθ ) 2 × 10 −6
+
+Learning rate ( fψ ) 4 × 10 −7
+
+Generator/Critic Update ratio 5:1 
+
+EMA decay 0.99   
+
+> Table 5 VBench Evaluation on different dimensions (%) across generation lengths.
+
+We compare Self Forcing and Sparse Forcing under 5-second, 20-second, and 1-minute generation. The better result within each pair is highlighted in bold.   
+
+> 5 seconds 20 seconds 1 minute Dimension
+
+Self Forcing Sparse Forcing Self Forcing Sparse Forcing Self Forcing Sparse Forcing 
+
+subject consistency ↑ 94.82 96.19 91.52 93.12 85.48 91.52 
+
+background consistency ↑ 95.80 96.77 93.12 94.13 88.12 92.68 
+
+temporal flickering ↑ 98.84 99.12 98.81 98.07 98.81 97.71 motion smoothness ↑ 98.41 98.10 98.35 97.62 98.31 97.50 dynamic degree ↑ 69.44 61.11 56.67 66.39 56.39 69.17 
+
+aesthetic quality ↑ 67.15 67.90 65.72 66.22 61.86 64.71 
+
+imaging quality ↑ 70.75 69.85 69.37 69.49 67.84 68.58 
+
+overall consistency ↑ 25.42 26.74 27.14 26.89 26.63 26.90 
+
+temporal style ↑ 22.73 24.15 24.56 24.43 24.32 24.52 
+
+human action ↑ 80.80 97.00 96.20 95.60 95.40 95.60 
+
+object class ↑ 88.49 95.65 94.32 93.59 89.08 93.07 
+
+multiple objects ↑ 74.70 88.14 85.03 86.80 76.77 83.60 
+
+scene ↑ 44.97 56.72 55.81 57.53 54.99 54.29 appearance style ↑ 20.62 20.54 20.96 20.66 21.20 20.89 color ↑ 89.81 89.87 82.07 89.47 71.70 86.54 
+
+spatial relationship ↑ 77.10 81.27 83.74 79.23 76.38 77.91 
+
+gracefully among the exhibits, admiring the diverse collection. The lighting is soft and diffused, enhancing the colors and textures of each piece. Wide shots capture the expansive gallery spaces, while close-ups highlight individual paintings. The atmosphere is serene and inviting, encouraging viewers to explore and appreciate the art.” “A cheerful, fuzzy panda playing a guitar near a warm campfire. The panda has soft, black patches against a white fluffy coat, with large, expressive eyes filled with joy. It is sitting comfortably, strumming the strings with its front paws. Flames from the campfire flicker and dance, casting gentle shadows on the ground. In the background, a majestic snow-capped mountain rises, its peaks dusted with snow under a clear blue sky. The scene is captured in a medium shot, emphasizing the cozy, serene atmosphere of the winter landscape.” “Oil painting style, depicting a couple dressed in elegant evening attire walking home under heavy rain. The man is wearing a black tuxedo with a bow tie, while the woman is in a flowing evening gown with a fitted bodice and full skirt, adorned with intricate lace and embroidery. They are holding umbrellas, but the rain is so intense that water droplets are visible around them. The background showcases a dimly lit city street with blurred lights from distant buildings. Both s are positioned close together, sharing an umbrella, with a slightly hunched posture due to the rain. The scene captures the romantic yet challenging atmosphere of a sudden downpour. Medium shot, focusing on the couple’s interaction and the surrounding environment.” 18 0s 2s 4s 6s 8s 18s 20s14s 16s …                  
+
+> Sparse -Forcing (training -free, w/
+> Dynamic Persistent Memory )
+> Self -Forcing (trained, w/o
+> Persistent Memory)
+> Sparse -Forcing (trained, w/
+> Sink Persistent Memory)
+> Sparse -Forcing(trained, full)
+> Sparse -Forcing (training -free, w/
+> Dynamic Persistent Memory )
+> Self -Forcing (trained, w/o
+> Persistent Memory)
+> Sparse -Forcing (trained, w/
+> Sink Persistent Memory)
+> Sparse -Forcing(trained, full)
+> Sparse -Forcing (training -free, w/
+> Dynamic Persistent Memory )
+> Self -Forcing (trained, w/o
+> Persistent Memory)
+> Sparse -Forcing (trained, w/
+> Sink Persistent Memory)
+> Sparse -Forcing(trained, full)
+
+Figure 7 A comparison for different Sparse Forcing models and the baseline. 
+
+## F More Generation Samples 
+
+We show generation samples on 5-second short video. The prompts are: “A serene and tranquil tableau of an alley during early morning, with soft golden sunlight filtering through narrow gaps between tall buildings. The alley is clean and quiet, with cobblestone paving stones and small patches of green moss growing sporadically along the walls. A single old tree stands at one end, casting long shadows across the ground. The background showcases a mix of residential and commercial buildings, their facades weathered and painted in various pastel shades. The atmosphere is calm and peaceful, with a sense of quietude that invites contemplation. Wide shot, static scene.” “A serene countryside landscape featuring a gentle cow grazing in the foreground and a majestic elephant standing gracefully in the background. The cow has a calm, content expression as it munches on grass, while the elephant displays a peaceful demeanor, its large ears flapping gently in the breeze. Both animals are set against a backdrop of rolling hills, lush greenery, and a clear blue sky. The cow is positioned close to the viewer, while the elephant is further away, creating depth and scale. The scene captures the natural harmony between these two distinct creatures. Medium shot focusing on both animals.” “A young adult male is skateboarding down a city street during daytime. He has tousled brown hair, wears a black graphic t-shirt, dark blue jeans, and white sneakers. He is performing a kickflip trick, mid-air, with his skateboard rotating underneath him. The urban environment includes parked cars, street signs, and pedestrians in the background. The camera captures this action from a low angle, focusing on the skateboarder as he skillfully executes the trick. The scene is vibrant with sunlight casting shadows on the pavement.” “A person in a green hoodie and jeans is planting trees in a sunny meadow. They are bending down to place a sapling into a freshly dug hole, then carefully covering it with soil. The person has curly hair and a determined expression. In the background, there are several other newly planted trees, and wildflowers bloom around them. The scene has a vibrant, hopeful feel, emphasizing the importance of reforestation. Medium close-up shot focusing on the person’s hands and the sapling.” “A warm and tender moment captured in a close-up shot, featuring a person embracing another person in a 19 Sparse 
+
+Forcing 
+
+0s  5s …
+
+Sparse 
+
+Forcing 
+
+Sparse 
+
+Forcing 
+
+Sparse 
+
+Forcing 
+
+Sparse 
+
+Forcing 
+
+Sparse 
+
+Forcing 
+
+Self 
+
+Forcing 
+
+Sparse 
+
+Forcing 
+
+Self 
+
+Forcing Figure 8 Samples on 5-second short-video generation for Sparse Forcing. 
+
+tight hug. Both individuals have their arms wrapped around each other, with one person’s head resting gently on the other’s shoulder. They appear to be sharing a loving and emotional connection. The scene is set in a cozy, dimly lit room with soft ambient lighting, creating a serene and intimate atmosphere. The focus is on the expressions of affection and comfort displayed through body language and facial expressions, conveying a sense of security and warmth.” “A person is grooming a golden retriever in a cozy living room. The person, wearing a pastel-colored apron, gently brushes the dog’s fur with a soft-bristled brush. The golden retriever is sitting obediently on a plush rug, wagging its tail occasionally. The room has warm lighting and is decorated with family photos and plants. The scene focuses on close-up shots of the person’s hands working on the dog and the dog’s face, showing expressions of comfort and relaxation.” Additional long-video generation samples comparing Sparse Forcing with self forcing are shown in Figure 9. The prompts are: “A large great white shark is swimming gracefully through the vast, deep blue ocean. Its sleek, muscular body cuts through the water as it propels forward with powerful tail strokes. The shark’s dorsal fin slices through the surface, while smaller fish dart around it. The camera begins at a wide shot of the shark and the surrounding ocean, then smoothly zooms in to focus closely on the shark’s sharp teeth and piercing eyes. The scene is filled with sunlight filtering through the water, creating a dynamic interplay of light and shadow. Close-up underwater perspective.” “In super slow motion, a friendly panda bear sits at a cozy café table in Paris. The panda is wearing a small, stylish beret and is seated comfortably in a chair. It holds a steaming cup of coffee delicately with both paws, sipping from a straw inserted into the cup. The panda’s black eyes are focused on the cup with a curious yet 20 Sparse   
+
+> Forcing
+> Self
+> Forcing
+> 0s 20s …
+> Sparse
+> Forcing
+> Self
+> Forcing
+> Sparse
+> Forcing
+> Self
+> Forcing
+> Sparse
+> Forcing
+> Self
+> Forcing
+> Sparse
+> Forcing
+> Self
+> Forcing
+> Sparse
+> Forcing
+> Self
+> Forcing Figure 9 Samples on 20-second long-video generation for Self Forcing and Sparse Forcing.
+
+relaxed expression. The café background showcases elegant Parisian decor, including vintage posters and soft lighting, with other patrons subtly visible in the periphery. The scene captures the panda’s gentle movements and the delicate steam rising from the coffee in a close-up shot.” “A joyful, playful Corgi running and frolicking in a vibrant park during sunset. The Corgi has a cheerful expression with its tail wagging excitedly as it jumps over small obstacles and chases after a ball. The dog has short legs, a sturdy build, and a fluffy coat. The background showcases a beautiful orange and pink sky with tall grass swaying gently in the breeze. The scene transitions from a wide shot of the park to a close-up of the Corgi, emphasizing its lively actions and the warm, serene atmosphere.” “A person is cycling through a scenic park trail. The rider is wearing a helmet, casual clothes, and sunglasses, pedaling steadily. They are mid-action, leaning slightly forward, with one hand on the handlebars and the other hanging loosely. The environment around them includes lush green trees, blooming flowers, and a winding dirt path. The sun is shining brightly, casting dappled shadows through the leaves. The scene captures a close-up of the rider from a side angle, focusing on their determined expression and the motion of the bicycle wheels.” “A close-up of a person styling their hair with a handheld hair dryer. The person, with a focused expression, holds the hair dryer in one hand and uses a brush in the other to smooth their hair. They are standing in front of a bathroom mirror, which reflects their determined face and the steam from the hair dryer. The 21 background includes a typical bathroom setup with a towel rack and a sink. The person is mid-action, with natural motion captured in a medium shot that emphasizes the interaction between the person and the hair dryer.” “A still frame showing a busy parking lot during a sunny day. The scene includes multiple cars of various makes and models parked neatly in rows. In the background, there are tall office buildings with glass facades reflecting sunlight. The pavement is clean and well-maintained, with clear parking lines and spaces marked. A few people can be seen walking between cars, and a couple of vehicles are driving in and out of the lot. The overall atmosphere is calm and orderly. Wide shot, static scene.” 
+
+## G Rearrange for Locality Preserving 
+
+Algorithm 3 Locality-Preserving Spatiotemporal Block Rearrange  
+
+> Require:
+
+Latent tensor X ∈ RT ×H×W ×d ▷ d : feature dim, d = H × dh 
+
+> Require:
+
+Block shape (Bt, B h, B w) 
+
+> Ensure:
+
+Block-major tensor Xblk ∈ RNb×B×d 
+
+> 1:
+
+Nt ← T /B t, Nh ← H/B h, Nw ← W/B w 
+
+> 2:
+
+B ← Bt · Bh · Bw, Nb ← Nt · Nh · Nw ▷ B : #tokens per block; Nb: #blocks 3: X ← reshape( X, [Nt, B t, N h, B h, N w, B w, d ]) ▷ group into blocks 4: X ← permute( X, [Nt, N h, N w, B t, B h, B w, d ]) ▷ block-contiguous layout 5: Xblk ← reshape( X, [Nb, B, d ]) ▷ flatten to block-major 6: return Xblk 
+
+Algorithm 3 summarizes the locality-preserving reshape that converts a spatiotemporal latent tensor into a block-major layout. Given a latent tensor X ∈ RT ×H×W ×d and a block shape (Bt, B h, B w), we partition the T × H × W grid into Nt = T /B t, Nh = H/B h, and Nw = W/B w blocks, each containing B = BtBhBw
+
+tokens. First, we reshape X into a six-dimensional view that explicitly separates block indices from intra-block coordinates, and then permutes dimensions so that block indices (nt, n h, n w) are contiguous. Finally, we flatten the tensor into a matrix Xblk ∈ RNb×B×d with Nb = NtNhNw, where each row corresponds to one spatiotemporal block and tokens within a block are stored contiguously. This layout is convenient for our blockwise sparse computation: it preserves local spatiotemporal neighborhoods, enables coalesced memory access when loading a block. In practice, Xblk serves as the common interface between the model-side tensor representation and our block-sparse attention kernels, allowing block-level selection and compute to be implemented as contiguous reads and writes with minimal indexing overhead. 
+
+## H Analysis and breakdown of PBSA  
+
+> Table 6
+
+Latency breakdown of PBSA kernel for a 65536-length KV sequence with 4096-token persistent memory and 6.25% local block sparsity.  
+
+> Operation Percentage (%)
+
+Block Compression 2.51 Block Representative Attention 1.39 Block Representative Broadcasting 1.73 Row-wise Top-K Block Selection 9.52 Generate Fine-Stage Mask 9.52 Block Sparse Attention 73.16 Others 2.16 To understand where computation is spent in the customized PBSA kernel, we profile the end-to-end latency and decompose it into major stages. Table 6 reports the latency breakdown for a representative configuration 22 Table 7 Benchmarking kernel latency for PBSA and FA2(forward and backward). 
+
+Top-K NC NL/N C NP /N L NKV 
+
+Forward Backward PBSA(ms) FA2(ms) Speedup PBSA(ms) FA2(ms) Speedup 0.0625 5376 2 0.25 13440 0.691 1.314 1.90 × 1.301 4.165 3.20 ×
+
+0.0625 5376 2 0.50 16128 0.892 1.647 1.85 × 1.786 4.917 2.75 ×
+
+0.0625 5376 4 0.25 26880 1.025 2.739 2.67 × 2.279 8.079 3.55 ×
+
+0.0625 5376 4 0.50 32256 1.460 3.428 2.35 × 3.560 9.269 2.60 ×
+
+0.0625 21504 2 0.25 53760 4.847 21.570 4.45 × 13.666 63.109 4.62 ×
+
+0.0625 21504 2 0.50 64512 8.740 26.236 3.00 × 23.338 74.533 3.19 ×
+
+0.0625 21504 4 0.25 107520 10.429 43.533 4.17 × 26.089 124.094 4.76 ×
+
+0.0625 21504 4 0.50 129024 16.161 52.864 3.27 × 45.830 148.566 3.24 ×
+
+0.1250 5376 2 0.25 13440 0.737 1.368 1.86 × 1.431 4.491 3.14 ×
+
+0.1250 5376 2 0.50 16128 0.956 1.658 1.73 × 1.985 4.908 2.47 ×
+
+0.1250 5376 4 0.25 26880 1.121 2.731 2.44 × 2.544 8.136 3.20 ×
+
+0.1250 5376 4 0.50 32256 1.526 3.529 2.31 × 3.871 9.292 2.40 ×
+
+0.1250 21504 2 0.25 53760 5.599 21.642 3.87 × 15.670 63.376 4.04 ×
+
+0.1250 21504 2 0.50 64512 9.614 26.170 2.72 × 26.071 75.054 2.88 ×
+
+0.1250 21504 4 0.25 107520 12.099 43.353 3.58 × 30.399 124.289 4.09 ×
+
+0.1250 21504 4 0.50 129024 18.342 52.885 2.88 × 51.079 148.460 2.91 ×
+
+0.2500 5376 2 0.25 13440 0.813 1.377 1.69 × 1.643 4.427 2.69 ×
+
+0.2500 5376 2 0.50 16128 1.052 1.719 1.63 × 2.329 4.948 2.13 ×
+
+0.2500 5376 4 0.25 26880 1.315 2.730 2.08 × 3.083 8.143 2.64 ×
+
+0.2500 5376 4 0.50 32256 1.739 3.449 1.98 × 4.591 9.282 2.02 ×
+
+0.2500 21504 2 0.25 53760 6.838 21.622 3.16 × 19.334 63.192 3.27 ×
+
+0.2500 21504 2 0.50 64512 11.164 26.192 2.35 × 31.594 74.546 2.36 ×
+
+0.2500 21504 4 0.25 107520 15.022 43.410 2.89 × 39.637 124.244 3.13 ×
+
+0.2500 21504 4 0.50 129024 21.966 52.801 2.40 × 60.628 148.350 2.45 ×
+
+with a 65,536-length KV sequence, 4,096-token persistent memory, and 6.25% local block sparsity. The fine-stage Block Sparse Attention dominates the runtime (73.16%), indicating that PBSA is primarily compute-bound in the sparse attention computation rather than in selection and mask-construction overhead. The coarse block representative pathway is lightweight: Block Representative Attention and its broadcasting together account for only 3.12%. In contrast, row-wise Top-K block selection and fine-stage mask generation introduce a moderate overhead (19.04%), highlighting an additional optimization opportunity on the attention kernel. 
+
+## I Measured Latency for both forward-pass and backward-pass of PBSA on H100 
+
+Table 7 benchmarks the averaged latency for both forward- and backward- passes in PBSA and the baseline FA2 across different configurations on Nvidia H100 96G. 23 J Broader Societal Impact 
+
+This work improves the efficiency, scalability and generation quality of both short-horizon and long-horizon video generation by introducing Sparse Forcing and an optimized sparse-attention kernel. By reducing peak KV-cache usage and accelerating decoding stages, it can lower the compute barrier for video generation, enabling broader access for research and creative applications and potentially reducing energy consumed per generated samples when replacing more expensive inference. 
+
+## K Reproducibility and Limitations 
+
+We will release code, training and evaluation recipes, and our PBSA kernel implementation to facilitate reproducibility and adoption. A limitation of the current work is that we evaluate Sparse Forcing on a single pretrained video diffusion backbone and a fixed resolution; extending our analysis to other backbones and higher resolutions is an interesting direction for future work. 24
