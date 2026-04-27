@@ -1,0 +1,535 @@
+Title: Divide-then-Diagnose: Weaving Clinician-Inspired Contexts for Ultra-Long Capsule Endoscopy Videos
+
+URL Source: https://arxiv.org/pdf/2604.21814v1
+
+Published Time: Fri, 24 Apr 2026 01:16:06 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Divide-then-Diagnose: Weaving Clinician-Inspired Contexts for Ultra-Long Capsule Endoscopy Videos 
+
+Bowen Liu 1, Li Yang 2, Shanshan Song 1, Mingyu Tang 2, Zhifang Gao 2, Qifeng Chen 1, Yangqiu Song 1,
+
+Huimin Chen 2, Xiaomeng Li 11The Hong Kong University of Science and Technology, 2Renji Hospital, Shanghai Jiao Tong University School of Medicine Capsule endoscopy (CE) enables non-invasive gastrointestinal screening, but current CE research remains largely limited to frame-level classification and detection, leaving video-level analysis un-derexplored. To bridge this gap, we introduce and formally define a new task, diagnosis-driven CE video summarization , which requires extracting key evidence frames that covers clinically meaningful findings and making accurate diagnoses from those evidence frames. This setting is challenging because diagnostically relevant events are extremely sparse and can be overwhelmed by tens of thousands of redundant normal frames, while individual observations are often ambiguous due to motion blur, debris, specular highlights, and rapid viewpoint changes. To facilitate research in this direction, we introduce VideoCAP, the first CE dataset with diagnosis-driven annotations derived from real clinical reports. VideoCAP comprises 240 full-length videos and provides realistic supervision for both key evidence frame extraction and diagnosis. To address this task, we further propose DiCE , a clinician-inspired framework that mirrors the standard CE reading workflow. DiCE first performs efficient candidate screening over the raw video, then uses a Context Weaver to organize candidates into coherent diagnostic contexts that preserve distinct lesion events, and an Evidence Converger to aggregate multi-frame evidence within each context into robust clip-level judgments. Experiments show that DiCE consistently outperforms state-of-the-art methods, producing concise and clinically reliable diagnostic summaries. These results highlight diagnosis-driven contextual reasoning as a promising paradigm for ultra-long CE video summarization.  
+
+> Correspondence:
+
+Xiaomeng Li, Huimin Chen XMed Lab 
+
+## 1 Introduction 
+
+Capsule endoscopy (CE)Andrade et al. (2025); Habe et al. (2025); Panchananam et al. (2024); Xie et al. (2022) enables non-invasive gastrointestinal screening and has become an essential tool for large-scale outpatient diagnosis. However, a single examination generates an ultra-long video stream lasting 8–12 hoursXie et al. (2022), and reviewing such data remains time-consuming and cognitively demanding: even experienced clinicians typically spend over an hour per study. This heavy workload limits clinical scalability and increases the risk of missed lesions Spada et al. (2024); Xie et al. (2022). Existing automated CE methods mainly focus on frame-level classification Xing et al. (2020); Zhu et al. (2021); Guo and Yuan (2019, 2020); Harish et al. (2024); Roth et al. (2024) and detection Almalioglu et al. (2020); Singh et al. (2024); Alawode et al. (2024); Agossou et al. (2025); Xiao et al. (2024); Malik et al. (2024) on curated image datasets, where diagnostically relevant frames have already been manually isolated into clean, high-quality examples and the goal is to recognize whether an individual frame contains a lesion. Clinical CE reading, however, is a full-video diagnostic process: physicians inspect the entire examination video and retain only the lesion-related evidence that supports the final report. This mismatch leaves the clinically realistic problem of full-video CE summarization largely unexplored. To bridge this gap, we introduce a new task, diagnosis-driven CE video summarization , which aims to extract concise yet diagnosis-supporting visual evidence from raw CE videos. One simple method for CE video summarization is to apply existing frame-level CE models to every frame in 1          
+
+> arXiv:2604.21814v1 [cs.CV] 23 Apr 2026 Figure 1 (a) General videos typically contain task-relevant evidence that is temporally dense and visually salient, as reflected by the larger red box and denser timeline; (b) CE videos instead contain diagnostic evidence that is temporally sparse and visually subtle, as reflected by the smaller red box and sparser timeline; (c) Uniform sampling selects clinically irrelevant frames due to the sparse nature of lesions, leading to missed diagnoses; (d) Keyframe sampling
+> captures unsatisfactory representative frames (e.g., bubbles), resulting in misdiagnosis; (e) DiCE (Ours) adaptively extracts context-aware evidence clips from the raw video, rather than selecting a fixed frame budget, to generate clinically oriented summaries and support correct diagnosis.
+
+the raw video and then aggregate the predictions. However, this strategy achieves limited clinical utility: deployment studies report that after frame-level analysis, only 8% of selected images contained significant lesions Haslach-Häfner and Mönkemüller (2023), and physician review time still remained more than 1 hour Oh et al. (2024). In real CE examinations, diagnostically relevant frames are overwhelmed by vast numbers of normal views, while capsule motion, motion blur, luminal debris, specular highlights, and rapidly changing viewpoints make isolated frames noisy and diagnostically ambiguous. Under this regime, frame-level predictions on raw videos become unstable and redundant, and simple post-hoc aggregation still fails to consolidate uncertain observations into robust diagnostic judgments. As shown in Figure 4, roughly half of nearby keyframes from strong baselines receive conflicting diagnoses. This exposes the first challenge of diagnosis-driven CE summarization: high uncertainty of isolated frames , which makes simple frame-by-frame inference and aggregation insufficient for robust diagnosis. Another feasible route is to adapt natural long-video understanding methods to CE summarization Wang et al. (2024); Bai et al. (2025a); Chen et al. (2024b); Zhu et al. (2025); Wang et al. (2025); Tang et al. (2025, 2026); Cheng et al. (2025); Wang et al.; Liu et al. (2025b). The simplest adaptation is uniform sampling Wang et al. (2024); Bai et al. (2025a); Chen et al. (2024b); Zhu et al. (2025); Wang et al. (2025), which sparsely samples frames from the full video to keep long-horizon reasoning tractable. Later methods replace uniform sampling with keyframe selection Tang et al. (2025, 2026); Cheng et al. (2025); Wang et al.; Liu et al. (2025b), aiming to retain more salient or representative frames for downstream reasoning. In practice, however, both strategies are poorly matched to CE. Figure 1a–b highlights the core mismatch: in many natural-video settings, informative events are temporally dense and visually salient enough to survive representative sampling, whereas CE lesion cues are sparse, subtle, short-lived, and often embedded in redundant normal or artifact-heavy views. Figure 1c–d further illustrates the resulting failure modes: uniform sampling tends to select clinically irrelevant frames because lesions are rare, whereas keyframe selection may favor visually representative yet diagnostically unsatisfactory frames such as bubbles. Astandard CE video may comprise as many as 100k frames, while fewer than ten may be diagnostically relevant for final clinical decision-making Fiaidhi et al. (2022); Adewole et al. (2021). This exposes the second 2challenge of diagnosis-driven CE summarization: extreme spatio-temporal sparsity of clinically relevant events .Taken together, these two challenges suggest that CE summarization should be formulated not as selecting representative frames, but as extracting diagnostically sufficient evidence from sparse and uncertain lesion events. The clinical reading process offers a natural blueprint for addressing these challenges: clinicians first localize potentially relevant events throughout the video and then integrate evidence across temporally adjacent views before committing to a judgment. Inspired by this workflow, we propose DiCE (Di vide-then-Diagnose for 
+
+> C
+
+apsule Endoscopy), the first diagnosis-driven framework that explicitly shifts CE analysis from frame-level analysis to context-based reasoning(Figure 1e). Rather than treating a CE video as an undifferentiated frame stream, DiCE first divides the video into coherent diagnostic contexts centered on distinct lesion, and then 
+
+diagnoses each context by converging multi-frame evidence into a robust clinical judgment. Concretely, DiCE realizes this design through two key reasoning stages, supported by an efficient preprocessing step. A lightweight Selector first performs high-recall screening over the raw video stream, reducing tens of thousands of frames to a manageable candidate set. On top of this candidate set, the Context Weaver 
+
+organizes frames into temporally and visually coherent diagnostic contexts so that rare lesion events can be preserved as distinct evidence units rather than being overwhelmed by redundant normal views. The 
+
+Evidence Converger then performs multi-frame synthesis within each context, aggregating noisy observations into a single robust diagnostic judgment. To support model development and evaluation, we introduce VideoCAP, the first diagnosis-driven CE dataset derived from real clinical reports and comprising 240 full-length patient videos with report-derived annotations. Experiments on VideoCAP show that DiCE outperforms state-of-the-art methods, supporting the value of diagnosis-driven contextual reasoning for ultra-long CE video summarization. Our key contributions are as follows: 
+
+❶ New Task formulation. We are the first to propose and formally define the novel task of diagnosis-driven CE video summarization. 
+
+❷ Novel Clinician-inspired framework. We propose DiCE , the first diagnosis-driven framework that explicitly shifts CE analysis from frame-level analysis to contextual reasoning for summarization of ultra-long CE videos. 
+
+❸ New Dataset and benchmark. We introduce VideoCAP, the first diagnosis-driven CE dataset derived from real clinical reports, comprising 240 full-length videos with report-derived annotations. 
+
+❹ Experimental validation. Extensive experiments show that DiCE outperforms state-of-the-art methods, validating diagnosis-driven contextual reasoning as an effective paradigm for ultra-long CE video summarization. 
+
+## 2 Related Work 
+
+2.1 Long Video Analysis 
+
+Long-video methods typically reduce computation through sparse sampling or frame selection. Strong video understanding models such as QwenVL and the InternVL family rely on sparse visual inputs with efficient long-context modeling Wang et al. (2024); Bai et al. (2025a); Chen et al. (2024b); Zhu et al. (2025); Wang et al. (2025), while keyframe sampling methods first select representative or query-relevant frames before downstream reasoning Tang et al. (2025, 2026); Cheng et al. (2025); Wang et al.; Liu et al. (2025b). In contrast, diagnosis-driven CE summarization requires localize rare lesion events and aggregating evidence within local contexts, rather than preserving representative content under a fixed frame budget. 
+
+2.2 AI for Capsule Endoscopy Analysis and Datasets 
+
+Most CE studies target frame-level lesion classification or detection Xing et al. (2020); Zhu et al. (2021); Guo and Yuan (2019, 2020); Harish et al. (2024); Roth et al. (2024); Almalioglu et al. (2020); Singh 3Table 1 Comparison with existing capsule endoscopy datasets. “–” indicates unavailable information. VideoCAP is the first CE dataset with diagnosis-driven annotations derived from real clinical reports, where each annotation pairs a lesion label with a diagnostic keyframe timestamp.                                                         
+
+> Dataset Video Lesion Anno. #Videos Resolution #Frames/Images Diag. Report Diag. Timestamp
+> Rhode Island Charoen et al. (2022) ✗✗–320 ×320 5,247,588 ✗✗
+> AI-KODA Handa et al. (2024) ✗✓–320 ×320 2,173 ✗✗
+> SEE-AI Akihito et al. (2022) ✗✓––18,481 ✗✗
+> Kvasir-Capsule Smedsrud et al. (2021) ✓✓43 256 ×256 – 512 ×512 1,955,675 ✗✗
+> KID Koulaouzidis et al. (2017) ✓✓47 360 ×360 2,500 ✗✗
+> Galar Le Floch et al. (2025) ✓✓80 336 ×336 – 512 ×512 3,513,539 ✗✗
+> VideoCAP (Ours) ✓✓240 576 ×576 7,245,249 ✓✓
+
+Diag. Report : annotations derived from clinical diagnostic reports, capturing only lesions that contributed to the final patient diagnosis. Diag. Timestamp : timestamp of the diagnostic keyframe corresponding to each clinically reported finding. 
+
+et al. (2024); Alawode et al. (2024); Agossou et al. (2025); Xiao et al. (2024); Malik et al. (2024). Public datasets such as Kvasir-Capsule Smedsrud et al. (2021), the Rhode Island corpus Charoen et al. (2022), and Galar Le Floch et al. (2025) have advanced this line, but they mainly provide curated image-level supervision rather than full-video, diagnosis-driven annotations. Beyond frame recognition, prior CE work has explored anomaly scoring Mohammed et al. (2020), keyframe extraction Sushma and Aparna (2021), abnormal-frame pre-filtering Morera et al. (2022); Pinto et al. (2025), temporal modeling Oh et al. (2023), transit-time estimation Nam et al. (2024), and robustness under distribution shift Tan et al. (2024); Liu et al. (2025a). However, these methods and datasets still provide limited support for diagnosis-driven full-video summarization, where the model must localize sparse evidence and consolidate it into reliable judgments. Our work fills this gap with VideoCAP and a contextual reasoning framework designed for full-length CE videos. 
+
+## 3 Dataset and Benchmark 
+
+Existing CE datasets (Table 1) are predominantly image-centric: they curate selected images into standalone collections and label every visible abnormality, regardless of whether a finding actually contributed to the patient’s final diagnosis. As a result, they provide limited support for evaluating diagnosis-driven CE summarization, which requires full-length video context, timestamped diagnostic keyframes, and patient-level clinical grounding. To bridge this gap, we introduce VideoCAP, a diagnosis-driven dataset comprising 240 full-length CE videos collected from two clinical centers of Shanghai Renji Hospital. VideoCAP 
+
+> Dataset
+> Class Distribution
+> Ulcer (27.5%)
+> Normal small intestinal mucosa (25.0%)
+> Erosion (17.3%)
+> Mucosal erythema (12.3%)
+> Angioectasia (4.7%)
+> Lymphangiectasia (2.7%)
+> Polyp (2.5%)
+> Eminence lesion (2.2%)
+> Hematocele (2.1%)
+> Parasite (1.5%)
+> Intestinal fluid accumulation (1.5%)
+> Lymphoid follicular hyperplasia (0.7%)
+
+Figure 2 Dataset statistics. 
+
+3.1 Data Collection and Annotation 
+
+All videos were captured during routine clinical ex-aminations at a native resolution of 576 × 576 . The dataset preserves real-world CE variability, includ-ing extremely sparse lesion occurrences, frequent motion blur, luminal debris, specular highlights, and rapid viewpoint changes. We split the data into 160/40/40 videos for training, validation, and testing at the patient level to prevent data leak-age. 
+
+Annotation protocol. Unlike prior datasets that retrospectively label curated image collections—often including all visible abnormalities regardless of diagnostic significance—our annotations are derived directly 4from clinical diagnostic reports issued during routine patient care. Each report entry corresponds to a clinically relevant finding that directly contributed to the patient’s final diagnosis, ensuring that the benchmark captures clinically actionable evidence rather than exhaustive image-level cataloging. Every report was further reviewed and verified by three senior gastroenterologists to establish a gold-standard reference. The resulting annotations are organized as diagnosis-driven annotations : each annotated finding records the lesion label together with the timestamp of its corresponding diagnostic keyframe in the full examination video. Because these diagnoses are made in the context of the overall patient examination rather than as isolated image labels, they better reflect clinically meaningful diagnostic decisions. The annotation taxonomy covers 12 clinically established categories—ulcer, erosion, angioectasia, mucosal erythema, eminence lesion, hematocele, lymphangiectasia, lymphoid follicular hyperplasia, polyp, parasite, intestinal fluid accumulation, and normal small intestinal mucosa—aligned with standard CE reporting guidelines Pennazio et al. (2023). This diagnosis-driven annotation scheme supports lesion-level, keyframe-level, and patient-level evaluation. 
+
+3.2 Evaluation Protocol 
+
+We evaluate all methods under a unified protocol at three complementary granularities: lesion-level, keyframe-level, and patient-level. All metrics are computed after greedy one-to-one temporal deduplication against annotated diagnostic keyframes so that repeated detections of the same clinically reported finding are not over-counted. 
+
+Matching rule. Following established CE clinical studies Spada et al. (2024), a selected frame is considered matched to an annotated diagnostic keyframe if it falls within a ±300 s temporal window around the keyframe timestamp. To penalize temporally proximate but semantically inconsistent predictions, two selected frames within 20 s of each other that carry different predicted labels are both treated as incorrect. When multiple selected frames match the same clinically reported finding, only the frame with the smallest time error is retained as the true match, and the rest count toward redundancy. 
+
+Lesion-level metrics. Lesion Detection Rate (LDR) measures the proportion of clinically reported findings that are both temporally matched and assigned the correct lesion category. Sensitivity measures the proportion of clinically reported findings that are hit by at least one temporally matched selected frame, regardless of the predicted lesion category, and therefore captures coverage of clinically reported findings. Specificity 
+
+measures the fraction of unique predicted lesion findings that correspond to a clinically reported finding after deduplication, reflecting how often the reported findings are clinically valid. 
+
+Keyframe-level metrics. Time Error = |tframe − tkeyframe | measures temporal localization in seconds relative to the annotated diagnostic keyframe timestamp for correctly matched findings. Redundancy = 
+
+> #selected −#matched
+> #selected
+
+captures the fraction of selected frames that contribute no new lesion information after deduplication. 
+
+Patient-level metrics. Diagnostic Yield (DY) is the fraction of patients for whom all clinically reported findings are successfully detected. Per-Patient Detection Rate (PDR) is the fraction of patients with at least one correctly detected lesion. 
+
+## 4 Method 
+
+We present DiCE , a diagnosis-driven framework for summarizing long CE videos into concise and diagnostically meaningful visual summaries. The framework follows a coarse-to-fine reasoning pipeline. After an initial high-recall screening stage (Selector S) filters the raw video stream into diagnostically relevant candidates, 
+
+DiCE performs contextual reasoning through two core modules: a Context Weaver W that organizes candidates into hierarchical diagnostic contexts, and an Evidence Converger E that aggregates multi-frame evidence within each context into robust context-level diagnoses. To enable the Context Weaver to jointly reason about appearance and temporal-anatomical position, we first construct spatio-temporal tokens that 5Temporal  
+
+> Embedding
+> Vision
+> Encoder ```
+> Spatial token
+> ```
+> Temporal token
+> ```
+> Diagnoser
+> ```
+> Visual Summary
+
+Coarse-level 
+
+Fine-level Clip Distribution       
+
+> Ulcer
+> Spatio-temporal token
+> Candidate Frames
+> ``` ``` ```
+> ``` ```
+> Diagnoser Diff from majority
+> Must be Wrong
+> Lesion Distributions ```
+> Aggregate
+> Evidence Converger Context Weaver
+> Selector
+> T
+> Anatomical
+> Contexts
+> Lesion Contexts
+> Duodenum
+> Jejunum
+> Ileum
+> Terminal Ileum
+> ```
+> Jejunum
+> Ulcer
+> Erosion
+> Ulcer
+> Bleed
+> Erosion
+> Lymph ...
+
+Figure 3 Overview of DiCE . A Selector first filters the raw video into a high-recall candidate pool. Each retained frame is encoded as a spatio-temporal token combining appearance and temporal position. The Context Weaver 
+
+then constructs a two-level hierarchy of coarse anatomical contexts and fine lesion contexts. Finally, the Evidence Converger aggregates frame-level predictions within each lesion context into a stable context-level diagnosis and removes inconsistent frames, yielding a concise diagnostic summary. 
+
+fuse visual features with temporal encodings. We next introduce the notation and then detail the Selector, Context Weaver, and Evidence Converger in turn. 
+
+4.1 Notation 
+
+A CE video is denoted V = {It}Tt=1 . Given V, our goal is to produce a compact visual summary 
+
+R = ( ˜Ii,j , ˆyi,j ) , (1) where each entry corresponds to one retained lesion context: ˜Ii,j is the representative keyframe of the j-th fine-grained lesion context inside the i-th coarse anatomical context, and ˆyi,j is the corresponding context-level lesion prediction. Here, R denotes the visual summary. Throughout the section, t indexes video frames, i
+
+indexes coarse anatomical contexts, and j indexes fine lesion contexts within each coarse context. Ideally, the summary should cover distinct lesion findings while avoiding redundant or spurious findings. 
+
+4.2 Selector S
+
+The Selector S serves as a high-recall preprocessing stage that performs efficient binary screening over the raw video stream frame by frame: 
+
+st = hψ
+
+ fθ (It) ∈ [0 , 1] , (2) where fθ is a frozen vision backbone producing a visual feature ut = fθ (It) ∈ Rd, and hψ is a lightweight MLP head trained with binary cross-entropy to distinguish diagnostically relevant frames from normal ones. Frames with st ≥ τs are retained as the candidate set: 
+
+C = {It | st ≥ τs} , (3) substantially reducing the search space while preserving frames that may contribute to the final diagnosis. 
+
+4.3 Spatio-Temporal Tokenization 
+
+Frame-level analysis ignores the temporal continuity of CE examinations: nearby frames often show the same region from slightly different viewpoints. To encode this continuity, we construct a spatio-temporal token for 6each candidate frame by fusing its visual feature with a temporal signal. Specifically, we compute a sinusoidal temporal embedding et ∈ Rd from the frame index t and form: 
+
+vt =  ut ⊕ et
+
+ ∈ R2d , (4) where ⊕ denotes concatenation. The token vt jointly encodes frame content and examination position. 
+
+4.4 Context Weaver W
+
+Existing keyframe selection methods evaluate frames in isolation and ignore their position along the gas-trointestinal tract. This can over-select visually salient regions, miss subtle lesions elsewhere, and merge nearby but distinct findings. The Context Weaver W addresses this by constructing a hierarchy of diagnostic contexts from coarse anatomical coverage to fine lesion-level specificity. 
+
+Hierarchical context construction. The Context Weaver takes the candidate tokens {vt | It ∈ C} and organizes them into a two-level contextual hierarchy: 
+
+C|{z} 
+
+> candidates
+> Wcoarse
+
+−−−−−→ {G i}Nc
+
+> i=1
+
+| {z }
+
+> anatomical contexts
+> Wfine
+
+−−−−→ {H i,j }Mi
+
+> j=1
+
+| {z }
+
+> lesion contexts
+
+, (5) where Gi denotes a coarse context associated with a contiguous portion of the examination trajectory, and 
+
+Hi,j denotes a fine-grained lesion context. At both levels, grouping is driven by the joint temporal-visual affinity encoded in vt, but at different resolutions. Specifically, Wcoarse assembles candidate tokens into Nc
+
+progression-aware groups according to their joint temporal-visual compatibility, and Wfine further refines each coarse group into Mi lesion-focused contexts using the same compatibility at a finer granularity. Thus, the coarse stage distributes attention across the examination, whereas the fine stage separates nearby lesion hypotheses before diagnosis. 
+
+Anatomical context anchoring (coarse level). Although capsule motion is irregular, CE still follows a coarse anatomical progression, so temporal position is a useful proxy. The coarse stage therefore groups tokens with compatible temporal position and visual appearance into broad contiguous contexts without requiring explicit organ labels. Intuitively, different coarse contexts may correspond to different phases of the examination, such as earlier small-bowel views around the proximal jejunum versus later views closer to the terminal ileum. Rather than repeatedly selecting frames from a few salient regions, the Nc anchors encourage broader coverage of distinct events across the bowel. 
+
+Lesion context refinement (fine level). Within one coarse context Gi, multiple phenomena may still co-exist: repeated glimpses of one lesion, nearby but distinct lesions, and occasional irrelevant normal or low-quality frames. The fine stage therefore decomposes each Gi into Mi lesion contexts {H i,j } by applying finer-grained grouping within the coarse context, so that visually and temporally coherent observations supporting different lesion hypotheses can be separated before diagnosis. To describe the intended structure of a well-formed lesion context, let y∗ 
+
+> t
+
+denote the lesion label of frame It, and let y∗ 
+
+> i,j
+
+denote the latent dominant label associated with context Hi,j . We use the following dominant-label prior: 
+
+y∗ 
+
+> i,j
+
+= mode 
+
+> It∈H i,j
+
+y∗ 
+
+> t
+
+, (6) 
+
+i.e. , a well-formed lesion context should be dominated by one underlying finding, although a small number of irrelevant or corrupted frames may remain. This prior is conceptual rather than explicitly supervised, and is used to motivate the subsequent context-level evidence fusion and refinement. 
+
+4.5 Evidence Converger E
+
+Motivated by the dominant-label prior in Eq. 6, the Evidence Converger E performs diagnosis at the lesion-context level: rather than trusting any single frame, it converts each lesion context into a stable diagnostic judgment through three stages—multi-frame evidence fusion, intra-context refinement, and inter-context pruning. 7Table 2 Zero-shot evaluation results on capsule endoscopy lesion detection and keyframe quality. Size indicates model parameters. Frames denotes the frame sampling strategy or keyframe selection budget.                                            
+
+> Lesion-Level Frame-level Models Size Frames Detection Rate (%) Sensitivity (%) Specificity (%) Time Error (sec) Redundancy (%) Colon Specific
+> ColonXJi et al. (2025a) 3B 32 2.94 72.06 20.58 49.91 79.42 ColonGPTJi et al. (2025b) 2B 32 9.56 69.85 21.59 54.11 78.41
+> General Medical
+> MedGemmaSellergren et al. (2025) 4B 32 9.56 62.50 21.59 64.74 78.41 HuatuoGPTChen et al. (2024a) 7B 32 8.09 61.03 20.58 55.00 79.42 LingShuXu et al. (2025) 7B 32 17.65 61.76 20.36 66.21 79.64
+
+Multi-frame evidence fusion. A lesion diagnoser gϕ maps each frame to a categorical distribution over 
+
+K lesion types: 
+
+pt = gϕ(It) ∈ ∆K−1 . (7) We refer to pt as the lesion distribution of frame It. To obtain a provisional context-level judgment, we aggregate all frame-level lesion distributions within a lesion context into an unnormalized context evidence vector :
+
+Pi,j = X
+
+> It∈H i,j
+
+pt , ˆy(0)  
+
+> i,j
+
+= arg max  
+
+> k
+
+Pi,j [k] . (8) When a context is dominated by one lesion hypothesis, summation strengthens consistent evidence while suppressing sporadic mispredictions caused by transient blur, debris, or suboptimal viewing angles. This converts a set of uncertain frame-level predictions into a single, more robust provisional diagnosis. 
+
+Intra-context coherence refinement. Aggregation handles random noise effectively, but it can still be biased by frames that are systematically corrupted ( e.g. , a debris-occluded view that persistently activates a wrong category). We again leverage Eq. 6: in a well-formed lesion context, most frames should support the same dominant lesion hypothesis, so frames that contradict the context consensus are likely unreliable. We first keep the frames that agree with the provisional context-level decision, 
+
+eHi,j =  It ∈ H i,j pt[ˆ y(0)  
+
+> i,j
+
+] ≥ τagree , (9) 
+
+H ret  
+
+> i,j
+
+=
+
+( eHi,j , eHi,j ̸ = ∅,
+
+Hi,j , otherwise , (10) 
+
+P ref  
+
+> i,j
+
+= X 
+
+> It∈H ret
+> i,j
+
+pt . (11) We then recompute the final context-level prediction as 
+
+ˆyi,j = arg max  
+
+> k
+
+P ref  
+
+> i,j
+
+[k] . (12) Here τagree is a consistency threshold. If thresholding removes every frame, we fall back to the original context to avoid empty refined contexts. This self-consistency check sharpens the final context-level prediction by filtering out diagnostically incoherent frames. 
+
+Inter-context pruning. While intra-context refinement improves the quality of each individual lesion context, the final set may still contain non-informative or unreliable entries. We therefore discard contexts that remain normal or low-confidence after refinement: Discard H ret  
+
+> i,j
+
+if ˆyi,j = normal ∨ ci,j < τ min , (13) 8Table 3 Full training evaluation results on capsule endoscopy keyframe detection and diagnostic performance. Size indicates model parameters. Frames denotes the frame sampling strategy or keyframe selection budget. Best results are in bold , second best results are underlined.                                                                                                                     
+
+> Lesion-Level Frame-level Patient-Level Models Size Frames Detection Rate Sensitivity Specificity Time Error Redundancy Diagnostic Yield Detection Rate (%) (%) (%) (sec) (%) (%) (%) General
+> Qwen3-VL + AKS 8B 32 18.38 48.53 19.19 78.42 91.73 2.50 32.50
+> Qwen3-VL + ViLAMP 8B 32 21.32 65.44 18.83 70.82 88.69 2.50 35.00
+> InternVL3.5 + AKS 8B 32 19.85 51.47 23.55 67.77 83.45 5.00 32.50
+> InternVL3.5 + ViLAMP 8B 32 27.94 66.18 22.62 66.28 78.86 7.50 40.00
+> Dinov3 + AKS 0.2B 32 33.82 50.00 22.88 69.13 84.78 15.00 60.00
+> Dinov3 + ViLAMP 0.2B 32 35.29 61.76 23.18 69.69 83.26 12.50 60.00
+> Medical
+> Colongpt + AKS 2B 32 25.00 50.74 23.05 78.16 89.41 10.00 45.00
+> Colongpt + ViLAMP 2B 32 34.56 63.97 21.86 65.21 85.07 12.50 57.50
+> Lingshu + AKS 7B 32 27.21 50.74 21.86 64.54 87.48 10.00 52.50
+> Lingshu + ViLAMP 7B 32 35.29 67.65 21.80 59.91 82.32 7.50 65.00
+> DiCE (Ours) 0.2B 29.98 44.12 85.29 19.30 54.86 77.81 20.00 67.50
+
+where ci,j = max k ¯P ref  
+
+> i,j
+
+[k] is the peak probability of the normalized context distribution ¯P ref  
+
+> i,j
+
+= P ref  
+
+> i,j
+
+/ ∥P ref  
+
+> i,j
+
+∥1.The first rule removes contexts whose refined prediction remains normal, suggesting insufficient abnormal evidence under the current model. The second rule discards contexts whose predictions remain ambiguous even after multi-frame aggregation, indicating insufficient evidence to commit to a diagnosis. 
+
+Summary assembly. For each surviving lesion context, we select the medoid of H ret  
+
+> i,j
+
+in visual feature space as the representative keyframe ˜Ii,j , providing a visually typical image for physician inspection. The final visual summary contains all surviving contexts after pruning: 
+
+R =  ( ˜Ii,j , ˆyi,j ) . (14) 
+
+The number of output summary items is therefore adaptive, matching the variable lesion burden across patients. 
+
+## 5 Experiments 
+
+5.1 Baselines 
+
+We compare DiCE against representative methods under two settings: zero-shot transfer and full training. In the zero-shot setting (Table 2), we evaluate off-the-shelf models without CE-specific training to measure intrinsic cross-domain generalization. All zero-shot models are combined with ViLAMP frame selection strategy and the same frame budget, so the comparison isolates differences in diagnostic transfer rather than downstream sampling. The compared methods include endoscopy-oriented specialist models (ColonX Ji et al. (2025a), ColonGPT Ji et al. (2025b)), whose training data include capsule endoscopy sources such as Kvasir-Capsule, making them among the closest publicly available domain matches to CE, and general medical MLLMs (MedGemma Sellergren et al. (2025), HuatuoGPT-Vision Chen et al. (2024a), LingShu Xu et al. (2025)) trained on broader medical corpora. This setting tests whether either endoscopy-oriented specialist knowledge or generic medical pre-training can transfer to CE. 915 20 25 30 35 40 45 50  
+
+> Time (min)
+> ViLAMP + LingShu
+> ViLAMP + DINOv3
+> AKS + LingShu
+> AKS + DINOv3
+> Ours Rapid label switching
+> (within seconds)
+> Angioectasia
+> Eminence lesion
+> Erosion
+> Hematocele
+> Lymphangiectasia
+> Mucosal erythema
+> Normal small intestinal mucosa
+> Polyp
+> Ulcer
+
+(a) Keyframe label timeline for a represen-tative patient. The shaded region high-lights a short interval with frequent label changes. 30 s 60 s 2 min 5 min 10 min    
+
+> Temporal proximity threshold
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> Short-range inconsistency rate (%)  All baselines vs Ours: p< 0.001 (paired Wilcoxon) ViLAMP + LingShu
+> ViLAMP + DINOv3
+> AKS + LingShu
+> AKS + DINOv3
+> Ours
+
+(b) Short-range label inconsistency rate at varying temporal thresholds. Lower is bet-ter. Error bars denote variation across pa-tients. 0 200 400 600 800 1000 1200 1400 1600 1800   
+
+> Time gap between adjacent label switches (s)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Cumulative fraction of switches (%)
+> 1 min 5 min
+> Best baseline: ~48%
+> Ours: 17%
+> 31% reduction
+> at 1 min ViLAMP + LingShu
+> ViLAMP + DINOv3
+> AKS + LingShu
+> AKS + DINOv3
+> Ours
+
+(c) Cumulative distribution of label-switch intervals for all methods. 
+
+Figure 4 Temporal diagnostic consistency analysis. 
+
+In the full-training setting (Table 3), all methods use the same Selector as a high-recall pre-screening stage, which creates a shared candidate pool before downstream summarization. We then build strong baselines by pairing three backbone families with two frame-selection strategies: general-purpose MLLMs (Qwen3-VL Bai et al. (2025b), InternVL3.5 Wang et al. (2025)), a self-supervised visual backbone (DINOv3 Siméoni et al. (2025)), and the two strongest zero-shot medical models (ColonGPT and LingShu). Each backbone is combined with Adaptive Keyframe Sampling (AKS) Tang et al. (2025) and ViLAMP Cheng et al. (2025). All baselines use a fixed budget of 32 selected frames, whereas DiCE outputs one representative summary frame per surviving context and therefore produces an adaptive number of selected frames, yielding 29.98 selected frames on average on the test set. 
+
+5.2 Implementation Details 
+
+The Selector uses a frozen DINOv3 encoder with a lightweight MLP head trained by binary cross-entropy on abnormal-versus-normal labels derived from the lesion taxonomy. The diagnoser gϕ in the Evidence Converger is fine-tuned for 12-class lesion recognition on VideoCAP. At inference time, we fix τs = 0 .5, while τagree ,
+
+τmin , and the Context Weaver hyperparameters are selected on the validation set. 
+
+5.3 Main Results 
+
+Zero-shot models reveal a severe domain gap. The zero-shot results (Table 2) show a severe domain gap: lesion detection rate ranges from 2.94% (ColonX) to 17.65% (LingShu), and no method reaches 20%. ColonX and ColonGPT achieve the highest sensitivities (72.06% and 69.85%) and the lowest time errors (49.91 s and 54.11 s), suggesting that endoscopy-oriented pre-training helps temporal localization but remains insufficient for strong CE performance. 
+
+DiCE consistently outperforms state-of-the-art baselines. Table 3 shows that DiCE achieves the strongest overall performance among fully trained methods. Despite using only 0.2B parameters, it attains the best lesion detection rate (44.12%), sensitivity (85.29%), time error, redundancy, diagnostic yield, and patient detection rate. Specificity is 19.30%, within the baseline range of 18.83–23.55%. These results suggest that structured context construction and evidence aggregation improve lesion coverage and clinical utility without clearly increasing false positives. 
+
+Improved keyframe quality and patient-level utility. Beyond lesion coverage, DiCE also produces more useful summaries at both the frame and patient levels. It achieves the lowest time error (54.86 s) and the lowest redundancy (77.81%), indicating more precise temporal localization and less repeated evidence. At the patient level, DiCE achieves the best diagnostic yield (20.00%) and the best patient detection rate (67.50%). 10 Table 4 Ablation study on DIV-Cap. For each variant we list the absolute metric value and, on the following line, the absolute difference ∆ relative to the full DIV-Cap ( DiCE ): ∆ = vvariant − vDiCE . For percentage metrics ∆ is in percentage points (%); for Time Error ∆ is in seconds. Arrow legend: ↑ = performance improved; ↓ = performance degraded (improvement/deterioration is judged w.r.t. clinical utility; e.g., lower Time Error and lower Redundancy are improvements).                                                             
+
+> Lesion-Level Frame-level Patient-Level Variants Detection Rate Sensitivity Specificity Time Error Redundancy Diagnostic Yield Detection Rate (%) (%) (%) (sec) (%) (%) (%) DiCE 44.12 85.29 19.30 54.86 77.81 20.00 67.50 - Context Weaver 21.36 38.83 20.00 55.09 77.18 15.00 35.00
+> ∆vs. DiCE ↓ − 22 .76 % ↓ − 46 .46 % ↑+0 .70 % ↓+0 .23 s↑ − 0.63 % ↓ − 5.00 % ↓ − 32 .50 %
+> - Evidence Converger 18.38 29.41 15.39 75.48 84.60 2.50 27.50
+> ∆vs. DiCE ↓ − 25 .74 % ↓ − 55 .88 % ↓ − 3.91 % ↓+20 .62 s↓+6 .79 % ↓ − 17 .50 % ↓ − 40 .00 %
+
+Figure 5 Temporal case study on a representative CE examination. 
+
+5.4 Temporal Diagnostic Uncertainty Analysis 
+
+Temporal diagnostic uncertainty in CE often appears as inconsistent labels across nearby keyframes. We evaluate this phenomenon on the 40-patient test set by comparing DiCE with four strong baselines: ViL-AMP+LingShu, ViLAMP+DINOv3, AKS+LingShu, and AKS+DINOv3. 
+
+Metrics. We define the short-range label inconsistency rate at threshold τ as the fraction of consecutive keyframe pairs within each patient whose timestamps differ by at most τ seconds but receive different labels. Lower values indicate better temporal consistency. We report this metric at τ ∈ { 30 s, 60 s, 2min , 5min , 10 min }
+
+and also analyze the cumulative distribution of label-switch intervals. 
+
+Qualitative evidence (Fig. 4(a)). Figure 4(a) shows a representative interval in which baselines switch repeatedly among nearby labels, whereas DiCE remains more stable. 
+
+Short-range inconsistency (Fig. 4(b)). Across all thresholds, the baselines remain high at 46%–65%, meaning that roughly half of nearby keyframe pairs receive conflicting labels. In contrast, DiCE reduces the inconsistency rate to 5.1%–10.7%, yielding an 8–9 × reduction at the 30 s and 60 s thresholds (paired Wilcoxon signed-rank test, p < 0.001 for all pairwise comparisons at every threshold). The smaller increase with larger 
+
+τ suggests that the remaining label changes in DiCE are more compatible with genuine temporal transitions than pervasive label noise. 11 Distribution of label-switch intervals (Fig. 4(c)). Figure 4(c) further shows that DiCE specifically suppresses short-interval switches. For the strongest baseline, ViLAMP+LingShu, about 48% of label switches occur within 1 min, versus 17% for DiCE . The total number of switch events is also reduced by more than 4× (155 versus 654–832). These results indicate that DiCE shifts label changes toward longer intervals and reduces rapid diagnostic oscillation.  
+
+> Clinical implications.
+
+Temporally inconsistent summaries increase cognitive burden because clinicians must reconcile conflicting predictions before diagnosis. By producing more coherent label sequences, DiCE makes summaries more reliable and easier to interpret. 
+
+5.5 Ablation Study 
+
+Table 4 isolates the contribution of each major module. The full model provides the best balance, while each ablation exposes a distinct failure mode.  
+
+> Without Context Weaver.
+
+Replacing the hierarchical Context Weaver with a coarse 300 s temporal window causes large recall losses: LDR drops by 22.76%, sensitivity drops by 46.46%, and patient detection rate drops by 32.50%. Specificity changes only slightly (+0.70%), while time error and redundancy remain nearly unchanged. This suggests that temporal proximity alone is insufficient for CE evidence grouping.  
+
+> Without Evidence Converger.
+
+Removing the Evidence Converger produces the most severe degradation. When each clip is labeled by its single highest-confidence frame instead of multi-frame aggregation, sensitivity drops by 55.88%, diagnostic yield drops from 20.00% to 2.50%, time error worsens by 20.62 s, redundancy increases by 6.79%, and patient detection rate drops by 40.00%. This shows that single-frame confidence is too unstable for CE diagnosis.                   
+
+> Table 5 Selector backbone comparison for binary frame screening.
+> Backbone Accuracy Precision Recall F1
+> SigLIP2 0.8887 0.8912 0.8887 0.8896 DINOv2 0.8998 0.9069 0.8998 0.9017 DINOv3 0.9144 0.9145 0.9144 0.9144
+> Selector backbone choice.
+
+Table 5 compares three backbones for the Selector. DINOv3 performs best on all four screening metrics, so we adopt it as the Selector backbone. 
+
+5.6 Case Study 
+
+Figure 5 visualizes a representative CE examination with multiple annotated ulcer events. DiCE detects more ulcer events and localizes them more accurately in time: it produces three ulcer summaries that align closely with the later three ground-truth timestamps, whereas both ViLAMP+LingShu and AKS+LingShu yield only one clear ulcer summary around the final event and miss the earlier ulcers. This qualitative pattern is consistent with the quantitative results. 
+
+## 6 Conclusion 
+
+We introduce a new CE video analysis task, diagnosis-driven video summarization, which extracts key evidence frames and diagnoses from them. We propose DiCE , a novel clinician-inspired framework that mirrors the clinician reading workflow by shifting from frame-level analysis to contextual reasoning. Through its Selector, Context Weaver, and Evidence Converger, DiCE first preserves candidate lesion events, then organizes them into diagnostic contexts, and finally aggregates multi-frame evidence into robust clip-level 12 judgments. We further introduce VideoCAP, the first dataset of 240 full-length CE videos with diagnosis-driven annotations derived from real clinical reports, enabling model development and realistic evaluation of CE video summarization. Experiments demonstrate that DiCE consistently outperforms baselines, producing concise and clinically reliable diagnostic summaries. Our results highlight the importance of context-aware evidence aggregation for long CE video understanding and suggest a promising direction toward AI-assisted CE review systems that can reduce clinician workload while preserving diagnostic reliability. 
+
+## References 
+
+Sodiq Adewole et al. Graph convolutional neural network for weakly supervised abnormality localization in long capsule endoscopy videos. In 2021 IEEE International Conference on Big Data (Big Data) , pages 388–399, 2021. doi: 10.1109/BigData52589.2021.9671281. Bidossessi Emmanuel Agossou, Marius Pedersen, Kiran Raja, Anuja Vats, and Pål Anders Floor. Influence of color correction on pathology detection in Capsule Endoscopy, January 2025. http://arxiv.org/abs/2502.00076 .arXiv:2502.00076 [cs]. Y. Akihito et al. The see-ai project dataset. Kaggle dataset, 2022. https://doi.org/10.34740/KAGGLE/DS/1516536 .DOI: https://doi.org/10.34740/KAGGLE/DS/1516536 .Basit Alawode, Shibani Hamza, Adarsh Ghimire, and Divya Velayudhan. Transformer-Based Wireless Capsule Endoscopy Bleeding Tissue Detection and Classification, December 2024. http://arxiv.org/abs/2412.19218 .arXiv:2412.19218 [cs]. Yasin Almalioglu et al. EndoL2H: Deep Super-Resolution for Capsule Endoscopy, June 2020. http://arxiv.org/abs/ 2002.05459 . arXiv:2002.05459 [cs]. Patrícia Andrade et al. Ai-assisted capsule endoscopy for detection of ulcers and erosions in crohn’s disease: amulticenter validation study. Clinical Gastroenterology and Hepatology , 2025. Shuai Bai et al. Qwen2. 5-vl technical report. arXiv preprint arXiv:2502.13923 , 2025a. Shuai Bai et al. Qwen3-vl technical report. arXiv preprint arXiv:2511.21631 , 2025b. A. Charoen et al. Rhode island gastroenterology video capsule endoscopy data set. Scientific Data , 9:602, 2022. doi: 10.1038/s41597-022-01726-3. https://doi.org/10.1038/s41597-022-01726-3 .Junying Chen et al. Huatuogpt-vision, towards injecting medical visual knowledge into multimodal llms at scale, 2024a. https://arxiv.org/abs/2406.19280 .Zhe Chen et al. Internvl: Scaling up vision foundation models and aligning for generic visual-linguistic tasks. In 
+
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 24185–24198, 2024b. Chuanqi Cheng, Jian Guan, Wei Wu, and Rui Yan. Scaling video-language models to 10k frames via hierarchical differential distillation. arXiv preprint arXiv:2504.02438 , 2025. Jinan Fiaidhi, Sabah Mohammed, and Petros Zezos. Thick data techniques for identifying abnormality in video frames for wireless capsule endoscopy. In 2022 IEEE International Conference on Big Data (Big Data) , pages 5263–5268, 2022. doi: 10.1109/BigData55660.2022.10020333. Xiaoqing Guo and Yixuan Yuan. Triple ANet: Adaptive Abnormal-aware Attention Network for WCE Image Classification. In Dinggang Shen, Tianming Liu, Terry M. Peters, Lawrence H. Staib, Caroline Essert, Sean Zhou, Pew-Thian Yap, and Ali Khan, editors, Medical Image Computing and Computer Assisted Intervention – MICCAI 2019 , pages 293–301, Cham, 2019. Springer International Publishing. ISBN 978-3-030-32239-7. doi: 10.1007/978-3-030-32239-7_33. Xiaoqing Guo and Yixuan Yuan. Semi-supervised WCE image classification with adaptive aggregated attention. 
+
+Medical Image Analysis , 64:101733, August 2020. ISSN 1361-8415. doi: 10.1016/j.media.2020.101733. https: //www.sciencedirect.com/science/article/pii/S1361841520300979 .Tsedeke Temesgen Habe, Keijo Haataja, and Pekka Toivanen. Precision enhancement in wireless capsule endoscopy: a novel transformer-based approach for real-time video object detection. Frontiers in Artificial Intelligence , 8:1529814, 2025. 
+
+13 P. Handa, D. D. Gunjan, P. N. Goel, and P. S. Indu. Ai-koda dataset: An ai-image dataset for automatic assessment of cleanliness in video capsule endoscopy as per korea-canada scores. figshare, May 2024. https://doi.org/10.6084/ m9.figshare.25807915.v1 .Ishita Harish et al. CAVE-Net: Classifying Abnormalities in Video Capsule Endoscopy, December 2024. http: //arxiv.org/abs/2410.20231 . arXiv:2410.20231 [cs]. Maren Haslach-Häfner and Klaus Mönkemüller. Reading capsule endoscopy: Why not ai alone? Endoscopy International Open , 11(12):E1175–E1176, 2023. Ge-Peng Ji, Jingyi Liu, Deng-Ping Fan, and Nick Barnes. Colon-X: Advancing Intelligent Colonoscopy from Multimodal Understanding to Clinical Reasoning, December 2025a. http://arxiv.org/abs/2512.03667 . arXiv:2512.03667 [cs]. Ge-Peng Ji et al. Frontiers in Intelligent Colonoscopy, February 2025b. http://arxiv.org/abs/2410.17241 .arXiv:2410.17241 [eess]. A. Koulaouzidis et al. Kid project: an internet-based digital video atlas of capsule endoscopy for research purposes. 
+
+Endoscopy International Open , 5(6):E477–E483, 2017. doi: 10.1055/s-0043-105488. https://doi.org/10.1055/ s-0043-105488 .M. Le Floch et al. Galar - a large multi-label video capsule endoscopy dataset. Scientific Data , 12:828, 2025. doi: 10.1038/s41597-025-05112-7. https://doi.org/10.1038/s41597-025-05112-7 .Bowen Liu, Haoyang Li, Shuning Wang, Shuo Nie, and Shanghang Zhang. Subgraph aggregation for out-of-distribution generalization on graphs. Proceedings of the AAAI Conference on Artificial Intelligence , 39(18):18763–18771, Apr. 2025a. doi: 10.1609/aaai.v39i18.34065. https://ojs.aaai.org/index.php/AAAI/article/view/34065 .Runtao Liu et al. Longvideoagent: Multi-agent reasoning with long videos. arXiv preprint arXiv:2512.20618 , 2025b. Hassaan Malik, Ahmad Naeem, Abolghasem Sadeghi-Niaraki, Rizwan Ali Naqvi, and Seung-Won Lee. Multi-classification deep learning models for detection of ulcerative colitis, polyps, and dyed-lifted polyps using wireless capsule endoscopy images. Complex & Intelligent Systems , 10(2):2477–2497, April 2024. ISSN 2199-4536, 2198-6053. doi: 10.1007/s40747-023-01271-5. https://link.springer.com/10.1007/s40747-023-01271-5 .Ahmed Mohammed, Ivar Farup, Marius Pedersen, Sule Yildirim, and Øistein Hovde. PS-DeVCEM: Pathology-sensitive deep learning model for video capsule endoscopy based on weakly labeled data. Computer Vision and Image Understanding , 201:103062, 2020. doi: 10.1016/j.cviu.2020.103062. Hunter Morera et al. Reduction of video capsule endoscopy reading times using deep learning with small data. 
+
+Algorithms , 15(10):339, 2022. doi: 10.3390/a15100339. Seung-Joo Nam, Gwiseong Moon, Jung-Hwan Park, Yoon Kim, Yun Jeong Lim, and Hyun-Soo Choi. Deep Learning-Based Real-Time Organ Localization and Transit Time Estimation in Wireless Capsule Endoscopy. Biomedicines ,12(8):1704, July 2024. ISSN 2227-9059. doi: 10.3390/biomedicines12081704. https://www.mdpi.com/2227-9059/ 12/8/1704 .Dong Jun Oh, Youngbae Hwang, Sang Hoon Kim, Ji Hyung Nam, Min Kyu Jung, and Yun Jeong Lim. Reading of small bowel capsule endoscopy after frame reduction using an artificial intelligence algorithm. BMC gastroenterology ,24(1):80, 2024. SangYup Oh et al. Video analysis of small bowel capsule endoscopy using a transformer network. Diagnostics , 13(19): 3133, 2023. doi: 10.3390/diagnostics13193133. Lakshmi Srinivas Panchananam, Praveen Kumar Chandaliya, Kishor Upla, and Kiran Raja. Capsule Endoscopy Multi-classification via Gated Attention and Wavelet Transformations, December 2024. http://arxiv.org/abs/2410.19363 .arXiv:2410.19363 [cs]. Marco Pennazio et al. Small-bowel capsule endoscopy and device-assisted enteroscopy for diagnosis and treatment of small-bowel disorders: European society of gastrointestinal endoscopy (esge) guideline–update 2022. Endoscopy , 55 (01):58–95, 2023. Luís Pinto, Isabel N. Figueiredo, and Pedro N. Figueiredo. Reducing reading time and assessing disease in capsule endoscopy videos: A deep learning approach. International Journal of Medical Informatics , 195:105792, 2025. doi: 10.1016/j.ijmedinf.2024.105792. 
+
+14 Marcel Roth, Micha V. Nowak, Adrian Krenzer, and Frank Puppe. Domain-Adaptive Pre-training of Self-Supervised Foundation Models for Medical Image Classification in Gastrointestinal Endoscopy, December 2024. http://arxiv. org/abs/2410.21302 . arXiv:2410.21302 [cs]. Andrew Sellergren et al. Medgemma technical report. arXiv preprint arXiv:2507.05201 , 2025. Oriane Siméoni et al. Dinov3. arXiv preprint arXiv:2508.10104 , 2025. Ayushman Singh, Sharad Prakash, Aniket Das, and Nidhi Kushwaha. ColonNet: A Hybrid Of DenseNet121 And U-NET Model For Detection And Segmentation Of GI Bleeding, December 2024. http://arxiv.org/abs/2412.05216 .arXiv:2412.05216 [eess]. P. H. Smedsrud et al. Kvasir-capsule, a video capsule endoscopy dataset. Scientific Data , 8:142, 2021. doi: 10.1038/s41597-021-00920-z. https://doi.org/10.1038/s41597-021-00920-z .Cristiano Spada et al. Ai-assisted capsule endoscopy reading in suspected small bowel bleeding: a multicentre prospective study. The Lancet Digital Health , 6(5):e345–e353, 2024. B. Sushma and P. Aparna. Summarization of Wireless Capsule Endoscopy Video Using Deep Feature Matching and Motion Analysis. IEEE Access , 9:13691–13703, 2021. ISSN 2169-3536. doi: 10.1109/ACCESS.2020.3044759. 
+
+https://ieeexplore.ieee.org/document/9293302/ .Qiaozhi Tan, Long Bai, Guankun Wang, Mobarakol Islam, and Hongliang Ren. EndoOOD: Uncertainty-aware Out-of-distribution Detection in Capsule Endoscopy Diagnosis, February 2024. http://arxiv.org/abs/2402.11476 .arXiv:2402.11476 [cs]. Canhui Tang et al. Tspo: Temporal sampling policy optimization for long-form video language understanding. In 
+
+Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, pages 9368–9376, 2026. Xi Tang, Jihao Qiu, Lingxi Xie, Yunjie Tian, Jianbin Jiao, and Qixiang Ye. Adaptive keyframe sampling for long video understanding. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 29118–29128, 2025. Peng Wang et al. Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution. arXiv preprint arXiv:2409.12191 , 2024. Weiyun Wang et al. Internvl3. 5: Advancing open-source multimodal models in versatility, reasoning, and efficiency. 
+
+arXiv preprint arXiv:2508.18265 , 2025. Xiaohan Wang, Yuhui Zhang, Orr Zohar, and Serena Yeung-Levy. VideoAgent: Long-form video understanding with large language model as agent. In Aleš Leonardis, Elisa Ricci, Stefan Roth, Olga Russakovsky, Torsten Sattler, and Gül Varol, editors, Computer Vision – ECCV 2024 , volume 15138, pages 58–76. Springer Nature Switzerland. ISBN 978-3-031-72988-1 978-3-031-72989-8. doi: 10.1007/978-3-031-72989-8_4. https://link.springer.com/10. 1007/978-3-031-72989-8_4 . Series Title: Lecture Notes in Computer Science. Zhi-Guo Xiao, Xian-Qing Chen, Dong Zhang, Xin-Yuan Li, Wen-Xin Dai, and Wen-Hui Liang. Image detection method for multi-category lesions in wireless capsule endoscopy based on deep learning models. World Journal of Gastroenterology , 30(48):5111–5129, December 2024. ISSN 1007-9327. doi: 10.3748/wjg.v30.i48.5111. https: //www.wjgnet.com/1007-9327/full/v30/i48/5111.htm .Xia Xie et al. Development and Validation of an Artificial Intelligence Model for Small Bowel Capsule Endoscopy Video Review. JAMA Network Open , 5(7):e2221992, July 2022. ISSN 2574-3805. doi: 10.1001/jamanetworkopen.2022.21992. 
+
+https://jamanetwork.com/journals/jamanetworkopen/fullarticle/2794207 .Xiaohan Xing, Yixuan Yuan, and Max Q-H Meng. Zoom in lesions for better diagnosis: Attention guided deformation network for wce image classification. IEEE Transactions on Medical Imaging , 39(12):4047–4059, 2020. Weiwen Xu et al. Lingshu: A generalist foundation model for unified multimodal medical understanding and reasoning. 
+
+arXiv preprint arXiv:2506.07044 , 2025. Jinguo Zhu et al. Internvl3: Exploring advanced training and test-time recipes for open-source multimodal models. 
+
+arXiv preprint arXiv:2504.10479 , 2025. Meilu Zhu, Zhen Chen, and Yixuan Yuan. DSI-Net: Deep Synergistic Interaction Network for Joint Classification and Segmentation With Endoscope Images. IEEE Transactions on Medical Imaging , 40(12):3315–3325, December 2021. ISSN 1558-254X. doi: 10.1109/TMI.2021.3083586. https://ieeexplore.ieee.org/document/9440441/?arnumber= 9440441 .
+
+15
