@@ -1,0 +1,325 @@
+Title: Structure-Adaptive Sparse Diffusion in Voxel Space for 3D Medical Image Enhancement
+
+URL Source: https://arxiv.org/pdf/2604.17773v1
+
+Published Time: Tue, 21 Apr 2026 01:51:56 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# Structure-Adaptive Sparse Diffusion in Voxel Space for 3D Medical Image Enhancement 
+
+Hongxu Jiang 1, Fei Li 2, Boxiao Yu 3, Ying Zhang 4, Kaleb Smith 5,Kuang Gong 3, and Wei Shao 2⋆ 
+
+> 1
+
+Department of Electrical and Computer Engineering, University of Florida, Gainesville, FL, USA 
+
+hongxu.jiang@ufl.edu  
+
+> 2
+
+Department of Medicine, University of Florida, Gainesville, FL, USA 
+
+fei.Li@medicine.ufl.edu, weishao@ufl.edu  
+
+> 3
+
+Department of Biomedical Engineering, University of Florida, Gainesville, FL, USA 
+
+boxiao.yu@ufl.edu, kgong@bme.ufl.edu  
+
+> 4
+
+Research Computing, University of Florida, Gainesville, FL, USA 
+
+yingz@ufl.edu  
+
+> 5
+
+NVIDIA, Santa Clara, CA, USA 
+
+kasmith@nvidia.com 
+
+Abstract. Three-dimensional (3D) medical image enhancement, includ-ing denoising and super-resolution, is critical for clinical diagnosis in CT, PET, and MRI. Although diffusion models have shown remarkable suc-cess in 2D medical imaging, scaling them to high-resolution 3D volumes remains computationally prohibitive due to lengthy diffusion trajectories over high-dimensional volumetric data. We observe that in conditional enhancement, strong anatomical priors in the degraded input render dense noise schedules largely redundant. Leveraging this insight, we pro-pose a sparse voxel-space diffusion framework that trains and samples on a compact set of uniformly subsampled timesteps. The network predicts clean data directly on the data manifold, supervised in velocity space for stable gradient scaling. A lightweight Structure-aware Trajectory Modu-lation (STM) module recalibrates time embeddings at each network block based on local anatomical content, enabling structure-adaptive denoising over the shared sparse schedule. Operating directly in voxel space, our framework preserves fine anatomical detail without lossy compression while achieving up to 10 × training acceleration. Experiments on four datasets spanning CT, PET, and MRI demonstrate state-of-the-art per-formance on both denoising and super-resolution tasks. Our code is pub-licly available at: https://github.com/mirthAI/sparse-3d-diffusion .
+
+Keywords: Sparse diffusion · Voxel space · Medical image enhancement. 
+
+1 Introduction 
+
+Three-dimensional (3D) medical imaging modalities, such as computed tomogra-phy (CT), magnetic resonance imaging (MRI), and positron emission tomogra- 
+
+> ⋆
+
+Corresponding author: Wei Shao (e-mail: weishao@ufl.edu).  
+
+> arXiv:2604.17773v1 [cs.CV] 20 Apr 2026 2Jiang et al.
+
+phy (PET), are central to modern clinical diagnosis and treatment planning [11]. In practice, however, image acquisition is often constrained by radiation dose, scan duration, and hardware limitations, resulting in low signal-to-noise ratio and limited spatial resolution. These degradations obscure subtle anatomical struc-tures and compromise diagnostic confidence, motivating extensive research into 3D image enhancement tasks, including denoising [27,6] and super-resolution [16,29]. Early enhancement approaches operated in a slice-by-slice or 2.5D man-ner, often resulting in through-plane inconsistencies due to limited volumetric context. Fully 3D convolutional neural networks [2,20] and generative adversarial networks [22,28] were later introduced, but convolutional models often produce over-smooth details and adversarial methods remain difficult to optimize [22,26]. Diffusion probabilistic models [10,24,25] have recently emerged as a powerful alternative offering more stable training, better distribution coverage, and im-proved perceptual fidelity [14,27]. To reduce computational costs, most existing methods operate diffusion in compressed representations, including VAE-learned latents [31,14], wavelet decompositions [5,30], or downsampled inputs [1,4]. While efficient, such compressions inevitably discard high-frequency anatomical details (e.g., cortical folds and lung fissures), imposing representational bottle-necks that fundamentally limit enhancement quality. A natural alternative is returning to the original voxel space, thereby preserving full spatial resolution and avoiding information loss. However, existing diffusion models learn to pre-dict noise or velocity targets that reside in complex, high-dimensional spaces far from the data manifold [15,18], requiring both prolonged training to capture such mappings and hundreds of iterative denoising steps to recover a clean volume, making direct 3D voxel-space generation prohibitively expensive. To mitigate this overhead, we revisit the problem from a conditional modeling perspective. In enhancement tasks, the degraded input already encodes strong anatomical priors, fundamentally reducing the learning complexity compared to unconditional generation. The key is to choose a prediction target that preserves this advantage: predicting noise or velocity maps the network output away from the data manifold, discarding the structural proximity between the degraded input and the clean target. We instead adopt clean data x0 prediction, which keeps the network output on the data manifold throughout training, allowing the model to to directly refine the conditioning prior rather than learn a detour through high-variance noise or velocity spaces. This closer alignment between prediction target and enhancement objective yields smoother denoising behaviors in which neighboring timesteps produce highly similar outputs [9,3,7,17], naturally motivating sparse diffusion on a sub-set of representative timesteps. While [13] showed that a fixed sparse schedule suffices for 2D conditional generation, extending it to patch-based 3D diffusion reveals a further challenge: high-resolution patches across diverse anatomical re-gions (e.g., homogeneous liver tissue versus intricate vascular structures) exhibit varied denoising dynamics that a single global schedule cannot accommodate. To this end, we propose a structure-aware sparse diffusion framework that op-erates directly in 3D voxel space for medical image enhancement. The framework Title Suppressed Due to Excessive Length 3
+
+combines three complementary designs: x0-prediction with velocity supervision for stable on-manifold learning, sparse diffusion that eliminates redundant de-noising steps, and a Structure-aware Trajectory Modulation (STM) module that recalibrates the time embedding according to local anatomical complexity, en-abling structure-adaptive denoising at each step. Together, these components achieve up to 10 × faster training while delivering state-of-the-art performance across CT, PET, and MRI denoising and super-resolution benchmarks. The main contributions of this work are as follows: 1. We propose a sparse diffusion framework in 3D voxel space that combines 
+
+x0-prediction with velocity supervision and timestep subsampling, achieving up to 10 × faster training while improving enhancement quality. 2. We introduce Structure-aware Trajectory Modulation (STM), which lever-ages tri-planar structural encoding and block-wise time embedding modula-tion to adapt denoising trajectories to local anatomical structure. 3. Extensive experiments on four datasets spanning CT, PET, and MRI deliver state-of-the-art performance on both denoising and super-resolution tasks. 
+
+2 Methodology 
+
+2.1 Overview 
+
+The proposed framework, illustrated in Fig. 1, performs structure-adaptive sparse diffusion directly in voxel space for 3D medical image enhancement. High-resolution volumes are first partitioned into overlapping 3D patches to enable memory-efficient processing while preserving local spatial context. During diffusion, the model takes the noisy patch xt and degraded input xcond as joint inputs and predicts the clean target x0, supervised by a velocity loss for stable on-manifold learning. Training operates on a subset of uniformly subsampled timesteps, form-ing a sparse trajectory that eliminates redundant denoising steps. A Structure-aware Trajectory Modulation (STM) module further extracts structural cues from xcond to recalibrate time embeddings at each UNet block, adapting the denoising behavior to local anatomical complexity. STM 
+
+> Xt
+> Xcond
+
+t       
+
+> Xpred
+> X0
+> Velocity Loss
+> Block -wise modulation Coronal view average pooling Structure -aware trajectory modulation (STM) Sagittal view average pooling
+> Avg Pool Avg Pool
+> Conv2d Conv2d Conv3d
+> GAP GAP GAP
+> MLP
+> Structure -adaptive Trajectory Modulation
+> ⨁
+> Embedding
+> layer
+> t
+> Scale, Shift
+> Block -wise MLP  MLP
+> tmod
+> Xcond
+> 𝛾 ,β
+
+Fig. 1. Overview of the proposed framework. 4 Jiang et al. 
+
+2.2 Sparse Voxel-Space Diffusion 
+
+Let x0 ∈ RD×H×W denote a high-quality 3D medical volume and y ∈ RD×H×W
+
+its degraded input. To enable tractable processing under GPU memory con-straints, we extract overlapping 3D patches {x(i)0 , y (i)}Ni=1 of size d × h × w from the volume pair. The forward diffusion process corrupts x0 via xt = √¯αt x0 +√1 − ¯αt ϵ, where ¯αt = Qts=1 (1 − βs) and ϵ ∼ N (0 , I).
+
+x0-Prediction. In conditional enhancement, the degraded input y already pro-vides strong anatomical priors, restricting the problem to local refinement rather than unconditioned generation. Rather than regressing noise ϵ or velocity v,which reside in high-variance spaces off the data manifold, we let the denoising network fθ directly predict the clean data: ˆx0 = fθ (xt, y, t ).
+
+Sparse Timestep Scheduling. The x0-prediction formulation yields smoother denoising trajectories with high inter-step redundancy, as neighboring noise lev-els produce highly similar outputs. We exploit this by uniformly subsampling 
+
+K timesteps from the full schedule of T steps (e.g., T =1000) to form a sparse schedule S = {s1, . . . , s K } where K ≪ T . (we use K=5 ; see ablation in table 2). Both forward and reverse processes then operate exclusively on S, whereas con-ventional models require the full T steps. 
+
+Velocity Supervision. While x0-prediction keeps the network output on the data manifold, directly supervising in x0-space leads to unbalanced gradient magnitudes across timesteps: the loss scale vanishes near t=0 and explodes near 
+
+t=T [21,10]. We therefore reformulate the supervision in velocity space. Sub-stituting ϵ = ( xt − √¯αt x0)/√1 − ¯αt into the velocity definition vt = √¯αt ϵ −√1 − ¯αt x0 yields vt = ( √¯αt xt − x0)/√1 − ¯αt. We apply the same conversion to the network prediction ˆx0 to obtain: 
+
+ˆvt =
+
+√¯αt xt − ˆx0
+
+√1 − ¯αt
+
+. (1) This retains the benefit of on-manifold prediction while producing uniformly scaled gradients across all timesteps in S, stabilizing training under our sparse schedule. The training objective is given by: 
+
+Lbase = Ex0, t ∼U (S), ϵ ∼N (0 ,I)
+
+h
+
+∥vt − ˆvt∥22
+
+i
+
+. (2) 
+
+2.3 Structure-aware Trajectory Modulation 
+
+The sparse diffusion process described above applies a globally uniform denois-ing schedule across all patches regardless of their content. In practice, however, 3D medical volumes exhibit pronounced anatomical heterogeneity: patches con-taining fine structural detail (e.g., bronchial trees, cortical folds) require more gradual denoising, whereas homogeneous regions (e.g., soft tissue, background) can tolerate coarser adjustments. To address this, we propose Structure-aware Trajectory Modulation (STM), which dynamically conditions the denoising pro-cess on local anatomical content, enabling structure-adaptive denoising behavior across the shared sparse schedule. Title Suppressed Due to Excessive Length 5
+
+Multi-structure Encoder. To capture structural context from complementary spatial dimensions, we design a lightweight multi-structure encoder Eϕ as shown in Fig. 1. A volumetric branch extracts holistic 3D structural features from the conditioning input xcond through 3D convolutions followed by global average pooling (GAP). In parallel, two planar branches operate on mean projections of 
+
+xcond along the coronal and sagittal axes, each processed by 2D convolutions and GAP to capture orientation-specific 2D structural patterns that may be diluted in purely volumetric pooling. The three branch outputs are concatenated and fused through an MLP to produce a compact structural representation: 
+
+c = MLP 
+
+h 
+
+E3D  
+
+> ϕ
+
+(xcond ); Ecor  
+
+> ϕ
+
+(˜ xcor 
+
+> cond
+
+); Esag  
+
+> ϕ
+
+(˜ xsag 
+
+> cond
+
+)
+
+i 
+
+∈ Rdc , (3) where ˜xcor  
+
+> cond
+
+and ˜xsag  
+
+> cond
+
+denote mean projections along the anterior–posterior and lateral axes, respectively. 
+
+Block-wise Trajectory Modulation. The structural representation c modu-lates the denoising process by recalibrating the time embedding at every residual block of the UNet. Each block contains a dedicated MLP that maps c to block-specific affine parameters: 
+
+(γk, β k) = split(MLP k(c)) , (4) which then modulate the time embedding et to produce a structure-conditioned variant: 
+
+t(k) 
+
+> mod
+
+= (1 + γk) ⊙ et + βk, (5) where et is obtained from timestep t via a sinusoidal embedding layer and k in-dexes the residual blocks of the UNet. The block-wise design allows each network depth to learn its own structure-time interaction, as shallow blocks may priori-tize coarse anatomical layout while deeper blocks attend to fine-grained detail. Since the time embedding governs how aggressively the network denoises at each step, modulating it with structural information effectively reshapes the denois-ing trajectory: the same physical timestep induces different denoising strengths depending on local anatomical complexity, enabling structurally distinct patches to follow individualized denoising paths over the shared sparse schedule. 
+
+3 Experimental Results 
+
+Datasets. We evaluate the proposed approach on two 3D medical image en-hancement tasks: image denoising and image super-resolution, using four pub-licly available datasets that span CT, PET, and MRI modalities. For CT image denoising, we use the lung LDCT-and-Projection-data dataset [19] with image sizes ranging from 512 ×512 ×300 to 512 ×512 ×400. We used 50 patients in total, with 40 for training and 10 for testing. For PET image denoising, we use brain FDG PET dataset [8] with an image size of 256 ×256 ×89. We used 70 patients for training and 18 for evaluation. For CTA image super-resolution, the Aor-taSeg24 dataset [12] were used with image sizes ranging from 350 ×350 ×500 to 520 ×520 ×800. We used 50 patients for training and 10 for evaluation. For MRI 6 Jiang et al. 
+
+super-resolution, we use UHB FCD Lesion Brain MRI Dataset [23] with image sizes of 320 ×320 ×208. We used 120 scans in total, with 96 for training and 24 for testing. All volumes were normalized to [-1, 1]. 
+
+Model Evaluation. We evaluate enhancement quality using four 3D metrics: PSNR, SSIM, MS-SSIM, and HFEN. We compare against four representative 3D diffusion baselines: 3D LDM [14] (latent-space), 3D WDM [5] (wavelet-domain), 3D DDPM [27], and 3D DDIM [24], covering the dominant paradigms of 3D medical image diffusion. 
+
+Quantitative Results. Table 1 presents quantitative results across all datasets and tasks. Our method consistently achieves the best or second-best scores on every metric. On lung CT denoising, our model improves PSNR by +0.57 dB and SSIM by +0.016 over the strongest baseline, while on aorta CTA it sur-passes 3D DDIM by +0.46 dB PSNR with uniformly better SSIM, MS-SSIM, and HFEN, indicating more faithful recovery of fine vascular structures. A consis-tent improvement is observed across all remaining datasets as well. We attribute these gains to the complementary strengths of the framework: operating in voxel space avoids the representational loss of latent compression, sparse scheduling eliminates redundant steps that cause repeated smoothing, and STM adapts the denoising behavior to local anatomical complexity, preserving fine details in structurally rich regions while allowing more aggressive denoising elsewhere. 
+
+Table 1. Quantitative comparison on denoising and 4× super-resolution tasks across four datasets. Best results are in red , second-best are blue.                                                                                                   
+
+> Lung CT Denoising Brain PET Denoising Method PSNR ↑SSIM ↑MS-SSIM ↑HFEN ↓PSNR ↑SSIM ↑MS-SSIM ↑HFEN ↓
+> 3D LDM 28.89 0.7380 0.9430 0.0308 35.43 0.9605 0.9872 0.0179 3D WDM 29.54 0.7578 0.9532 0.0283 36.27 0.9624 0.9884 0.0167 3D DDPM 29.25 0.7414 0.9426 0.0291 36.59 0.9621 0.9890 0.0159 3D DDIM 31.25 0.8073 0.9613 0.0230 36.85 0.9646 0.9896 0.0156
+> Ours 31.82 0.8232 0.9644 0.0215 37.08 0.9660 0.9899 0.0149 Aorta CTA Super-Resolution Brain MRI Super-Resolution Method PSNR ↑SSIM ↑MS-SSIM ↑HFEN ↓PSNR ↑SSIM ↑MS-SSIM ↑HFEN ↓
+> 3D LDM 40.24 0.9765 0.9951 0.0111 33.96 0.9613 0.9908 0.0207 3D WDM 40.66 0.9772 0.9952 0.0107 34.45 0.9645 0.9912 0.0200 3D DDPM 40.72 0.9742 0.9947 0.0107 33.68 0.9592 0.9903 0.0217 3D DDIM 41.52 0.9798 0.9957 0.0096 35.62 0.9700 0.9930 0.0172
+> Ours 41.98 0.9827 0.9965 0.0089 35.95 0.9724 0.9934 0.0163
+
+Qualitative Results. Fig. 2 presents denoising comparisons on lung CT and brain PET. In CT, our method reconstructs the sharpest lung fissure lines (pur-ple boxes), closely matching the normal-dose reference, while baselines exhibit blurring or structural loss. In PET, our approach recovers clearer anatomical boundaries (blue boxes) where baselines suffer from oversmoothing. Fig. 3 shows 
+
+4× super-resolution results on aorta CTA and brain MRI. Our method produces more distinct vessel boundaries in CTA and preserves sharper gray–white matter interfaces in MRI, whereas baselines fail to resolve fine cortical folds and aortic Title Suppressed Due to Excessive Length 7
+
+branches. Across both tasks, our proposed method consistently improves fine anatomical detail recovery. Axial  Coronal 
+
+35.43db/0.9605 
+
+35.43db/0.9605 
+
+36.27db/0.9624 
+
+36.27db/0.9624 
+
+36.59db/0.9621 
+
+36.59db/0.9621 
+
+36.85db/0.9646 
+
+36.85db/0.9646 
+
+37.06db/0.9659 
+
+37.06db/0.9659 
+
+Low -dose PET 3D LDM 3D WDM 3D DDPM 3D DDIM Ours Ground Truth 
+
+> Axial  Sagittal
+
+28.89db/0.7380 29.54db/0.7578 29.25db/0.7414 31.25db/0.8073 31.67db/0.8165 
+
+31.67db/0.8165 31.25db/0.8073 29.25db/0.7414 29.54db/0.7578 28.89db/0.7380 
+
+> Lung CT Denoising Brain PET Denoising
+
+Low -dose C T 3D LDM 3D WDM 3D DDPM 3D DDIM Ours Ground Truth 
+
+Fig. 2. Qualitative denoising results on lung CT and brain PET. Purple and blue boxes highlight lung fissures and subtle anatomical boundaries, respectively. Our model preserves sharper, more structurally consistent details than all baselines. 3D LDM 3D WDM 3D DDPM 3D DDIM Ours Ground Truth 
+
+> Coronal  Sagittal
+
+Low -resolution MRI 
+
+33.96db/0.9613 
+
+33.96db/0.9613 
+
+34.45db/0.9645 
+
+34.45db/0.9645 
+
+33.68db/0.9592 
+
+33.68db/0.9592 
+
+35.62db/0.9700 
+
+35.62db/0.9700 
+
+35.83db/0.9708 
+
+35.83db/0.9708 
+
+40.24db/0.9765 
+
+40.24db/0.9765 
+
+40.66db/0.9772 
+
+40.66db/0.9772 
+
+40.72db/0.9742 
+
+40.72db/0.9742 
+
+41.52db/0.9798 
+
+41.52db/0.9798 
+
+41.83db/0.9812 
+
+41.83db/0.9812 
+
+> Coronal  Sagittal
+> Aorta CTA Super -Resolution Brain MRI Super -Resolution
+
+3D LDM 3D WDM 3D DDPM 3D DDIM Ours Ground Truth Low -resolution CTA 
+
+Fig. 3. Qualitative 4× super-resolution results on aorta CTA and brain MRI. High-lighted regions show vessel boundaries and cortical structures. Our model recovers finer anatomical details with fewer artifacts than all baselines. 8 Jiang et al. 
+
+Table 2. Ablation on diffusion step count K for lung CT denoising (PSNR / SSIM). Best in red , second in blue.                
+
+> Method / Step# 3510 50 100
+> 3D DDIM 30.69 / .7897 31.01 / .8020 31.25 / .8073 30.56 / .7872 30.28 / .7839
+> Ours 31.05 / .7968 31.82 / .8232 31.69 / .8194 31.41 / .8140 30.98 / .7988
+
+Computational Efficiency. We evaluate training efficiency by comparing con-vergence curves against 3D DDIM on both tasks. As shown in Fig. 4, our method achieves up to 10 × faster convergence on denoising and super-resolution, reach-ing higher PSNR at the same iteration count while the baseline remains far from its final performance. This confirms that sparse voxel-space diffusion with STM substantially reduces the computational cost of 3D diffusion without sacrificing enhancement quality. (a) (b) (c) (d) 
+
+Fig. 4. Training convergence curves for lung CT denoising and aorta CTA 4× super-resolution. Our method reaches the baseline’s final performance with up to 10 × fewer iterations. 
+
+Ablation Study. We first analyze the effect of diffusion step count K on lung CT denoising. As shown in Table 2, performance peaks at K=5 , with further steps degrading quality due to repeated noise injection–denoising cycles that oversmooth fine structures, confirming that a compact sparse schedule is both sufficient and optimal for conditional enhancement. Table 3 isolates the contribution of each proposed component. Switching from ϵ and v-prediction to x0-prediction with velocity supervision dramatically improves all metrics. Adding sparse diffusion scheduling improve this quality while reducing training time by ∼ 10 ×. Finally, incorporating STM yields further gains across all metrics at no additional training cost, validating that structure-adaptive modulation and sparse diffusion are complementary. 
+
+4 Conclusion 
+
+We presented a sparse voxel-space diffusion framework for 3D medical image enhancement that combines x0-prediction with velocity supervision, uniform timestep subsampling, and structure-aware trajectory modulation (STM). The key insight is that strong anatomical priors in the degraded input render dense Title Suppressed Due to Excessive Length 9
+
+Table 3. Component ablation on lung CT denoising. x0+v: x0-prediction with velocity supervision. Sparse: sparse timestep scheduling ( K=5 ). STM: structure-aware trajec-tory modulation. Best in red , second in blue.                                      
+
+> x0+vSparse STM PSNR ↑SSIM ↑MS-SSIM ↑HFEN ↓Train Time ↓
+> ✗✗✗19.42 .4639 .5087 0.0812 1×
+> ✓✗✗31.25 .8073 .9613 0.0230 1×
+> ✓✓✗31.56 .8137 .9624 0.0222 ∼0.1×
+> ✓✓✓31.82 .8232 .9644 0.0215 ∼0.1×
+
+noise schedules largely redundant for conditional enhancement. By exploiting this redundancy, our framework trains and samples on as few as five timesteps while STM adapts denoising behavior to local anatomical structure. Experi-ments across CT, PET, and MRI demonstrate up to 10 × training acceleration with consistent improvements in reconstruction quality. We believe this princi-ple extends naturally to other conditional generative tasks in volumetric medical imaging. 
+
+References 
+
+1. Bieder, F., Wolleb, J., Durrer, A., Sandkuehler, R., Cattin, P.C.: Memory-efficient 3d denoising diffusion models for medical image processing. In: Medical Imaging with Deep Learning. pp. 552–567. PMLR (2024) 2 2. Chaudhari, A.S., Fang, Z., Kogan, F., Wood, J., Stevens, K.J., Gibbons, E.K., Lee, J.H., Gold, G.E., Hargreaves, B.A.: Super-resolution musculoskeletal mri using deep learning. Magnetic resonance in medicine 80 (5), 2139–2154 (2018) 2 3. Choi, J., Lee, J., Shin, C., Kim, S., Kim, H., Yoon, S.: Perception prioritized train-ing of diffusion models. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 11472–11481 (2022) 2 4. Dorjsembe, Z., Pao, H.K., Odonchimed, S., Xiao, F.: Conditional diffusion mod-els for semantic 3d brain mri synthesis. IEEE Journal of Biomedical and Health Informatics 28 (7), 4084–4093 (2024) 2 5. Friedrich, P., Wolleb, J., Bieder, F., Durrer, A., Cattin, P.C.: Wdm: 3d wavelet diffusion models for high-resolution medical image synthesis. In: MICCAI workshop on deep generative models. pp. 11–21. Springer (2024) 2, 6 6. Gao, Q., Li, Z., Zhang, J., Zhang, Y., Shan, H.: Corediff: Contextual error-modulated generalized diffusion model for low-dose ct denoising and generalization. IEEE Transactions on Medical Imaging 43 (2), 745–759 (2023) 2 7. Go, H., Lee, Y., Lee, S., Oh, S., Moon, H., Choi, S.: Addressing negative transfer in diffusion models. Advances in Neural Information Processing Systems 36 , 27199– 27222 (2023) 2 8. Gong, K., Johnson, K., El Fakhri, G., Li, Q., Pan, T.: Pet image denoising based on denoising diffusion probabilistic model. European Journal of Nuclear Medicine and Molecular Imaging 51 (2), 358–368 (2024) 5 9. Hang, T., Gu, S., Li, C., Bao, J., Chen, D., Hu, H., Geng, X., Guo, B.: Efficient diffusion training via min-snr weighting strategy. In: Proceedings of the IEEE/CVF international conference on computer vision. pp. 7441–7451 (2023) 2 10 Jiang et al. 10. Ho, J., Jain, A., Abbeel, P.: Denoising diffusion probabilistic models. Advances in neural information processing systems 33 , 6840–6851 (2020) 2, 4 11. Hussain, S., Mubeen, I., Ullah, N., Shah, S.S.U.D., Khan, B.A., Zahoor, M., Ul-lah, R., Khan, F.A., Sultan, M.A.: Modern diagnostic imaging technique applica-tions and risk factors in the medical field: a review. BioMed research international 
+
+2022 (1), 5164970 (2022) 2 12. Imran, M., Krebs, J.R., Sivaraman, V.B., Zhang, T., Kumar, A., Ueland, W.R., Fassler, M.J., Huang, J., Sun, X., Wang, L., et al.: Multi-class segmentation of aortic branches and zones in computed tomography angiography: The aortaseg24 challenge. arXiv preprint arXiv:2502.05330 (2025) 5 13. Jiang, H., Imran, M., Zhang, T., Zhou, Y., Liang, M., Gong, K., Shao, W.: Fast-ddpm: Fast denoising diffusion probabilistic models for medical image-to-image generation. IEEE Journal of Biomedical and Health Informatics (2025) 2 14. Khader, F., Müller-Franzes, G., Tayebi Arasteh, S., Han, T., Haarburger, C., Schulze-Hagen, M., Schad, P., Engelhardt, S., Baeßler, B., Foersch, S., et al.: De-noising diffusion probabilistic models for 3d medical image generation. Scientific Reports 13 (1), 7303 (2023) 2, 6 15. Li, T., He, K.: Back to basics: Let denoising generative models denoise. arXiv preprint arXiv:2511.13720 (2025) 2 16. Liu, X., Xie, Y., Liu, C., Cheng, J., Diao, S., Tan, S., Liang, X.: Diffusion prob-abilistic priors for zero-shot low-dose ct image denoising. Medical Physics 52 (1), 329–345 (2025) 2 17. Ma, Q., Ning, X., Liu, D., Niu, L., Zhang, L.: Decouple-then-merge: Finetune diffusion models as multi-task learning. In: Proceedings of the Computer Vision and Pattern Recognition Conference. pp. 23281–23291 (2025) 2 18. Ma, Z., Xu, R., Zhang, S.: Pixelgen: Pixel diffusion beats latent diffusion with perceptual loss. arXiv preprint arXiv:2602.02493 (2026) 2 19. Moen, T.R., Chen, B., Holmes III, D.R., Duan, X., Yu, Z., Yu, L., Leng, S., Fletcher, J.G., McCollough, C.H.: Low-dose ct image and projection dataset. Med-ical physics 48 (2), 902–911 (2021) 5 20. Pham, C.H., Tor-Díez, C., Meunier, H., Bednarek, N., Fablet, R., Passat, N., Rousseau, F.: Multiscale brain mri super-resolution using deep 3d convolutional networks. Computerized Medical Imaging and Graphics 77 , 101647 (2019) 2 21. Salimans, T., Ho, J.: Progressive distillation for fast sampling of diffusion models. arXiv preprint arXiv:2202.00512 (2022) 4 22. Sánchez, I., Vilaplana, V.: Brain mri super-resolution using 3d generative adver-sarial networks. arXiv preprint arXiv:1812.11440 (2018) 2 23. Schuch, F., Walger, L., Schmitz, M., David, B., Bauer, T., Harms, A., Fischbach, L., Schulte, F., Schidlowski, M., Reiter, J., et al.: An open presurgery mri dataset of people with epilepsy and focal cortical dysplasia type ii. Scientific Data 10 (1), 475 (2023) 6 24. Song, J., Meng, C., Ermon, S.: Denoising diffusion implicit models. arXiv preprint arXiv:2010.02502 (2020) 2, 6 25. Song, Y., Sohl-Dickstein, J., Kingma, D.P., Kumar, A., Ermon, S., Poole, B.: Score-based generative modeling through stochastic differential equations. arXiv preprint arXiv:2011.13456 (2020) 2 26. Uzunova, H., Ehrhardt, J., Handels, H.: Memory-efficient gan-based domain trans-lation of high resolution 3d medical images. Computerized Medical Imaging and Graphics 86 , 101801 (2020) 2 Title Suppressed Due to Excessive Length 11 27. Yu, B., Ozdemir, S., Dong, Y., Shao, W., Shi, K., Gong, K.: Pet image denois-ing based on 3d denoising diffusion probabilistic model: Evaluations on total-body datasets. In: International Conference on Medical Image Computing and Computer-Assisted Intervention. pp. 541–550. Springer (2024) 2, 6 28. Zhang, K., Hu, H., Philbrick, K., Conte, G.M., Sobek, J.D., Rouzrokh, P., Erick-son, B.J.: Soup-gan: Super-resolution mri using generative adversarial networks. Tomography 8(2), 905–919 (2022) 2 29. Zhang, T., Jiang, H., Gong, K., Shao, W.: Geodesic diffusion models for medical image-to-image generation. arXiv preprint arXiv:2503.00745 (2025) 2 30. Zheng, J., He, M., Tang, X., Wang, X., Cao, T., Zeng, T., Zhang, L., You, C.: 3d wavelet latent diffusion model for whole-body mr-to-ct modality translation. arXiv preprint arXiv:2507.11557 (2025) 2 31. Zhu, L., Xue, Z., Jin, Z., Liu, X., He, J., Liu, Z., Yu, L.: Make-a-volume: Leveraging latent diffusion models for cross-modality 3d brain mri synthesis. In: International Conference on Medical Image Computing and Computer-Assisted Intervention. pp. 592–601. Springer (2023) 2
