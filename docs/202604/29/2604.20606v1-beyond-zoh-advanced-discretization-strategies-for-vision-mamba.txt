@@ -1,0 +1,329 @@
+Title: Beyond ZOH: Advanced Discretization Strategies for Vision Mamba
+
+URL Source: https://arxiv.org/pdf/2604.20606v1
+
+Published Time: Thu, 23 Apr 2026 01:01:04 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Beyond ZOH: Advanced Discretization Strategies for Vision Mamba 
+
+Fady Ibrahim [0009 −0004 −6534 −598 X], Guangjun Liu [0000 −0002 −3301 −1166] , and Guanghui Wang [0000 −0003 −3182 −104 X]
+
+Toronto Metropolitan University, 350 Victoria St, Toronto, ON M5B 2K3 
+
+Abstract. Vision Mamba, as a state space model (SSM), employs a zero-order hold (ZOH) discretization, which assumes that input sig-nals remain constant between sampling instants. This assumption de-grades temporal fidelity in dynamic visual environments and constrains the attainable accuracy of modern SSM-based vision models. In this paper, we present a systematic and controlled comparison of six dis-cretization schemes instantiated within the Vision Mamba framework: ZOH, first-order hold (FOH), bilinear/Tustin transform (BIL), polyno-mial interpolation (POL), higher-order hold (HOH), and the fourth-order Runge–Kutta method (RK4). We evaluate each method on standard vi-sual benchmarks to quantify its influence in image classification, semantic segmentation, and object detection. Our results demonstrate that POL and HOH yield the largest gains in accuracy at the cost of higher training-time computation. In contrast, the BIL provides consistent improvements over ZOH with modest additional overhead, offering the most favorable trade-off between precision and efficiency. These findings elucidate the pivotal role of discretization in SSM-based vision architectures and fur-nish empirically grounded justification for adopting BIL as the default discretization baseline for state-of-the-art SSM models. 
+
+Keywords: Mamba · State Space Models · Vision Mamba · Discretiza-tion · Bilinear Transform · Higher-Order Hold. 
+
+1 Introduction 
+
+State Space Models (SSMs), such as Vision Mamba (ViM), have received sig-nificant attention in recent years [11] [18]. ViM presents a promising alternative to Vision Transformers (ViTs), which leverage their ability to capture complex dependencies, but at a quadratic rate of calculations due to their attention mech-anisms [10] [14] [31]. SSMs have near-linear scalability in sequence length and hardware-efficient processing [11]. Mamba has recently been adapted to com-puter vision tasks; ViM [33], Vmamba [18], and VideoMamba [16] demonstrate Mamba’s ability to handle long-range dependencies while addressing the com-putational and memory bottlenecks faced by Transformer-based models in the visual domain. Despite their efficiency, Mamba models used for vision inherit a limitation from classical control theory, the use of zero-order hold (ZOH) for  
+
+> arXiv:2604.20606v1 [cs.CV] 22 Apr 2026 2F. Ibrahim et al.
+
+continuous-to-discrete conversion [30]. ZOH assumes that input values remain constant between samples—an assumption that oversimplifies visual data, where spatial signals exhibit continuous variation, sharp edges, textures, and structured frequency content. While ZOH simplifies implementation and guarantees stabil-ity, it introduces discretization lag and truncation errors that accumulate across long sequences of image patches or tokens. To address these limitations, this work systematically investigates a con-trolled and hardware-aware study of advanced discretization strategies that bet-ter capture continuous dynamics within Mamba-based visual systems. We im-plement and evaluate six discretization methods within the ViM framework: 1. Zero-Order Hold (ZOH) – The baseline method used in original ViM imple-mentations, serving as a reference point for comparison [30]. 2. First-Order Hold (FOH) – A linear interpolation method that models smoother transitions between samples [30]. 3. Bilinear/Tustin Transform (BIL) – A signal processing technique that con-verts stable analog filters into equivalent digital filters, allowing analog de-signs to be implemented digitally, preserving stability [3] [21]. 4. Polynomial Interpolation (POL) – A higher-order approximation that fits polynomial curves through sample points, improving temporal smoothness [7] [2]. 5. Higher-Order Hold (HOH) – An extension of FOH using higher-degree poly-nomials to better approximate complex temporal variations [24]. 6. Runge–Kutta 4 (RK4) – A fourth-order integration method providing high-precision discretization for systems with fast-changing dynamics [5]. By integrating these methods within a unified CUDA-based execution frame-work that preserves identical memory access patterns, kernel fusion, and scan-based recurrence across methods, we analyze how each affects model accu-racy, training stability, and generalization across benchmark datasets such as ImageNet-1k [9], Cifar100 [15], ADE20K [32], and MS COCO [17]. This work establishes a foundational understanding of how numerical meth-ods, often overlooked in architectural design, directly influence the performance and stability of modern state space visual models. This work establishes dis-cretization as a first-class design decision in ViM and provides the first hardware-consistent benchmark of numerical integration methods for state-space vision models. Although the work in this paper is based on ViM, the proposed dis-cretization methods can be directly applied to other SSMs as well. The contri-butions of this paper are threefold: 1. Identifying the limitations introduced by ZOH in current ViM and formally characterizing its impact on visual modeling. 2. Implementing and evaluating five advanced discretization strategies (six in-cluding ZOH) within the ViM framework across large-scale classification, segmentation, and detection benchmarks. 3. Demonstrating that while POL and HOH methods yield the highest accu-racy, BIL provides a balanced improvement in precision and efficiency. Beyond ZOH: Advanced Discretization Strategies for Vision Mamba 3
+
+2 Related Work 
+
+In foundational SSM frameworks, the conversion from continuous to discrete time uses a fixed discretization rule. This ensures that the model can handle continuous input x(t) by propagating information through hidden states h(t).Modern SSM architectures, such as Vision Mamba (ViM) [33], VMamba [18], and its derivatives [13] [28] [27] [29] operate using this structured fixed discretization step. The fundamental SSM layer introduced in [23] relies on this continuous-to-discrete system translation. The original Mamba research [11], while focusing on content-dependent selection, maintains that SSMs were originally defined as discretizations of continuous systems. The standard and most commonly cited discretization technique across mod-ern SSM architectures is the ZOH method. The ZOH method is predicated on the assumption that the input remains constant over a given time interval ∆.This method transforms the continuous system parameters, such as the evolu-tion matrix A and input matrix B, into their discrete counterparts. ZOH dis-cretization is utilized implicitly in many prominent SSM models and extensions, including Mamba [11], Structured State Space Sequence (S4) models [29] [27], VMamba [18], and VideoMamba [16]. The general framework of State Space Models allows for various discretiza-tion methods. One line of work explored simplifying the complexity of state matrices themselves, while later research focused on integrating an alternative discretization method beyond ZOH to enhance model expressivity [1] [22]. This is similar in concept to BIL (Tustin’s method) [21]: 
+
+– Real Valued Simplification [23]: The Mega model, a derivative of S4, repre-sented the discretization of continuous system parameters as an Exponential Moving Average (EMA) term, which led to a simplification of the SSM model that only focused on real-valued parameters, reducing computational cost. 
+
+– Trapezoidal Discretization (Mamba-3) [1]: The work experimented with the use of trapezoidal discretization (trapezoidal/Euler’s rule) [22] as an im-provement to the core SSM components within Mamba for large language modeling. The complex valued SSMs, when discretized using the general trapezoidal rule, yielded an equivalent real valued SSM equipped with data-dependent Rotary Positional Embeddings (RoPE) [12] [20]. The successful application of this method resulted in precise algorithmic reasoning, with which previous SSM variants struggled. [1]. In summary, prior work on state space models for vision has largely treated discretization as a fixed and secondary design choice, with ZOH implicitly adopted across most Mamba-based architectures. Recent efforts, such as real-valued sim-plifications and trapezoidal discretization, demonstrate that revisiting numerical formulations can improve specific capabilities; however, these approaches are ei-ther task-specific, limited to language modeling, or evaluate a single alternative in isolation. In contrast, this work systematically examines discretization itself as a first-class modeling component, providing a comparison of five advanced 4 F. Ibrahim et al. 
+
+discretization methods within a consistent ViM framework. By isolating dis-cretization from other architectural changes, our study clarifies its independent impact on performance in visual tasks, establishing discretization as a key design choice rather than a fixed implementation detail. 
+
+3 Methodology 
+
+3.1 Preliminaries Mamba Selective State Space Model (S6) Mamba enhances the context-aware capabilities of traditional SSMs by making its parameters functions of the input. The original Mamba architecture was intended for 1D sequential data such as language tokens. SSMs map a 1D function x(t) ∈ R to an output y(t) ∈ R
+
+through a hidden state h(t) ∈ RN . Using the parameters A ∈ RN ×N , B ∈
+
+RN ×1,C ∈ R1×N , the continuous system is defined by 
+
+dh (t)
+
+dt = Ah(t) + Bx(t), y(t) = Ch(t) (1) For the discrete sequences defined by the input xt = ( x0, x 1, . . . ) ∈ RL, the continuous system parameters in Eq. (1) must be discretized using a step size 
+
+∆. ZOH [30] is used as the simplest discretization method in [16, 18, 33]. Using step size ∆, the continuous system parameters A, B are converted to ¯A, ¯B as 
+
+¯A = eA∆,
+
+¯B = ( A∆)−1(eA∆ − I) · ∆B (2) and the discretized system equation can be represented as 
+
+ht = ¯Aht−1 + ¯Bxt, yt = Cht (3) The innovation of Mamba lies in the Selective Scan Mechanism (S6) [11], making these SSM parameters B, C, ∆ functions of the input. The original Mamba block [11] introduced a hardware-aware algorithm to efficiently com-pute the discretization and selective SSM parameters in Eq. (1) and Eq. (3) to compute the latent hidden state and output. This mechanism allows Mamba to selectively retain or discard information based on the relevance of the input sequence. 
+
+ViM Model ViM extends the Mamba architecture, as shown in Fig.1, to ad-dress the complexities of visual data. It addresses position sensitivity by incor-porating position embeddings, similar to those used in ViT [10]. The original Mamba block’s unidirectional scanning suits causal sequences. However, visual data are non-causal. To capture global context, ViM employs bidirectional scan-ning, processing sequences forward and backward to capture dependencies ef-fectively [33]. The model integrates information across the scan direction as if Beyond ZOH: Advanced Discretization Strategies for Vision Mamba 5Patch Embeddings (inc. Spatial Position) 
+
+> a
+
+The PlainMamba Block is repeated L times with a Global Pooling Layer at the end. 
+
+> Depth-Wise Conv SSM x4 Lin. Proj Lin. Proj Lin. Proj Direction Aware Update {𝛩 1,𝛩 2,𝛩 3,𝛩 4,𝛩 5}SiLU SiLU
+> XZ
+> MLP
+
+(d) PlainMamba Block (c) LocalMamba Architecture   
+
+> Patch Embeddings (inc. Spatial Position) Layer Norm Conv1d Lin. Proj Lin. Proj
+> XZSiLU SiLU SASF
+
+The Spatial Mamba Block is repe architecture, with a downsampling 
+
+(e) SpatialMam 
+
+> Patch Embeddings (inc. Spatial Position / Cls Token) Layer Norm Forward Conv1d Backward Conv1d Lin. Proj Lin. Proj
+> XZ
+> Forward S SS Backward SSiLU
+
+Token Fusion Block;  fi nds tokens from two token sets, fu 
+
+> Patch Embeddings (inc. Spatial Position)
+
+The HiMamba Block is repeated 4 times in the incorporating a single direction scanning SSM implements an upsampling layer to produce H   
+
+> HxWxC Layer Norm Layer Norm Local SSM Region SSM Fusion Module H/n x W/n x C Conv AvgPool Lin. Proj SiLU Local Region SSM HxWxC HxWxC HxWxC (H / n) x (W / n) x C Lin. Proj  Lin. Proj (H / n) x (W / n) x C Depth-Wise Conv SiLU SiLU HxWxC Lin. Proj  Lin. Proj Depth-Wise Conv SiLU
+
+(f) Famba-V A (g) Hi-Mamba B 
+
+> Patch Embeddings (inc. Spatial Position / Cls Token)
+
+Vision Mamba (ViM) Architecture 
+
+> Layer Norm Forward Conv1d Backward Conv1d Lin. Proj Lin. Proj
+> XZ
+> Lin. Proj Forward Selective SSM (State Space Model) Backward Selective SSM (State Space Model) SiLU MLP
+
+The VSS Block is repeated 4 times in VMamba architecture, with a downsampling between each block shown above. 
+
+(b) VMamba Architecture (Visual State Space - VSS Block)    
+
+> Patch Embeddings (inc. Spatial Position / Cls Token) Layer Norm Depth-Wise Conv Lin. Proj 2D-Selective Scan (SS2D) Layer Norm Lin. Proj Layer Norm FFN SiLU Patch Embeddings (inc. Spatial Position / Cls Token) MLP Conv1d Scan Direction 1 Lin. Proj Lin. Proj
+> ZX
+> Lin. Proj Selective SSM Conv1d Scan Direction 2 Conv1d Scan Direction 3 Conv1d Scan Direction 4 Spatial & Channel Attention Module (SCAttn) FC FC SiLU SiLU Conv AvgPool FC Global GELU FC Local GELU Spatial Attn Channel Attn SiLU
+
+Fig. 1: The architecture of Vision Mamba model. it had evolved continuously, although pixels are discrete samples, adjacent pix-els are highly correlated through smooth shading, edges with consistent slopes, and textures with gradients. As ViM scans image patches sequentially, treated as continuous systems, they must be discretized to determine how the hidden latent state in state space models evolves between adjacent tokens. 
+
+3.2 Baseline SSM Discretization Method Zero-order hold (ZOH) is predominantly used in converting continuous sig-nals to discrete samples because it is easy to implement and ensures that the system behaves predictably by holding the sample value constant until the next time step. This leads to approximation errors with visual data because it as-sumes that the signal is constant between samples, with no slopes, no interme-diate changes in textures, and no sudden jumps at patch boundaries, which may not accurately reflect the true nature of complex spatial data [19] [30]. This can result in such errors as edges getting smeared, textures losing sharpness, and spatial details drift across long sequences. In this study, we replace the ZOH operation with more advanced discretiza-tion methods, each designed to better capture dynamic changes between samples while keeping the ViM architecture and state update equations structurally iden-tical. The general discrete-time state-space formulation remains: 
+
+ht+1 = ¯Aht + ¯Bxt, yt = Cht (4) with the ZOH approximating equation: 
+
+y(t) = X
+
+n
+
+x(nT ) · rect ( t − nT − T / 2
+
+T )
+
+where rect(t) is the rectangular function and the computation of ¯A and ¯B differs according to the chosen discretization method. 6 F. Ibrahim et al. Bilinear / Tustin Transform (BIL)  
+
+> Sample & Buffer (x t, xt-1 )
+> Trapedzoidal Rule
+> Area Calculation
+> Input Signal x(t)
+> Output y(t)
+
+Fig. 2: BIL employs a trapezoidal integration rule to approximate the continuous input signal area, ensuring numerical stability and preserving high-frequency features during the discretization. 
+
+3.3 Advanced Discretization Methods First-order hold (FOH) assumes that the input x(t) varies linearly between two samples, rather than being held constant as in ZOH. This yields smoother transitions and better approximations for signals with continuous slopes [19] [30]. For a continuous system dh (t) 
+
+> dt
+
+= Ah(t) + Bx(t), under FOH, the discrete time equivalent is: 
+
+¯A = eA∆ (5) 
+
+¯B = A−2(eA∆ − I − A∆)B (6) This formulation preserves the first-order derivative of x(t) within the sam-pling interval, resulting in a more accurate representation of input-driven dy-namics, especially in systems with moderate rate-of-change in features. 
+
+The Bilinear/Tustin Transform (BIL) provides a mapping between the continuous domain and the discrete domain, while minimizing frequency distor-tion. In vision tasks, the spatial frequency corresponds to the rate of change in pixel or feature values, where low frequencies capture smooth regions and global structure, and high frequencies represent edges, textures, and fine details. Pre-serving these high-frequency components during discretization is critical for ac-curate visual representation. As illustrated in Fig.2, BIL differs from hold-based methods by approximating the integration operation rather than the input sig-nal itself. It employs a trapezoidal-rule formulation that uses both current and previous samples, treating the sampling period ∆ as a fixed scaling factor for the calculation of the trapezoidal area rather than a dynamic interpolation variable as in FOH. When applied to a continuous system matrix, the discrete time representation is: ¯A = ( I − ∆ 
+
+> 2
+
+A)−1(I + ∆ 
+
+> 2
+
+A) (7) 
+
+¯B = ( I − ∆ 
+
+> 2
+
+A)−1∆B (8) Beyond ZOH: Advanced Discretization Strategies for Vision Mamba 7Polynomial Interpolation (POL) 
+
+> Sample Points
+> POL Interpolator
+> Coef fi cient Calculation
+> Input Signal x(t)
+> Output y(t)
+
+Fig. 3: POL fits a polynomial through sampled points of the input, allowing the discrete model to approximate smooth, non-linear transitions between samples. Unlike FOH, which can "blur" high-frequency content through linear approx-imation, BIL preserves fine spectral variations while maintaining system stability and accurate frequency-domain behavior [3, 8, 21], making it particularly effec-tive for ViM layers sensitive to fine spectral variations in texture and edges. 
+
+Polynomial interpolation (POL) incorporates higher order terms as co-efficients, improving the accuracy of the discrete approximation by capturing curvature in the input, resulting in smoother and more accurate latent state updates compared to lower order hold methods [7] [24] [2]. Fig.3 shows the block diagram that allows the discrete model to approximate smooth, non-linear tran-sitions between samples. The discrete equivalent of the state-space system is given by integrating the polynomial input over time: 
+
+¯A = eA∆ (9) 
+
+¯B =
+
+Z ∆
+
+> 0
+
+eAτ Bp(τ )dτ (10) where p(τ ) is the chosen polynomial basis function (e.g., quadratic or cubic). For example, for cubic interpolation, a closed-form solution can be expressed as: 
+
+¯B = A−1(eA∆ − I)B + 12 A−2(eA∆ − I − A∆)B (11) POL uses both past data and future sample points, a non-causal approach aligning directly with the bidirectional scan mechanism used in ViM and other vision SSMs. This allows the system to "see" the entire sequence at once rather than guessing the trajectory based solely on past momentum. Other discretiza-tion methods only project the signal forward based on the previous sampled points and may overshoot; POL, however, ensures the discretization error is minimized across the entire visual context. 
+
+Higher-order hold (HOH) generalizes both ZOH and FOH by modeling the input as a polynomial of nth order between samples. In contrast to POL, which applies fixed-order polynomial correction terms to improve local input smoothness. For an nth order hold, the discrete matrices are defined as: 
+
+¯A = eA∆ (12) 8 F. Ibrahim et al. Higher Order Hold (HOH) 
+
+> Sample Points
+> HOH
+> Coef fi cient Calculation
+> Input Signal x(t)
+> Output y(t)
+
+Fig. 4: HOH uses multiple samples to construct a higher-order polynomial ap-proximation of the signal within the sampling interval, providing smoother re-construction with potentially lower error than ZOH/FOH. Runge-Kutta 4 (RK4)   
+
+> Calc k1, k2, k3, k4 Weighted Sum
+> ODE / Input Signal Output
+
+Fig. 5: RK4 is a fourth-order iterative method that approximates the value at the current time step determined by the previous time step value, where each increment is the product of the size of the interval and an estimated weighted average of the four slopes [5] [2]. 
+
+¯B =
+
+> n
+
+X
+
+> i=0
+
+A−(i+1) (eA∆ − Pik=0 (A∆)k 
+
+> k!
+
+)
+
+i! B (13) where, n = 0 corresponds to ZOH; n = 1 represents FOH; n > 1 denotes higher order (quadratic, cubic). As shown in Fig.4, HOH offers superior accuracy for sys-tems with rapidly changing inputs, such as changes in dynamic textures [7] [24]. 
+
+Runge–Kutta 4 (RK4) provides a fourth-order numerical integration scheme to approximate the continuous time dynamics of the system with high precision. For a given step size ∆:
+
+k1 = Aht + Bxt (14) 
+
+k2 = A(ht + ∆ 
+
+> 2
+
+k1) + Bxt+∆/ 2 (15) 
+
+k3 = A(ht + ∆ 
+
+> 2
+
+k2) + Bxt+∆/ 2 (16) 
+
+k4 = A(ht + ∆k 3) + Bxt+∆ (17) The next state is computed as: 
+
+ht+1 = ht + ∆ 
+
+> 6
+
+(k1 + 2 k2 + 2 k3 + k4) (18) In ViM, RK4 discretization enables smoother propagation of state dynamics during training, as shown in Fig.5, especially for long-range dependencies or high-resolution images [4] [5]. Beyond ZOH: Advanced Discretization Strategies for Vision Mamba 9
+
+3.4 Unified Hardware-Aware Discretization Framework 
+
+The original Mamba addressed issues with SSM implementations being memory-bound due to frequent high-bandwidth memory (HBM) accesses by implement-ing a hardware-aware design that favors recomputation over storage to reduce bandwidth pressure. Discretization, state updates, and output projection are fused into a single GPU kernel, eliminating intermediate writes to HBM [11]. The original Mamba CUDA kernel only supported ZOH. We extend the hardware-aware algorithm to support all discretization methods evaluated in this work, ensuring identical fused execution, memory access patterns, and scan-based recurrence across methods. Discretization is computed inside the selec-tive scan kernel, keeping all intermediate values in registers and avoiding global memory writes. This design maintains optimized memory access and parallel scalability of the original Mamba implementation. 
+
+4 Experiments 
+
+This section outlines our experiments to integrate advanced discretization schemes into ViM. All experiments were trained according to the original ViM-Ti model in [33] on 4 A100 GPUs. The continuous-to-discrete conversion is evaluated on three tasks: image classification, semantic segmentation, and object detection. The resulting discrete-time parameters ¯A and ¯B replace the default ZOH ma-trices used in the state update function. The rest of the ViM pipeline from [33] remains unchanged as shown in Fig.1, ensuring comparability across all experi-ments. After discretization, the ViM layer updates the hidden state using Eq. (4). 
+
+4.1 Image Classification on ImageNet-1k & Cifar100 Settings. The original ViM model was trained on the ImageNet-1K dataset [9] and Cifar100 dataset [15]. The top-1 and top-5 accuracy on the validation set are reported. Training settings were maintained according to [25] with the same data augmentations defined in the original work (random cropping, random horizontal flipping, label-smoothing regularization, mixup). 
+
+Results. Table 1 illustrates an improved, more efficient learning strategy for State Space Models to accurately classify different images. Using the same ViM model with no other architectural changes, BIL results in an accuracy of 
+
+71 .95% , a 0.83% improvement from the original ZOH method used in [33]. This improvement, while not a large improvement, is achieved with approximately the same convergence of 232 epochs, indicating a more efficient numerical method integrated within the model. The POL and HOH methods are the most ac-curate, while requiring more training epochs before reaching their maximum performance of 72 .76% and 72 .74% , a 1.64% and 1.62% , respectively. To verify these results, the same comparison procedure was trained and evaluated on Ci-far100 [15], showing a similar improved top-1 accuracy by approximately 2.32% 
+
+for the HOH compared to ZOH, and 0.85% improvement for BIL. The results 10 F. Ibrahim et al. 
+
+Table 1: Discretization methods results on image classification tasks.                                                     
+
+> Discretization Method Dataset Training Time (dd-hh:mm) Best Epoch / 300 Top-1 ACC Top 5 ACC
+> ZOH 22-11:36 227 71.12 86.71 FOH 22-11:36 226 71.14 86.49 BIL ImageNet-1k 22-18:27 232 71.95 90.75 POL 23-16:31 272 72.76 91.21 HOH 23-21:51 289 72.74 91.20 RK4 28-06:22 298 71.63 90.10 ZOH 0-01:29 225 43.84 71.23 FOH 0-01:08 227 43.08 70.43 BIL CIFAR100 0-01:28 230 44.69 71.44 POL 0-01:38 271 45.87 72.23 HOH 0-01:38 281 46.16 72.53 RK4 0-01:47 290 44.27 71.09
+
+Table 2: Discretization methods results on semantic segmentation using ADE20K and object detection using MSCOCO. 
+
+Discretization Method mIoU AP box 
+
+> 75
+
+ZOH 41.0 49.6 FOH 40.2 49.4 BIL 43.9 52.1 POL 45.4 53.2 HOH 45.2 54.1 RK4 44.1 52.0 
+
+demonstrate that advanced discretization methods can be applied to existing models without changing any other model parameters or architecture to reduce approximation errors, and extract stronger visual representations. It should be noted that the original ZOH results were recreated and compared against non-fine-tuned models. 
+
+4.2 Semantic Segmentation on ADE20K Settings. We evaluate the proposed discretization methods on the ADE20K dataset [32], which contains 150 fine-grained semantic categories with 20K train-ing images, 2K validation images, and 3K test images. All experiments are con-ducted using ViM as the backbone, integrated into the UperNet framework [26]. The models were optimized using AdamW with a weight decay of 0.01 and a total batch size of 16 . The learning rate was initialized at 6 × 10 −5 and decayed linearly over a total of 160 K iterations, with a linear warmup of 1,500 iterations. Data augmentation includes random horizontal flipping, random rescaling, and random distortion. Across all experiments, the ViM architecture, training sched-ule, and segmentation head remain unchanged. Only the discretization method used to compute the discrete-time SSM parameters is modified, ensuring that observed differences arise solely from the numerical discretization strategy. 
+
+Results. Table 2 reports the mean Intersection over Union (mIoU) results on ADE20K. BIL improves segmentation performance to 43 .9 mIoU, representing a 
+
+2.9 point gain over the ZOH baseline used in previous ViM implementations [33]. Beyond ZOH: Advanced Discretization Strategies for Vision Mamba 11 
+
+This improvement is achieved without changes to the model capacity or the train-ing procedure, indicating that advanced discretization methods directly benefit segmentation tasks. The POL and HOH methods achieve the strongest segmen-tation performance, with mIoU scores of 45 .4 and 45 .2, corresponding to gains of 4.4 and 4.2 over ZOH, respectively. These results suggest that higher-order approximations better capture fine-grained spatial transitions and boundary in-formation for semantic segmentation. RK4 also improves over ZOH, although minimally, while FOH underperforms the baseline. 
+
+4.3 Object Detection on COCO2017 Settings. We evaluated object detection performance on the MS COCO 2017 benchmark [17], which consists of 118K training images, 5K validation images, and 20K test images. All experiments use ViM as the backbone within the Cas-cade Mask R-CNN framework [6]. Unlike ViT-based backbones, ViM is used directly without architectural modifications for high-resolution processing. Training is performed using the AdamW optimizer with a weight decay of 
+
+0.1 and a total batch size of 64 . The learning rate is initialized at 1 × 10 −4 and decayed linearly over 380 K iterations. Large-scale jitter enhancement is applied, resizing the input images to 1024 × 1024 during training. During evaluation, the images are resized so that the shorter side is 1024 pixels. All detection and training hyperparameters are kept constant across discretization methods. 
+
+Results. Detection results are summarized in Table 2 using AP box 75 as the evaluation metric. BIL improves AP box 75 from 49 .6 under ZOH to 52 .1, yielding a gain of 2.5. POL and HOH methods achieve AP box  
+
+> 75
+
+scores of 53 .2 and 54 .1, re-spectively. These gains indicate that higher-order discretization more effectively preserves spatial dynamics relevant for object localization and bounding box re-finement. Consistent with the classification and segmentation results, FOH does not offer a significant improvement over ZOH, while RK4 provides moderate gains but does not match the performance of POL or HOH. The results con-firm that the discretization strategy has a substantial impact on downstream detection accuracy. 
+
+4.4 Statistical Significance 
+
+Further experiments shown in Fig.6 evaluate the six discretization methods across 10 random seeds to determine whether the accuracy improvements were statistically significant. A one-sided paired permutation test was used to assess whether each method improved accuracy relative to the baseline ZOH [30]. A significance level of α = 0 .05% was selected and the accuracy gains were con-sidered significant only if they exceeded 0.70% , which corresponds to the upper limit of the typical seed-induced variation on CIFAR-100 [15]. Throughput was observed to have minor variations relative to the complexity of each method, and accuracy gain did not degrade computational efficiency. BIL demonstrated a statistically significant improvement in accuracy of 1.09% 
+
+(≥ 0.70% threshold, p<0.001) with an observed downtime of only 2.77% . HOH 12 F. Ibrahim et al. 
+
+Fig. 6: Statistical scatter plot - performance vs. efficiency. Mean ± standard deviation (std) of different methods. showed a statistically significant improvement in accuracy of 2.66% (p<0.001), well above the threshold of 0.70% , with an observed decrease in performance of 
+
+11 .23% . This decrease is expected as it follows the increasing order of compu-tational operations required to solve each advanced discretization method. POL achieved a statistically significant improvement in accuracy of 2.33% (p<0.001) with an observed decrease in throughput of 9.13% . FOH and RK4 did not meet the required accuracy threshold and therefore do not offer statistically significant improvements. FOH improved accuracy by only 0.48% (below the threshold of 
+
+0.70% ) and did not show statistical significance (p=0.97). RK4 improved accu-racy by only 0.68% (p<0.001), also below the practical significance threshold. BIL, HOH, and POL provide statistically significant accuracy gains, with modest throughput trade-offs. 
+
+5 Discussion 
+
+5.1 Peak Performance and Training Convergence 
+
+Beyond the final precision, we observe substantial differences in the convergence speed across discretization methods, represented as the training time in Table 1. These differences arise from both the order of the numerical approximation and the causality structure of each method. POL exhibits slower convergence despite using a relatively low approxima-tion order because it is non-causal. The bidirectional formulation introduces dependencies on both past and future states, causing gradients to propagate in multiple directions. This requires additional training iterations for the model to reconcile competing gradient signals and achieve stable performance. HOH, while fully causal, relies on higher-order approximations, introducing a stronger coupling between model parameters. As a result, gradients become more sen-sitive to small parameter changes, and optimization proceeds more cautiously. This results in slower convergence, even though these methods provide greater final accuracy. RK4 presents the most challenging optimization dynamics. Its multi-stage weighted average algorithm produces deep gradient paths and strong Beyond ZOH: Advanced Discretization Strategies for Vision Mamba 13 
+
+Table 3: Fastest method per batch size based on latency and throughput. 
+
+Fastest Method Batch Size Latency (ms/img) Throughput (img/s) BIL 1 13.46 74.28 POL 4 3.39 298.16 FOH 8 1.70 587.08 FOH 16 0.86 1164.25 POL 32 0.48 2193.21 ZOH 64 0.42 2257.83 POL 128 0.38 2588.37 FOH 256 0.32 3272.25 BIL 512 0.21 4804.37 
+
+Table 4: Summary of deployment scenarios.                
+
+> Deployment Scenario Batch Size Best Method Performance Improvement Over Baseline (ZOH) Real-Time/Edge 1BIL 13.46 ms (Latency) 0.37% Faster High-Throughput / Cloud 512 BIL 4,804 img/s (Throughput) 0.67% Faster Balanced / Batched 32 POL 2,193 img/s (Throughput) Context Dependent
+
+interactions among intermediate terms. This increases the risk of gradient insta-bility and limits practical gains in accuracy under standard training regimes, consistent with its failure to surpass the practical significance threshold. These observations highlight a fundamental trade-off between convergence speed and accuracy. Lower-order, causal discretizations favor faster optimization; however, higher-order and non-causal methods improve final performance at the cost of increased training complexity. From a practical standpoint, the bilinear transform emerges as a strong default choice, offering statistically significant gains with minimal computational overhead and fast convergence. 
+
+5.2 Inference Speed 
+
+Tables 3 and 4 show our benchmarked inference speeds across batch sizes to evaluate the efficiency of each advanced discretization method. BIL establishes an improvement in efficiency, outperforming the other methods in both low-latency (with batch size 1) and high-throughput comparisons (with batch size 512). As shown in Table 4, BIL achieves the lowest latency of 13.46 ms/img at batch size 1, making it the optimal choice for real-time applications. At batch size 512, it maximizes GPU saturation with a peak throughput of 4,804 img/s. While POL and FOH offer marginal gains at intermediate batch sizes (4–256), BIL provides the most robust solution for scalable deployment. For latency-critical applications (batch size 1), BIL is the superior discretiza-tion strategy at 13.46 ms, providing a distinct advantage over higher-order meth-ods which may incur computational overhead without throughput gains at low saturation. As batch sizes increase to 512, BIL shows advantageous throughput (4,804 img/s), suggesting that it handles memory-bound and compute-bound transitions more effectively than the other methods. Intermediate batch sizes (4 14 F. Ibrahim et al. 
+
+to 256) reveal a volatile landscape where POL and FOH frequently outperform BIL and the other methods, as shown in Table 3. For example, at batch size 32, POL peaks at 2,193 img/s. This suggests that our specific hardware kernel optimizations favor polynomial approximations at medium loads. The advanced discretization methods defined in this work increase numeri-cal accuracy by introducing additional matrix operations; however, they incur almost equal or slightly better inference cost than ZOH, with practical latency differences typically small. This indicates a minimal tradeoff for deploying a more accurate model in scalable environments. 
+
+6 Conclusion 
+
+This study demonstrates that incorporating advanced discretization strategies yields measurable performance gains in visual tasks without any other changes to model parameters or architectural design. POL and HOH methods provide the highest accuracy, and BIL offers the most practical balance between preci-sion and computational efficiency in classification, segmentation, and detection. BIL ensures that spatial frequencies encoded in image patches evolve correctly in the latent state, preserving edges, textures, and long-range accuracies. Our com-prehensive comparison of discretization strategies in SSM for vision establishes a clear direction for future SSM research by using more advanced methods 
+
+Acknowledgements This research was partly funded by the Natural Sciences and Engineering Research Council of Canada (NSERC) and the Canada Foun-dation for Innovation (CFI). 
+
+References              
+
+> 1. Lahoti, A., Li, K. Y., Chen, B., Wang, C., Bick, A., Kolter, J. Z., Dao, T., Gu, A.: Mamba-3: Improved Sequence Modeling using State Space Principles. ICLR (2026) 2. Ascher, U.M., Petzold, L.R.: Computer methods for ordinary differential equations and differential-algebraic equations. SIAM (1998) 3. Åström, K.J., Wittenmark, B.: Computer-controlled systems: theory and design. Courier Corporation (2013) 4. Butcher, J.C.: Coefficients for the study of runge-kutta integration processes. Jour-nal of the Australian Mathematical Society 3(2), 185–201 (1963) 5. Butcher, J.C.: On runge-kutta processes of high order. Journal of the Australian Mathematical Society 4(2), 179–194 (1964) 6. Cai, Z., Vasconcelos, N.: Cascade r-cnn: High quality object detection and instance segmentation. IEEE TPAMI 43 (5), 1483–1498 (2019) 7. Chen, S., et al.: Comprehensive analysis and exclusion hypothesis of alpha-approximation method for discretizing analog systems. arXiv:2509.02054 (2025) 8. Chen, X., Qin, Y., et al.: Improving vision transformers on small datasets by in-creasing input information density in frequency domain. ICCV Workshops (2022).
+
+Beyond ZOH: Advanced Discretization Strategies for Vision Mamba 15 9. Deng, J., Dong, W., Socher, et al.: Imagenet: A large-scale hierarchical image database. In: CVPR. pp. 248–255. (2009) 10. Dosovitskiy, A.: An image is worth 16x16 words: Transformers for image recogni-tion at scale. arXiv preprint arXiv:2010.11929 (2020) 11. Gu, A., Dao, T.: Mamba: Linear-time sequence modeling with selective state spaces. arXiv preprint arXiv:2312.00752 (2023) 12. Heo, B., Park, S., Han, D., Yun, S.: Rotary position embedding for vision trans-former. In: ECCV. pp. 289–305. Springer (2024) 13. Huang, T., Pei, X., You, S., et al.: Localmamba: Visual state space model with windowed selective scan. arXiv preprint arXiv:2403.09338 (2024) 14. Ibrahim, F., Liu, G., Wang, G.: A survey on mamba architecture for vision appli-cations. arXiv preprint arXiv:2502.07161 (2025) 15. Krizhevsky, A., Hinton, G., et al.: Learning multiple layers of features from tiny images (2009) 16. Li, K., Li, X., Wang, Y., et al.: Videomamba: State space model for efficient video understanding. In: ECCV. pp. 237–255. (2025) 17. Lin, T.Y., Maire, M., Belongie, S., et al. Microsoft coco: Common objects in con-text. In: ECCV pp. 740–755. S(2014) 18. Liu, Y., Tian, Y., Zhao, Y., Yu, H., Xie, L., Wang, Y., Ye, Q., Liu, Y.: Vmamba: Visual state space model. arXiv preprint arXiv:2401.10166 (2024) 19. Moir, T.J., Moir, T.J.: Rudiments of Signal Processing and Systems. Springer (2022) 20. Movahedi, S., Carstensen, T., Afzal, A., Hutter, F., Orvieto, A., Cevher, V.: Se-lective rotary position embedding. arXiv preprint arXiv:2511.17388 (2025) 21. Oppenheim, A.V., Schafer, R.W.: Discrete time signal processing third edition. Pearson Higher Education, Inc. p. 504 (2010) 22. Rahman, Q.I., Schmeisser, G.: Characterization of the speed of convergence of the trapezoidal rule. Numerische Mathematik 57 (1), 123–138 (1990) 23. Smith, J.T., Warrington, A., Linderman, S.W.: Simplified state space layers for sequence modeling. arXiv preprint arXiv:2208.04933 (2022) 24. Takács, B., Hadjimichael, Y.: High order discretization methods for spatial-dependent epidemic models. Transactions of IMACS 198 , 211–236 (2022) 25. Touvron, H., Cord, M., Douze, M., et al. Training data-efficient image transformers & distillation through attention. In: ICML. pp. 10347–10357. PMLR (2021) 26. Xiao, T., Liu, Y., Zhou, B., Jiang, Y., Sun, J.: Unified perceptual parsing for scene understanding. In: ECCV. pp. 418–434 (2018) 27. Xu, R., Yang, S., Wang, Y., Du, B., Chen, H.: A survey on vision mamba: Models, applications and challenges. arXiv preprint arXiv:2404.18861 (2024) 28. Yang, C., Chen, Z., Espinosa, M., et al. Plainmamba: Improving non-hierarchical mamba in visual recognition. arXiv preprint arXiv:2403.17695 (2024) 29. Zhang, H., Zhu, Y., Wang, D., Zhang, L., Chen, T., Wang, Z., Ye, Z.: A survey on visual mamba. Applied Sciences 14 (13), 5683 (2024) 30. Zhang, Z., Chong, K.T.: Comparison between first-order hold with zero-order hold in discretization of input-delay nonlinear systems. In: ICCAS. pp. 2892–2896 (2007) 31. Zhang, Z., Wang, S., et al. Mix-domain contrastive learning with mamba generator for unpaired h&e-to-ihc stain translation. Knowledge-Based Systems. (2025) 32. Zhou, B., Zhao, H., Puig, X., et al. Semantic understanding of scenes through the ade20k dataset. IJCV 127 , 302–321 (2019) 33. Zhu, L., Liao, B., et al. Vision Mamba: Efficient visual representation learning with bidirectional state space model. arXiv preprint arXiv:2401.09417 (2024)

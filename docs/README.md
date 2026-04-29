@@ -6,88 +6,80 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-28
-- 运行时间：2026-04-28 20:57:43 UTC
+- 最新运行日期：2026-04-29
+- 运行时间：2026-04-29 20:44:47 UTC
 - 运行状态：成功
-- 本次总论文数：22
-- 精读区：10
+- 本次总论文数：19
+- 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日精选 22 篇前沿成果，重点突破高效时序动作检测与野外医疗视频感知两大技术高地。
-满分论文 LiquidTAD 实现了极速动作识别，而 EgoMAGIC 数据集则填补了医疗现场视频感知的空白。
-推荐关注视频理解算法在垂直医疗领域的落地，以及扩散模型驱动的开放词汇检测新趋势。
-- 详情：[/202604/28/README](/202604/28/README)
+- 今日共生成 19 篇推荐（精读 7 篇，速读 12 篇）
+- 精读：《Interactive Episodic Memory with User Feedback》（9.0/10）, 《Nemotron 3 Nano Omni: Efficient and Open Multimodal Intelligence》（9.0/10）
+- 速读：《TopoMamba: Topology-Aware Scanning and Fusion for Segmenting Heterogeneous Medical Visual Media》（8.5/10）, 《The Recurrent Transformer: Greater Effective Depth and Efficient Decoding》（8.0/10）, 《One Identity, Many Roles: Multimodal Entity Coreference for Enhanced Video Situation Recognition》（8.0/10）
+- 这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。
+- 详情：[/202604/29/README](/202604/29/README)
 
 ### 精读区论文标签
-1. [LiquidTAD: Efficient Temporal Action Detection via Parallel Liquid-Inspired Temporal Relaxation](/202604/28/2604.18274v2-liquidtad-efficient-temporal-action-detection-via-parallel-liquid-inspired-temporal-relaxation)  
-   标签：评分：10.0/10、query:lvu
-   evidence：长未修剪视频序列中的高效时序动作检测
-2. [EgoMAGIC- An Egocentric Video Field Medicine Dataset for Training Perception Algorithms](/202604/28/2604.22036v1-egomagic--an-egocentric-video-field-medicine-dataset-for-training-perception-algorithms)  
-   标签：评分：10.0/10、query:medvid
-   evidence：用于动作检测和任务指导的第一视角医疗活动数据集
-3. [Structure-Augmented Standard Plane Detection with Temporal Aggregation in Blind-Sweep Fetal Ultrasound](/202604/28/2604.20591v1-structure-augmented-standard-plane-detection-with-temporal-aggregation-in-blind-sweep-fetal-ultrasound)  
+1. [Interactive Episodic Memory with User Feedback](/202604/29/2604.24893v1-interactive-episodic-memory-with-user-feedback)  
+   标签：评分：9.0/10、query:lvu
+   evidence：使用自然语言查询和交互式反馈在长第一视角视频中进行搜索以回答问题。
+2. [Nemotron 3 Nano Omni: Efficient and Open Multimodal Intelligence](/202604/29/2604.24954v1-nemotron-3-nano-omni-efficient-and-open-multimodal-intelligence)  
+   标签：评分：9.0/10、query:lvu
+   evidence：该论文介绍了一种专门针对长音视频理解和高效处理进行优化的多模态模型。
+3. [Image Compression with Bubble-Aware Frame Rate Adaptation for Energy-Efficient Video Capsule Endoscopy](/202604/29/2604.25464v1-image-compression-with-bubble-aware-frame-rate-adaptation-for-energy-efficient-video-capsule-endoscopy)  
    标签：评分：9.0/10、query:medvid
-   evidence：胎儿超声视频中的时序聚合
-4. [UpstreamQA: A Modular Framework for Explicit Reasoning on Video Question Answering Tasks](/202604/28/2604.23145v1-upstreamqa-a-modular-framework-for-explicit-reasoning-on-video-question-answering-tasks)  
+   evidence：该论文专注于胶囊内镜视频处理以及用于医学检查的帧率自适应技术。
+4. [MarkIt: Training-Free Visual Markers for Precise Video Temporal Grounding](/202604/29/2604.25886v1-markit-training-free-visual-markers-for-precise-video-temporal-grounding)  
    标签：评分：9.0/10、query:lvu
-   evidence：视频问答任务中的显式推理
-5. [DyABD: The Abdominal Muscle Segmentation in Dynamic MRI Benchmark](/202604/28/2604.23187v1-dyabd-the-abdominal-muscle-segmentation-in-dynamic-mri-benchmark)  
-   标签：评分：9.0/10、query:medvid
-   evidence：实时医学视频分割与动态MRI基准
-6. [PushupBench: Your VLM is not good at counting pushups](/202604/28/2604.23407v1-pushupbench-your-vlm-is-not-good-at-counting-pushups)  
-   标签：评分：9.0/10、query:lvu
-   evidence：用于评估重复计数和时间推理的长视频片段
-7. [Exploring Audio Hallucination in Egocentric Video Understanding](/202604/28/2604.23860v1-exploring-audio-hallucination-in-egocentric-video-understanding)  
-   标签：评分：9.0/10、query:lvu
-   evidence：针对第一视角视频理解的定向问答协议
-8. [QEVA: A Reference-Free Evaluation Metric for Narrative Video Summarization with Multimodal Question Answering](/202604/28/2604.24052v1-qeva-a-reference-free-evaluation-metric-for-narrative-video-summarization-with-multimodal-question-answering)  
-   标签：评分：9.0/10、query:lvu
-   evidence：叙事视频摘要的无参考评估指标
-9. [Touchless Intraoperative Image Access System Based on Vision-Based Hand Tracking](/202604/28/2604.24235v1-touchless-intraoperative-image-access-system-based-on-vision-based-hand-tracking)  
-   标签：评分：9.0/10、query:medvid
-   evidence：术中图像访问与手术工作流
-10. [Don't Pause! Every prediction matters in a streaming video](/202604/28/2604.24317v1-dont-pause-every-prediction-matters-in-a-streaming-video)  
-   标签：评分：9.0/10、query:lvu
-   evidence：长视频问答与流式感知基准
+   evidence：利用视觉标记在未修剪视频中进行时间定位和接地
+5. [Exploring High-Order Self-Similarity for Video Understanding](/202604/29/2604.20760v1-exploring-high-order-self-similarity-for-video-understanding)  
+   标签：评分：8.5/10、query:lvu
+   evidence：该论文引入了多阶自相似性模块，用于视频理解任务中的时序动态和运动建模。
+6. [ELSA: Exact Linear-Scan Attention for Fast and Memory-Light Vision Transformers](/202604/29/2604.23798v1-elsa-exact-linear-scan-attention-for-fast-and-memory-light-vision-transformers)  
+   标签：评分：8.5/10、query:lvu
+   evidence：用于长序列快速且轻量化处理的精确线性扫描注意力机制
+7. [BifDet: A 3D Bifurcation Detection Dataset for Airway-Tree Modeling](/202604/29/2604.24999v1-bifdet-a-3d-bifurcation-detection-dataset-for-airway-tree-modeling)  
+   标签：评分：8.5/10、query:medvid
+   evidence：医学CT扫描中的3D分叉检测
 
 ### 速读区论文标签
-1. [Denoise and Align: Diffusion-Driven Foreground Knowledge Prompting for Open-Vocabulary Temporal Action Detection](/202604/28/2604.18313v1-denoise-and-align-diffusion-driven-foreground-knowledge-prompting-for-open-vocabulary-temporal-action-detection)  
-   标签：评分：8.5/10、query:lvu
-   evidence：未经修剪视频中的时序动作检测
-2. [BioVLM: Routing Prompts, Not Parameters, for Cross-Modality Generalization in Biomedical VLMs](/202604/28/2604.17629v1-biovlm-routing-prompts-not-parameters-for-cross-modality-generalization-in-biomedical-vlms)  
+1. [TopoMamba: Topology-Aware Scanning and Fusion for Segmenting Heterogeneous Medical Visual Media](/202604/29/2604.25545v1-topomamba-topology-aware-scanning-and-fusion-for-segmenting-heterogeneous-medical-visual-media)  
+   标签：评分：8.5/10、query:medvid
+   evidence：使用拓扑感知扫描和融合技术对异构医学视觉媒体进行分割
+2. [The Recurrent Transformer: Greater Effective Depth and Efficient Decoding](/202604/29/2604.21215v1-the-recurrent-transformer-greater-effective-depth-and-efficient-decoding)  
+   标签：评分：8.0/10、query:lvu
+   evidence：Transformer中用于无限时间深度的循环记忆
+3. [One Identity, Many Roles: Multimodal Entity Coreference for Enhanced Video Situation Recognition](/202604/29/2604.23173v1-one-identity-many-roles-multimodal-entity-coreference-for-enhanced-video-situation-recognition)  
+   标签：评分：8.0/10、query:lvu
+   evidence：多模态实体共指消解用于增强视频情境识别与理解
+4. [Focus on What Matters: Two-Stage ROI-Aware Refinement for Anatomy-Preserving Fetal Ultrasound Reconstruction](/202604/29/2604.23839v1-focus-on-what-matters-two-stage-roi-aware-refinement-for-anatomy-preserving-fetal-ultrasound-reconstruction)  
    标签：评分：8.0/10、query:medvid
-   evidence：用于跨模态泛化的生物医学视觉语言模型
-3. [Weakly-Supervised Referring Video Object Segmentation through Text Supervision](/202604/28/2604.17797v1-weakly-supervised-referring-video-object-segmentation-through-text-supervision)  
-   标签：评分：8.0/10、query:lvu
-   evidence：使用文本监督的多模态指代视频对象分割
-4. [Geometry-Guided 3D Visual Token Pruning for Video-Language Models](/202604/28/2604.18260v1-geometry-guided-3d-visual-token-pruning-for-video-language-models)  
-   标签：评分：8.0/10、query:lvu
-   evidence：用于高效视频语言模型的视觉令牌剪枝
-5. [Context Unrolling in Omni Models](/202604/28/2604.21921v1-context-unrolling-in-omni-models)  
-   标签：评分：7.5/10、query:lvu
-   evidence：在包括视频在内的多种模态上训练的统一多模态模型，用于多模态推理
-6. [EmoTrans: A Benchmark for Understanding, Reasoning, and Predicting Emotion Transitions in Multimodal LLMs](/202604/28/2604.23348v1-emotrans-a-benchmark-for-understanding-reasoning-and-predicting-emotion-transitions-in-multimodal-llms)  
-   标签：评分：7.5/10、query:lvu
-   evidence：用于评估多模态视频中情感动态和演变的基准测试
-7. [Zoom In, Reason Out: Efficient Far-field Anomaly Detection in Expressway Surveillance Videos via Focused VLM Reasoning Guided by Bayesian Inference](/202604/28/2604.23724v1-zoom-in-reason-out-efficient-far-field-anomaly-detection-in-expressway-surveillance-videos-via-focused-vlm-reasoning-guided-by-bayesian-inference)  
-   标签：评分：7.5/10、query:lvu
-   evidence：利用VLM和贝叶斯推理在监控视频中进行高效推理
-8. [Multivariate Gaussian NeRF for Wide Field-of-View Ultrasound Reconstruction](/202604/28/2604.24187v1-multivariate-gaussian-nerf-for-wide-field-of-view-ultrasound-reconstruction)  
+   evidence：医学超声视频处理与重建的进展
+5. [PanGuide3D: Cohort-Robust Pancreas Tumor Segmentation via Probabilistic Pancreas Conditioning and a Transformer Bottleneck](/202604/29/2604.20981v1-panguide3d-cohort-robust-pancreas-tumor-segmentation-via-probabilistic-pancreas-conditioning-and-a-transformer-bottleneck)  
    标签：评分：7.5/10、query:medvid
-   evidence：超声成像序列的时空分析与3D重建
-9. [Seeing Further and Wider: Joint Spatio-Temporal Enlargement for Micro-Video Popularity Prediction](/202604/28/2604.20311v1-seeing-further-and-wider-joint-spatio-temporal-enlargement-for-micro-video-popularity-prediction)  
+   evidence：用于胰腺肿瘤分割的医学图像序列时空分析
+6. [Deep kernel video approximation for unsupervised action segmentation](/202604/29/2604.21572v1-deep-kernel-video-approximation-for-unsupervised-action-segmentation)  
+   标签：评分：7.5/10、query:lvu
+   evidence：深度核空间中的无监督动作分割与时序建模
+7. [Building a Precise Video Language with Human-AI Oversight](/202604/29/2604.21718v2-building-a-precise-video-language-with-human-ai-oversight)  
+   标签：评分：7.5/10、query:lvu
+   evidence：用于精确视频字幕和推理的多模态视频语言模型
+8. [Bridging the Pose-Semantic Gap: A Cascade Framework for Text-Based Person Anomaly Search](/202604/29/2604.23282v1-bridging-the-pose-semantic-gap-a-cascade-framework-for-text-based-person-anomaly-search)  
+   标签：评分：7.5/10、query:lvu
+   evidence：使用多模态大模型进行视频理解和异常搜索的多模态方法
+9. [Beyond ZOH: Advanced Discretization Strategies for Vision Mamba](/202604/29/2604.20606v1-beyond-zoh-advanced-discretization-strategies-for-vision-mamba)  
    标签：评分：6.5/10、query:lvu
-   evidence：微视频流行度预测的时空扩展
-10. [Mammographic Lesion Segmentation with Lightweight Models: A Comparative Study](/202604/28/2604.23899v1-mammographic-lesion-segmentation-with-lightweight-models-a-comparative-study)  
+   evidence：使用Vision Mamba和高级离散化进行时间建模的高效架构
+10. [Amodal SAM: A Unified Amodal Segmentation Framework with Generalization](/202604/29/2604.20748v1-amodal-sam-a-unified-amodal-segmentation-framework-with-generalization)  
+   标签：评分：6.5/10、query:lvu
+   evidence：该论文提出了一个统一的非全貌视频分割框架，这是视频理解的关键组成部分。
+11. [SAMIDARE: Advanced Tracking-by-Segmentation for Dense Scenarios](/202604/29/2604.22162v1-samidare-advanced-tracking-by-segmentation-for-dense-scenarios)  
    标签：评分：6.5/10、query:medvid
-   evidence：用于乳腺 X 线摄影病变分割的轻量级模型
-11. [Structure-Adaptive Sparse Diffusion in Voxel Space for 3D Medical Image Enhancement](/202604/28/2604.17773v1-structure-adaptive-sparse-diffusion-in-voxel-space-for-3d-medical-image-enhancement)  
-   标签：评分：6.0/10、query:medvid
-   evidence：用于增强的3D医学图像序列时空分析
-12. [Region-Grounded Report Generation for 3D Medical Imaging: A Fine-Grained Dataset and Graph-Enhanced Framework](/202604/28/2604.18145v1-region-grounded-report-generation-for-3d-medical-imaging-a-fine-grained-dataset-and-graph-enhanced-framework)  
-   标签：评分：6.0/10、query:medvid
-   evidence：3D医学影像的时空分析与报告生成
+   evidence：密集场景下的跟踪分割与自适应掩码控制
+12. [FlowAnchor: Stabilizing the Editing Signal for Inversion-Free Video Editing](/202604/29/2604.22586v1-flowanchor-stabilizing-the-editing-signal-for-inversion-free-video-editing)  
+   标签：评分：6.5/10、query:lvu
+   evidence：增加帧数情况下的视频编辑时序稳定性
 
 
 <div class="dpr-home-promo-card">

@@ -1,0 +1,1527 @@
+Title: The Recurrent Transformer: Greater Effective Depth and Efficient Decoding
+
+URL Source: https://arxiv.org/pdf/2604.21215v1
+
+Published Time: Fri, 24 Apr 2026 00:22:06 GMT
+
+Number of Pages: 27
+
+Markdown Content:
+# The Recurrent Transformer: Greater Effective Depth and Efficient Decoding 
+
+## Costin-Andrei Oncescu ∗ Depen Morwani Samy Jelassi Alexandru Meterez Mujin Kwun Sham Kakade Harvard University 
+
+Abstract 
+
+Transformers process tokens in parallel but are temporally shallow: at position t, each layer attends to key–value pairs computed based on the previous layer, yielding a depth capped by the number of layers. Recurrent models offer unbounded temporal depth but suffer from optimization instability and historically underutilize modern accelerators. We introduce the Recurrent Transformer , a simple architectural change where each layer 
+
+attends to key–value pairs computed off its own activations, yielding layerwise recurrent memory while preserving standard autoregressive decoding cost. We show that the architecture can emulate both (i) a conventional Transformer and (ii) token-to-token recurrent updates under mild assumptions, while avoiding optimization instability. Naively, prefill/training appears bandwidth-bound with effective arithmetic intensity near 1 because keys and values are revealed sequentially; we give an exact tiling-based algorithm that preserves the mathematical computation while reducing HBM traffic from Θ( N 2) to Θ( N log N ), increasing effective arithmetic intensity to Θ( N/ log N ) for sequence length N . On 150M and 300M parameter C4 pretraining, Recurrent Transformers improve cross-entropy over a parameter-matched Transformer baseline and achieve the improvement with fewer layers (fixed parameters), suggesting that recurrence can trade depth for width, thus reducing KV cache memory footprint and inference latency. Code is available at https://github.com/geniucos/recurrent-transformer 
+
+# 1 Introduction 
+
+Transformers [Vaswani et al., 2017] are highly effective sequence models, but their computation across positions is structurally shallow: within each layer, position t attends to key–value pairs computed from the previous layer embeddings, allowing essentially at most one interaction per layer between any pair of positions. A growing body of theory studies the fundamental limitations implied by bounded depth in attention models, including circuit-complexity characterizations of what low-depth Transformers can and cannot represent [Merrill et al., 2022, Liu et al., 2023]. These perspectives motivate architectures that achieve greater effective depth. We introduce the Recurrent Transformer (RT ), a simple modification of how key–value pairs are computed that makes each layer temporally recurrent. In a standard Transformer, at layer ℓ, the key–value pair at position t
+
+is computed from the layer-(ℓ − 1) representation at that position and can then be attended to by later positions 
+
+t′ > t . In the Recurrent Transformer, by contrast, the key–value pair at position t in layer ℓ is computed from that position’s output at layer ℓ, rather than from its layer-(ℓ − 1) representation. Consequently, a later position 
+
+t < t ′ at layer ℓ attends to a representation at t that already reflects layer ℓ attention and MLP computation. Importantly, Recurrent Transformer performs this recurrence separately within each layer, so each layer maintains its own key–value memory. This differs from the Feedback Transformer [Fan et al., 2020], which uses a shared memory across layers, and this layerwise separation is a key reason why our architecture can be implemented efficiently. We motivate Recurrent Transformer’s design through lenses of representation, optimization and computational efficiency: 
+
+(i) Representational perspective. Recurrent Transformers retains per-token key–value memory just like a Transformer, but increase the space of computations that can be expressed within a single layer by allowing later positions to attend to representations that have already undergone attention and MLP processing. Under mild assumptions, Recurrent Transformers can emulate standard Transformer behavior; conversely, by restricting 
+
+> ∗Correspondence to: concescu@g.harvard.edu
+
+1
+
+> arXiv:2604.21215v1 [cs.LG] 23 Apr 2026
+
+x1
+
+q1
+
+ktemp 1
+
+vtemp 1
+
+a1
+
+z1
+
+k1
+
+v1
+
+x2
+
+q2
+
+ktemp 2
+
+vtemp 2
+
+a2
+
+z2
+
+k2
+
+v2
+
+x3
+
+q3
+
+ktemp 3
+
+vtemp 3
+
+a3
+
+z3
+
+k3
+
+v3
+
+x4
+
+q4
+
+ktemp 4
+
+vtemp 4
+
+a4
+
+z4
+
+k4
+
+v4Figure 1: One layer of the Recurrent Transformer mapping input embeddings x1 . . . x4 to output embeddings 
+
+z1 . . . zN . Notice how the persistent key–value pairs are a function of the layer’s output and are used for all subsequent attention computations. The temporary key–value pairs are only used at the time they are computed and then discarded. They are only used to avoid ill-defined attention since, for example, a2 cannot attend to (k2, v2)
+
+as that indirectly depends on it. This is in contrast to a vanilla Transformer that uses these same key–value pairs for all subsequent attention computation as well. attention to the previous position, they can implement token-to-token recurrent computation. This positions Recurrent Transformer between fully parallel attention and purely recurrent state-space computation, while avoiding a capped-memory bottleneck. 
+
+(ii) Training Stability. Viewing the model as a directed computation graph over positions, classical RNNs transmit information from position i to j only through the length-(j − i) chain of intermediate states. The potentially large length of such paths gives rise to vanishing and exploding gradient phenomena [Bengio et al., 1994, Pascanu et al., 2013], making it hard to ensure information flow between distant positions. Recurrent Transformer alleviates this by introducing many additional multi-hop paths, corresponding to repeated attend+MLP applications across positions within a layer, while still permitting direct one-hop attention interactions between any two positions. In practice, we find that this architecture, together with appropriate normalization before key–value computation and standard depth-wise residual scaling [Bordelon et al., 2023, Yang et al., 2023], trains stably. We expand on this view, and on why exploding gradients are not expected to be an issue, in Section 4. 
+
+(iii) Training-time efficiency. A naive implementation of Recurrent Transformer training/prefill is sequential in position and appears bandwidth-bound: keys and values are revealed one position at a time, and each query must aggregate over a linearly-growing prefix, leading to a very low effective arithmetic intensity – Θ(1) – under the Roofline model [Williams et al., 2009]. We give an exact tiling algorithm that preserves the mathematical attention computation while reorganizing memory movement, reducing high-bandwidth memory (HBM) traffic from Θ( N 2) to Θ( N log N ) and raising effective arithmetic intensity to Θ( N/ log N ). Our key observation is that, during training/prefill, the full sequence of queries is available in advance even though persistent key–value pairs are revealed causally. This makes it possible to reorganize the computation into a tiled schedule, in the spirit of Flash Inference [Oncescu et al., 2025], that reuses each revealed key–value tile across many future queries before it is evicted from fast memory. The final algorithm interleaves attention blocks and MLP computation while employing the same methodology as Rabe and Staats [2021], Dao et al. [2022] to accumulate attention contribution. 
+
+(iv) Depth to inference efficiency. Crucially, the additional effective temporal depth can translate into a better depth–width tradeoff: at fixed parameter count, achieving the same quality with fewer layers reduces the amount of stored key–value state and the corresponding decode-time memory traffic. Our experiments support this regime, with shallower Recurrent Transformer models outperforming deeper Transformer baselines. 25e3 1e4 1.5e4 2e4 2.5e4   
+
+> Training Steps
+> 2.8
+> 3.0
+> 3.2
+> 3.4
+> 3.6
+> 3.8
+> Validation Loss
+> Model
+> recurrent transformer
+> Layers
+> 12 6
+
+Figure 2: C4 pretraining: loss curves for 300m parameter model trained on C4 dataset. Table 1: C4 pretraining loss for 300M parameter model. Model Layers Width Val CE ↓
+
+Transformer 6 2048 2.917 
+
+Transformer 12 1408 2.896 
+
+Transformer 24 1024 2.892 
+
+Recurrent Transformer 12 1408 2.867 
+
+Recurrent Transformer 6 2048 2.86 
+
+Contributions. 
+
+• In Section 2, we propose the Recurrent Transformer ( RT ), a layerwise recurrent attention architecture that computes each layer’s key–value pairs from that layer’s outputs rather than from the previous layer’s representations. 
+
+• In Section 3, we provide representational arguments showing Recurrent Transformer can emulate standard self-attention behavior and can implement token-to-token recurrent computation via attention concentration under mild assumptions. 
+
+• In Section 4, we provide a path-based analysis of training stability in Recurrent Transformer, showing how the architecture combines additional multi-hop computation with direct one-hop attention paths, and giving theoretical evidence in a simplified setting that neither exploding gradients nor vanishing gradients are expected under appropriate scaling. 
+
+• In Section 5, we provide an exact , IO-aware tiling algorithm for prefill/training that preserves the mathematical attention computation while reducing memory traffic from Θ( N 2) to Θ( N log N ) and increasing effective arithmetic intensity from Θ(1) to Θ( N/ log N ).
+
+• In Section 6, we outline various computational challenges and design choices required to make Recurrent Transformer training more efficient and practical. 
+
+• In Section 7, we present empirical results on 300M-parameter C4 pretraining showing improved cross-entropy over parameter-matched Transformer baselines and favorable depth–width tradeoffs at fixed parameter count (as shown in Figure 2). In particular, Recurrent Transformer with 6 layers performs comparably to 12 layers (fixed parameters), reducing KV cache size by approximately 30% and lowering decode-time memory traffic, thereby improving inference efficiency. Additional results for the 150M-parameter model are provided in Appendix E.3. 
+
+# 2 Architectural overview and notation 
+
+Architectural overview. Relative to a standard causal Transformer, the defining change in Recurrent Transformer is where the key–value pairs exposed to future positions come from. In a standard Transformer, the key–value pair at position i is computed from the layer input at that position. In Recurrent Transformer, by contrast, the persistent 
+
+key–value pair at position i is computed from that position’s layer output. Consequently, later positions attend to 3earlier positions whose representations have already undergone same-layer attention and MLP computation, making each layer recurrent along the temporal axis. This creates a circularity at the current position: because the layer output at position i also attends to the current position, the persistent pair (ki, vi) cannot itself be used while computing that output. To resolve this, Recurrent Transformer distinguishes between two kinds of key–value pairs. A temporary pair, computed from the current layer input, is used only when evaluating attention at the current position. A persistent pair, computed from the resulting layer output, is then stored and made available to all later positions. 
+
+Notation. We present the single-head formulation; multihead attention applies the same construction independently per head and then uses the usual output projection. We assume a sequence length of N and use L for the number of stacked layers. Let D be the embedding dimension and consider a single layer with inputs x1, . . . , xN ∈ RD . Let 
+
+MLP : RD → RD denote the MLP block and let RMS : RD → RD denote Root Mean Square normalization [Zhang and Sennrich, 2019]. While in practice we use learnable parameters, as far as presentation and analysis is concerned, we take RMS (x) = √D · x/∥x∥2. We use (magenta) RMS to distinguish query/key normalization [Dehghani et al., 2023]. The attention operator Attn : ( RD × RD )∗ × RD → RD maps a sequence of key–value pairs (k1, v1), . . . , (kℓ, vℓ)
+
+and a query q to 
+
+Attn  (k1, v1), . . . , (kℓ, vℓ), q =
+
+> ℓ
+
+X
+
+> i=1
+
+vi · exp( ⟨ki, q⟩)
+
+Pℓj=1 exp( ⟨kj , q⟩)
+
+We use projection matrices Q, K, V ∈ RD×D to compute queries, keys and values based off an embedding. Following standard Transformer parameterizations Bordelon et al. [2023], Yang et al. [2023], we use pre-LN Xiong et al. [2020] and assume attention and MLP residual updates are initialized/parameterized with an appropriate 
+
+1/√L scale so chaining maps of the form x 7 → x + 1√L {Attn , MLP }(RMS( x)) is well-behaved. 
+
+## 2.1 The Transformer layer 
+
+We first recall a standard causal decoder-only Transformer layer [Vaswani et al., 2017]. Given inputs x1, . . . , xN ∈ RD ,position i forms its query, key, and value from the current layer input: 
+
+qi = RMS[ Q RMS( xi)] ,
+
+ki = RMS[ K RMS( xi)] ,
+
+vi = V RMS( xi).
+
+The attention output at position i is then computed by attending over the prefix of key–value pairs available up to that position: 
+
+ai = Attn  (k1, v1), . . . , (ki, vi), qi
+
+.
+
+Finally, the layer output is obtained by adding the attention and MLP residual branches: 
+
+yi = xi + 1
+
+√L
+
+
+
+ai + MLP[RMS( xi + 1
+
+√L ai)] 
+
+
+
+.
+
+The key structural point is that, in a standard Transformer, the key–value pair stored at position i is computed from the layer input at the same position. 
+
+## 2.2 The Recurrent Transformer layer 
+
+Recurrent Transformer layers (illustrated in Figure 1) differ from standard Transformer layers only in how the key–value pairs exposed to future positions are formed. At position i, Recurrent Transformer first forms the query together with a temporary key–value pair from the current layer input: 
+
+qi = RMS[ Q RMS( xi)] ,
+
+ktemp  
+
+> i
+
+= RMS[ K RMS( xi)] ,
+
+vtemp  
+
+> i
+
+= V RMS( xi).
+
+4These definitions are identical to the Transformer’s query, key, and value projections at position i. The attention output at position i is then computed using the persistent key–value pairs from earlier positions together with the temporary pair at the current position: 
+
+ai = Attn  (k1, v1), . . . , (ki−1, vi−1), (ktemp  
+
+> i
+
+, vtemp  
+
+> i
+
+), qi
+
+.
+
+We next form the layer output representation 
+
+zi = xi + 1
+
+√L
+
+
+
+ai + MLP[RMS( xi + 1
+
+√L ai)] 
+
+
+
+,
+
+which is both the representation passed to the next layer and the source from which the persistent key–value pair at position i is computed. We define that persistent pair by projecting from this output: 
+
+ki = RMS[ K RMS( zi)] , (1) 
+
+vi = V RMS( zi). (2) Thus, ktemp  
+
+> i
+
+, vtemp  
+
+> i
+
+is used only to compute attention at position i; it is not exposed to future positions. The persistent pair, by contrast, is defined only after zi has been formed and is then stored for use by all later positions. Thus, unlike in a standard Transformer, future positions attend not to a pair computed from the layer input at position i, but to one computed from the already-updated representation zi.We reuse the same projection matrices K and V for both the temporary and persistent key–value pairs. Consequently, Recurrent Transformer does not introduce additional key/value projection parameters relative to a Transformer; this reuse also preserves a shared semantics between the temporary and persistent key–value representations. 
+
+## 2.3 Closest Related Work 
+
+The closest representational relatives are Feedback Transformer variants. Feedback Transformer [Fan et al., 2020] uses a cross-layer feedback memory shared across depth, essentially having just one list of key-value pairs computed based on the whole model’s output rather than independently at each layer. Staircase Attention [Ju et al., 2021] generalizes Feedback Transformers, studying recurrent processing and caching variants with weight sharing – still at a model rather than layerwise level. This separation matters not only representationally but also computationally: within an RT layer, all queries are available early, which is the enabling condition behind our efficient training methodology (Section 5). TransformerFAM [Hwang et al., 2024] is closer in that it also operates independently at each layer and allows later positions to access more processed representations. However, it does so through a bounded memory that is read from and written to via attention. By contrast, Recurrent Transformer retains per-token persistent key–value memory rather than compressing past information into a fixed-size state. This difference is important both for avoiding a bounded-memory bottleneck and for the representational results of Section 3.1. 
+
+# 3 Representational Perspective 
+
+In this section, we theoretically show that Recurrent Transformer can emulate both a Transformer and RNN under mild assumptions. This shows that it subsumes both RNNs and Transformers, at least in the representation power. 
+
+## 3.1 Representing Transformers 
+
+Intuitively, Recurrent Transformers can recover the behavior of a standard Transformer of lower width by ensuring that the persistent key–value pairs computed from zi track those that would have been computed from xi via K
+
+and V projections. We concretize this statement below: 
+
+Theorem 1 (informal) . Any width-d′ Transformer can be approximately simulated by a width-d = 3 d′ Recurrent Transformer: the simulated Transformer activations can be embedded into disjoint feature groups of the RT ’s embeddings. The RT layer can be parameterized so that (i) attention scores are preserved and (ii) the layer output exactly tracks the Transformer layer output. 
+
+5At a high level, the construction relies on representing smaller Transformer states inside a larger embedding of 
+
+RT by dedicating disjoint feature blocks to different roles. One block stores a protected copy of the layer input xi so that when RT later computes persistent keys and values from the layer output zi, it can still recover exactly the same key–value pairs the Transformer would have computed from xi. A separate block is used to hold the attention contribution ai, so that when adding it to xi prior to applying the MLP, the contents of xi are protected from being lost. In this way, later tokens see identical attention scores, while the layer output matches the Transformer’s layer output in the designated block. The width overhead of a factor of 3, rather than 2, is a subtle technical requirement for stacking multiple layers; a single layer can be replicated with an overhead of 2. The complete construction and formal proof are provided in Appendix A.1. 
+
+## 3.2 Representing token-to-token recurrence 
+
+If, using positional embeddings or biases, attention concentrates locally to the previous position, Recurrent Trans-formers implement an RNN-like update. Formally, if ai is dominated by the previous persistent value vi−1, i.e. 
+
+⟨qi, ki−1⟩ ≫ ⟨ qi, ktemp  
+
+> i
+
+⟩ and ⟨qi, ki−1⟩ ≫ ⟨ qi, kj ⟩ for any j < i − 1, then we get that: 
+
+zi ≈ xi + vi−1 + MLP[RMS( xi + vi−1)] = V RMS( zi−1) + xi + MLP[RMS( xi + V RMS( zi−1))] 
+
+Under the additional simplifying assumption that V is the identity, this becomes a particular state recurrence with a skip connection: 
+
+zi = RMS( zi−1) + xi + MLP[RMS( xi + RMS( zi−1))] 
+
+We do not claim to reproduce gated RNN/LSTMs, nor that training would yield to learning such structures. We stress that representationally, Recurrent Transformer is rich enough to express explicit iterative computation within a layer while also retaining full-prefix per-token memory (which was required to simulate Transformers in the previous section). Crucially, once an architecture can represent such iterative computation, a natural question is whether the classic learnability issues of RNNs [Bengio et al., 1994, Pascanu et al., 2013] impede training. Section 4 explains why Recurrent Transformers multi-hop dynamics can still train stably. 
+
+## 3.3 Why temporal depth matters 
+
+Transformers are shallow-through-time: deeper iterative computation along the sequence must be simulated primarily by stacking layers. Theory on low-depth attention models and finite-automata tracking problems suggests that bounded depth can have concrete consequences, with shallow Transformers being representationally insufficient to simulate certain automata [Liu et al., 2023] and more generally bound to TC0 - a class of shallow circuits [Merrill et al., 2022]. Recurrent Transformers expose additional temporal depth within each layer. This is complementary to the depth obtained from stacking layers, thus pointing to the potential of achieving matching Transformers’ effective depth while using fewer layers. We corroborate this hypothesis empirically in Section 7. 
+
+# 4 Training Stability of Recurrent Transformer 
+
+In this section, we explain how Recurrent Transformer manages to avoid degenerate dynamics such as gradient vanishing or exploding through depth. We formalize our arguments by viewing the model as a directed computation graph over positions: there is an edge i → j when the computation at position j directly depends on quantities computed at position i. In a classical RNN, information (and gradients) from position i to j must traverse the full chain i → i+1 → · · · → j, and repeated composition along long chains leads to vanishing/exploding gradient phenomena [Bengio et al., 1994, Pascanu et al., 2013]. This chain topology forces all influence from position i to j
+
+through (j − i) successive state transitions. Stabilizing training typically requires these transitions to be close to contractive, but then the influence of xi on xj shrinks rapidly with (j − i), making distant information difficult to transmit. While in RNNs this issue can be alleviated through careful initialization schemes [Orvieto et al., 2023], our method takes advantage of the fact that there are both direct hops, as well as additional multi-hop paths between layers. As in a standard Transformer, token j can directly attend to any earlier token i < j via the stored key–value pair (ki, vi), creating a one-hop information path i → j. The key difference is that in Recurrent Transformer, the stored pair (ki, vi) is computed from the layer output zi, and zi already includes the result of attending to earlier stored pairs. Consequently, information can propagate not only directly from i to j, but also indirectly .6Concretely, a multi-hop path from token 1 to token 4 (Figure 1) can go through intermediate write–read steps: 
+
+x1 → z1 → (k1, v1) → a2 → z2 → (k2, v2) → a4 → z4
+
+Here each step zt → (kt, vt) is a write to the layer’s persistent memory, and each step (kt, vt) → at′ is a read by attention at any later position t′ > t . Chaining these write–read operations yields multi-hop influence paths whose length scales with the distance between positions, enabling within-layer iterative computation (as in Section 3.2) while preserving the direct one-hop attention routes of a Transformer. 
+
+Dampening long paths without eliminating long-range access. Multi-hop paths are only useful if they do not explode. In practice, two levers dominate. First, standard depth-wise scaling conventions for residual branches keep per-layer updates in a stable range [Bordelon et al., 2023, Yang et al., 2023]. Second, normalization preceding computation of persistent keys/values (the RMS (zi) inside Equations 1-2) controls magnitudes even though zi is a sum of multiple components. Empirically, these choices place long multi-hop influences on the vanishing end: longer chains have smaller effect. Unlike a pure RNN, this does not remove long-range access because direct attention edges remain available even when long chains are damped. In the theorem below, for a very simplified setup without normalization, we show that we do not get exploding gradients at initialization. Normalization helps in stability, that is, it allows stable training of Recurrent Transformer with higher learning rates. This is demonstrated empirically in Appendix E.2. 
+
+Theorem 4.1. Consider a simplified 1-layer uniform-attention only RT layer with inputs given by x1, ..., x n and outputs denoted as z1, ..., z n, where 
+
+zk = xk + αk
+
+V x k + V
+
+> k−1
+
+X
+
+> j=1
+
+zj
+
+
+
+where α is a scalar denoting the scaling of the residual and V is the value matrix. Then, for k ≥ 2,
+
+∂z k
+
+∂x 1
+
+= 1
+
+k!
+
+> k
+
+X
+
+> r=1
+
+kr
+
+
+
+αr V r
+
+where kr
+
+ denotes the total number of permutations of k elements having exactly r cycles. 
+
+As the total number of permutations is k!, the theorem above shows that as long as the maximum eigenvalue of 
+
+αV is smaller than 1, we do not get an exploding gradient from zj to x1. Thus, for orthonormal initialization, for any 
+
+α < 1, we expect to be in this regime. Moreover, since the overall gradient is summed over paths of various lengths (given by r in the above expression), we can see that we have non-vanishing gradient even when the maximum eigenvalue of αV is smaller than 1. In particular, since k
+
+> 1
+
+ = ( k − 1)! , the term in the above expression corresponding to r = 1 is αk · V , which is precisely the gradient a vanilla transformer would yield. Proof for this theorem can be found in Appendix B. 
+
+# 5 Exact Tiling for Training and Prefill 
+
+What makes naive evaluation slow. During training/prefill, Recurrent Transformers are fundamentally sequential in position; to compute the persistent pair (kt, vt) we must first compute zt, and zt depends on at, which aggregates over all previous persistent key–value pairs: {(ki, vi)}i<t . Therefore, a naive implementation reveals persistent keys/values one position at a time by having each new query aggregate over a growing prefix, yielding low reuse and high memory traffic. 
+
+A short Roofline view: why we care about arithmetic intensity. The Roofline model [Williams et al., 2009] bounds attainable throughput by either peak compute or peak memory bandwidth depending on arithmetic intensity (FLOPs per byte moved). When attention repeatedly streams large prefixes of keys/values to produce small incremental updates, effective arithmetic intensity (AI) can be close to constant, making the operation bandwidth-bound even on large accelerators. This is the regime where reorganizing memory movement (even without changing the math) can give large wins. 7kv [1 ,1] 
+
+↓
+
+a[2 ,2] 
+
+kv [1 ,2] 
+
+↓
+
+a[3 ,4] kv [3 ,3] 
+
+↓
+
+a[4 ,4] 
+
+contribution of 
+
+kv [1 ,4] to a[5 ,8] 
+
+kv [5 ,5] 
+
+↓
+
+a[6 ,6] 
+
+kv [5 ,6] 
+
+↓
+
+a[7 ,8] kv [7 ,7] 
+
+↓
+
+a[8 ,8] 
+
+kv temp 1
+
+↓
+
+a1
+
+kv temp 2
+
+↓
+
+a2
+
+kv temp 3
+
+↓
+
+a3
+
+kv temp 4
+
+↓
+
+a4
+
+kv temp 5
+
+↓
+
+a5
+
+kv temp 6
+
+↓
+
+a6
+
+kv temp 7
+
+↓
+
+a7
+
+kv temp 8
+
+↓
+
+a8
+
+## j
+
+## i =
+
+## i =
+
+## 1
+
+## 1
+
+## 1
+
+## 2
+
+## 2
+
+## 2
+
+## 3
+
+## 3
+
+## 3
+
+## 4
+
+## 4
+
+## 4
+
+## 5
+
+## 5
+
+## 5
+
+## 6
+
+## 6
+
+## 6
+
+## 7
+
+## 7
+
+## 7
+
+## 8
+
+## 8
+
+## 8Figure 3: We use the tiling of Oncescu et al. [2025] to increase arithmetic intensity during the forward pass since 
+
+(kt, vt) only become available after the attention output at is computed - this in turn happens once position t has attended to all previous KVs. 
+
+Enabling observation: within-layer queries are available early. Despite the sequential reveal of persistent keys/values, all queries {qi}Ni=1 in a layer depend only on the layer input {xi} and can be computed early on in parallel. This means that one could do some eager work of "aggregating" the contribution of any key–value pairs available thus far, to any future queries, not just the immediately upcoming one. For example, after (k4, v4) are computed, naively, we would wait until next step when we need to know a5; for that, we check the whole prefix of 4
+
+key–value pairs, "inquiring" about just one query ( q5). This "just one" is what gives the arithmetic intensity of ≈ 1.Alternatively, one can already start accounting for how they contribute to a5 . . . a8 - inquiring about 4 queries at once and thus raising the arithmetic intensity to ≈ 4 1.A very similar regime is exploited in the Flash Inference framework [Oncescu et al., 2025] – while their framework is meant for decoding, one forward pass of RT is essentially a sequence of decode steps. It applies to our case since the computation of interest is: 
+
+• Contribution-based ( ai can be accumulated over different groups of key–value pairs) 
+
+• the contribution is independent of future z’s (i.e., all queries are readily available) The second condition also clarifies why the same approach cannot extend to cross-layer feedback architectures [Fan et al., 2020, Ju et al., 2021]: when future queries indirectly depend on feedback that is only produced after running later layers, queries are not all available early. 
+
+Exact tiling schedule. Our algorithm is an exact evaluation algorithm: it computes the same attention outputs up to floating-point reordering effects. The schedule follows the tiling in Figure 3. It interleaves          
+
+> 1Since we also need to load the queries, for cnt qqueries to attend to cnt kv key–value pairs we get an AI of Θ(2 ·cnt q·cnt kv /(cnt q+2 cnt kv ))
+
+80 250 500 750 1000 1250 1500 1750 2000 
+
+> Sequence Length
+> 0
+> 500
+> 1000
+> 1500
+> 2000
+> 2500
+> Latency (ms)
+> Batch size = 512
+> Recurrent Transformer (tiled)
+> Recurrent Transformer (naive)
+> Transformer baseline
+
+Figure 4: One-layer forward-pass latency as a function of sequence length at batch size 512 on a single H100 GPU with 1024 width. The naive recurrent implementation shows approximately quadratic growth with context length, whereas the tiled implementation scales much closer to linearly. This matches the intended effect of the tiled schedule, which increases reuse of loaded key–value pairs across multiple future queries. We also include the vanilla Transformer baseline for reference. 
+
+• computing zt (via MLP ) as soon as at is available, to then reveal the new persistent key–value pair ( kt, vt)
+
+and 
+
+• updating attention accumulators for several future queries that are already known - by processing the newly freed tile. For example, as a6 becomes available, z6 and then ( k6, v6) are computed and then one can process all the the contribution of {(k5, v5), (k6, v6)} to {a7, a8} (by "asking" queries q7, q8). In order to aggregate attention contribution, we maintain the same online softmax statistics as [Rabe and Staats, 2021, Dao et al., 2022] (running attention score maxima and normalizing factor) so that contributions from multiple key/value tiles can be accumulated stably. The full algorithm description is available in Appendix C. 
+
+Asymptotics. Counting HBM movement, the naive one-query-at-a-time implementation incurs Θ( N 2) memory traffic. The tiled schedule reduces traffic to Θ( N log N ) by reusing streamed key/value tiles across many queries, while attention FLOPs remain Θ( N 2). Consequently, effective arithmetic intensity increases from Θ(1) to Θ( N/ log N ).The gains of this tiling approach can be seen in Figure 4 - while the latency of a naive eager implementation grows approximately quadratically with context length, our method exhibits near-linear scaling. 
+
+# 6 A deep dive into the computational challenges 
+
+In this section, we outline the key computational design decisions required to make Recurrent Transformer training practically efficient, enabling the execution of our language modeling experiments. In contrast to the tiling algorithm discussed earlier, which focuses on algorithmic structure, the emphasis here is on implementation-level optimizations. These changes do not alter asymptotic complexity, but instead yield meaningful constant-factor speedups that are critical for reducing overall training time. 
+
+The setup. We run all experiments on H100 GPUs, with training carried out on a single device at a time. Our implementation is in PyTorch [Paszke et al., 2017]. Beyond the algorithmic tiling strategy of Section 5, we make several implementation choices aimed at improving hardware utilization and reducing overheads. While we successfully use Torch compile to fuse a number of components, we do not rely on custom kernels in the 9Table 2: One layer of Recurrent Transformer forward pass latency (ms) for sequences of 512 tokens each. CPU overhead dominates at lower batch sizes and we employ CUDA Graphs to mitigate this. batch size without CUDA Graphs with CUDA Graphs 32 277.08 38.85 64 279.23 42.28 128 279.42 48.95 256 276.05 61.39 512 277.33 81.73 1024 275.49 134.09 2048 293.70 240.83 current implementation. We leave such kernel-level optimization to future work and focus here on the algorithmic improvements introduced by the architecture and computation schedule. Unless otherwise noted, all latency measurements assume hidden dimension 1024 and 16 attention heads, are averaged over 5 runs after 3 warmup runs, and have standard deviation below 1 ms. Latencies are reported on a per-layer basis: they measure the computation of a single layer’s map x 7 → z, including both attention and MLP computation, but excluding embedding, unembedding, and loss computation, which are identical across Recurrent Transformers and Transformers. 
+
+## 6.1 MLPs and batch size 
+
+While the tiling algorithm greatly improves the arithmetic intensity of the attention component of Recurrent Transformers, the MLP computations must be interleaved with it and can become the dominant cost of a forward pass. The reason is that, unlike in a standard Transformer, the MLP does not receive all B × N tokens at once. Instead, it processes only B tokens at a time over N iterations, one position at a time. As a result, the per-device batch size B directly controls the arithmetic intensity of the MLP; in the regime B ≤ O(d), this intensity is approximately linear in B.In practice, for the model scales we consider, B = 512 provides a favorable trade-off between GPU utilization and activation memory. This constraint is fundamental to recurrent-in-time architectures and is not specific to the attention mechanism; similar issues arise in classical recurrent models such as LSTMs. In particular, sustaining such a batch size on a single device is already challenging from the perspective of activation memory, even for models in the 150M–300M parameter range. Under ordinary circumstances, one would employ gradient accumulation, but that defeats the purpose here: increasing the total batch size via accumulation does not increase the effective batching seen by the MLP, and therefore does not improve arithmetic intensity. 
+
+Activation Checkpointing We therefore rely on activation checkpointing. One useful property of our computation is that once the inputs x to each layer are stored, the outputs z can be retained essentially “for free,” since they serve as the inputs to the next layer. This leads to a substantially cheaper recomputation procedure. In particular, once the persistent key–value pairs have been (parallelly) reconstructed from z, the remaining intermediate quantities can be recovered in a fully parallel manner. In particular, the attention-related intermediates can be recomputed without replaying the slow sequential process by which the zi were originally revealed one at a time. Consequently, although we still incur the standard cost of checkpointing, the recomputation overhead is meaningfully smaller than that of the original forward pass. 
+
+Critical batch size. Even if memory permitted arbitrarily large batches, there remains a statistical efficiency limit to how many tokens can be processed per optimizer step before optimization quality begins to degrade [McCandlish et al., 2018, Shallue et al., 2018]. In our setup, this critical batch size is around 256 K tokens per optimizer iteration for Transformer models in the 150M and 300M parameter range [Zhang et al., 2025]. Accordingly, throughout our experiments we use sequences of length 512 and batch size 512 , corresponding to 256 K tokens per iteration. In Appendix E.3, we further verify that the critical batch size of Recurrent Transformer is not below this value. 10 6.2 Using CUDA Graphs 
+
+Both the attention and MLP portions of our architecture involve O(N ) launches of moderately small kernels. Even when the underlying kernels are themselves compute-bound, the amount of work per kernel can be small enough that CPU-side dispatch overhead becomes a dominant bottleneck. Ordinarily, launch overhead is hidden because future kernels can be enqueued while current ones are still executing. Here, however, the kernels are sufficiently short-lived that this overlap is limited, and dispatch latency becomes visible on the critical path. For this reason, we use CUDA Graphs, recording the full forward (and backward) pass computation and replaying it with a single launch. This turns out to be crucial for performance. The resulting latency improvements are reported in Table 2. One noteworthy feature of Table 2 is that, without CUDA Graphs, latency remains nearly flat across a wide range of batch sizes, indicating that dispatch overhead rather than arithmetic work is the main bottleneck. With CUDA Graphs enabled, latency scales much more meaningfully with batch size, reflecting the underlying compute cost more faithfully. 
+
+## 6.3 Cache locality and memory access pattern 
+
+The tiling schedule also has a favorable memory-access pattern. As we iterate through positions, the portions of the KV cache accessed at successive steps overlap heavily and are often quite small: on average involving only O(log N )
+
+positions. To exploit this locality, we store the KV cache with the position dimension first, rather than the more conventional batch- or head-major layout. This ensures that the slices accessed by each tiled update are contiguous in memory, improving cache locality and reducing unnecessary memory movement. 
+
+## 6.4 The backward pass 
+
+To avoid repeated cat -operations, which would increase both memory traffic and peak memory usage, we preallocate the persistent KV cache and write to it in place. Since PyTorch autograd is not compatible with in-place operations, we implement a custom backward pass. A naive implementation would simply mimic the reverse traversal that autograd would have carried out on the corresponding computational graph. However, the structure of the computation allows a more parallel schedule. In particular, within the reverse loop over positions, one only needs to accumulate the gradients with respect to 
+
+(ki, vi). The reason is that, before moving from position i to position i − 1 and propagating the effect of ai−1 onto earlier key–value pairs, one must already have the final gradient with respect to zi−1, which itself depends in part on 
+
+(ki−1, vi−1). By contrast, gradients with respect to x, q, the temporary key–value pairs, and the model parameters do not impose such immediate dependencies and can therefore be computed outside the loop in a batched manner via larger kernels. This substantially improves parallelism in the backward pass. 
+
+# 7 Experiments 
+
+We evaluate Recurrent Transformer on synthetic tasks designed to stretch models’ representation ability, as well as language modeling. 
+
+## 7.1 Synthetic diagnostics 
+
+We use the MAD suite [Poli et al., 2024] as a diagnostic for hybrid architectures. We also include the copy task [Jelassi et al., 2024] that is provably impossible to solve via models of finite memory (this classification includes all forms of RNNs, including SSMs Gu and Dao [2024]). These diagnostics are not intended as long-range benchmarks; they isolate whether recurrence is being used in the intended way. Since we want to measure the effective depth of a layer, we compare one Transformer layer to one layer of RT , otherwise preserving the same model configurations as in [Poli et al., 2024]. The precise hyperparameter details are provided in Appendix D.2. The sequence-level accuracies are displayed in Figure 5 and show RT s significantly outperform Transformers that do not achieve meaningful performance on any of the tasks. 
+
+## 7.2 Language modeling on C4 (300M parameters) 
+
+We implement the Recurrent Transformer on top of the OLMo-2 OLMo et al. [2024] codebase and pretrain 300M and 150M parameter models on C4 [Raffel et al., 2020], for 1× Chinchilla tokens ( ≈ 3b tokens). The precise hyperparameters are provided in Appendix D.1. Figure 2 shows the cross-entropy loss for the 300M model during 11 50 100 150 200 250                      
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Compression
+> 100 200 300 400 500
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Copying
+> 100 200 300 400 500
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Fuzzy In Context Recall
+> 100 200 300 400 500
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> In Context Recall
+> 100 200 300 400 500
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Noisy In Context Recall
+> 100 200 300 400 500
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Selective Copying
+> Sequence Length
+> ExactMatch Performance
+> transformer recurrent
+
+Figure 5: Sequence-level accuracy of the Recurrent Transformer and a regular Transformer on MAD synthetic tasks and the copy task. RT outperforms Transformers in all tasks but compression. Neither model achieves non-trivial performance on compression at sequence-level, but they do achieve meaningful token-level accuracy with RT still in the lead, as shown in Appendix E.1. training for Transformers and Recurrent Transformers at 12 layers ( 24 layers is the standard configuration used in previous works such as Zhao et al. [2025] which performs comparably as shown in Table 1) and parameter-equivalent 
+
+6 layers ( d scaled up by √2 from 1408 to 2048 ). Table 1 contains the final cross entropy values. As shown, RT soutperform Transformers meaningfully by a delta cross-entropy of 0.03 at 12 layers and 0.057 at 6 layers. Notably, the layerwise recurrence shifts the depth–width optimum at fixed parameter count. We evaluate the model’s downstream performance on 6 multiple choice tasks used in OLMo [Groeneveld et al., 2024]: PIQA [Bisk et al., 2020], Hellaswag [Zellers et al., 2019], ARC Easy [Clark et al., 2018], OpenBookQA [Mihaylov et al., 2018], SciQ [Welbl et al., 2017] and Winogrande [Sakaguchi et al., 2020]. We provide the model’s CE loss values on the ground truth answers in Table 3. We used this metric as it is known to be smoother at small scales [Bhagia et al., 2025]. We also provide the downstream accuracies in Appendix Table 10, but most of them are close to random noise (with Winogrande being close to 50%, while most others being 6-7% above random). The results for the 150M model are provided in Appendix E.3. 
+
+## 7.3 Depth–width tradeoffs and decoding footprint 
+
+For autoregressive decoding, Recurrent Transformer exhibits essentially the same per-token attention behavior as a Transformer with comparable depth and width: each new token attends to cached keys and values computed from preceding tokens. If, however, Recurrent Transformer achieves comparable model quality using fewer layers—reduced by a factor of α—while keeping the total parameter count fixed, the size of the key–value (KV) cache decreases by a factor of √α. This follows from the corresponding increase in model width by only √α. A smaller KV cache directly reduces memory traffic during decoding, which can lead to higher throughput in bandwidth-limited settings. More 12 Table 3: Downstream performance for the 300M model. Model Layers piqa CE hellaswag CE arc easy CE openbook qa CE sciq CE winogrande CE Transformer 6 5.536 4.334 11 .128 12 .408 14 .514 8.413 
+
+Transformer 12 5.508 4.156 10 .894 12 .36 14 .15 7.809 
+
+Recurrent 12 5.276 4.052 10.336 11.557 13 .384 7.628 
+
+Recurrent 6 5.356 4.122 10 .388 11 .65 13.206 7.914 
+
+broadly, trading off depth for width may be advantageous for decoding, since increased width can be more effectively parallelized using techniques such as tensor parallelism. We leave a detailed evaluation of fully optimized decoding latency to future work. 
+
+# 8 Related Work 
+
+We group the most relevant prior work by the core bottleneck it imposes and by whether it introduces recurrence/feedback-like computation beyond standard feedforward self-attention. 
+
+Bounded-memory sequence models. Classical RNNs and modern state-space models maintain a fixed-size state that is updated recurrently [Bengio et al., 1994, Pascanu et al., 2013, Hochreiter and Schmidhuber, 1997, Smith et al., 2022, Gu and Dao, 2024]. Linear-attention/retention variants also admit recurrent formulations with bounded state [Katharopoulos et al., 2020, Sun et al., 2023, Peng et al., 2023]. While computationally attractive, bounded-state families cannot in general preserve information that scales with sequence length; [Jelassi et al., 2024] highlight this limitation by proving such models cannot perform the copy task. This limitation is in contrast to 
+
+RT (as shown in Section 3.1). 
+
+Segment recurrence and memory mechanisms. Transformer-XL and follow-ups process context in segments and potentially summarize them via attention mechanisms [Dai et al., 2019, Rae et al., 1911]. RMTs take this a step forward by summarizing the feedback information across segments [Bulatov et al., 2022]. These methods primarily address efficient long-context handling rather than layerwise recurrent computation over token states. Furthermore, they have the same limitation that classic RNNs have - namely bounded memory. 
+
+Recurrent/feedback Transformers. Feedback Transformers [Fan et al., 2020], Staircase Attention [Ju et al., 2021], and TransformerFAM [Hwang et al., 2024] introduce recurrent/feedback-style computation in Transformer blocks. As discussed in Section 2.3, Recurrent Transformer is layerwise recurrent with separate per-layer key– value collections (rather than cross-layer shared feedback), and this structure is also what enables our efficient training/prefill (Section 5). 
+
+# 9 Discussion and Conclusion 
+
+In this work, we introduce Recurrent Transformer, which integrates three key ideas: (i) a deeper-in-time representation within each layer, (ii) a path-based perspective that enables longer multi-hop influences while retaining direct attention access by operating closer to the vanishing-gradient regime, and (iii) an exact, I/O-aware evaluation algorithm that makes training and prefill practical by reducing memory traffic without altering the underlying computation. Our results clearly demonstrate the increased effective depth provided by introducing layerwise recurrence. We view this work as a proof of concept that opens several directions for future research. As with any new architecture, the introduction of layerwise recurrence may alter tuning behavior and scaling laws, potentially shifting the optimal depth–width trade-off. In addition, the current design can be extended with blocking, in which recurrence is executed over blocks of steps, yielding a controllable trade-off between recurrent depth and training speed. Finally, while the proposed tiling algorithm is exact and delivers measurable gains, further improvements are likely achievable through fully optimized kernels and extensions of existing parallelization techniques, which we leave to future work. In conclusion, layerwise recurrence provides a simple and principled mechanism for exposing additional temporal depth while retaining a memory that scales with sequence length and preserves the full representational capacity of the Transformer. When combined with an exact tiling strategy that enables computation reuse and reduces HBM 13 traffic, Recurrent Transformers make recurrent-in-layer training and prefill feasible in practice and shift depth–width trade-offs at a fixed parameter count. This shift is also beneficial at decode time, where a reduced KV cache size leads to improved efficiency. 
+
+# Acknowledgements 
+
+DM, AM, MK acknowledge the support of a Kempner Institute Graduate Research Fellowship. The authors acknowledge that this work has been made possible in part by a gift from the Chan Zuckerberg Initiative Foundation to establish the Kempner Institute for the Study of Natural and Artificial Intelligence. SK, CO and DM acknowledge support from the Office of Naval Research under award N0001422-1-2377 and the National Science Foundation Grant under award #IIS 2229881. DM is also supported by a Simons Investigator Fellowship, NSF grant DMS-2134157, DARPA grant W911NF2010021,and DOE grant DE-SC0022199. 
+
+# References 
+
+Y. Bengio, P. Simard, and P. Frasconi. Learning long-term dependencies with gradient descent is difficult. IEEE Transactions on Neural Networks, 1994. Often cited via the 1994 journal version. A. Bhagia, J. Liu, A. Wettig, D. Heineman, O. Tafjord, A. H. Jha, L. Soldaini, N. A. Smith, D. Groeneveld, P. W. Koh, J. Dodge, and H. Hajishirzi. Establishing task scaling laws via compute-efficient model ladders, 2025. URL 
+
+https://arxiv.org/abs/2412.04403 .Y. Bisk, R. Zellers, R. L. Bras, J. Gao, and Y. Choi. Piqa: Reasoning about physical commonsense in natural language. In Proceedings of the AAAI Conference on Artificial Intelligence , 2020. B. Bordelon, L. Noci, M. B. Li, B. Hanin, and C. Pehlevan. Depthwise hyperparameter transfer in residual networks: Dynamics and scaling limit, 2023. A. Bulatov, Y. Kuratov, and M. Burtsev. Recurrent memory transformer. Advances in Neural Information Processing Systems , 35:11079–11091, 2022. P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord. Think you have solved question answering? try arc, the ai2 reasoning challenge. In arXiv preprint arXiv:1803.05457 , 2018. Z. Dai, Z. Yang, Y. Yang, et al. Transformer-XL: Attentive language models beyond a fixed-length context. arXiv preprint arXiv:1901.02860 , 2019. T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré. Flashattention: Fast and memory-efficient exact attention with io-awareness, 2022. M. Dehghani, J. Djolonga, B. Mustafa, P. Padlewski, J. Heek, J. Gilmer, A. P. Steiner, M. Caron, R. Geirhos, I. Alabdulmohsin, et al. Scaling vision transformers to 22 billion parameters. In International conference on machine learning , pages 7480–7512. PMLR, 2023. A. Fan, T. Lavril, E. Grave, A. Joulin, and S. Sukhbaatar. Addressing some limitations of transformers with feedback memory. arXiv preprint arXiv:2002.09402 , 2020. D. Groeneveld, I. Beltagy, P. Walsh, A. Bhagia, R. Kinney, O. Tafjord, A. H. Jha, H. Ivison, I. Magnusson, Y. Wang, S. Arora, D. Atkinson, R. Authur, K. R. Chandu, A. Cohan, J. Dumas, Y. Elazar, Y. Gu, J. Hessel, T. Khot, W. Merrill, J. Morrison, N. Muennighoff, A. Naik, C. Nam, M. E. Peters, V. Pyatkin, A. Ravichander, D. Schwenk, S. Shah, W. Smith, E. Strubell, N. Subramani, M. Wortsman, P. Dasigi, N. Lambert, K. Richardson, L. Zettlemoyer, J. Dodge, K. Lo, L. Soldaini, N. A. Smith, and H. Hajishirzi. Olmo: Accelerating the science of language models, 2024. URL https://arxiv.org/abs/2402.00838 .A. Gu and T. Dao. Mamba: Linear-time sequence modeling with selective state spaces. In First conference on language modeling , 2024. S. Hochreiter and J. Schmidhuber. Long short-term memory. Neural computation , 9(8):1735–1780, 1997. 14 D. Hwang, W. Wang, Z. Huo, K. C. Sim, and P. Moreno Mengibar. Transformerfam: Feedback attention is working memory. arXiv preprint arXiv:2404.09173 , 2024. S. Jelassi, D. Brandfonbrener, S. M. Kakade, and E. Malach. Repeat after me: Transformers are better than state space models at copying. arXiv preprint arXiv:2402.01032 , 2024. D. Ju, S. Roller, S. Sukhbaatar, and J. Weston. Staircase attention for recurrent processing of sequences. arXiv preprint arXiv:2106.04279 , 2021. A. Katharopoulos, A. Vyas, N. Pappas, and F. Fleuret. Transformers are rnns: Fast autoregressive transformers with linear attention. In International conference on machine learning , pages 5156–5165. PMLR, 2020. B. Liu, J. Ash, S. Goel, A. Krishnamurthy, and C. Zhang. Transformers learn shortcuts to automata. In ICLR ,2023. arXiv:2210.10749. S. McCandlish, J. Kaplan, D. Amodei, and O. Team. An empirical model of large-batch training. arXiv preprint arXiv:1812.06162 , 2018. W. Merrill, A. Sabharwal, and N. A. Smith. Saturated transformers are constant-depth threshold circuits. Transactions of the Association for Computational Linguistics , 10:843–856, 2022. doi: 10.1162/tacl_a_00493. URL https: //aclanthology.org/2022.tacl-1.49/ .T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal. Can a suit of armor conduct electricity? a new dataset for open book question answering. In Proceedings of the EMNLP , 2018. T. OLMo, P. Walsh, L. Soldaini, D. Groeneveld, K. Lo, S. Arora, A. Bhagia, Y. Gu, S. Huang, M. Jordan, et al. 2 olmo 2 furious. arXiv preprint arXiv:2501.00656 , 2024. C.-A. Oncescu, S. J. Purandare, S. Idreos, and S. Kakade. Flash inference: Near linear time inference for long convolution sequence models and beyond. In Y. Yue, A. Garg, N. Peng, F. Sha, and R. Yu, editors, International Conference on Learning Representations , volume 2025, pages 49732–49757, 2025. URL https://proceedings. iclr.cc/paper_files/paper/2025/file/7c818dd40651b420873af70b8a790e3f-Paper-Conference.pdf .A. Orvieto, S. L. Smith, A. Gu, A. Fernando, C. Gulcehre, R. Pascanu, and S. De. Resurrecting recurrent neural networks for long sequences. In International Conference on Machine Learning , pages 26670–26698. PMLR, 2023. R. Pascanu, T. Mikolov, and Y. Bengio. On the difficulty of training recurrent neural networks, 2013. A. Paszke, S. Gross, S. Chintala, G. Chanan, E. Yang, Z. DeVito, Z. Lin, A. Desmaison, L. Antiga, and A. Lerer. Automatic differentiation in pytorch. In NIPS-W , 2017. B. Peng, E. Alcaide, Q. Anthony, A. Albalak, S. Arcadinho, S. Biderman, H. Cao, X. Cheng, M. Chung, M. Grella, et al. Rwkv: Reinventing rnns for the transformer era. arXiv preprint arXiv:2305.13048 , 2023. M. Poli, A. W. Thomas, E. Nguyen, P. Ponnusamy, B. Deiseroth, K. Kersting, T. Suzuki, B. Hie, S. Ermon, C. Re, C. Zhang, and S. Massaroli. Mechanistic design and scaling of hybrid architectures. In Forty-first International Conference on Machine Learning , 2024. URL https://openreview.net/forum?id=GDp7Gyd9nf .O. Press, N. A. Smith, and M. Lewis. Train short, test long: Attention with linear biases enables input length extrapolation, 2022. URL https://arxiv.org/abs/2108.12409 .M. N. Rabe and C. Staats. Self-attention does not need O(n2) memory. arXiv preprint arXiv:2112.05682 , 2021. J. W. Rae, A. Potapenko, S. M. Jayakumar, C. Hillier, and T. P. Lillicrap. Compressive transformers for long-range sequence modelling. arxiv preprint, 2019. URL https://arxiv. org/abs , 1911. C. Raffel, N. Shazeer, A. Roberts, K. Lee, S. Narang, M. Matena, Y. Zhou, W. Li, and P. J. Liu. Exploring the limits of transfer learning with a unified text-to-text transformer. Journal of machine learning research , 21(140): 1–67, 2020. K. Sakaguchi, R. L. Bras, C. Bhagavatula, and Y. Choi. Winogrande: An adversarial winograd schema challenge at scale. In Proceedings of the AAAI Conference on Artificial Intelligence , 2020. 15 C. J. Shallue, J. Lee, J. Antognini, J. Sohl-Dickstein, R. Frostig, and G. E. Dahl. Measuring the effects of data parallelism on neural network training. arXiv preprint arXiv:1811.03600 , 2018. J. T. Smith, A. Warrington, and S. W. Linderman. Simplified state space layers for sequence modeling. arXiv preprint arXiv:2208.04933 , 2022. Y. Sun, L. Dong, S. Huang, S. Ma, Y. Xia, J. Xue, J. Wang, and F. Wei. Retentive network: A successor to transformer for large language models. arXiv preprint arXiv:2307.08621 , 2023. A. Vaswani, N. Shazeer, N. Parmar, et al. Attention is all you need. In NeurIPS , 2017. J. Welbl, N. F. Liu, and M. Gardner. Crowdsourcing multiple choice science questions. In Proceedings of the Workshop on Noisy User-generated Text (WNUT) , 2017. S. Williams, A. Waterman, and D. Patterson. Roofline: An insightful visual performance model for multicore architectures. Communications of the ACM , 52(4):65–76, 2009. doi: 10.1145/1498765.1498785. R. Xiong, Y. Yang, D. He, K. Zheng, S. Zheng, C. Xing, H. Zhang, Y. Lan, L. Wang, and T. Liu. On layer normalization in the transformer architecture. In International conference on machine learning , pages 10524–10533. PMLR, 2020. G. Yang, D. Yu, C. Zhu, and S. Hayou. Tensor programs vi: Feature learning in infinite-depth neural networks, 2023. R. Zellers, Y. Bisk, A. Farhadi, and Y. Choi. Hellaswag: Can a machine really finish your sentence? In Proceedings of the Annual Meeting of the Association for Computational Linguistics (ACL) , 2019. B. Zhang and R. Sennrich. Root mean square layer normalization. In H. Wallach, H. Larochelle, A. Beygelz-imer, F. d 'Alché-Buc, E. Fox, and R. Garnett, editors, Advances in Neural Information Processing Systems ,volume 32. Curran Associates, Inc., 2019. URL https://proceedings.neurips.cc/paper_files/paper/2019/ file/1e8a19426224ca89e83cef47f1e7f53b-Paper.pdf .H. Zhang, D. Morwani, N. Vyas, J. Wu, D. Zou, U. Ghai, D. Foster, and S. M. Kakade. How does critical batch size scale in pre-training? In The Thirteenth International Conference on Learning Representations , 2025. URL 
+
+https://openreview.net/forum?id=JCiF03qnmi .R. Zhao, D. Morwani, D. Brandfonbrener, N. Vyas, and S. M. Kakade. Deconstructing what makes a good optimizer for autoregressive language models. In The Thirteenth International Conference on Learning Representations ,2025. URL https://openreview.net/forum?id=zfeso8ceqr .16 A Simulating Transformers with Recurrent Transformer 
+
+## A.1 Transformer Generalization Theorem Statement 
+
+The approximate part of the Informal Theorem 1 refers to the statement applying exactly when no RMS s are used. This is only a small technicality required to make the statement exact. We restate both architectures without RMS s(including inside attention projections and the MLP) and give an exact representation construction in this setting. 
+
+Norm-free architectures. Transformer (width d′). Given inputs xT 
+
+> 1
+
+, . . . , xTN ∈ Rd′
+
+and parameters QT , K T , V T ∈
+
+Rd′×d′
+
+and MLP T : Rd′
+
+→ Rd′
+
+, then the outputs yT 
+
+> 1
+
+, . . . , yTN ∈ Rd′
+
+are computed by: 
+
+qTi = QT xTi kTi = KT xTi vTi = V T xTi
+
+aTi = Attn  (kT 
+
+> 1
+
+, vT 
+
+> 1
+
+), . . . , (kTi , vTi ), qTi
+
+
+
+yTi = xTi + aTi + MLP T [xTi + aTi ].
+
+Recurrent Transformer (width d). Given inputs x1, . . . , xN ∈ Rd and parameters Q, K, V ∈ Rd×d and MLP :
+
+Rd → Rd, the y1, . . . , yN ∈ Rd are defined via: 
+
+qi = Qxi ktemp  
+
+> i
+
+= Kxi vtemp  
+
+> i
+
+= V xi
+
+ai = Attn  (k1, v1), . . . , (ki−1, vi−1), (ktemp  
+
+> i
+
+, vtemp  
+
+> i
+
+), qi
+
+
+
+zi = xi + ai + MLP[ xi + ai]
+
+ki = Kzi vi = V zi.
+
+Theorem A.1 (Transformer Generalization) . Assuming neither architecture uses RMS s, any width-d′ Transformer (of arbitrary depth) can be simulated by a width-d = 3 d′ Recurrent Transformer of as many layers. There exists a parameterization of RT such that Transformer’s activations are embedded into disjoint feature groups of the RT ’s ones across layers for any input sequence. This is achieved while ensuring that: (i) attention scores match those of the Transformer at every position and every layer and (ii) the layer output exactly tracks the Transformer layer output. 
+
+## A.2 Proof 
+
+Three blocks and the per-layer invariant. Let d = 3 d′ and decompose Rd into three d′-dimensional blocks 
+
+R3d′
+
+= C ⊕ L ⊕ S .
+
+We call them carry (C), live (L) and scratch (S). Carry is the only block that K and V read from (so both temporary and persistent key/value pairs depend on it); live holds the next-layer activation and scratch holds attention outputs so residual addition does not corrupt carry. Fix one Transformer layer (parameters QT , K T , V T , MLP T ) and assume, for every position 1 ≤ i ≤ N that: 
+
+xi = ( xTi ; ∗ ; 0) .
+
+We will construct RT ’s layer parameters ( Q, K, V, MLP ) so that the output satisfies: 
+
+zi = ( xTi ; yTi ; 0) .
+
+Then a swap between the dimensional blocks C and L restores the same input form (namely, the output follows the 
+
+(yTi ; ∗ ; 0) pattern following the swap) enabling stacking. Define block-sparse linear maps 
+
+Q(c ; l ; s) = ( QT c ; 0 ; 0) 
+
+K(c ; l ; s) = ( KT c ; 0 ; 0) 
+
+V (c ; l ; s) = (0 ; 0 ; V T c).
+
+Because K and V read only from carry the fact that they are shared between temporary and persistent pairs is automatically respected. 17 Attention matches (induction on position). We prove by induction on i that attention scores match and that the attention output lands in scratch. Induction hypothesis: for all j < i the persistent pairs match the embedded Transformer pairs 
+
+kj = ( kTj ; 0 ; 0) vj = (0 ; 0 ; vTj ).
+
+Using the input form xi = ( xTi ; ∗ ; 0) we have 
+
+qi = ( qTi ; 0 ; 0) ktemp  
+
+> i
+
+= ( kTi ; 0 ; 0) vtemp  
+
+> i
+
+= (0 ; 0 ; vTi ).
+
+Therefore the logits ⟨kj , qi⟩ match ⟨kTj , qTi ⟩ for all j ≤ i and the attention output matches as well 
+
+ai = (0 ; 0 ; aTi ).
+
+It thus follows that xi + ai = ( xTi ; ∗ ; aTi ). Define MLP[ ·] on such inputs so that: 
+
+MLP[( xTi ; ∗ ; aTi )] = (0 ; xTi + aTi + MLP T [xTi + aTi ] − ∗ ; −aTi ).
+
+Substituting into the Recurrent Transformer update shows why this choice is natural 
+
+zi = xi + ai + MLP[ xi + ai]
+
+zi = ( xTi ; ∗ ; 0) + (0 ; 0 ; aTi ) + (0 ; xTi + aTi + MLP T [xTi + aTi ] − ∗ ; −aTi )
+
+zi = ( xTi ; xTi + aTi + MLP T [xTi + aTi ] ; 0) 
+
+zi = ( xTi ; yTi ; 0) .
+
+In particular the persistent pairs for position i satisfy 
+
+ki = Kzi = ( kTi ; 0 ; 0) vi = V zi = (0 ; 0 ; vTi ).
+
+This closes the induction and proves equality of attention scores at every position within the layer. 
+
+Stacking layers. After one layer we have zi = ( xTi ; yTi ; 0) . To simulate the next Transformer layer, the next Recurrent Transformer layer must see carry equal to yTi while scratch remains 0. Swapping carry and live between layers, we get: 
+
+(xTi ; yTi ; 0) 7 → (yTi ; xTi ; 0) .
+
+This restores the input form xi = ( xTi ; ∗ ; 0) for next layer since its input is current layer’s output yTi . Since each Recurrent Transformer layer has its own parameters the swap can be absorbed into the next layer’s (Q, K, V, MLP )
+
+choice. Iterating over depth completes the simulation of an arbitrary-depth Transformer. 
+
+Remark (single layer vs stacking and why 3d′ is needed). A single layer can be simulated with 2d′ by preserving carry and writing the output elsewhere. Stacking forces an additional scratch subspace: attention outputs must be representable and cancelable without corrupting the carry block that K, V read while the live block stores the next-layer activation. This is why the clean exact construction uses 3d′.18 B Training Stability of Recurrent Transformer 
+
+The proof for Theorem 4.1 is provided below. 
+
+Proof. Given the update, we can see 
+
+∂z k
+
+∂x 1
+
+= αk V
+
+> k−1
+
+X
+
+> j=1
+
+∂z j
+
+∂x 1
+
+Moreover, ∂z 1
+
+∂x 1
+
+= I + αV 
+
+Let’s denote ∂z k 
+
+> ∂x 1
+
+by f (k). Define 
+
+S(k) := 
+
+> k
+
+X
+
+> j=1
+
+f (j).
+
+Then for k ≥ 2, the recurrence gives 
+
+f (k) = αk V S (k − 1) .
+
+Hence 
+
+S(k) = S(k − 1) + f (k)= S(k − 1) + αk V S (k − 1) =
+
+
+
+I + αk V
+
+
+
+S(k − 1) .
+
+Since 
+
+S(1) = f (1) = I + αV, 
+
+we obtain by iterating the above relation that 
+
+S(k) = 
+
+> k
+
+Y
+
+> m=1
+
+
+
+I + αm V
+
+
+
+.
+
+Therefore, for k ≥ 2,
+
+f (k) = S(k) − S(k − 1) =
+
+
+
+I + αk V
+
+
+
+S(k − 1) − S(k − 1) = αk V S (k − 1) = αk V
+
+> k−1
+
+Y
+
+> m=1
+
+
+
+I + αm V
+
+
+
+.
+
+Now set z = αV . Then 
+
+f (k) = zk
+
+> k−1
+
+Y
+
+> m=1
+
+
+
+I + zm
+
+
+
+= zk
+
+> k−1
+
+Y
+
+> m=1
+
+z + mI m
+
+= zk · 1(k − 1)! 
+
+> k−1
+
+Y
+
+> m=1
+
+(z + mI )= 1
+
+k!
+
+> k−1
+
+Y
+
+> m=0
+
+(z + mI ).
+
+19 Substituting back z = αV gives 
+
+f (k) = 1
+
+k!
+
+> k−1
+
+Y
+
+> m=0
+
+(αV + mI ).
+
+Finally, we use the standard rising-factorial expansion 
+
+x(x + 1) · · · (x + k − 1) = 
+
+> k
+
+X
+
+> r=0
+
+kr
+
+
+
+xr ,
+
+where kr
+
+ are the unsigned Stirling numbers of the first kind or the total number of permutations of k elements with exactly r cycles. Replacing the scalar variable x by the matrix αV , we obtain 
+
+> k−1
+
+Y
+
+> m=0
+
+(αV + mI ) = 
+
+> k
+
+X
+
+> r=0
+
+kr
+
+
+
+αr V r .
+
+Since k
+
+> 0
+
+ = 0 for k ≥ 1, this becomes 
+
+> k−1
+
+Y
+
+> m=0
+
+(αV + mI ) = 
+
+> k
+
+X
+
+> r=1
+
+kr
+
+
+
+αr V r .
+
+Therefore, 
+
+f (k) = 1
+
+k!
+
+> k
+
+X
+
+> r=1
+
+kr
+
+
+
+αr V r ,
+
+as claimed. 20 Algorithm 1 Exact tiled forward pass for one Recurrent Transformer layer (training/prefill) 
+
+Require: Inputs x1: N for a single layer 
+
+Require: Projections Q, K, V and MLP block MLP 
+
+Require: Query tile size B (power of 2)
+
+Ensure: Outputs z1: N and persistent pairs (k1: N , v1: N ) 
+
+> 1:
+
+Compute queries in parallel: qi ← RMS[ Q RMS( xi)] for i = 1 , . . . , N  
+
+> 2:
+
+Initialize running stats for all queries:  
+
+> 3:
+
+mi ← −∞ li ← 0 oi ← 0 for i = 1 , . . . , N  
+
+> 4:
+
+Initialize persistent buffers k1: N , v1: N as empty  
+
+> 5:
+
+for t = 1 : N do  
+
+> 6:
+
+ktemp  
+
+> t
+
+← RMS[ K RMS( xt)] vtemp  
+
+> t
+
+← V RMS( xt) 
+
+> 7:
+
+UpdateTile  qt:t , ktemp  
+
+> t
+
+, vtemp 
+
+> t
+
+ {temporary self contribution}  
+
+> 8:
+
+at ← ot/l t 
+
+> 9:
+
+zt ← xt + at + MLP[RMS( xt + at)]  
+
+> 10:
+
+kt ← RMS[ K RMS( zt)] vt ← V RMS( zt) {persistent KV pair revealed}  
+
+> 11:
+
+P ← 2ν2(t) {largest power of 2 dividing t} 
+
+> 12:
+
+(u, v ) ← (t + 1 , min( t + P, N )))  
+
+> 13:
+
+if u ≤ v then  
+
+> 14:
+
+UpdateTile  qu:v , kt−P +1: t , vt−P +1: t
+
+ {have the next query block attend to the newly-available KV segment}  
+
+> 15:
+
+end if  
+
+> 16:
+
+end for 
+
+# C More on computational efficiency 
+
+We start by providing the full forward-pass algorithm for evaluating one RT layer exactly (Algorithm 1). The schedule follows Figure 3: persistent key–value pairs (kt, vt) are revealed sequentially (only after zt is computed), but queries {qi}Ni=1 are available from the very beginning. We take advantage of this by immediately attenting to newly-available key–value pairs across an entire range of future queries rather than only the next query, increasing KV-access reuse while preserving the model’s exact computation. Concretely, when token t finishes, the tile size is chosen as the largest power of 2, P that divides t. Algorithm 1 immediately incorporates the contribution of (kt−P +1: t, vt−P +1: t) into the attention accumulators of the next query block qt+1: t+P . Over the full run, every query position accumulates contributions from every earlier key–value pair exactly once, matching naive causal attention up to floating-point reordering effects. 
+
+Algorithm 2 UpdateTile (qu:v , ks:e, vs:e): online-softmax update for a query tile 
+
+Require: Query indices u : v with queries qu:v
+
+Require: A key–value tile ks:e, vs:e (persistent) or a single temporary pair (ktemp  
+
+> t
+
+, vtemp  
+
+> t
+
+)
+
+Require: Running stats (mu:v , l u:v , ou:v )
+
+Ensure: Updated (mu:v , l u:v , ou:v ) corresponding to including this tile  
+
+> 1:
+
+Compute tile logits αi,j ← ⟨ qi, kj ⟩ for all i ∈ [u, v ] and j ∈ [s, e ] 
+
+> 2:
+
+Compute per-query tile maxima mtile  
+
+> i
+
+← max j∈[s,e ] αi,j for all i ∈ [u, v ] 
+
+> 3:
+
+Compute new maxima mnew  
+
+> i
+
+← max( mi, m tile  
+
+> i
+
+) for all i ∈ [u, v ] 
+
+> 4:
+
+Rescale old accumulators:  
+
+> 5:
+
+oi ← oi · exp( mi − mnew  
+
+> i
+
+) li ← li · exp( mi − mnew  
+
+> i
+
+) for all i ∈ [u, v ] 
+
+> 6:
+
+Accumulate this tile:  
+
+> 7:
+
+oi ← oi + Pej=s vj exp( αi,j − mnew  
+
+> i
+
+) for all i ∈ [u, v ] 
+
+> 8:
+
+li ← li + Pej=s exp( αi,j − mnew  
+
+> i
+
+) for all i ∈ [u, v ] 
+
+> 9:
+
+Finalize maxima: mi ← mnew  
+
+> i
+
+for all i ∈ [u, v ]
+
+Regarding how to accumulate attention contributions from multiple ranges of key–value pairs, we use [Rabe and Staats, 2021, Dao et al., 2022]’s approach; For each query position (or query tile), we maintain the standard online-softmax running statistics: 
+
+• a running max logit m
+
+21 • a running normalizer l
+
+• and a running numerator vector o
+
+When a new contribution tile is processed, these statistics are updated by rescaling the existing accumulators and adding the tile’s contribution computed relative to the updated maximum (keeping the logit maxima is only required for numerical stability). After all prefix tiles have been incorporated for position t, the exact attention output is recovered as at = ot/l t.Algorithm 2 spells out the UpdateTile primitive used by the forward schedule. It takes a query range and a range of key–value pairs and updates (m, l, o) for all queries in the tile in a vectorized manner. 22 D Hyperparameter details 
+
+## D.1 C4 pretraining experiments 
+
+For the C4 pretraining experiments in Figure 2, we used a 300m non-embedding parameter transformer. For the 12 layer experiments, the width of the model was 1408 , with the MLP width being 5632 and number of heads being 22 
+
+(so as to keep per-head dim to be 64 ). For the 6 layer experiments, the width was adjusted to 2048 , with the MLP width being 8192 and number of heads being 32 . The maximum sequence length was fixed to 512 and the models were trained for 1x Chinchilla tokens ( ≈ 6b tokens), leading to 25 k steps for the 512 batch size experiment. We used the alibi positional embeddings [Press et al., 2022] with max alibi bias of 8.0. The throughput of Recurrent Transformer at 12 layers was 42 k tokens/sec as compared to 132 k tokens/sec for vanilla transformer. The throughput of Recurrent Transformer at 6 layers was 49 k tokens/sec as compared to 153 k tokens/sec for vanilla transformer. We used the Adam optimizer for the experiments, with hyperparameter tuning given by: η ∈ { 1e − 3, 3e − 3, 1e −
+
+2}, β 1 = 0 .9, β 2 ∈ { 0.95 , 0.99 }, ϵ = 1 e − 8, and the weight decay was set to 0.0. We used warmup and cosine schedule for the experiments, with the warmup accounting for 40% of the training as found to be optimal for this scale in previous works [Zhao et al., 2025]. 
+
+## D.2 Synthetic experiments 
+
+For the synthetic experiments in Figure 5, we used a single layer transformer, with model width 128 , MLP width 
+
+512 and 16 heads as in Poli et al. [2024]. We used the alibi positional embeddings with max alibi bias set to 8.0. We used the AdamW optimizer, with the hyperparameter tuning given by: η ∈ { 1e − 4, 5e − 4, 1e − 3, 5e − 4}, β 1 =0.9, β 2 = 0 .98 , ϵ = 1 e − 8, λ ∈ { 0.0, 0.1}, where λ represents the weight decay. 
+
+# E More experiments and results 
+
+## E.1 Synthetics Token Level 
+
+Figure 6 shows the token-level accuracies for the different synthetic tasks. Note how in the compression task where neither transformers nor the RT have non-trivial performance at sequence level, the accuracy becomes non-trivial at the token level and the gap between the two architectures is still prominent. 
+
+## E.2 RMSNorm Ablation 
+
+In this section, we ablate the RMSnorm used in Recurrent Transformer, i.e, we replace Equation 1 and 2 with 
+
+ki = RMS( K zi)
+
+vi = V zi
+
+The best performance with this setup was obtained with η = 1 e − 3, with higher learning rates destabilizing. Note that, in comparison, with RMSNorm, even learning rates till 1e − 2 are stable, although, 3e − 3 turns out to be the optimal. The results are shown in Figure 7. As can be seen, the performance obtained is significantly worse without the layernorm. 
+
+## E.3 C4 pretraining (150M scale) 
+
+For the 150M parameter model, for the 12 layer experiments, the width of the model was 1024, with the MLP width being 4096 and 16 number of heads. For the 6 layer experiments, the width was adjusted to 1408, with the MLP width being 5632 and 22 number of heads. The model was trained for 1x Chinchilla tokens ( ≈ 3b tokens). We provide loss curves in Figure 8 and 9 at batch sizes 512 and 256 respectively - this is such that the critical batch size of 256 K of the 150M model is not exceeded [Zhang et al., 2025], while keeping the batch size large enough to have MLPs be compute-bound. Figures 8 and 9 shows that we have benefits at various batch sizes. The corresponding losses are displayed in Tables 4 and 7. We also report the downstream performance of these models in terms of cross entropy loss of the ground truth answer in Tables 5 and 8 respectively. We also report the downstream accuracy in Tables 6 and 9 respectively. 23 50 100 150 200 250 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+Compression 
+
+100 200 300 400 500 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+Copying 
+
+100 200 300 400 500 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+Fuzzy In Context Recall 
+
+100 200 300 400 500 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+In Context Recall 
+
+100 200 300 400 500 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+Noisy In Context Recall 
+
+100 200 300 400 500 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+Selective Copying 
+
+Sequence Length 
+
+> TokenAccuracy Performance
+
+transformer recurrent Figure 6: Token level accuracies on synthetic diagnostics (MAD + copy). 
+
+## E.4 Downstream accuracy of 300M parameter transformer 
+
+In Table 10, we provide the downstream accuracy for the 300m model. 24 2.5e3 5e3 7.5e3 1e4 1.25e4 
+
+> Training Steps
+> 3.0
+> 3.2
+> 3.4
+> 3.6
+> 3.8
+> Validation Loss
+> No-RMS
+> RMS
+
+Figure 7: C4 pretraining: Ablating the use of RMSNorm in Recurrent Transformer for 150M parameter model at 512 batch size. Table 4: C4 pretraining loss at 150M parameters at batch size 512. Model Layers Width Val CE ↓
+
+Transformer 6 1408 3.097 
+
+Transformer 12 1024 3.067 
+
+Recurrent Transformer 6 1408 3.049 
+
+Recurrent Transformer 12 1024 3.046 
+
+Table 5: Downstream performance for the 150M model at batch size 512. Model Layers piqa CE hellaswag CE arc easy CE openbook qa CE sciq CE winogrande CE Transformer 6 5.791 4.460 11 .419 12 .509 15 .3 7.912 
+
+Transformer 12 5.911 4.371 11 .87 13 .471 14 .948 8.365 
+
+Recurrent 12 5.606 4.274 11.124 12.067 14.43 7.645 
+
+Recurrent 6 5.689 4.327 11 .242 12 .252 14 .529 8.314 
+
+Table 6: Downstream accuracy for the 150M model at batch size 512. Model Layers piqa acc hellaswag acc arc easy acc openbook qa acc sciq acc winogrande acc Transformer 6 60 .55 28 .34 32 .11 35 .6 34 .29 49 .49 
+
+Transformer 12 60 .94 28 .41 31 .4 37 .4 37.17 52.01 
+
+Recurrent 12 61.26 29.67 32.63 36 .2 36 .28 50 .82 
+
+Recurrent 6 61 .21 29 .06 31 .23 38.4 31 .08 48 .93 
+
+25 2.5e3 5e3 7.5e3 1e4 1.25e4   
+
+> Training Steps
+> 3.0
+> 3.2
+> 3.4
+> 3.6
+> 3.8
+> Validation Loss
+> Model
+> recurrent transformer
+> Layers
+> 12 6
+
+Figure 8: C4 pretraining: loss curve for the 150M parameter model at batch size 512. Table 7: C4 pretraining loss at 150M parameters, training at batch-size 256. Model Layers Width Val CE ↓
+
+Transformer 6 1440 3.091 
+
+Transformer 12 1024 3.059 
+
+Recurrent Transformer 6 1440 3.037 
+
+Recurrent Transformer 12 1024 3.036 
+
+Table 8: Downstream performance for the 150M model at batch size 256. Model Layers piqa CE hellaswag CE arc easy CE openbook qa CE sciq CE winogrande CE Transformer 6 5.851 4.43 11 .792 13 .42 15 .061 8.359 
+
+Transformer 12 6.018 4.535 12 .552 13 .999 16 .643 8.883 
+
+Recurrent 12 5.512 4.231 10 .822 12 .28 14 .149 7.842 
+
+Recurrent 6 5.387 4.15 10.516 11.529 13.494 7.682 
+
+Table 9: Downstream accuracy for the 150M model at batch size 256. Model Layers piqa acc hellaswag acc arc easy acc openbook qa acc sciq acc winogrande acc Transformer 6 60 .94 28 .59 31 .58 37.8 39 .16 51 .3
+
+Transformer 12 60 .5 28 .57 32 .63 37 .6 36 .5 52.88 
+
+Recurrent 12 61 .92 29 .18 31 .75 36 .6 35 .29 49 .8
+
+Recurrent 6 62.19 29.28 32.81 37.8 39.71 50 .51 
+
+26 5e3 1e4 1.5e4 2e4 2.5e4   
+
+> Training Steps
+> 3.0
+> 3.2
+> 3.4
+> 3.6
+> 3.8
+> Validation Loss
+> Model
+> recurrent transformer
+> Layers
+> 12 6
+
+Figure 9: C4 pretraining: loss curve for the 150M parameter model at batch size 256. Table 10: Downstream accuracy for the 300M model. Model Layers piqa acc hellaswag acc arc easy acc openbook qa acc sciq acc winogrande acc Transformer 6 63.49 31 .67 33.51 37 .8 34 .4 50 .36 
+
+Transformer 12 62 .4 31 .82 32 .46 38.2 34 .4 51.85 
+
+Recurrent 12 63.49 33.02 31 .58 37 35.95 50 .59 
+
+Recurrent 6 63 .27 32 .66 30 .88 37 .2 35 .62 49 .96 
+
+27

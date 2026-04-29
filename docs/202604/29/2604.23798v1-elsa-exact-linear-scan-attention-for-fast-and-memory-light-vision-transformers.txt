@@ -1,0 +1,1151 @@
+Title: ELSA: Exact Linear-Scan Attention for Fast and Memory-Light Vision Transformers
+
+URL Source: https://arxiv.org/pdf/2604.23798v1
+
+Published Time: Tue, 28 Apr 2026 01:21:09 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# ELSA: Exact Linear-Scan Attention for Fast and Memory-Light Vision Transformers 
+
+## Chih-Chung Hsu Xin-Di Ma Wo-Ting Liao Chia-Ming Lee Advanced Computer Vision Laboratory, National Yang Ming Chiao Tung University 
+
+## Abstract 
+
+Existing attention accelerators often trade exact softmax semantics, depend on fused Tensor Core kernels, or incur sequential depth that limits FP32 throughput on long se-quences. We present ELSA , an algorithmic reformulation of online softmax attention that (i) preserves exact softmax se-mantics in real arithmetic with a provable O(u log n) FP32 relative error bound; (ii) casts the online softmax update as a prefix scan over an associative monoid (m, S, W ),yielding O(n) extra memory and O(log n) parallel depth; and (iii) is Tensor-Core independent, implemented in Tri-ton and CUDA C++, and deployable as a drop-in re-placement requiring no retraining or weight modification. Unlike FlashAttention-2/3, which rely on HMMA/GMMA Tensor Core instructions and provide no compatible FP32 path, ELSA operates identically on A100s and resource-constrained edge devices such as Jetson TX2—making it the only hardware-agnostic exact-attention kernel that re-duces parallel depth to O(log n) at full precision. On A100 FP32 benchmarks (1K–16K tokens), ELSA delivers 1.3–
+
+3.5× speedup over memory-efficient SDPA and 1.97 –2.27 ×
+
+on BERT; on Jetson TX2, ELSA achieves 1.5–1.6× over Math (64–900 tokens), with 17 .8–20 .2% throughput gains under LLaMA-13B offloading at ≥32K. In FP16, ELSA ap-proaches hardware-fused baselines at long sequences while retaining full FP32 capability, offering a unified kernel for high-precision inference across platforms. Our code and implementation are available at https://github. com/ming053l/ELSA .
+
+## 1. Introduction 
+
+Vision Transformers (ViT) [11, 37] have achieved remark-able success across computer vision, but their Multi-Head Self-Attention (MHSA) suffers from quadratic memory scaling. A 4K image ( 4096 × 4096 ), tokenized at a 
+
+4×4 patch size typical of high-resolution scientific mod-
+
+> This study was supported in part by the National Science and Tech-nology Council (NSTC), Taiwan, under grants 112-2221-E-006-157-MY3, 114-2627-M-A49-003, and 114-2218-E-035-001. We thank the National Center for NCHC of NARLabs in Taiwan for providing computational and storage resources. Corresponding author: Chih-Chung Hsu.
+
+els, yields ≈1M tokens and requires over 4 TB of GPU memory to materialize the full attention matrix in FP32— far exceeding commercial hardware capacity. This O(n2)
+
+bottleneck is particularly critical in high-precision do-mains such as medical imaging, hyperspectral analysis, and super-resolution microscopy, where FP32 accuracy is non-negotiable [9, 12, 21, 44, 48]. Accelerating attention while preserving exactness and precision is thus essential for scal-ing ViTs to high-resolution applications. 
+
+Challenges. Existing approaches remain limited for high-speed, high-precision inference. Current strate-gies fall into three paradigms: approximate attention [4, 40, 46], which linearize complexity via low-rank pro-jections or sparse patterns; hardware-fused kernels like FlashAttention-2/3 [7, 33], which achieve linear memory through block-tiling and Tensor Core instructions; and 
+
+memory-efficient implementations such as ME-SDPA [5], which reduce memory via sequential computation. Each faces critical limitations: approximate methods alter the at-tention operator, requiring retraining that is infeasible for foundation models trained over millions of GPU hours and cost-intensive data curation (e.g., CLIP [30], SAM [18], LLaMA [36], and 3D Large Reconstruction Model like VGGT [39]); FlashAttention’s FP32 path reverts to un-tuned SIMD without fused HMMA kernels and requires per-generation tuning; ME-SDPA, despite supporting FP32, suffers O(n/T k) sequential depth— 3.5× slower than ELSA at 16K tokens . We therefore restrict comparisons to exact drop-in implementations (Math kernel, ME-SDPA, FA2/FA3); approximate methods fall outside fair evaluation scope as they require retraining every benchmark model. 
+
+Problem Formulation. What remains missing is an ex-act, inherently parallel reformulation of attention that re-quires no specialized hardware. The online softmax re-currence of Rabe and Staats [29] reduces memory to O(n)
+
+but remains inherently sequential. For the ≈1M-token 4K example above, a GPU must synchronize over one million steps, leaving pipelines idle. Breaking this sequential bot-tleneck is the key challenge for efficient FP32 attention. To address this, we propose Exact Linear-Scan At-tention (ELSA) , which reformulates the online soft-
+
+> arXiv:2604.23798v1 [cs.LG] 26 Apr 2026
+
+Table 1. Method Comparison. ELSA is exact, hardware-agnostic, and retrain-free—a drop-in replacement requiring no architecture-specific primitives—while achieving O(log n) depth and O(n) memory in FP32.                                              
+
+> Method Exact FP32 HW-agnostic Retrain-free Depth (per head) Extra mem. Standard SDPA ✓✗✓✓O(n)O(n2)
+> ME-SDPA (xFormers) ✓✓✓✓O(n/T k)O(Tkd)
+> FlashAttn-2/3 ✓✗✗✓O(n/T k)O(Tkd)
+> Linear Attention ✗✓✓✗O(log n)†O(n)
+> ELSA (Ours) ✓✓✓✓O(log n)O(n)
+> Notes: Depth for blockwise kernels scales as O(n/T k); ELSA uses a two-level scan (Hillis–Steele + Blelloch). “FP32” denotes a high-throughput FP32 path without fused Tensor Cores. †Depth shown for representative linear-kernel variants; exactness is not preserved.
+
+max recurrence as a prefix scan over an associative monoid, achieving O(log n) parallel depth and O(n)
+
+memory with exact FP32 semantics, no retraining, and no Tensor Core dependency (in FP32 we provide a prov-able bound under Assumption 1). Table 1 summarizes how ELSA uniquely combines exactness, FP32 efficiency, and GPU-agnostic design. Our contributions are as follows: • Provable FP32 error bound and deployable kernel. 
+
+We formalize the online softmax merge operator ⊕ on state triples (m, S, W ) ∈ ¯R × R≥0 × Rdv as a monoid— going beyond prior theoretical treatments [13] by proving closure, associativity, and identity—and derive a kernel-aware O(u log n)1 FP32 relative error bound tied to scan merge depth, enabling provable numerical stability for million-token sequences on real hardware. • Hardware-agnostic implementation. We implement a two-level scan (intra-block Hillis–Steele, inter-block Blelloch) in Triton and CUDA C++ without Tensor Core dependencies, achieving high-throughput FP32 inference across platforms from data-centre GPUs (e.g., A100, L4) to embedded devices (Jetson TX2). • Retraining-free deployment. ELSA preserves exact softmax semantics as a drop-in replacement for pretrained large foundation models, such as CLIP, ViT, LLaMA, and VGGT, enabling immediate acceleration without fine-tuning, which is critical for foundation models trained over millions of GPU hours. • Comprehensive evaluation. Across vision and language benchmarks, (i) in FP32 ELSA improves latency over memory-efficient SDPA by 1.3–3.5× while using com-parable peak memory; (ii) in FP16 ELSA approaches FlashAttention-2/3 throughput at long sequences while achieving the lowest peak memory among exact ker-nels (e.g., 0.19 GB vs. 0.29 /0.36 GB at 16K, Figure 4). 
+
+(iii) under host-device offloading, ELSA delivers 17.8– 20.2% throughput gains over ME-SDPA at ≥32K tokens (LLaMA-13B, FP32).    
+
+> 1We write ufor FP32 unit roundoff; FP64 would be denoted by u64 .
+
+## 2. Related Works 
+
+Attention Approximation. A major research branch ap-proximates the attention matrix to achieve O(n) com-plexity, but at the cost of modifying the attention oper-ator itself. Performer [4] applies random feature maps to linearize the exponential kernel, replacing exact soft-max with a kernel approximation that enables linear-time computation but introduces approximation error. Lin-former [40] projects keys and values to a lower-dimensional space via learned linear projections, reducing the effec-tive sequence length but losing full token-to-token interac-tions. Sparse attention methods such as BigBird [46] and Sparse Transformers [3] restrict attention to predefined pat-terns (e.g., local windows, random connections, global to-kens), discarding most pairwise interactions to achieve spar-sity. Nystr¨ omformer [43] approximates the attention ma-trix via the Nystr¨ om method using landmark tokens, and Reformer [19] employs locality-sensitive hashing to clus-ter similar queries and keys. More recently, DeltaNet [38] parallelizes linear Transformers with the delta rule over se-quence length using a hardware-efficient chunk-wise scan, achieving O(n) training complexity while retaining recur-rent expressiveness. While these methods achieve attrac-tive theoretical complexity, they inevitably modify the at-tention operator and require training a model from scratch to compensate for the approximation—impractical for foun-dation models such as CLIP [30] or SAM [18] trained over millions of GPU hours and labour-intensive data curation. In contrast, ELSA preserves exact softmax semantics and serves as a drop-in replacement without any retraining .
+
+Hardware-fused Attention. FlashAttention-2 (FA2) [7] pioneered tiling attention to fit on-chip memory, achiev-ing linear memory use and 2–4× speedups by fusing 
+
+QK ⊤, softmax, and V within shared memory using 
+
+16 ×16 tiles aligned to Tensor Core (HMMA) instructions. FlashAttention-3 (FA3) [33] further improves throughput via finer tile partitioning and warp-specialization. Both kernels, however, depend critically on HMMA/GMMA in-structions optimized for FP16/BF16; without them, exe-cution reverts to SIMD paths and the throughput ad-vantage largely disappears . Both are also tightly coupled to specific GPU generations, complicating deployment on older or embedded devices. 
+
+The Case for Exact FP32 Attention. Despite the preva-lence of BF16/FP16, FP32 remains indispensable in sev-eral settings: hyperspectral imaging , where 12–16-bit sen-sor dynamic range is irrecoverable under half-precision accumulation [17, 50]; medical image analysis , where clinical accuracy requirements preclude any approxima-tion [12, 21]; zero-shot deployment of foundation mod-els (CLIP [30], SAM [18], and VGGT [39]), where re-training to recalibrate precision-induced drift is infeasible; and mixed-precision pipelines that require a numerically auditable FP32 attention sub-module. In all these cases, FA2/FA3’s FP32 path is uncompetitive and ME-SDPA’s se-quential depth imposes a 3.5× latency penalty at 16K to-kens . ELSA addresses this gap by treating softmax as an al-gorithmic problem: an associative monoid over (m, S, W )
+
+solved via prefix-scan, delivering exact, high-throughput FP32 inference across platforms, from A100s to Jetson de-vices, without any Tensor Core dependency .
+
+Efficient Memory and Architecture Design. Beyond ap-proximation and hardware fusion, a parallel line of work re-duces memory through architectural redesign. In distributed settings, DistFlashAttn [22] overlaps compute and com-munication to extend FA2 across devices. In vision, rep-resentative designs include EfficientViT’s cascaded group attention [24], ELFATT’s sparse-blockify approach [42], SHViT’s single-head design [45], L2ViT’s information con-centration [49], and META’s cross-shaped window atten-tion [47]. While these designs achieve efficiency through structural modifications, they require task-specific retrain-ing and cannot serve as drop-in replacements for pre-trained models. Most closely related to ELSA are three lines of work. Feng et al. [13] identify that the online softmax recurrence admits parallel prefix reduction, but neither formalize it as a monoid nor deliver a deployable FP32 kernel with a quan-titative error bound. LeanAttention [32] exploits associa-tivity only for single-query decode. ME-SDPA [5] pre-serves exact FP32 semantics but processes tokens sequen-tially, incurring O(n/T k) depth and a 3.5× latency penalty at 16K tokens. ELSA addresses all three gaps: (i) a triple-state monoid (m, S, W ) with formally proven closure, as-sociativity, and identity; (ii) all-queries (prefill) attention; and (iii) a provable FP32 error bound tied to scan depth 
+
+L(n, B )—making ELSA a general, training-free, numeri-cally auditable drop-in for vision and language inference. 
+
+## 3. Motivation and Preliminaries 
+
+Efficient attention requires addressing two intertwined chal-lenges: the O(n2) memory cost of materializing the full score matrix, and the sequential depth of memory-efficient implementations that avoid it. We first characterize the se-quential bottleneck and then introduce the parallel prefix scan framework that ELSA exploits to overcome it. 
+
+3.1. Why Is Sequential Attention a Bottleneck? 
+
+Self-attention and Quadratic Memory. Given a se-quence of n tokens, let qi, k j ∈ Rd denote the query and key vectors and vj ∈ Rdv the value vector. The attention score sij = ⟨qi, k j ⟩/√d and output are 
+
+yi =
+
+P 
+
+> j
+
+esij vj
+
+P 
+
+> j
+
+esij . (1) Naive materialization of the full n×n score matrix requires 
+
+O(n2) memory, which becomes prohibitive at long se-quence lengths. To avoid this, one instead maintains a run-ning state (mj , S j , W j ), where mj = max u≤j su is the running maximum logit, Sj = Pju=1 esu−mj the normal-ized cumulative sum, and Wj = Pju=1 esu−mj vu the cor-responding weighted sum, reducing memory to O(n) with-out storing intermediate scores. 
+
+Online Softmax Recurrence and Its Sequential Depth. 
+
+Rabe and Staats [29] showed this O(n)-memory computa-tion can be performed in a single forward sweep via                  
+
+> mj= max( mj−1, s j),Sj=Sj−1emj−1−mj+esj−mj,Wj=Wj−1emj−1−mj+esj−mjvj.
+
+(2) Heinsen [14] later proposed a constant-cost-per-token vari-ant confirming the same memory property. However, both formulations are inherently sequential : each step depends on the previous, so a GPU must synchronize n times, leav-ing most threads idle. This O(n/T k) sequential depth in memory-efficient kernels such as ME-SDPA [5] is the core latency bottleneck we address. Throughout, we use exact to mean that our output equals standard softmax attention in real arithmetic; in floating point, we derive a provable FP32 relative error bound (Theorem 1). 
+
+3.2. Parallelization via Prefix Scan 
+
+Parallel Prefix Scanning. To overcome the sequential bottleneck, we turn to the theory of parallel prefix scan [1]. A prefix scan computes all prefix reductions over a monoid 
+
+(⊕, e ): a set with an associative binary operator and an iden-tity element. Classic algorithms, Hillis–Steele [16], Kogge– Stone [20], and Blelloch’s two-pass [1], achieve O(log n)
+
+depth with O(n) work . Modern GPU libraries (CUDA CUB, Thrust) generalize these primitives to composite data types: as long as the tuple-level operation is associative and has an identity, prefix scan accumulates vector- or tuple-valued states in parallel without Tensor Core dependen-cies . This raises a natural question: can the online softmax recurrence be cast as such a monoid? We answer affirma-tively in Sec. 4. 
+
+Integral-image View of Softmax Attention. A key ob-stacle is that each recurrence step depends on the global 
+
+running maximum mj , unknown until all previous tokens are processed. The integral-image view resolves this: just as a 2D integral image lets any rectangular region sum be retrieved in O(1) by combining corner values, the atten-tion state over any contiguous block can be recovered by composing the states of its sub-blocks. This composability means blocks can be computed independently in parallel 
+
+and merged in a logarithmic reduction tree .(a) Integral-Image Analogy                                 
+
+> 31415926xj
+> 348914 23 25 31 Pj
+> P5
+> j=2 xj=P5−P1
+> — softmax analogue —
+> u1u2u3u4u5u6u7u8uj
+> u(B1)u(B2)
+> u(B1∪B2) = u(B1)⊕u(B2)
+> (Proposition 1)
+
+(b) Sequential (ME-SDPA)             
+
+> depth =O(n)(token-wise conceptual view)
+> t1t2t3t4
+> u1u1:2 u1:3 u1:4
+> ⊕⊕⊕
+> n
+> output y
+> Each step waits for all previous steps
+
+(c) ELSA (Two-Level Prefix Scan)               
+
+> depth =O(log n)
+> t1t2t3t4t5t6t7t8
+> B1B2
+> u1:2 u3:4 u5:6 u7:8
+> Hillis–Steele (intra)
+> u(B1)
+> ⊕
+> u(B2)
+> ⊕
+
+⊕     
+
+> Blelloch (inter)
+> output y
+> ⌈log 2 B⌉log  nB
+> Total: L(n, B ) = O(log n)(Eq. 6)
+
+Figure 1. Integral-image analogy and ELSA computational flow. (a) Just as a prefix-sum table [6] enables O(1) range queries by composing boundary values, the softmax state (m, S, W ) supports exact blockwise composition via ⊕ (Proposition 1). (b) ME-SDPA [5] chains tokens sequentially via the online softmax recurrence [29], incurring O(n) depth that becomes prohibitive at long sequences. 
+
+(c) ELSA reduces depth to O(log n) via a two-level prefix scan: Hillis–Steele [16] within blocks (all threads active, maximizing shared-memory bandwidth) and Blelloch [1] across blocks (work-optimal, minimizing global memory traffic)—while preserving exact FP32 semantics , O(n) memory, and hardware agnosticism: ⊕ requires only scalar max /exp and vector fma , with no Tensor Core dependency .
+
+(ma, S a, W a) 
+
+> Block A
+
+(mb, S b, W b) 
+
+> Block B
+
+Saema , W aema Sbemb , W bemb 
+
+> un (·)un (·)
+> add
+
+max( ma, m b), ˜Sa+ ˜Sb, ˜Wa+ ˜Wb
+
+> renorm (·)renorm
+
+(m, S, W ) = u(A ∪ B)     
+
+> =uA⊕uB(Eq. 5)
+> unnormalize (expose raw sums)
+> element-wise add & max
+> renormalize by e−m
+
+Figure 2. Monoid merge operator ⊕. Three steps compose two block states: un exposes raw sums, element-wise + and max ag-gregate them, and renorm re-anchors to the new maximum. 
+
+Concretely, let sj = ⟨q, k j ⟩/√d and mj = max u≤j su.Define the unnormalized prefix quantities 
+
+˜Sj = X
+
+> u≤j
+
+esu , ˜Wj = X
+
+> u≤j
+
+esu vu, (3) and the normalized state (mj , S j , W j ) =(mj , ˜Sj e−mj , ˜Wj e−mj ). Normalization by e−mj ,analogous to the origin correction in integral im-ages, re-anchors accumulated sums to the local max-imum, preventing overflow while preserving exact values. The maps un (m, S, W ) = (Se m, W e m) and 
+
+renorm (m, ˜S, ˜W ) = ( m, ˜Se −m, ˜W e −m) convert between representations; our merge operator ⊕ implements block-wise composition via “un-sum-renorm” , the softmax analogue of summing corner values. This yields a scan over 
+
+(m, S, W ) in O(log n) depth with O(n) extra memory ,what we term linear-scan . The key question is whether this blockwise composability can be formalized as a monoid, enabling standard parallel scan primitives. We answer this in Sec. 4; the complete monoid proof and I/O complexity analysis are deferred to the supplementary material. 
+
+## 4. Exact Linear-Scan Attention 
+
+Overview. The integral-image view in Sec. 3 suggests that the online softmax state (m, S, W ) can be composed blockwise (Figure 1); Figure 2 details the three-step merge operator ⊕ that implements this composition. We begin by formalizing this observation. 
+
+Proposition 1 (Block composition) . For any partition of indices into contiguous blocks B1, . . . , B K , let u(Bk) be the state (m, S, W ) computed on block Bk. Then u(B1 ∪· · · ∪ BK ) = u(B1) ⊕ · · · ⊕ u(BK ).
+
+This composability is the foundation of ELSA: because block states can be computed independently in parallel and merged in a logarithmic reduction tree, it suffices to show that ⊕ forms a monoid —thereby admitting standard paral-lel scan primitives (Sec. 3, Parallel prefix scanning). Unlike LeanAttention [32], which exploits a related property only for single-query decode, our formulation covers all-queries (prefill) attention and provides a formal FP32 error bound tied to scan depth. Similarly, while Feng et al. [13] identify this algebraic structure theoretically, they do not provide a deployable high-throughput FP32 kernel; our contribution lies precisely in this gap. In this section, we proceed in three steps: (1) proving the monoid structure of ⊕, (2) deriving the FP32 error bound, and (3) designing the two-level GPU scan. 
+
+4.1. Monoid Formulation 
+
+Let U = ¯R × R≥0 × Rdv with ¯R = R ∪ {−∞} , and 
+
+e = ( −∞ , 0, 0). The merge operator ⊕ is designed to compose the running states of Eq. (2) blockwise. For 
+
+ua = ( ma, S a, W a) and ub = ( mb, S b, W b), define 
+
+ua ⊕ ub =
+
+(  ma, S a + Sb emb−ma , W a + Wb emb−ma
+
+, ma ≥ mb,
+
+ mb, S b + Sa ema−mb , W b + Wa ema−mb
+
+, otherwise. (4) 
+
+Closure. Since emb−ma ∈ (0 , 1] when ma ≥ mb, S ∈ R≥0
+
+is preserved and W ∈ Rdv is closed under affine combina-tion; the symmetric case follows by construction. Associativity. With un (m, S, W ) = (Se m, W e m) and 
+
+renorm (m, ˜S, ˜W ) = ( m, ˜Se −m, ˜W e −m),       
+
+> ua⊕ub=renorm  max( ma, m b),un (ua) + un (ub).
+
+(5) By associativity of vector addition and max , (ua ⊕ ub) ⊕
+
+uc = ua ⊕ (ub ⊕ uc).
+
+Identity. (U, ⊕, e) forms a monoid with identity e =(−∞ , 0, 0); a complete proof is given in Supp. A. 
+
+4.2. Logical Scan and GPU Parallelization 
+
+Logical level. Proposition 1 guarantees that the state 
+
+(m, S, W ) composes associatively via ⊕ (Eq. (4)), so the full-sequence result equals the sequential prefix prod-uct u1 ⊕ · · · ⊕ un. The per-query sequential for-mulation (detailed pseudocode and step-by-step expla-nation in Supp. A.4) makes this explicit: it initializes 
+
+(m0, S 0, W 0) = ( −∞ , 0, 0), computes scores, applies the conditional rescaling of Eq. (2), and normalizes. Although the loop is written sequentially, its correctness relies solely on the monoid structure, not on sequential order, which is precisely what enables parallel execution. 
+
+Physical level. A naive single-level parallel scan would require all n threads to synchronize through global memory, incurring high communication overhead at long sequences. ME-SDPA [5] avoids this by processing tiles sequentially, but at the cost of O(n/T k) depth. FA2/FA3 [7, 33] reduce depth via block tiling, but advance sequentially along the key dimension and depend on Tensor Core fusion unavail-able in FP32. To achieve O(log n) depth without these de-pendencies, we exploit the two-level structure of ⊕: since 
+
+⊕ is associative, blocks can be reduced independently and their results merged in a logarithmic tree. Concretely, since 
+
+(U, ⊕, e) is a monoid, we map the computation to a two-level prefix scan, choosing algorithms whose properties match each level’s constraints: 1. Intra-block ( B = 128 ): Each thread block indepen-dently reduces a chunk of 128 tokens via a Hillis–Steele scan [16] in shared memory, contributing ⌈log 2 B⌉
+
+merge levels . Because ⊕ is associative (Sec. 4, Monoid Formulation), any ordering of pairwise merges within the block yields the same result, making Hillis–Steele’s tree-structured reduction provably correct. Hillis–Steele is preferred here because all B threads remain active throughout every level , maximizing shared-memory bandwidth utilization; at the small block size B=128 ,its O(B log B) work overhead over the O(B)-optimal alternative is negligible relative to the latency saved by keeping threads busy. Block size B=128 balances oc-cupancy and shared-memory usage across GPU genera-tions. 2. Inter-block: A Blelloch two-pass scan [1] aggre-gates block-level states in global memory, adding 
+
+2⌈log 2(n/B )⌉ merge levels . The identity element 
+
+e = (−∞ , 0, 0) of the monoid enables Blel-loch’s down-sweep to initialize boundary states cor-rectly without special-casing empty prefixes. Un-like Hillis–Steele, Blelloch’s up-sweep/down-sweep is 
+
+work-optimal (O(n/B ) total operations), which is crit-ical at the inter-block level where n/B can reach the hundreds and unnecessary global memory traffic would dominate latency. The up-sweep computes each block’s total utot ; the down-sweep distributes prefix results back and combines with each block’s internal state via ⊕,yielding the total depth L(n, B ) (Eq. (6)). 
+
+4.3. Numerical Stability, Scan Depth, and I/O Scope 
+
+Assumption 1 (underflow and exp-accuracy). Expo-nentials underflowing below the IEEE-754 single-precision subnormal range are treated as zero; the library exp satis-fies |fl(exp( x)) − exp( x)| ≤ κ u exp( x) for all x ≤ 0, for a modest constant κ independent of n.
+
+Lemma 1 (Bounded exponents) . With running-max rescal-ing mj = max( mj−1, s ij ), we have esij −mj ≤ 1 for all terms in each prefix. 
+
+Two-level Merge Depth. Let B be the intra-block size (B=128 ). The two-level scan induces at most          
+
+> L(n, B ) = ⌈log 2B⌉+ 2 ⌈log 2(n/B )⌉+ 3 ≤2⌈log 2n⌉+ 3
+
+(6) merge levels along any data path. 
+
+Theorem 1 (FP32 relative error bound) . Assume IEEE-754 single precision with unit roundoff u, finite logits, and As-sumption 1. Let ˆy be the ELSA output and y the exact output in real arithmetic. (a) Single query. By Higham’s (1+ δ) model [15] and Lemma 1,           
+
+> ∥ˆy−y∥2
+> ∥y∥2
+> ≤u L (n, B ) + O(u2)≤u 2⌈log 2n⌉+ 3 +O(u2).
+
+(7) 
+
+(b) All queries (blocked). Each output row follows a path of depth ≤ L(n, B ); the same bound applies per row. 
+
+I/O scope. Per query: ELSA streams K, V once while updating (m, S, W ) and writes one yi, attaining the Ω( n)
+
+lower bound for reading inputs and writing the output. All queries: With tile sizes satisfying Tq d + Tk(d+dv ) ≤ cM f ,the DRAM traffic is     
+
+> Θ( nd ) + Θ
+> n2dTq
+> 
+> + Θ
+> n2dv
+> Tq
+> 
+> + Θ( nd v)
+
+(8) and choosing Tq ≍ pMf /(d+dv ) yields 
+
+O(n2(d+dv )/pMf ) + Θ( nd +nd v ), matching clas-sical blocked I/O lower bounds up to constants; full derivations are in Supp. B. Figure 3. Per-head latency vs. sequence length. Measured la-tency fitted to T (n) ≈ a L (n, B ) + b n 2 + c (orange dashed); vertical offsets track the logarithmic merge depth L(n, 128) , vali-dating O(log n) depth (Eq. 6) and O(n2) work.                                          
+
+> Speedup ( ×)VRAM Savings (%) Model 224 336 448 560 224 336 448 560 ViT-B/16 1.46 1.63 1.79 1.98 0.0 2.3 17.8 36.1
+> ViT-B/32 1.03 –1.42 –0.0 –0.0 –ViT-L/14 1.54 1.68 1.87 2.12 0.0 5.0 20.8 39.6
+> ViT-L/14-336 1.56 1.71 1.90 2.15 0.0 5.0 20.8 39.6
+
+Table 2. ELSA vs. Math-SDPA on CLIP ( attention-only proxy ,FP32): speedup and VRAM savings across resolutions. Both gains scale with resolution; Dashes indicate unevaluated configu-rations. For full image-encoder latency see Tab. 8. 
+
+Empirical Scaling Validation. We measure per-head FP16 latency (median of 200 runs, single A100 GPU) for 
+
+n ∈ { 210 , . . . , 215 } tokens (Figure 3). Latency fits closely to T (n) ≈ a L (n, B ) + b n 2 + c (a=0 .0142 , b=1 .74 ×10 −9,
+
+c=−0.149 , B=128 ), confirming O(log n) merge depth and 
+
+O(n2) overall work, consistent with Theorem 1. 
+
+## 5. Experiments 
+
+Implementation and Experimental Setup. We im-plement ELSA in Triton and CUDA C++ without HMMA/GMMA instructions, making the kernels Tensor-Core independent and deployable across GPU genera-tions. Total arithmetic work remains O(n2d)—identical to exact attention—while the critical path is reduced to 
+
+O(log n), an advantage that is most pronounced in FP32 where Tensor Core fusion is not available. Unless other-wise stated, benchmarks run on a single NVIDIA A100 (40GB, CUDA 12.6, Triton 3.2.0, PyTorch 2.6), averaged over 200 runs; Jetson TX2 and host-device offloading re-sults are reported separately. We evaluate only exact , drop-in replacements for standard multi-head self-attention: the PyTorch Math kernel (Math), ME-SDPA in xFormers [5], FA2 [8] and FA3 [33] where applicable, and ELSA (FP32 and FP16). 2 Approximate linear-time variants [4, 40, 46] are excluded as they modify the attention operator and re-quire retraining. 
+
+Benchmarks and Scalability on Synthetic Sequences. 
+
+We evaluate ELSA across a diverse set of tasks and mod-
+
+> 2
+
+https://github.com/Dao- AILab/flash- attention .FA2/FA3 are evaluated in FP16/mixed precision as their FP32 kernels are not competitive on our hardware. Math-SDPA 
+
+> ME-SDPA
+> ELSA
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> Memory (GB)
+> 0.22
+> 0.11
+> 0.1
+> Math-SDPA
+> ME-SDPA
+> ELSA
+> FP32@Memory@1K/4K/16K tokens
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 1.83
+> 0.15
+> 0.16
+> Math-SDPA
+> ME-SDPA
+> ELSA
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.29
+> 0.34
+> OOM
+> Math-SDPA
+> ME-SDPA
+> ELSA
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Latency (ms)
+> 0.65
+> 0.25
+> 0.19
+> Math-SDPA
+> ME-SDPA
+> ELSA
+> FP32@Latency@1K/4K/16K tokens
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5
+> 8.28
+> 2.89
+> 0.92
+> Math-SDPA
+> ME-SDPA
+> ELSA
+> 0
+> 20
+> 40
+> 60
+> 41.77
+> 12.06
+> OOM
+> Math-SDPA
+> FA2
+> FA3
+> ELSA 0.0
+> 0.1
+> 0.2
+> 0.3
+> Memory (GB)
+> 0.22
+> 0.11
+> 0.12
+> 0.1
+> Math-SDPA
+> FA2
+> FA3
+> ELSA
+> FP16@Memory@1K/4K/16K tokens
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 1.85
+> 0.15
+> 0.16
+> 0.12
+> Math-SDPA
+> FA2
+> FA3
+> ELSA 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.26
+> 0.36
+> 0.19
+> OOM
+> Math-SDPA
+> FA2
+> FA3
+> ELSA 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Latency (ms)
+> 0.55
+> 0.18
+> 0.27
+> 0.12
+> Math-SDPA
+> FA2
+> FA3
+> ELSA
+> FP16@Latency@1K/4K/16K tokens
+> 0
+> 2
+> 4
+> 6
+> 8
+> 5.8
+> 0.47
+> 0.55
+> 0.49
+> Math-SDPA
+> FA2
+> FA3
+> ELSA 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 5.71
+> 6.01
+> 6.66
+> OOM
+
+Figure 4. Latency and peak memory at 1K, 4K, and 16K to-kens (FP16/FP32). In FP32, ELSA reduces latency over Math-SDPA and ME-SDPA while maintaining low memory. In FP16, ELSA achieves the lowest memory among exact kernels and re-mains competitive with FA2/FA3 at longer sequences; at 16K to-kens, standard softmax attention fails with OOM while ELSA re-mains stable. 
+
+els: ImageNet-1K classification [31] with ViT-B/16 [11] and Swin-T [25]; zero-shot inference with CLIP ViT-L/14 [30]; BERT sentiment on SST-2 and IMDB; and hy-perspectral classification (Pavia, Salinas, WHU) with HSI-MAE [41]. We benchmark single-GPU inference with ran-dom sequences of n = 64 –16 ,384 tokens in both FP16 and FP32 (Figure 4). In FP16, at the isolated kernel level, ELSA remains close to FA2/FA3 in latency at n=4 ,096 ,with the gap further narrowing beyond n=16 ,384 ; this kernel-only gap reverses at the full-model level (Table 3). FA2/FA3 are excluded from FP32 comparisons: their opti-mized paths rely on HMMA/GMMA Tensor Core instruc-tions for FP16/BF16, and their FP32 fallback reverts to un-tuned SIMD execution, rendering the comparison uninfor-mative. More broadly, FA2/FA3 require Ampere/Hopper Tensor Cores and are unavailable on older GPUs and edge devices—deployment scenarios where ELSA operates as a hardware-agnostic, FP32-exact drop-in replacement. This resolution-scalability advantage is further evidenced in Ta-ble 2, which reports attention-module-only resolution scal-ing (proxy scope) and should not be directly compared; ex-tended results on 3D reconstruction models (VGGT [39] and FastVGGT [34]) are provided in Supp. G, where ELSA achieves up to 2.34 × speedup over xFormers-FP32 while matching its memory footprint. 
+
+Training and Inference on ImageNet-1K Classification. 
+
+Table 3 reports full-model FP16 forward at the same batch size (batch =8 ) for ViT and Swin [25] using the corrected strict FP16 scan path (no FP32 bridge, no legacy triton). We drop ME-SDPA since FA2 is the relevant FP16 flash baseline; Math-SDPA /WA are kept only as memory ref-erences. Under this strict same-batch protocol, ELSA / W-Model Method Throughput (img/s) Peak Mem (MB) Mem vs Ref ↓                                                                        
+
+> ViT Family (Global Attention, full-model, FP16, batch=8, strict scan only)
+> ViT-T Math-SDPA 868.44 43.5 –FA2 791.03 36.0 −17 .2%
+> ELSA 1309.24 33.8 −22 .3%
+> ViT-S Math-SDPA 897.03 96.4 –FA2 859.73 79.8 −17 .2%
+> ELSA 1275.71 74.0 −23 .2%
+> ViT-M Math-SDPA 838.34 152.2 –FA2 828.39 130.3 −14 .4%
+> ELSA 1204.31 113.3 −25 .6%
+> ViT-B Math-SDPA 820.91 282.3 –FA2 787.39 249.6 −11 .6%
+> ELSA 1064.34 220.8 −21 .8%
+> Swin Family (Window Attention, full-model, FP16, batch=8, strict scan only)
+> Swin-T/W8 WA 479.98 202.2 –FA2 526.65 223.2 +10 .4%
+> W-ELSA 597.23 232.1 +14 .8%
+> Swin-T/W16 WA 493.20 341.0 –FA2 485.45 351.9 +3 .2%
+> W-ELSA 520.22 351.9 +3 .2%
+> Swin-S/W8 WA 241.90 245.7 –FA2 260.23 267.5 +8 .9%
+> W-ELSA 266.59 291.3 +18 .6%
+> Swin-S/W16 WA 241.77 391.3 –FA2 267.89 401.8 +2 .7%
+> W-ELSA 305.22 369.1 −5.7%
+
+Table 3. ImageNet-1K full-model throughput and memory (FP16, batch =8 , strict scan only). Full-model forward on a sin-gle A100-40GB at 224 ×224 with the same batch size (batch =8 )for ViT and Swin. All ELSA / W-ELSA rows use the corrected strict FP16 two-scan path; no FP32 bridge and no legacy triton fast path are used. ME-SDPA is omitted: under FP16, FA2 is the relevant flash baseline, while Math-SDPA (ViT) and WA (Swin) are retained only as memory-reference rows for the “Mem vs Ref” column. Under this strict same-batch protocol, ELSA / W-ELSA is faster than FA2 on every reported ViT and Swin configuration, and also stays below the Math / WA memory reference on all ViT rows and on the Swin-S/W16 row. 0 100 200 300       
+
+> Epoch
+> 3
+> 4
+> 5
+> 6
+> 7
+> Train loss
+> Swin-T (ELSA)
+> 0100 200 300
+> Epoch
+> 3
+> 4
+> 5
+> 6
+> 7
+> ViT-S (ELSA)
+> 0100 200 300
+> Epoch
+> 3
+> 4
+> 5
+> 6
+> 7
+> ViT-T (ELSA)
+> 60
+> 65
+> 70
+> 75
+> 80
+> 85 Final 81.51%
+> 60
+> 65
+> 70
+> 75
+> 80
+> 85
+> Final 79.99%
+> 60
+> 65
+> 70
+> 75
+> 80
+> 85
+> Eval Top-1 (%)
+> Final 71.46%
+
+Figure 5. Training convergence on ImageNet-1K. Training loss (gray) and top-1 accuracy (colored) for classification models with ELSA. Dashed lines indicate peak accuracy. All models converge smoothly, confirming that ELSA does not disturb optimization. 
+
+ELSA is faster than FA2 on every ViT and Swin row ( ∼29 –
+
+65% on ViT, ∼2–14% on Swin), and also stays below the Math/WA memory reference on all ViT rows and on Swin-S/W16; the three remaining Swin rows incur mod-erate memory overhead ( +3 .2% to +18 .6% ) from short-window scan workspace, reported explicitly. Beyond infer-ence, ELSA deploys seamlessly as a drop-in replacement during training with no modifications to the optimization pipeline. As shown in Figure 5, Swin-T, ViT-S, and ViT-T trained entirely with ELSA exhibit steady loss decay and monotonically improving top-1 accuracy, with final values within 0.1% of the corresponding Math/FA2 baseline, con-firming no optimization penalty. 
+
+Downstream Tasks and LLM Inference. Table 4 reports FP32 throughput and peak memory for HSIMAE-B/L on three hyperspectral datasets; ELSA consistently exceeds ME-SDPA in throughput while remaining within the same sub-gigabyte memory regime. For NLP workloads, Ta-ble 7 (left) reports fixed-shape bucketed BERT attention un-der strict FP32, where ELSA achieves 1.97 × (SST-2) and 
+
+2.27 × (IMDB) speedup over ME-SDPA; Table 7 (right) reports synthetic padding-free variable-length throughput across precision variants. To assess generality beyond vi-sion, we evaluate ELSA on LLaMA-13B [36] under host-device offloading (Supp. H, Table 13): at long contexts (≥32K tokens), ELSA delivers 17.8–20.2% throughput gains over SDPA with no retraining or weight modifica-tion; at shorter contexts ( ≤8K), scan overhead outweighs the copy-overlap benefit. 
+
+Evaluation on Embedded Systems. Table 6 evaluates ELSA on the resource-constrained Jetson TX2, demonstrat-ing its hardware-agnostic nature: since ⊕ requires only scalar max /exp and vector fma —with no Tensor Core or architecture-specific primitives—ELSA deploys without modification on compute capability 6.2 where FA2 provides no compatible FP32 kernel and FA3 is entirely unavailable. Across 64–900 tokens (batch 1, d=64 , FP16/FP32), ELSA consistently reduces latency by ≈35 –38% over the PyTorch Math kernel with identical memory, confirming that the scan-based efficiency advantage transfers to edge deploy-ments. This makes ELSA particularly suited for latency-sensitive on-device inference scenarios, such as robotics and autonomous systems, where Tensor Core–dependent kernels are unavailable. 
+
+Fixed-Shape Bucketed BERT. On BERT attention work-loads with bucketed fixed-shape padding, ELSA consis-tently outperforms both ME-SDPA and Math-SDPA in strict FP32 (Table 7). On SST-2, ELSA achieves 1.97 × speedup over ME-SDPA; on IMDB, 2.27 × speedup. The larger gain on IMDB reflects its longer average sequence length, con-sistent with ELSA’s scan efficiency scaling with n.
+
+Synthetic Padding-Free Variable-Length. Under apadding-free synthetic workload with variable-length pack-ing (Table 7), ELSA-Strict (FP32) achieves 2.00M tok/s .ELSA-Turbo (TF32) further reaches 2.64 M tok/s (+175 .3% ), and ELSA-FP16 peaks at 5.03 M tok/s (+424 .0% ), demonstrating that the scan formulation’s gains compound across precision modes. 
+
+CLIP Image-Encoder Evaluation. Table 8 reports CLIP image-encoder latency (strict FP32 and TF32-Turbo) across four ViT sizes. ELSA consistently reduces latency Pavia Salinas WHU Model Method Throughput Peak Mem. (GB) Throughput Peak Mem. (GB) Throughput Peak Mem. (GB) HSIMAE-B ME-SDPA 10499 .20 ± 14 .19 (-) 0.11 ± 0.00 10427 .11 ± 18 .20 (-) 0.10 ± 0.00 10631 .04 ± 13 .62 (-) 0.11 ± 0.00 
+
+ELSA (Ours) 14401 .45 ± 53 .37 (+37.1%) 0.11 ± 0.00 14423 .96 ± 106 .10 (+38.3%) 0.10 ± 0.00 14928 .86 ± 15 .66 (+40.4%) 0.11 ± 0.00 
+
+HSIMAE-L ME-SDPA 6471 .18 ± 97 .38 (-) 0.23 ± 0.05 6489 .98 ± 20 .87 (-) 0.23 ± 0.00 6588 .37 ± 5.48 (-) 0.23 ± 0.00 
+
+ELSA (Ours) 10478 .84 ± 91 .26 (+62.0%) 0.25 ± 0.00 10395 .81 ± 27 .00 (+60.2%) 0.25 ± 0.00 10657 .24 ± 7.37 (+61.7%) 0.24 ± 0.00 
+
+Table 4. Efficiency evaluation on hyperspectral classification task (FP32). Throughput (imgs/s) and peak memory for HSIMAE-B/L [41] on Pavia, Salinas, and WHU [50]. ELSA consistently outperforms ME-SDPA in throughput with negligible memory overhead. 
+
+Task Method Latency (ms) Memory (GB) 
+
+DPT COCO (FP32) ME-SDPA 295.7 5.19 
+
+ELSA (Ours) 252.7 (+14.6%) 5.49 BERT (FP16) FA2 224.1 3.67 
+
+ELSA (Ours) 96.8 (+56.8%) 0.37 
+
+Swin COCO (FP16) FA2 46.0 0.95 
+
+ELSA (Ours) 40.1 (+12.8%) 0.87 
+
+Table 5. Downstream tasks inference (FP16 and FP32). La-tency and peak memory for DPT depth estimation, BERT [10] sentiment (SST-2/IMDB [26, 35]), and Swin-based COCO detec-tion [23]. ELSA reduces latency without retraining on common devices.                                                                                                          
+
+> Tokens FP16 FP32 Math ELSA Ratio Alloc (MB) Math ELSA Ratio Alloc (MB)
+> 64 1.06 0.69 (+34.9%) 1.54 ×0.04 1.06 0.69 (+34.9%) 1.54 ×0.08 100 2.64 1.71 (+35.2%) 1.54 ×0.06 2.64 1.71 (+35.2%) 1.54 ×0.12 144 5.47 3.53 (+35.5%) 1.55 ×0.09 5.49 3.54 (+35.6%) 1.55 ×0.18 196 10.10 6.47 (+35.9%) 1.56 ×0.12 10.12 6.48 (+36.0%) 1.56 ×0.24 256 16.74 10.52 (+37.2%) 1.59 ×0.16 16.77 10.54 (+37.1%) 1.59 ×0.31 324 27.22 17.24 (+36.6%) 1.58 ×0.20 27.29 17.28 (+36.7%) 1.58 ×0.40 400 41.23 25.95 (+37.0%) 1.59 ×0.24 41.34 26.04 (+36.9%) 1.59 ×0.49 484 60.01 37.63 (+37.3%) 1.59 ×0.30 60.16 37.74 (+37.3%) 1.59 ×0.59 576 84.54 52.78 (+37.6%) 1.60 ×0.35 84.76 52.96 (+37.5%) 1.60 ×0.70 676 116.85 73.03 (+37.5%) 1.60 ×0.41 117.18 73.33 (+37.4%) 1.60 ×0.83 784 157.45 98.47 (+37.4%) 1.60 ×0.48 157.89 98.86 (+37.4%) 1.60 ×0.96 900 207.55 129.74 (+37.5%) 1.60 ×0.55 208.91 131.14 (+37.2%) 1.59 ×1.10
+
+Table 6. Embedded-system benchmark on Jetson TX2 (FP16 and FP32). ELSA reduces latency by ∼1.5× over the Math base-line across all sequence lengths with no Tensor Core dependency. FP16 and FP32 latencies are nearly identical, confirming that TX2 executes both precisions via SIMD rather than Tensor Cores.                       
+
+> Dataset ME-SDPA ELSA Speedup Lat.
+> SST-2 1.308 0.664 1.97 ×49.3%
+> IMDB 17.693 7.794 2.27 ×56.0%
+> Method M tok/s vs baseline
+> SDPA-FP32-mem 0.960 –ELSA-Strict (FP32) 2.004 +108.7%
+> ELSA-Turbo (TF32) 2.643 +175.3%
+> ELSA-FP16 (FP16) 5.030 +424.0%
+
+Table 7. NLP benchmarks (strict FP32, TF32-Turbo, and FP16). Left : BERT fixed-shape bucketed attention vs. ME-SDPA; gains on IMDB reflect longer sequences. Right : padding-free variable-length throughput across precision variants; shading re-flects gain magnitude over SDPA-FP32-mem baseline. 
+
+over ME-SDPA (see Supp. I), reaching 1.060 × at ViT-L/14@336px (strict FP32) and 1.062 × via ELSA-Turbo; per-variant details are in Supp. I. Since FA2 [7] and FA3 [33] provide no compatible FP32 path for CLIP, ELSA is the only hardware-agnostic exact-attention kernel that re-duces parallel depth to O(log n) at full precision. 
+
+## 6. Discussions 
+
+Limitations. ELSA reduces memory and I/O to O(n) but preserves quadratic arithmetic complexity, and is most ef-fective when memory rather than compute is the bottle-neck. At the isolated kernel level on short sequences, scan merge overhead can leave ELSA behind FA2/FA3, though this reverses at the full-model level (Table 3); under of-                                   
+
+> Model Method Latency (ms) Speedup vs ME-SDPA
+> ViT-B/32 ME-SDPA (baseline) 2.398 1.00 ×
+> ELSA-Strict (Ours) 2.159 (−10.0%) 1.111 ×
+> ELSA-Turbo (Ours) 2.150 (−10.3%) 1.115 ×
+> ViT-B/16 ME-SDPA (baseline) 4.568 1.00 ×
+> ELSA-Strict (Ours) 4.365 (−4.4%) 1.046 ×
+> ELSA-Turbo (Ours) 4.329 (−5.2%) 1.055 ×
+> ViT-L/14 ME-SDPA (baseline) 15.419 1.00 ×
+> ELSA-Strict (Ours) 14.914 (−3.3%) 1.034 ×
+> ELSA-Turbo (Ours) 14.842 (−3.7%) 1.039 ×
+> ViT-L/14@336px ME-SDPA (baseline) 29.665 1.00 ×
+> ELSA-Strict (Ours) 27.989 (−5.7%) 1.060 ×
+> ELSA-Turbo (Ours) 27.931 (−5.8%) 1.062 ×
+
+Table 8. CLIP image-encoder inference (image encoder only scope, strict FP32 and TF32-Turbo). Latency measured on the full image encoder pipeline; speedup relative to ME-SDPA base-line. Memory is not reported in this table because it was not mea-sured under this end-to-end image-encoder scope. Numbers are 
+
+not comparable to attention-only proxy results (cf. Tab. 2). 
+
+floading, gains of 17.8–20.2% over SDPA emerge only at 
+
+≥32K tokens. The kernel is validated primarily on Ampere GPUs, and training dynamics under multi-GPU scaling re-main open. 
+
+Future Directions. Promising avenues include incorpo-rating sparsity or low-rank structures to reduce FLOPs, ex-tending to distributed multi-GPU training and paralleliza-tion, broadening hardware coverage beyond Ampere. 
+
+## 7. Conclusion 
+
+We reframe online softmax attention as a prefix scan over an associative monoid (m, S, W ) and present ELSA, a de-ployable strict FP32 exact attention kernel with a provable 
+
+O(u log n) relative error bound . ELSA retains O(n2)
+
+arithmetic cost while reducing parallel depth to O(log n),uses O(n) extra memory, and streams each query once, at-taining the per-query Ω( n) I/O lower bound. Requiring no Tensor Core primitives, it runs identically on A100s and Jetson TX2—a hardware-agnostic drop-in replacement for pretrained models that need neither retraining nor architec-tural modification. Within the strict FP32 exact-attention setting, where FA2/FA3 provide no compatible path, ELSA consistently outperforms sequential exact baselines, deliv-ering 1.3–3.5× speedups over ME-SDPA across long se-quences, and also surpasses FA2 on every ViT/Swin row in the FP16 full-model same-batch regime (Table 3), mak-ing it a precise, memory-light solution for high-precision vision and language inference. Additional FP16/TF32 ab-lations and system-level profiling (offloading, CUDA C++ portability) are provided in the supplementary so as not to dilute the strict FP32 headline result. References 
+
+[1] Guy E. Blelloch. Prefix sums and their applications. In Synthesis of Parallel Algorithms, pages 35–60, 1990. 3, 4, and 5 [2] Guy E. Blelloch. Prefix sums and their applications. Tech-nical Report CMU-CS-90-190, Carnegie Mellon University, 1990. 7 [3] Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. Generating Long Sequences with Sparse Transformers. In ICML, 2019. 2 [4] Krzysztof Choromanski, Valerii Likhosherstov, David Do-han, Xingyou Song, Andreea Gane, Tamas Sarlos, Peter Hawkins, Jared Davis, Afroz Mohiuddin, Lukasz Kaiser, David Belanger, Lucy Colwell, and Adrian Weller. Rethink-ing Attention with Performers. In ICLR, 2021. 1, 2, and 6 [5] Alexander Clark, Trevor Bean, et al. xformers: Amodular and memory-efficient transformer library. In Open Source Software Track at NeurIPS, 2022. https: //github.com/facebookresearch/xformers . 1, 3, 4, 5, and 6 [6] Franklin C. Crow. Summed-area tables for texture mapping. In ACM SIGGRAPH, pages 207–212, 1984. 4 [7] Tri Dao. FlashAttention-2: Faster attention with better parallelism and work partitioning. arXiv preprint arXiv:2307.08691, 2023. 1, 2, 5, and 8 [8] Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher R´ e. FlashAttention: Fast and memory-efficient exact attention with IO-awareness. In NeurIPS, 2022. 6 [9] Mostafa Dehghani, Basil Mustafa, Josip Djolonga, Jonathan Heek, Matthias Minderer, Mathilde Caron, Andreas Steiner, Joan Puigcerver, Robert Geirhos, Ibrahim Alabdulmohsin, Avital Oliver, Piotr Padlewski, Alexey Gritsenko, Mario Luˇ ci´ c, and Neil Houlsby. Patch n’ pack: NaViT, a vision transformer for any aspect ratio and resolution. In NeurIPS, 2023. 1 [10] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: Pre-training of deep bidirectional trans-formers for language understanding. In NAACL, 2019. 8 [11] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Syl-vain Gelly, Jakob Uszkoreit, and Neil Houlsby. An Image Is Worth 16x16 Words: Transformers for Image Recognition at Scale. In ICLR, 2021. 1 and 6 [12] Qihang Fan, Quanzeng You, Xiaotian Han, Yongfei Liu, Yunzhe Tao, Huaibo Huang, Ran He, and Hongxia Yang. Vi-TAR: Vision transformer with any resolution, 2024. 1 and 2 [13] Leo Feng, Frederick Tung, Mohamed Osama Ahmed, Yoshua Bengio, and Hossein Hajiloo. Attention as an RNN. arXiv preprint arXiv:2405.13956, 2024. 2, 3, and 4 [14] Franz A. Heinsen. Softmax Attention with Constant Cost per Token. arXiv preprint arXiv:2404.05843, 2024. 3 [15] Nicholas J. Higham. Accuracy and Stability of Numerical Algorithms . SIAM, Philadelphia, PA, second edition, 2002. 5 and 3 [16] W. Daniel Hillis and Guy L. Steele Jr. Data parallel al-gorithms. Communications of the ACM, 29(12):1170–1183, 1986. 3, 4, 5, and 7 [17] Danfeng Hong, Zhu Han, Jing Yao, Lianru Gao, Bing Zhang, Antonio Plaza, and Jocelyn Chanussot. SpectralFormer: Re-thinking hyperspectral image classification with transform-ers. TGRS, 2022. 2 [18] Alexander Kirillov, Eric Mintun, Nikhila Ravi, Hanzi Mao, Chloe Rolland, Laura Gustafson, Tete Xiao, Spencer White-head, Alexander C. Berg, Wan-Yen Lo, Piotr Doll´ ar, and Ross Girshick. Segment Anything. In ICCV, 2023. 1 and 2 [19] Nikita Kitaev, Łukasz Kaiser, and Anselm Levskaya. Re-former: The Efficient Transformer. In ICLR, 2020. 2 [20] Peter M. Kogge and Harold S. Stone. A parallel algorithm for the efficient solution of a general class of recurrence equa-tions. IEEE Transactions on Computers, C-22(8):786–793, 1973. 3 and 7 [21] Vincent Leroy, Jerome Revaud, Thomas Lucas, and Philippe Weinzaepfel. Win-win: Training high-resolution vision transformers from two windows. In ICLR, 2024. 1 and 2 [22] Dacheng Li, Rulin Shao, Anze Xie, Eric P. Xing, Xuezhe Ma, Ion Stoica, Joseph E. Gonzalez, and Hao Zhang. DISTFLASHATTN: Distributed memory-efficient attention for long-context LLMs training. arXiv preprint arXiv:2310.03294, 2023. 3 [23] Tsung-Yi Lin et al. Microsoft COCO: Common objects in context. In ECCV, 2014. 8 [24] Xinyu Liu, Houwen Peng, Ningxin Zheng, Yuqing Yang, Han Hu, and Yixuan Yuan. EfficientViT: Memory efficient vision transformer with cascaded group attention. In CVPR, 2023. 3 [25] Ze Liu, Yutong Lin, Yixuan Cao, Han Hu, Yixuan Wei, Zheng Zhang, Stephen Lin, and Baining Guo. Swin Trans-former: Hierarchical vision transformer using shifted win-dows. In ICCV, 2021. 6 [26] Andrew L. Maas et al. Learning word vectors for sentiment analysis. In ACL, 2011. 8 [27] Maxim Milakov and Natalia Gimelshein. Online normalizer calculation for softmax. arXiv preprint arXiv:1805.02867, 2018. 4 [28] NVIDIA Corporation. CUB: CUDA unbound. https:// github.com/NVIDIA/cccl , 2024. 7 [29] Markus N. Rabe and Charles Staats. Self-attention does not need O(n2) memory. arXiv preprint arXiv:2112.05682, 2021. 1, 3, and 4 [30] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sas-try, Amanda Askell, Peter Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever. Learning transferable visual models from natural language supervision. In ICML, 2021. 1, 2, and 6 [31] Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, San-jeev Satheesh, Sean Ma, Zhiheng Huang, Andrej Karpathy, Aditya Khosla, Michael Bernstein, Alexander C. Berg, and Li Fei-Fei. ImageNet large scale visual recognition chal-lenge. IJCV, 115(3):211–252, 2015. 6 [32] Rya Sanovar, Srikant Bharadwaj, Ren´ ee St Amant, Victor R¨ uhle, and Saravan Rajmohan. LeanAttention: Hardware-aware scalable attention mechanism for the decode-phase of transformers. In MLSys, 2024. 3 and 4 [33] Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao. FlashAttention-3: Fast and accurate attention with asynchrony and low-precision. NeurIPS, 37:68658–68685, 2024. 1, 2, 5, 6, and 8 [34] You Shen, Zhipeng Zhang, Yansong Qu, and Liujuan Cao. FastVGGT: Training-free acceleration of visual geometry transformer. arXiv preprint arXiv:2509.02560, 2025. 6 [35] Richard Socher et al. Recursive deep models for seman-tic compositionality over a sentiment treebank. In EMNLP, 2013. 8 [36] Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timoth´ ee Lacroix, Baptiste Rozi` ere, Naman Goyal, Eric Hambro, Faisal Azhar, et al. LLaMA: Open and efficient foundation language models. arXiv preprint arXiv:2302.13971, 2023. 1 and 7 [37] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszko-reit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention Is All You Need. In NeurIPS, 2017. 1 [38] Bailin Wang, Yu Zhang, Yikang Shen, and Yoon Kim. Paral-lelizing linear transformers with the delta rule over sequence length. In NeurIPS, 2024. 2 [39] Jianyuan Wang, Minghao Chen, Nikita Karaev, Andrea Vedaldi, Christian Rupprecht, and David Novotny. VGGT: Visual geometry grounded transformer. In CVPR, 2025. 1, 2, and 6 [40] Sinong Wang, Belinda Z. Cao, Jing Zhang, Chang Li, Kevin Xu, and Zhiyuan Liu. Linformer: Self-Attention with linear complexity. In arXiv preprint arXiv:2006.04768, 2020. 1, 2, and 6 [41] Yue Wang, Ming Wen, Hailiang Zhang, Jinyu Sun, Qiong Yang, Zhimin Zhang, and Hongmei Lu. HSIMAE: A unified masked autoencoder with large-scale pre-training for hyper-spectral image classification. TGRS, 2024. 6 and 8 [42] Chong Wu, Maolin Che, Renjie Xu, Zhuoheng Ran, and Hong Yan. ELFATT: Efficient linear fast attention for vi-sion transformers. In ACM MM, 2025. arXiv:2501.06098. 3[43] Yunyang Xiong, Zhengyan Zeng, Rudrasis Chakraborty, Mingxing Tan, Glenn Fung, Yin Li, and Vikas Singh. Nystr¨ omformer: A nystr¨ om-based approximation for self-attention. In AAAI, 2021. 2 [44] Ting Yao, Yehao Li, Yingwei Pan, and Tao Mei. HIRI-ViT: Scaling vision transformer with high resolution inputs, 2024. 1[45] Seokju Yun and Youngmin Ro. SHViT: Single-head vision transformer with memory efficient macro design. In CVPR, 2024. 3 [46] Manzil Zaheer, Guru Guruganesh, Kumar Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Onta˜ n´ on, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, and Amr Ahmed. Big Bird: Transformers for longer sequences. In NeurIPS, 2020. 1, 2, and 6 [47] Dong Zhang, Rui Yan, Pingcheng Dong, and Kwang-Ting Cheng. Memory efficient transformer adapter for dense pre-dictions. In ICLR, 2025. arXiv:2502.01962. 3 [48] Pengchuan Zhang, Xiyang Dai, Jianwei Yang, Bin Xiao, Lu Yuan, Lei Zhang, and Jianfeng Gao. Multi-scale vision long-former: A new vision transformer for high-resolution image encoding. In ICCV, pages 2998–3008, 2021. 1 [49] Chuanyang Zheng. The linear attention resurrection in vision transformer. arXiv preprint arXiv:2501.16182, 2025. 3 [50] Zilong Zhong, Ying Li, Lin Ma, Jonathan Li, and Wei-Shi Zheng. Spectral–spatial transformer network for hyperspec-tral image classification: A factorized architecture search framework. TGRS, 2021. 2 and 8 ELSA: Exact Linear-Scan Attention for Fast and Memory-Light Vision Transformers 
+
+# Supplementary Material 
+
+## Supplementary Overview 
+
+This supplementary provides theoretical foundations, additional experimental results, and implementation details for ELSA, orga-nized as follows. 
+
+Theory and Analysis 
+
+§ A Monoid Structure and Scan Correctness . . . . . . . . . 2§ B I/O Complexity and Algorithmic Bounds . . . . . . . . 3§ C Numerical Equivalence Verification . . . . . . . . . . . . . 4
+
+Additional Experiments 
+
+§ D Ablation Studies . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5§ E Variable-Length Sequence Benchmark . . . . . . . . . . 6§ F Window Attention and Offloading Analysis . . . . . 6§ G On 3D Large Reconstruction Model . . . . . . . . . . . . 6
+
+Implementation 
+
+§ H CUDA C++ Backend and Portability. . . . . . . . . . . . 7§ I ELSA Variants: Precision and Memory . . . . . . . . . 8
+
+Limitations 
+
+§ J Limitations. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+
+## A. Monoid Proof for ⊕
+
+ELSA’s parallelization strategy rests on casting online softmax at-tention as a parallel prefix scan over an associative operator (Sec. 4 of the main paper). This section provides the complete proof that our merge operator ⊕ forms a monoid, thereby guaranteeing that 
+
+any ordering of pairwise merges yields the same result —the property that makes Hillis–Steele and Blelloch scans provably cor-rect for ELSA. 
+
+A.1. State Space and Operations 
+
+Let ¯R = R ∪ {−∞} denote the extended reals, and let b, h, d,
+
+dv denote batch size, number of heads, key/query dimension, and value dimension respectively. Define the state space 
+
+G = ¯R × R≥0 × Rdv , (9) whose elements are triples (m, S, W ): the running maximum logit 
+
+m, the normalized cumulative sum S ∈ R≥0, and the weighted value accumulator W ∈ Rdv . For a = (ma, S a, W a) and 
+
+b = ( mb, S b, W b) in G, we define two operations that underpin ⊕
+
+(Eq. (5) of the main paper). 
+
+Unnormalize: 
+
+un( m, S, W ) = ( m, Se m, W e m) (10) exposes the raw accumulated sums prior to numerical stabilization, reversing the e−m re-anchoring applied during the scan. 
+
+Renormalize: 
+
+renorm( m, ˜S, ˜W ) = ( m, ˜Se −m, ˜W e −m) (11) restores numerical stability by rescaling with the running maxi-mum, ensuring all exponents remain ≤ 0 (Lemma 1 of the main paper). The merge operator ⊕ composes two block states via un-sum-renorm :
+
+a ⊕ b = renorm 
+
+
+
+mc, ˜Sa + ˜Sb, ˜Wa + ˜Wb
+
+
+
+,mc = max( ma, m b),
+
+(12) where (ma, ˜Sa, ˜Wa) = un( a) and (mb, ˜Sb, ˜Wb) = un( b).
+
+A.2. Monoid Structure 
+
+Identity element. Let e = (−∞ , 0, 0). Since un( e) =(−∞ , 0, 0), by Eq. (12), e contributes zero to both ˜S and ˜W ,and m = −∞ never dominates any finite m under max . Hence e
+
+is a two-sided identity :
+
+a ⊕ e = e ⊕ a = a ∀ a ∈ G, (13) which enables Blelloch’s down-sweep to initialize boundary states correctly without special-casing empty prefixes. 
+
+Associativity. Let ua, u b, u c ∈ G with ui = ( mi, S i, W i)
+
+for i ∈ { a, b, c }, and let ˜Si = Siemi , ˜Wi = Wiemi denote their unnormalized sums. For uab = ua ⊕ ub, Eq. (12) gives 
+
+mab = max( ma, m b) and ˜Sab = ˜Sa + ˜Sb, ˜Wab = ˜Wa + ˜Wb.Merging with uc and writing m∗ = max( ma, m b, m c):             
+
+> S(ab )c= ˜Sa+ ˜Sb+ ˜Sc
+> e−m∗,W(ab )c= ˜Wa+ ˜Wb+ ˜Wc
+> e−m∗.
+
+(14) The right-associative grouping ua ⊕ (ub ⊕ uc) yields the same m∗
+
+and the same unnormalized totals, so              
+
+> Sa(bc )= ˜Sa+ ˜Sb+ ˜Sc
+> e−m∗,Wa(bc )= ˜Wa+ ˜Wb+ ˜Wc
+> e−m∗.
+
+(15) Since Eqs. (14) and (15) are identical, 
+
+(ua ⊕ ub) ⊕ uc = ua ⊕ (ub ⊕ uc). (16) Together with Eq. (13), (G, ⊕, e) is a monoid , guaranteeing the correctness of the two-level parallel prefix scan in Sec. 4 and the FP32 error bound in Theorem 1 of the main paper. □
+
+A.3. Derivation of the Floating-Point Error Bound 
+
+We derive the bound stated in Theorem 1 of the main paper. Throughout, we adopt the standard IEEE-754 model fl( x op y) = (x op y)(1 + δ) with |δ| ≤ u (unit roundoff), and rely on Lemma 1 (bounded exponents) and Assumption 1 (exp-accuracy) from the main paper. Per-merge error. Consider a single pairwise merge Sout =
+
+Saema−mout + Sbemb−mout . Rounding errors arise from (1) the exponential scaling factors and (2) the subsequent addition. By Lemma 1, all scaling exponents satisfy ma − mout ≤ 0, so 
+
+ema−mout ∈ (0 , 1] —bounding the mantissa and preventing er-ror amplification. Letting ϵk denote the relative error at depth k of the reduction tree, the recursive step satisfies 
+
+ˆSk ≈ Strue (1 + ϵk−1)(1 + δexp )(1 + δadd ). (17) Dropping second-order terms O(u2), the error grows linearly in depth :
+
+|ϵk | ≤ | ϵk−1| + c u, (18) where c counts the FLOPs per merge (one subtraction, one expo-nential, one multiplication, one addition). 
+
+Total depth and error bound. The two-level scan (Sec. 4 of the main paper) contributes         
+
+> L(n, B ) = ⌈log 2B⌉
+> |{z }
+> intra-block (Hillis–Steele)
+> +2⌈log 2(n/B )⌉
+> |{z }
+> inter-block (Blelloch up/down)
+> + const
+
+(19) matching Eq. (6) of the main paper. Telescoping Eq. (18) over 
+
+L(n, B ) levels gives 
+
+∥ˆy − y∥2
+
+∥y∥2
+
+≤ γL(n,B ) ≈ L(n, B ) · u, (20) where γn = nu/ (1 −nu ) ≈ nu (Higham [15]). Since L(n, B ) = 
+
+O(log n), the error grows logarithmically with sequence length— in contrast to naive summation ( O(√n u )) or sequential recur-rence ( O(n u ))—confirming the numerical stability of ELSA as 
+
+n → ∞ and establishing Theorem 1. 
+
+A.4. Algorithm 
+
+This subsection provides the full pseudocode and a step-by-step walk-through of the per-query ELSA scan, which was condensed in the main paper (Sec. 4) due to space constraints. Algorithm 1 writes the scan in its sequential single-query form for clarity; the parallel two-level realization on GPU follows directly from the monoid structure of ⊕ and is described in Sec. H. 
+
+State triple and invariants. The algorithm maintains a triple 
+
+(mj , S j , W j ) summarizing the prefix 1: j of the key/value stream, where mj is the running maximum logit, Sj = P 
+
+> i≤j
+
+exp( si −
+
+mj ) is the rescaled normalizer, and Wj = P 
+
+> i≤j
+
+exp( si −
+
+mj ) V [i] is the rescaled weighted value sum. These three quanti-ties together encode the exact softmax-weighted output for the pre-fix as Wj /S j , while remaining numerically stable because all ex-ponentials are evaluated relative to the current maximum mj . The identity element e = ( −∞ , 0, 0) initializes the recursion (Line 3) so that the first iteration encounters m0 = −∞ and immediately enters the “new max” branch. 
+
+Per-token update. For each new token j (Lines 4–16), the algorithm first computes the scaled inner product sj =
+
+⟨q, K [j]⟩/√d (Line 5). It then dispatches on whether the previ-ous running maximum still dominates ( mj−1 ≥ sj , Lines 6–10) or the new logit takes over ( mj−1 < s j , Lines 11–15): • Case A: maximum unchanged. The previous mj−1 is pre-served as mj (Line 7). The new contribution is folded in by computing α = exp( sj − mj ) (Line 8) and adding it to both the normalizer S and the weighted value sum W (Lines 9–10). No rescaling of past terms is required because the normaliza-tion anchor mj has not moved. • Case B: new maximum. The current logit sj becomes the new anchor (Line 12). All previously accumulated quantities are rescaled by β = exp( mj−1 − mj ) ≤ 1 (Line 13) so that they are expressed relative to the new maximum, and the con-tribution of token j itself is added with weight exp(0) = 1 
+
+(Lines 14–15). This conditional rescaling is precisely the online-softmax update of Eq. (2): it guarantees that, after every step, (mj , S j , W j ) en-codes the exact softmax of the prefix without ever materializing the n × n score matrix and without floating-point overflow, since all exponentials use non-positive arguments. 
+
+Final normalization. After processing all n tokens, the at-tention output is recovered by a single division y = Wn/S n
+
+(Line 17). Because Wn and Sn are expressed in the same ex-ponential frame anchored at mn, the exp( ·) scale cancels in the ratio, yielding the exact softmax output up to floating-point round-off bounded by u L (n, B ) (Theorem 1 of the main paper). 
+
+From sequential to parallel. Although Algorithm 1 is pre-sented as a left-to-right loop for readability, its correctness de-pends only on the associativity of ⊕ (Proposition 1), not on the order of combination. Concretely, any binary tree of ⊕-merges over the state triples u1, . . . , u n produces the identical final state 
+
+u1 ⊕ · · · ⊕ un. This is exactly the property exploited by the GPU implementation: intra-block reductions use a Hillis–Steele tree of depth ⌈log 2 B⌉ in shared memory, and inter-block combinations use a Blelloch up-/down-sweep of depth 2⌈log 2(n/B )⌉ in global memory, yielding a total scan depth L(n, B ) (Sec. H). The pseu-docode below should therefore be read as a specification of ⊕ ap-plied left-to-right; any parallel evaluation order matching the same monoid contract produces bit-equivalent results in exact arithmetic and bounded round-off in floating point. 
+
+## B. I/O Analysis and Bounds 
+
+We analyze ELSA’s I/O complexity at two levels, complementing the I/O scope paragraph in Sec. 4 of the main paper. Through-out, linear-scan refers to O(n) extra memory and one-pass I/O per query; total arithmetic work remains O(n2).
+
+B.1. Per-Query Streaming 
+
+Any exact attention computation for a fixed query must read its 
+
+K, V inputs and write its output at least once, incurring Ω( n) I/O. ELSA attains this lower bound by streaming K and V exactly once per query while keeping the running state (m, S, W ) in reg-isters or fast memory—a direct consequence of the monoid struc-ture: the identity e = ( −∞ , 0, 0) allows the scan to initialize without reading any additional data. Algorithm 1 ELSA per-query sequential formulation. The loop is written sequentially for clarity; parallel execution follows from the monoid structure of ⊕ (Sec. 4).                                                                                                                 
+
+> Require: Query q∈Rd, Keys K[1 ..n ]∈(Rd)n, Values V[1 ..n ]∈(Rdv)n
+> Ensure: Attention output y∈Rdv
+> 1: (m0, S 0, W 0)←(−∞ ,0,0)▷initialize state triple: max logit, normalized sum, weighted sum
+> 2: for j= 1 to ndo
+> 3: sj←⟨q,K [j]⟩√d▷compute attention score (logit) for token j
+> 4: if mj−1≥sjthen ▷current max remains; rescale new contribution
+> 5: mj←mj−1▷keep previous maximum
+> 6: α←exp( sj−mj)▷normalized weight for token j
+> 7: Sj←Sj−1+α▷accumulate normalized sum
+> 8: Wj←Wj−1+αV [j]▷accumulate weighted value sum
+> 9: else ▷new max found; rescale all previous contributions
+> 10: mj←sj▷update maximum to current score
+> 11: β←exp( mj−1−mj)▷rescaling factor for previous terms
+> 12: Sj←Sj−1·β+ 1 ▷rescale previous sum and add exp(0) = 1
+> 13: Wj←Wj−1·β+V[j]▷rescale previous weighted sum and add current value
+> 14: end if
+> 15: end for
+> 16: y←Wn/S n▷normalize: divide accumulated weighted sum by total weight
+
+B.2. All-Queries Tiling 
+
+For the full QK ⊤ interaction and subsequent P V accumulation, classical red–blue pebble arguments imply the I/O lower bound 
+
+Ω n2(d + dv )
+
+pMf
+
+!
+
+(21) for fast-memory capacity Mf . ELSA adopts a blocked schedule with query tile Tq and key/value tile Tk subject to 
+
+Tq d + Tk (d + dv ) ≤ c M f (22) for a small constant c. The resulting total DRAM traffic is 
+
+Θ( nd + nd v ) + Θ 
+
+ n2(d + dv )
+
+Tq
+
+
+
+. (23) Setting Tq ≍ pMf /(d + dv ) reduces this to 
+
+O n2(d + dv )
+
+pMf
+
+!
+
++ Θ( nd + nd v ), (24) 
+
+matching the lower bound (21) up to constants (Eq. (8) of the main paper). Hence linear-scan refers strictly to per-query mem-ory ( O(n)); the global all-queries schedule meets the rectangular-matrix I/O lower bound within constant factors via tiling. 
+
+## C. Numerical Equivalence Verification 
+
+Standard softmax attention materializes the full n×n score matrix and normalizes in a single pass—a numerically well-characterized reference implementation. Milakov and Gimelshein [27] showed that the same result can be obtained by an online procedure that maintains running statistics (mi, s i, wi) and updates them to-ken by token, without ever storing the full matrix. ELSA lifts this sequential scan to a parallel prefix computation by casting those statistics as elements of an associative monoid (Sec. 4); be-cause the merge operator ⊕ is associative, any evaluation order— sequential or parallel—yields identical results in exact arithmetic. 
+
+Algorithm 2 Vectorized equivalence check 
+
+Require: Q, K, V ∈ Rb×h×n×d; reference outputs Pref , Y ref 
+
+(high precision) 
+
+Ensure: Drift metrics ∥δP ∥∞, ∥δY ∥∞, . . . 
+
+1: S ← (QK ⊤)/√d
+
+2: m ← max( S, dim= −1, keepdim=True) 
+
+3: E ← exp( S − m)
+
+4: s ← P(E, dim= −1, keepdim=True) 
+
+5: ˆP ← E ⊘ s; ˆY ← (EV ) ⊘ s
+
+6: return ∥ ˆP − Pref ∥∞, ∥ ˆY − Yref ∥∞
+
+To validate this claim empirically, we use the vectorized batch for-mulation as a verification oracle: it computes ( ˆP , ˆY ) via standard matrix operations and we measure the drift against the monoid scan on GPU. In floating point the two agree to within O(u log n)
+
+(Sec. A.3), with both sharing the same asymptotic cost— O(bhnd )
+
+for the query–key product and O(bhnd v ) for value accumulation. 
+
+C.1. Vectorized Reference Algorithm 
+
+Let Q, K ∈ Rb×h×n×d and V ∈ Rb×h×n×dv denote queries, keys, and values with batch size b, h heads, and sequence length 
+
+n. The reference procedure computes attention probabilities ˆP
+
+and output ˆY as 
+
+S = 1√d QK ⊤, mi = max  
+
+> j
+
+S:,:,i,j ,E = exp( S − m), si = P 
+
+> j
+
+E:,:,i,j ,
+
+ˆP = E ⊘ s, ˆY = ( EV ) ⊘ s, 
+
+(25) where ⊘ denotes row-wise division. This mirrors the accumula-tion rules of Algorithm 1: row-wise max subtraction for stability, exponentiation, sum accumulation, and normalization. Numerical drift relative to the scan is reported in Sec. C.2. 
+
+C.2. Evaluation Results and Analysis 
+
+Metrics and Setup. We define six complementary drift met-rics on δP = ˆP − Pref and δY = ˆY − Yref , chosen to probe different failure modes of a numerical reformulation: 1. Maximum absolute probability drift ∥δP ∥∞ =max b,h,i,j |δP b,h,i,j |: worst-case pointwise error in the attention matrix—detects any single catastrophically mis-computed weight. 2. Relative L2 probability error ∥δP ∥2/∥Pref ∥2: aggregate er-ror normalized by scale—captures global distributional shift that pointwise maxima may mask by averaging over all entries. 3. Mean Jensen–Shannon divergence JS mean =
+
+> 1
+> bhn
+
+P 
+
+> b,h,i
+
+JS( ˆPb,h,i, : ∥ Pref ,b,h,i, :): per-row distributional discrepancy—JSD is symmetric and bounded, so it measures whether the shape of each query’s attention distribution is preserved, beyond individual entry magnitudes. 4. Argmax disagreement rate argRate =
+
+> 1
+> bhn
+
+P 
+
+> b,h,i
+
+1[arg max j ˆPb,h,i,j ̸ = arg max j Pref ,b,h,i,j ]:fraction of query positions where the top-attended token changes— the most behaviorally critical metric, as argmax disagreement directly alters which context the model attends to. Metric (p95) Regular Long Stress 
+
+∥δP ∥∞ 3.12 × 10 −17 2.34 × 10 −17 3.33 × 10 −16 
+
+∥δP ∥2/∥Pref ∥2 1.73 × 10 −15 3.42 × 10 −15 3.50 × 10 −15 
+
+JS mean 3.56 × 10 −16 3.77 × 10 −16 3.07 × 10 −16 
+
+argRate 0 0 0
+
+∥δY ∥∞ 4.99 × 10 −16 4.99 × 10 −16 3.28 × 10 −15 
+
+∥δY ∥2/∥Yref ∥2 2.39 × 10 −15 4.72 × 10 −15 4.94 × 10 −15 
+
+Table 9. Vectorized equivalence (oracle-based). 95th-percentile drift metrics against a high-precision (float64) reference, across all batches, heads, and tokens. All three scenarios show near-machine-precision agreement. 5. Maximum absolute output drift ∥δY ∥∞ =max b,h,i,k |δY b,h,i,k |: worst-case error in the final out-put embeddings propagated to the next layer—the downstream analogue of metric 1. 6. Relative L2 output error ∥δY ∥2/∥Yref ∥2: normalized ag-gregate output error—confirms that overall output magnitude is faithfully preserved across the full tensor. Metrics 1–4 probe the attention probability matrix P , progress-ing from pointwise to distributional to functional correctness; met-rics 5–6 repeat the same hierarchy for the output Y . All are com-puted in a fully vectorized manner on GPU; we report the median, 95th, and 99th percentiles across all tokens and heads. 
+
+Results. Table 9 reports 95th-percentile drift between the monoid scan (FP32) and a float64 oracle reference across all sce-narios. Discrepancies reach at most 3.3 × 10 −16 for probabili-ties and 3.3 × 10 −15 for outputs —well below single-precision unit roundoff u ≈ 6 × 10 −8, confirming that the scan result is indistinguishable from the float64 reference at FP32 precision. Crucially, the argmax disagreement rate is identically zero in all scenarios, confirming that the monoid scan exactly preserves the top attention weight . Long-sequence and stress scenarios exhibit slightly larger absolute errors owing to accumulated partial sums, yet all values remain at float64-oracle-level drift—as predicted by the logarithmic depth L(n, B ) (Eq. (19)). Figure 6 further corroborates these findings: the heatmap (left) reveals no spatial structure in |δP | across token pairs— the uniformly dark field confirms that errors are random floating-point noise rather than systematic accumulation—while the log-scale histogram (right) shows |δY | heavily concentrated near zero even under the stress scenario, with its tail bounded well below 
+
+2 × 10 −14 , orders of magnitude beneath single-precision unit roundoff. Finally, Figure 7 directly validates monoid composition (Proposition 1) by partitioning tokens into blocks of B = 128 ,computing (m, S, W ) per block in parallel, and reducing via ⊕;the resulting per-block drift is indistinguishable from the float64 oracle result, confirming correctness of the associative merge at the core of ELSA. 
+
+Figure 6. Drift visualization. Left: heatmap of |δP | (scaled by 10 8) for head 0, regular scenario; the uniformly dark field indicates no systematic spatial accumulation, errors are random floating-point noise throughout the n×n attention matrix. Right: log-scale histogram of |δY | under the stress scenario; the distribu-tion is heavily concentrated near zero, with the tail bounded below 
+
+2 × 10 −14 , confirming machine-precision agreement in the worst case. 
+
+Figure 7. Blockwise monoid validation. Tokens are partitioned into blocks of 128; (m, S, W ) is computed per block in parallel and then reduced via ⊕. The resulting drift metrics are indistin-guishable from the global vectorized procedure, validating correct-ness of the associative merge. 
+
+Figure 8. Memory footprint on synthetic benchmarks. ELSA’s advantage widens with sequence length in both precision modes. 
+
+## D. Ablation Studies 
+
+We examine the impact of block size ( B), accumulator precision, and resource-constrained deployment (Fig. 8). Block size B=128 
+
+offers the best latency-occupancy trade-off across all configura-tions. Using FP16 for the (S, W ) accumulator causes numerical error to increase dramatically beyond 2K tokens, while FP32 re-mains stable throughout (Fig. 8, bottom). On Jetson TX2, base-line MHSA kernels and FA2 cannot process long sequences due Method Total (ms) Kernel (ms) Convert (ms) Mem (GB) Tput (M)           
+
+> ELSA 1.79 1.12 0.66 0.05 5.66 FA2 1.65 0.31 1.34 0.10 6.14
+
+Table 10. Variable-length sequence benchmark. Random se-quences sampled from [256 , 1792] (FP32, medians over 200 runs). Total: end-to-end latency; Kernel: attention kernel time; Convert: layout conversion overhead; Mem: peak GPU memory; Tput: throughput in millions of tokens/s. ELSA’s zero-copy design re-duces conversion overhead at the cost of longer kernel time. to memory limitations, whereas ELSA maintains efficiency across all token lengths (Fig. 8, top). 
+
+## E. Variable-Length Sequence Benchmark 
+
+To ensure that performance differences are not confounded by data-layout conversions, we benchmark variable-length se-quences. We generate 8 sequences with lengths uniformly sampled from [256 , 1792] and compare ELSA (direct processing) against FA2 in unpadded mode ( cu seqlens ), accounting for FA2’s conversion cost between padded and packed layouts. Table 10 reports end-to-end latency, kernel time, conversion overhead, peak memory, and throughput (medians over 200 runs). ELSA’s zero-copy pipeline reduces FA2’s padded-to-packed con-version overhead (from 1.34 ms to 0.66 ms), achieving compara-ble end-to-end latency despite a longer kernel time. 
+
+## F. Window Attention and Offloading Analysis 
+
+F.1. Block Size Sensitivity 
+
+Window-ELSA introduces a block size B controlling the work as-signed to each prefix-scan step. We swept B ∈ { 64 , 128 , 256 } on Swin-T and Swin-S (A100, FP32) to characterize the throughput-memory trade-off. Smaller blocks reduce buffer pressure at the cost of more scan steps; larger blocks amortize scan overhead but may spill to slower memory. Concretely, B=64 reduces through-put by ∼15% while cutting memory by ∼20% ; B=256 yields negligible speedup but increases memory by ∼20% . Relaxing synchronization to every two blocks saves ∼5% runtime at a cost of ∼8% extra memory. We therefore adopt B=128 with per-block synchronization as the default operating point; memory-constrained platforms may prefer B=64 .
+
+F.2. Offloading Performance 
+
+Methodology. We quantify PCIe–compute overlap using LLaMA-13B instantiated as a meta-graph with no materialized weights; layer weights are loaded one layer at a time during the forward pass via asynchronous double-buffering (layer n+1 
+
+transfers while layer n computes). Each layer is instrumented with three CUDA event pairs measuring (i) H2D transfer time (copy ms ), (ii) kernel computation time ( compute ms ), and (iii) idle time ( wait ms ). We summarize overlap via 
+
+Overlap eff = 1 − wait ms total ms , (26) which approaches 1.0 when PCIe transfers are fully hidden by computation. 
+
+Results. Table 13 reports results for LLaMA-13B (FP32, batch 1) across four sequence lengths. At 4K and 8K to-kens the workload is PCIe-bound: transfers complete faster than ELSA’s scan overhead, yielding higher idle time (0.727 ms and 1.005 ms vs. 0.228 ms and 0.322 ms for SDPA) and lower throughput ( −42.4% and −25.2% respectively). At 32K tokens, ELSA’s lower memory footprint allows computation to begin ear-lier, reducing idle time from 540 ms to 467 ms/layer and deliv-ering a 17.8% throughput gain (1.460 vs. 1.239 M tok/s). At 65K tokens ELSA sustains 20.2% higher throughput (0.882 vs. 0.734 M tok/s), confirming that memory efficiency compounds into end-to-end gains as sequences grow. 
+
+## G. On 3D Large Reconstruction Model 
+
+To validate ELSA’s effectiveness on 3D vision tasks, we evaluate it within the Visual Geometry-Grounded Transformer (VGGT) [39], a feed-forward Large Reconstruction Model (LRM) for multi-view 3D reconstruction. VGGT alternates between frame-wise and global attention layers; the global attention aggregates cross-view information but becomes the computational bottleneck as the num-ber of frames grows. 
+
+Experimental Setup. We compare ELSA against FA2-FP16, xFormers-FP32 (ME-SDPA), and PyTorch Math under two configurations: (1) VGGT Baseline on 50–150 frames, and (2) FastVGGT [34], a memory-optimized variant with token merging. All experiments use 350 × 518 input resolution, yielding 1,041 tokens per frame ( 28 × 37 patches plus camera and register tokens). 
+
+Results on VGGT Baseline. Table 11 shows that ELSA-FP32 achieves a 1.46 × speedup over xFormers at 50 frames (12.56 s vs. 18.36 s) while matching memory usage (15.74 GB, within 0.01 GB). The advantage compounds with sequence length, reaching 2.34 × at 150 frames (55.97 s vs. 130.83 s) with an iden-tical 37.59 GB footprint. FA2-FP16 remains the fastest baseline (3.67 s at 50 frames) but consumes 17.16 GB—9% more than ELSA-FP32. 
+
+Results on FastVGGT Scaling. Table 12 demonstrates ELSA’s scalability on longer sequences. At 400 frames, ELSA-FP32 completes inference in 158.04 s versus xFormers’ 218.30 s (1.38 × speedup ), with identical 32.70 GB memory. The Math baseline runs out of memory beyond 30 frames due to its 
+
+O(n2) attention matrix materialization. Across all frame counts, ELSA’s memory overhead relative to xFormers remains negligible (<0.01 GB), confirming that the O(n) auxiliary state (m, S, W )
+
+imposes no practical burden at these scales. 
+
+Analysis. ELSA’s O(log n) scan depth confers two key advan-tages for multi-view 3D reconstruction: (1) efficient paralleliza-tion over long token sequences (10K–100K tokens across views), and (2) reduced global synchronization overhead compared to Method Frames Time (s) Mem (GB) Speedup 
+
+xFormers-FP32 50 18.36 15.74 1.00 ×
+
+100 61.75 26.67 1.00 ×
+
+150 130.83 37.59 1.00 ×
+
+FA2-FP16 50 3.67 17.16 –100 9.44 27.13 –150 17.88 37.43 –
+
+ELSA-FP32 
+
+50 12.56 15.74 1.46 ×
+
+100 29.49 26.68 2.09 ×
+
+150 55.97 37.59 2.34 ×
+
+Table 11. VGGT baseline. ELSA-FP32 achieves 1.46 –2.34 ×
+
+speedup over xFormers-FP32 while matching its memory foot-print. Speedup is relative to xFormers-FP32; shading intensity re-flects speedup magnitude. xFormers’ O(n/T k ) sequential tiling. At 400 frames with 1,041 tokens per frame (416,400 tokens total), the number of global syn-chronization points drops from ∼3,250 (xFormers, Tk = 128 ) to 
+
+∼15 (scan-tree depth ⌈log 2(400 ×1041 /128) ⌉ + 3 ≈ 15 ), directly explaining the observed 1.38 × end-to-end speedup. 
+
+## H. CUDA C++ Backend and Portability 
+
+While our primary implementation uses Triton for rapid proto-typing, we provide a CUDA C++ backend for deployments with-out JIT support or requiring finer control over the memory hier-archy. Both backends share the same algorithmic core—a two-level prefix scan over the monoid (m, S, W )—differing only in how that scan is realized: within each block we apply a Hillis– Steele [16] or Kogge–Stone [20] scan, and across blocks a Blelloch scan [2] via cooperative groups and CUB’s BlockScan primi-tive [28], ensuring portability across GPU generations. Vectoriza-tion width and block size are exposed as template parameters and autotuned at runtime. Critically, the backend avoids Tensor-Core (HMMA/GMMA) instructions, enabling FP32 execution on de-vices such as Jetson TX2 where Tensor Cores are absent. Prelim-inary internal benchmarks on A100, L4, and Jetson suggest that the C++ backend remains within roughly 10–15% of the Triton implementation. The C++ backend’s fine-grained memory control proves par-ticularly advantageous under host-device offloading, where layer weights are streamed from CPU memory one layer at a time. Ta-ble 13 reports results for LLaMA-13B [36] (FP32, batch 1) using asynchronous double-buffering across four sequence lengths. At 4K and 8K tokens the workload is PCIe-bound: transfers com-plete faster than ELSA’s scan overhead, causing higher per-layer idle time (0.727 ms and 1.005 ms vs. 0.228 ms and 0.322 ms for SDPA), and SDPA holds a throughput edge ( −42.4% and −25.2% for ELSA). At ≥32K tokens, however, ELSA’s lower memory footprint allows computation to begin earlier, reducing per-layer wait from 540 ms to 467 ms and from 2069 ms to 1695 ms respec-
+
+Method Frames Time (s) Mem (GB) Speedup 
+
+FA2-FP16 15 1.76 4.42 –30 2.38 4.42 –50 3.35 5.04 –100 6.26 7.85 –150 9.97 10.66 –200 14.75 13.47 –300 27.08 19.09 –400 46.14 24.72 –Math-FP32 15 4.93 8.58 0.68 ×
+
+30 13.06 18.08 0.45 ×
+
+>30 OOM 
+
+Math-FP16 15 5.76 7.13 0.59 ×
+
+30 17.68 18.72 0.34 ×
+
+>30 OOM 
+
+xFormers-FP32 15 3.37 6.26 1.00 ×
+
+30 5.94 6.55 1.00 ×
+
+100 23.94 11.50 1.00 ×
+
+150 43.05 15.03 1.00 ×
+
+200 65.81 18.56 1.00 ×
+
+300 129.97 25.63 1.00 ×
+
+400 218.30 32.70 1.00 ×
+
+ELSA-FP32 
+
+15 3.58 6.26 0.94 ×
+
+30 6.66 6.55 0.89 ×
+
+100 20.22 11.50 1.18 ×
+
+150 34.93 15.03 1.23 ×
+
+200 50.76 18.56 1.30 ×
+
+300 97.89 25.63 1.33 ×
+
+400 158.04 32.70 1.38 ×
+
+Table 12. FastVGGT scaling. ELSA-FP32 sustains 1.18 –1.38 ×
+
+speedup at long sequences with identical memory overhead. Math baselines fail beyond 30 frames (OOM); shading intensity reflects speedup magnitude, red denotes below-baseline performance. tively, translating to 17.8% and 20.2% throughput gains over SDPA, confirming that ELSA’s memory efficiency compounds into end-to-end gains as sequences and transfer times grow. Ta-ble 14 further reports LLaMA-8B direct inference (no offload-ing), where ELSA’s throughput gain scales from +1.7% at 4K to 
+
++12.3% at 16K tokens. Method Metric 4K 8K 32K 65K                       
+
+> FP32 offloading, LLaMA-13B, batch 1
+> ELSA Throughput (M tok/s) 0.364 0.956 1.460 0.882
+> Wait (ms/layer) 0.727 1.005 467.2 1694.5
+> SDPA Throughput (M tok/s) 0.632 1.278 1.239 0.734 Wait (ms/layer) 0.228 0.322 540.1 2069.4 Throughput gain −42.4% −25.2% +17.8% +20.2%
+
+Table 13. LLaMA-13B host-device offloading. At ≤8K tokens the workload is PCIe-bound and ELSA’s per-layer overhead ex-ceeds its memory savings. At ≥32K tokens, ELSA’s reduced footprint hides transfer latency more effectively, delivering 17.8– 20.2% throughput gains. Gray shading marks the winner per met-ric and sequence length.                  
+
+> Sequence length ELSA (tok/s) SDPA (tok/s) Gain Latency ↓
+> 4K 5,729.6 5,636.5 +1.7% 1.6% 8K 4,862.9 4,440.6 +9.5% 8.7%
+> 16K 3,636.4 3,237.7 +12.3% 11.0%
+
+Table 14. LLaMA-8B direct inference. ELSA vs. ME-SDPA; gains scale with sequence length, reaching +12.3% throughput and 11.0% latency reduction at 16K tokens. 
+
+## I. ELSA Variants 
+
+We examine ELSA’s performance across different precision modes, long-context workloads, and offload scenarios. Unless oth-erwise stated, throughput is reported in millions of tokens per sec-ond (M tok/s) and memory refers to peak GPU usage. 
+
+FP32 variants and memory trade-offs. The main paper reports both strict FP32 and TF32-Turbo results. Strict FP32 is the primary headline for exact-attention claims; TF32-Turbo is an optional higher-throughput variant. We additionally benchmark a memory-lean variant (streaming smaller key-value chunks con-trolled by η), which trades memory for throughput. Table 15 com-pares these variants against ME-SDPA at 16K tokens. Strict FP32 achieves 3.4× throughput improvement (1.36M vs. 0.40M tok/s) at a modest memory increase from 0.289 GB to 0.336 GB. ELSA-Turbo (TF32) delivers an additional 5% speedup (1.43M tok/s) while preserving FP32-quality outputs; numerical error remains within 10 −4 relative to strict FP32. The memory-lean variant ( η=0 .25 ) matches ME-SDPA’s 0.288 GB footprint while sustaining 0.13M tok/s. Taken together, these variants span a continuum from maximum throughput to minimal memory, allow-ing practitioners to select the operating point best suited to their hardware constraints. 
+
+FP16 regime and FlashAttention comparison. At 16K tokens in FP16, ELSA delivers 2.49M tok/s with 0.19 GB mem-ory. FlashAttention-2 [7] achieves 2.88M tok/s ( ∼15% faster) but requires 0.29 GB; FlashAttention-3 [33] reaches 2.73M tok/s at 0.36 GB. ME-SDPA sustains only 1.47M tok/s despite matching ELSA’s 0.19 GB footprint. Across sequence lengths, FA2 leads in            
+
+> Method Throughput (M tok/s) Memory (GB)
+> ME-SDPA 0.40 0.289 ELSA-Strict (FP32) 1.36 0.336 ELSA-Turbo (TF32) 1.43 0.288
+> ELSA-Lean (FP32, η=0 .25 )0.13 0.288
+
+Table 15. FP32 variant comparison. ELSA variants versus ME-SDPA at 16K tokens. Throughput in millions of tokens per second; memory is peak GPU usage. Strict FP32 ( allow tf32=0 ) is used throughout the main paper; TF32-Turbo is an optional higher-throughput variant.                                   
+
+> Batch size Latency (ms) Memory (GB) Speed-up Math ELSA Math ELSA
+> 10.405 0.399 (+1.5%) 0.0098 0.0095 (+3.1%) 1.02 40.427 0.424 (+0.7%) 0.0107 0.0100 (+6.5%) 1.01 80.430 0.411 (+4.4%) 0.0131 0.0116 (+11.5%) 1.05 16 0.431 0.409 (+5.1%) 0.0175 0.0138 (+21.1%) 1.05
+
+Table 16. Swin-v2 window attention (FP16) across batch sizes. 
+
+Latency and memory vs. Math baseline; ELSA columns shaded, green denotes improvement. ELSA consistently reduces both la-tency and memory with no retraining. raw throughput, but ELSA consistently achieves the lowest mem-ory usage among exact kernels and narrows the speed gap as se-quences grow. ELSA thus carries its long-context advantages into FP16 while remaining competitive with hardware-fused kernels. 
+
+## J. Limitations 
+
+Arithmetic Complexity. ELSA eliminates the O(n2) mem-ory bottleneck but preserves quadratic arithmetic complexity: the prefix-scan formulation parallelizes computation and reduces memory traffic to O(n), yet still performs all pairwise interactions. The term linear-scan refers strictly to the additional memory and I/O overhead, not to arithmetic complexity; ELSA is therefore best suited to regimes where memory rather than compute is the pri-mary bottleneck. 
+
+Short-Sequence and Window Attention. For windowed MHSA (e.g., Swin with n ≤ 196 ), the O(log n) scan-depth ad-vantage diminishes and per-level merge overhead becomes visible, while FA2/3 are highly optimized for small tiles. Table 16 shows that ELSA consistently outperforms the unfused Math baseline in both latency and memory—improving by up to 5.1% and 21.1% respectively—yet FA2 remains faster in this short-window FP16 regime. This is consistent with ELSA’s design goal: long/global contexts and FP32 portability, where fused kernels provide no compatible alternative. 
+
+Training and Multi-GPU Scaling. The prefix-scan formu-lation introduces inter-block data dependencies that complicate se-quence parallelism: the monoid reduction across blocks must com-plete before downstream layers proceed, creating synchronization barriers that do not exist in standard attention. Efficient multi-GPU scaling therefore requires careful pipeline scheduling to overlap these reductions with communication, which remains future work. 
+
+Hardware Coverage. The current kernel is validated primar-ily on Ampere GPUs (A100, L4) and Jetson TX2; broader cover-age across Hopper, Ada Lovelace, and non-NVIDIA accelerators is left to future work.
