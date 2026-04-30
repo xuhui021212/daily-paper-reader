@@ -1,0 +1,933 @@
+Title: LaplacianFormer:Rethinking Linear Attention with Laplacian Kernel
+
+URL Source: https://arxiv.org/pdf/2604.20368v1
+
+Published Time: Thu, 23 Apr 2026 00:42:54 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+Published as a conference paper at ICLR 2026 
+
+# LAPLACIAN FORMER :R ETHINKING LINEAR ATTEN -
+
+# TION WITH LAPLACIAN KERNEL 
+
+Zhe Feng 2,1 ∗ Sen Lian 3 ∗ Changwei Wang 5,6 † Muyang Zhang 2,1 Tianlong Tan 4 Rongtao Xu 7
+
+Weiliang Meng 1,2 † Xiaopeng Zhang 1,2 
+
+> 1
+
+MAIS,Institute of Automation, Chinese Academy of Sciences 
+
+> 2
+
+School of Artificial Intelligence, University of Chinese Academy of Sciences usr 3China Electronics Data Corporation 
+
+> 4
+
+Institute of Computing Technology, Chinese Academy of Sciences 
+
+> 5
+
+The Key Laboratory of Computing Power Network and Information Security, Ministry of Education, Shandong Computer Science Center, Qilu University of Technology 
+
+> 6
+
+Shandong Provincial Key Laboratory of Computing Power Internet and Service Computing, Shandong Fundamental Research Center for Computer Science  
+
+> 7
+
+Spatialtemporal AI 
+
+changweiwang@sdas.org, weiliang.meng@ia.ac.cn 
+
+ABSTRACT 
+
+The quadratic complexity of softmax attention presents a major obstacle for scal-ing Transformers to high-resolution vision tasks. Existing linear attention variants often replace the softmax with Gaussian kernels to reduce complexity, but such ap-proximations lack theoretical grounding and tend to oversuppress mid-range token interactions. We propose LaplacianFormer, a Transformer variant that employs a Laplacian kernel as a principled alternative to softmax, motivated by empiri-cal observations and theoretical analysis. To address expressiveness degradation under low-rank approximations, we introduce a provably injective feature map that retains fine-grained token information. For efficient computation, we adopt a Nystr¨ om approximation of the kernel matrix and solve the resulting system using Newton–Schulz iteration, avoiding costly matrix inversion and SVD. We further develop custom CUDA implementations for both the kernel and solver, enabling high-throughput forward and backward passes suitable for edge deployment. Ex-periments on ImageNet show that LaplacianFormer achieves strong performance-efficiency trade-offs while improving attention expressiveness. Code is available at the following site: LaplacianFormer . 
+
+1 INTRODUCTION 
+
+The Transformer architecture Vaswani et al. (2017) has become a fundamental framework for sequence modeling, demonstrating strong performance across a wide range of computer vision tasks Jiang et al. (2024); Zhu et al. (2021); Yu et al. (2025); Hou et al. (2024); Su et al. (2024b). While its self-attention mechanism effectively captures rich contextual dependencies, its quadratic time and space complexity with respect to sequence length significantly limits scalability to long input sequences Keles et al. (2022); Hassani et al. (2024). To address this, a number of linear attention variants have been proposed to approximate softmax at-tention using kernel-based formulations, thereby reducing complexity to linear Katharopoulos et al. (2020); Lu et al. (2021); Chen et al. (2021); Bui et al. (2025); Kashiwagi et al. (2021). Notably, de-spite differences in implementation, the vast majority of these methods converge on a similar design choice: they rely on Gaussian-like kernels to define attention similarity. This widespread adoption appears to be more of a default convention than a theoretically grounded decision. Indeed, there is a lack of empirical or analytical justification for why the Gaussian kernel is inherently suitable for modeling query-key interactions in attention mechanisms. 
+
+> ∗
+
+Equal contribution. 
+
+> †
+
+Corresponding author. 
+
+1
+
+> arXiv:2604.20368v1 [cs.CV] 22 Apr 2026
+
+Published as a conference paper at ICLR 2026 0 50 100 150 200 250 300 350 400         
+
+> Distance Value
+> 0.000
+> 0.005
+> 0.010
+> 0.015
+> 0.020
+> 0.025
+> 0.030
+> 0.035
+> 0.040
+> Density
+> DeiT Attention Q-K Vector Distance Distribution
+> L1Distance ( xy1)
+> L22Distance ( xy22)
+
+(a) DeiT 0 100 200 300 400          
+
+> Distance Value
+> 0.000
+> 0.005
+> 0.010
+> 0.015
+> 0.020
+> 0.025
+> Density
+> PVT Attention Q-K Vector Distance Distribution
+> L1Distance ( xy1)
+> L22Distance ( xy22)
+
+(b) PVT 0 25 50 75 100 125 150 175          
+
+> Distance Value
+> 0.00
+> 0.01
+> 0.02
+> 0.03
+> 0.04
+> 0.05
+> 0.06
+> 0.07
+> Density
+> Swin Attention Q-K Vector Distance Distribution
+> L1Distance ( qk1)
+> L22Distance ( qk22)
+
+(c) Swin 
+
+Figure 1: Distributions of ℓ1 and ℓ22 Q-K distances in DeiT, PVT, and Swin Transformers. Theoretically, the Gaussian kernel presumes that query-key similarity should decay rapidly with increasing ℓ22 distance. However, this assumption may not reflect the actual distribution of query-key interactions in vision Transformers. To investigate this issue, we analyze the empirical distribution of query-key distances in DeiT Touvron et al. (2020), PVT Wang et al. (2021b), and Swin Liu et al. (2021b), using official checkpoints on the ImageNet Deng et al. (2009) validation set. As shown in Figure 1, the ℓ22 distances exhibit a heavy-tailed distribution with high variance and frequent outliers. When passed through the exponential function in the Gaussian kernel, these long-tailed distances will lead to an amplification of the tail effect: outliers dominate the attention map, while moderately relevant keys are overly suppressed. This behavior not only reduces the expressiveness of attention weights but also causes vanishing gradients and unstable optimization, especially during the early stages of training Zhang et al. (2021). In contrast, ℓ1 distances tend to be more concentrated and less sensitive to outliers, providing a more faithful measure of token relevance. This observation motivates the use of the Laplacian kernel, defined as k(x, y ) = exp 
+
+
+
+− ∥x−y∥1
+
+λ
+
+
+
+, where x, y ∈ Rd
+
+are input feature vectors and λ > 0 is a decay parameter. Compared to the Gaussian kernel, which is based on squared ℓ2 distances, the Laplacian kernel exhibits a slower decay rate. SOFT++ (Gaussian)  SOFT++ (Laplacian)  Skyformer (Gaussian)  Skyformer (Laplacian) 
+
+Epoch Epoch 
+
+> Top-1 Accuracy(%)
+
+(a) 
+
+(b) 
+
+Figure 2: (a) Top-1 accuracy (%) over training epochs on ImageNet. The left plot shows results for SOFT++, and the right plot for Skyformer, each using either a Gaussian or Laplacian kernel for attention computation. Models with Laplacian kernels (blue) converge faster and achieve slightly higher final accuracy compared to their Gaussian counterparts (red). (b) Visual comparison of atten-tion maps with different kernel choices. Each pair shows attention maps from the first Transformer block of SOFT++ and Skyformer, where we only replace the Gaussian kernel with a Laplacian ker-nel, keeping all other components unchanged. Attention matrices computed with Laplacian kernels exhibit more structured patterns and better-conditioned rank profiles. Beyond empirical distributions, we further analyze the gradient behavior of these kernels, which plays a critical role in optimization stability. For the Laplacian kernel, the partial derivative with 2Published as a conference paper at ICLR 2026 respect to coordinate xi is ∂k ∂x i = 1 
+
+> λ
+
+· sign( xi − yi) · exp 
+
+
+
+− ∥x−y∥1
+
+> λ
+
+
+
+, while for the Gaussian kernel, it is ∂k ∂x i = 1 
+
+> σ2
+
+(xi − yi) · exp 
+
+
+
+− ∥x−y∥22
+
+> 2σ2
+
+
+
+, where σ denotes the kernel bandwidth. Notably, the Laplacian kernel maintains non-vanishing gradients even when x and y are nearly identical, owing to the piecewise linear nature of the ℓ1 norm. In contrast, the Gaussian kernel’s gradients diminish linearly as ∥x − y∥2 → 0, resulting in vanishing updates that may hinder convergence. To empiri-cally validate this theoretical claim, we perform a simple ablation by replacing the Gaussian kernel in two representative models—SOFT++ Lu et al. (2024) and Skyformer Chen et al. (2021)—with a Laplacian kernel, keeping all other architectural components unchanged. As shown in Figure 2, this modification alone leads to significantly faster convergence in both models, supporting the hy-pothesis that the Laplacian kernel facilitates more stable and efficient learning dynamics. Beyond training behavior, we also compare attention maps produced by the two kernels. The same figure also visualizes attention from the first Transformer block of both models. In SOFT++, the Gaussian kernel yields overly sparse attention, while the Laplacian variant produces more expressive and co-herent patterns. A similar trend is also observed in Skyformer. These results suggest that, beyond its theoretically favorable decay profile, the Laplacian kernel also improves the practical expressiveness of attention maps, particularly in early to mid-stage layers. Motivated by these findings, we introduce LaplacianFormer , a scalable linear attention framework that replaces the Gaussian-based attention mapping with a Laplacian formulation. To support prac-tical deployment, we develop a CUDA-accelerated implementation that features efficient Laplacian similarity computation and a Newton–Schulz-based inverse solver for fast inference. As shown in <3G 3~8G 8~10G 10~14G >14G 
+
+> FLOPs (G)
+> 76
+> 78
+> 80
+> 82
+> 84
+> 86
+> ImageNet Top-1 Accuracy (%)
+> LaplacianFormer(ours)
+> SOFT
+> Swin
+> PoolFormer
+> CaiT
+> FasterViT
+> CMT
+> EfficientFormerV2
+> CSWin
+> SOFT++
+
+(a) 784 × 1 784 × 2 784 × 3 784 × 4 784 × 5 784 × 6 784 × 7 784 × 8  
+
+> Token sequence length
+> 2000
+> 4000
+> 6000
+> 8000
+> 10000
+> 12000
+> 14000
+> 16000
+> Memory (MB)
+> LaplacianFormer(ours)
+> Transformer
+> Linformer
+> cosFormer
+> AgentFormer
+> Reformer
+> Nystromformer
+> Performer
+> SOFT
+
+(b) 
+
+Figure 3: Accuracy and Memory Comparison.(a) Top-1 accuracy vs. FLOPs on ImageNet-1k Deng et al. (2009). LaplacianFormer offers a strong accuracy-efficiency trade-off, outperforming prior models across all FLOPs ranges. (b) GPU memory usage across input lengths. LaplacianFormer shows linear scaling, matches efficient Transformers like Performer and SOFT, and far better than the vanilla Transformer. Figure 3, LaplacianFormer achieves strong performance across accuracy, memory efficiency, and scalability metrics on standard vision benchmarks. Our main contributions are summarized as follows: • We propose LaplacianFormer , a linear attention model grounded in the Laplacian ker-nel, which enhances long-range dependency modeling while maintaining scalability and efficiency. • We develop a CUDA-optimized implementation that integrates Laplacian attention with a Newton–Schulz inverse module, significantly improving runtime and memory efficiency. • We validate LaplacianFormer on ImageNet-1k Deng et al. (2009) and downstream vision tasks such as object detection and instance segmentation, demonstrating competitive per-formance across multiple benchmarks. 
+
+2 RELATED WORK 
+
+Vision Transformer with Softmax Attention. The Vision Transformer (ViT) Dosovitskiy et al. (2021) has demonstrated exceptional performance and has been widely adopted for a range of 3Published as a conference paper at ICLR 2026 computer vision tasks, including image classification Touvron et al. (2021); Liu et al. (2021b;a); Touvron et al. (2022), object detection Zhu et al. (2021); Zhang et al. (2023a), and semantic seg-mentation Zheng et al. (2020); Xie et al. (2021); Cheng et al. (2021). By substituting traditional convolutional operations with self-attention mechanisms, ViT enables the modeling of global de-pendencies within images, offering a powerful alternative to convolutional neural networks (CNNs). However, a major bottleneck lies in the quadratic time and memory complexity, O(n2), of stan-dard softmax attention, which significantly restricts its scalability—especially for high-resolution inputs—and limits its deployment on resource-constrained edge devices. 
+
+Linear Attention: A Scalable Alternative. To mitigate the computational overhead of softmax attention, linear attention has emerged as an efficient alternative. While softmax attention requires 
+
+O(N 2d) operations to compute pairwise similarities, linear attention reduces this to O(N d 2) by replacing the softmax with kernel-based approximations and reordering computations. Specifically, computing K⊤V first decouples the attention process and enables linear scalability. This efficiency gain becomes particularly significant in modern Transformers, where the token count N typically exceeds the channel dimension d. Linear attention thus maintains the ability to model long-range dependencies while substantially improving computational efficiency. Building on this foundation, a number of linear attention variants have been developed to reduce computational cost while enhancing model capacity. Nystr¨ omformer Xiong et al. (2021) approxi-mates softmax attention via Nystr¨ om matrix decomposition. SOFT Lu et al. (2021) replaces soft-max with a learnable kernel based on low-rank approximations. Skyformer Chen et al. (2021) in-corporates Gaussian kernels and Nystr¨ om sampling to improve scalability in vision tasks, while Gaussian Kernelized Attention Kashiwagi et al. (2021) applies a similar design to speech decoding. Performer Choromanski et al. (2021) employs orthogonal random features (FAVOR+) to achieve linear-time softmax approximation. Cosformer Qin et al. (2022) replaces softmax with a cosine-based reweighting scheme to achieve linear complexity. Hedgehog Zhang et al. (2024) introduces structured linear transformations to approximate softmax behavior, providing a unified and scalable alternative. HiViT Zhang et al. (2023b) streamlines hierarchical Transformers by reducing token mixing and applying uniform downsampling. While differing in architecture, many of these methods share a common reliance on Gaussian kernels to approximate attention weights. In this work, we replace the Gaussian kernel with a Laplace kernel that ensures injectivity and enhances expressiveness, grounded in rigorous theoretical analysis. 
+
+3 PRELIMINARIES 
+
+3.1 SOFTMAX SELF -A TTENTION 
+
+Softmax self-attention is a core operation in transformer models. Given an input sequence X ∈
+
+RN ×de of N tokens embedded in a de-dimensional space, we compute queries, keys, and values via linear projections: Q = XW Q, K = XW K , V = XW V , where WQ, WK , WV ∈ Rde×d are learnable parameters and Q, K, V ∈ RN ×d. The standard scaled dot-product attention for token i
+
+is: 
+
+Attention( Q, K, V)i =
+
+PNj=1 exp 
+
+ q⊤ 
+
+> ikj
+> √d
+
+
+
+vj
+
+PNj=1 exp 
+
+ q⊤ 
+
+> ikj
+> √d
+
+ (1) and in matrix form: 
+
+Attention( Q, K, V) = Softmax 
+
+ QK ⊤
+
+√d
+
+
+
+V (2) This formulation computes a similarity matrix QK ⊤ ∈ RN ×N , resulting in O(N 2d) complexity due to all pairwise interactions. To reduce cost, consider removing the softmax. Without it, attention simplifies to 
+
+ QK ⊤
+
+> √d
+
+
+
+V, which can be reordered as Q(K⊤V) using associativity. This avoids forming the large N × N matrix and reduces complexity to O(N d 2), linear in N if d is small. This insight underlies linear attention, which replaces softmax with associative operations for improved efficiency. Figure 4 compares softmax and linear self-attention. 4Published as a conference paper at ICLR 2026 × × × ×× ×            
+
+> Softmax Self -Attention Linear Self -Attention
+> 𝐊 ⊤
+> 𝑑 ×𝑁
+> 𝑉
+> 𝑁 ×𝑑
+> 𝑄 𝐊 ⊤
+> 𝑁 ×𝑁
+> 𝐊 ⊤×𝑉
+> 𝑑 ×𝑑
+
+𝑣𝑠             
+
+> 𝑄
+> 𝑁 ×𝑑
+> 𝑉
+> 𝑁 ×𝑑
+> 𝐊 ⊤
+> 𝑑 ×𝑁
+> 𝑉
+> 𝑁 ×𝑑
+> 𝑄
+> 𝑁 ×𝑑
+> 𝑄
+> 𝑁 ×𝑑
+
+Figure 4: Comparison between Softmax Self-Attention (left) and Linear Self-Attention (right). The former computes a full N ×N similarity matrix, while the latter enables associativity through kernel decomposition, reducing the complexity from O(N 2) to O(N ).3.2 LINEAR SELF -A TTENTION 
+
+Linear self-attention reformulates the attention mechanism by approximating the similarity compu-tation through kernel-based feature mappings. Specifically, let ϕ(·) denote a kernel function, and define the similarity between a query qi and a key kj as: Sim( qi, kj ) = ϕ(qi) ϕ(kj )⊤.
+
+The kernel-based formulation replaces the exponential dot product with a more general similarity function, enabling efficient reordering of computations and eliminating the softmax operation. The attention output for the i-th query can be written as: 
+
+Attention( Q, K, V)i =
+
+ϕ qi
+
+PNj=1 ϕ kj
+
+⊤vj
+
+
+
+ϕ qi
+
+PNj=1 ϕ kj
+
+⊤ . (3) Since the key-value summaries PNj=1 ϕ(kj )⊤vj and PNj=1 ϕ(kj )⊤ are independent of the query, they can be precomputed, allowing each attention output to be computed in linear time. 
+
+4 METHOD 
+
+4.1 LAPLACIAN FORMER 
+
+Our LaplacianFormer instantiates the general kernel attention framework described in Section 3.2 using a novel Laplace-based transformation inspired by recent work on attention injectivity Han et al. (2024a). Instead of directly using the Laplacian kernel as a similarity score, we construct a normalized kernel representation for each query qi to enhance feature discrimination: 
+
+zi = Σ− 12
+
+[k(qi, k1), . . . , k (qi, kN )] ⊤ − 1
+
+N
+
+> N
+
+X
+
+> j=1
+
+k(qi, kj )
+
+ + 1
+
+N , (4) where k(q, k) = exp 
+
+
+
+− ∥q−k∥1
+
+> λ
+
+
+
+denotes the Laplacian kernel. The whitening matrix Σ−1/2 ∈
+
+RN ×N is ideally computed from the covariance of query–key similarity vectors gi ∈ RN , where each gi = [ k(qi, k1), . . . , k (qi, kN )] ⊤.
+
+In practice, computing the full inverse square root Σ−1/2 is computationally prohibitive for long sequences, requiring eigendecomposition with O(N 3) time and O(N 2) memory. To mitigate this, we approximate the whitening operation with a diagonal estimator that normalizes each feature dimension independently across a batch of query–key vectors {gi}Bi=1 , where B is the batch size. For each dimension j ∈ { 1, . . . , N }, we compute the empirical mean and variance: 
+
+μj = 1
+
+B
+
+> B
+
+X
+
+> i=1
+
+gij , σ2 
+
+> j
+
+= 1
+
+B
+
+> B
+
+X
+
+> i=1
+
+(gij − μj )2 . (5) We then normalize each element of the similarity vector: ˜gij = gij −μj
+
+√σ2  
+
+> j+ε
+
+, where ε is a small constant added for numerical stability. This corresponds to a diagonal whitening matrix: 
+
+D−1/2 = diag 1
+
+pσ21 + ε , . . . , 1
+
+pσ2 
+
+> N
+
++ ε
+
+!
+
+. (6) 5Published as a conference paper at ICLR 2026 This approximation preserves the centering and scaling effects of full whitening, improves stability, and reduces both time and memory complexity from quadratic to linear in N , making it compatible with efficient kernelized attention. For completeness, we define the kernel similarity matrix among keys as Gij & = k(ki, kj ), Σkey & = PGP ⊤, with P = I − 1 
+
+> N
+
+11 ⊤. Although not directly used in normalization, the key–key covariance Σkey provides a useful interpretation of the kernel structure. We prove in the appendix that the transformation in Eq. equation 4 is injective under mild assump-tions, ensuring that distinct queries yield distinct outputs. This injectivity property aligns with the behavior of softmax attention, which is inherently injective and yields full-rank attention maps that preserve fine-grained token distinctions Han et al. (2024a). The final attention output incorporates both global interactions via kernelized similarity and local context modeling through depth-wise convolution. Specifically, we compute 
+
+Attention( Q, K, V) = ZV + DWC( V), (7) where Z ∈ RN ×N stacks each z⊤ 
+
+> i
+
+as a row, and DWC( ·) denotes a depth-wise convolution applied over the value sequence V.4.2 NYSTR ¨OM APPROXIMATION FOR LAPLACIAN KERNEL 
+
+To efficiently compute Laplacian kernel-based attention, we adopt a Nystr¨ om approxima-tion Williams & Seeger (2000); Xiong et al. (2021). The Nystr¨ om method approximates the ker-nel matrix G by selecting a small set of landmark keys and computing a rank-reduced estimate 
+
+eG ∈ RN ×N , defined as eG = CW †C⊤, where C ∈ RN ×m is the matrix of Laplacian kernel simi-larities between all queries and a selected subset of m ≪ N landmark keys, W ∈ Rm×m contains pairwise Laplacian kernel similarities among the m selected landmark keys, and W† denotes the Moore–Penrose pseudoinverse of W. More specifically, the (i, ℓ )-th entry of C is defined as: 
+
+Ciℓ = k(qi, ˜kℓ) = exp 
+
+
+
+− 1
+
+λ qi − ˜kℓ 1
+
+
+
+, (8) where qi is the query vector of the i-th token and ˜kℓ ∈ { k1, . . . , kN } is the ℓ-th landmark key, while the (ℓ, ℓ ′)-th entry of W is computed as: 
+
+Wℓℓ ′ = k(˜kℓ, ˜qℓ′ ) = exp 
+
+
+
+− 1
+
+λ ˜kℓ − ˜qℓ′
+
+> 1
+
+
+
+, (9) where ˜kℓ and ˜qℓ′ are the landmark key and query vectors selected by Nystr¨ om sampling, respec-tively. The process for computing the low-rank Laplacian kernel via Nystr¨ om approximation is outlined in Algorithm 1. In Line 2, the sampling function fs selects m ≪ N landmark tokens from the full set of queries and keys, forming the landmark matrices eQ, eK ∈ Rm×d. Lines 3–5 perform the core kernel operations: Line 3 computes the landmark kernel matrix W (Eq. 9), Line 4 computes the query-to-landmark kernel matrix C (Eq. 8), and Line 5 applies the Nystr¨ om approximation using 
+
+W† to obtain the final attention matrix ˆS.
+
+Algorithm 1 Laplacian Kernel with Nystr¨ om Approximation  
+
+> 1:
+
+Input: Queries Q ∈ RN ×d, Keys K ∈ RN ×d, Nystr¨ om sampling function fs 
+
+> 2:
+
+Sampling: ˜Q, ˜K ← fs(Q), f s(K) ▷ Select m ≪ n landmark points  
+
+> 3:
+
+W ← exp 
+
+
+
+− 1 
+
+> λ
+
+∥ ˜Q ⊖ ˜K∥1
+
+
+
+▷ Kernel matrix on sampled points  
+
+> 4:
+
+C ← exp 
+
+
+
+− 1 
+
+> λ
+
+∥Q ⊖ ˜K∥1
+
+
+
+▷ Cross-kernel between all queries and landmarks  
+
+> 5:
+
+ˆG ← CW †C⊤ ▷ Low-rank approximation of full kernel matrix  
+
+> 6:
+
+Output: ˆG
+
+Laplacian Kernel Inversion via Newton–Schulz Iteration. To efficiently and stably approximate the inverse of the landmark kernel matrix W ∈ Rm×m, which is symmetric and positive semi-definite, we use the Newton–Schulz iteration. Since convergence requires W to be strictly positive 6Published as a conference paper at ICLR 2026 
+
+Algorithm 2 Newton–Schulz Iteration for Approximating W† 
+
+> 1:
+
+Input: Landmark kernel matrix W ∈ Rm×m, number of iterations T ∈ Z+ 
+
+> 2:
+
+Add small perturbation: W ← W + ϵI, where ϵ > 0 
+
+> 3:
+
+Initialize scaling factor: α ← 2 
+
+> ∥W∥2
+> 4:
+
+Initialize: X0 ← αW⊤ 
+
+> 5:
+
+for k = 1 to T do  
+
+> 6:
+
+Xk ← Xk−1(2 I − WX k−1) 
+
+> 7:
+
+end for  
+
+> 8:
+
+Output: Approximate pseudoinverse XT ≈ W†NewTon-Schulz Kernel Execution Time  Laplace Kernel Execution Time 
+
+Matrix Size (N)  Matrix Size (N) 
+
+> Time (milliseconds)
+
+Figure 5: Execution time breakdown of custom CUDA kernels. Comparison of forward and backward execution time for Newton–Schulz iteration (left) and Laplacian kernel (right) across dif-ferent matrix sizes (batch = 1, 2 heads, 32 channels). CUDA execution times ( < 0.05 ms) are shown as 0.0 due to timing resolution limits. definite, we apply a small diagonal perturbation W ← W + ϵI, with ϵ > 0, preserving the structure while ensuring stability. Unlike inversion or SVD-based methods, Newton–Schulz relies only on matrix multiplications and additions, making it GPU-friendly. The iteration starts with X0 = αW⊤,where α = 2 
+
+> ∥W∥2
+
+ensures ∥I − αWW ⊤∥ < 1. The update rule is: Xk+1 = Xk(2 I − WX k). The full algorithm is detailed in Algorithm 2. 
+
+Sampling Strategies for Landmark Selection. To efficiently approximate attention, we adopt a pooling-based landmark selection strategy inspired by PVTv2 Wang et al. (2021a). The query tensor Q ∈ RB×H×N ×d is reshaped into a spatial map RB·H×d×H′×W ′
+
+, where N = H′ × W ′. We apply average pooling with kernel size r and stride r to aggregate each r × r region into a landmark token, yielding H′ 
+
+> r
+
+× W ′ 
+
+> r
+
+tokens per head. We also explored a depthwise convolution-based selection strategy, in which each r × r region is processed by a lightweight filter to extract local structure. While this approach offers greater expres-siveness, it yielded no significant improvement over average pooling in our experiments. Given its higher computational cost and additional parameters, we adopt average pooling by default. 
+
+Convergence Guarantee and Complexity Analysis. The Newton–Schulz iteration is guaranteed to converge for strictly positive definite matrices; this condition is satisfied by applying a small diagonal perturbation to W. Our method achieves linear time and space complexity O(n) with respect to the input length n. A complete complexity analysis and proof of convergence are provided in the appendix. 4.3 CUDA A CCELERATION 
+
+The Laplacian kernel fuses distance computation and exponential transformation into a single oper-ation, reducing global memory access. For Newton–Schulz iteration, we optimize matrix multipli-cations via tiling and register reuse. 7Published as a conference paper at ICLR 2026 Table 1: Performance comparison with state-of-the-art models on ImageNet.                                                                                                                           
+
+> FLOPs range Model Params FLOPs Top-1 % ↑Image Size
+> <3GAgent-Deit-T Han et al. (2024c) 6.0M 1.2G 74.9 224 VRWKV-T Duan et al. (2025) 6.2M 1.2G 75.1 256 PVT-T-PolaFormer Meng et al. (2025) 12M 2.0G 78.8 224 FL-PVTv2-B1 Han et al. (2023) 13M 2.2G 79.5 224 BiFormer-T Zhu et al. (2023) 13.1M 2.2G 81.4 224 LaplacianFormer-Tiny 12.1M 2.1G 81.4 224 3∼8G InLine-CSwin-S Han et al. (2024a) 33M 6.8G 83.8 224 SViT-S Huang et al. (2023) 25M 4.4G 83.6 224 BiFormer-S Zhu et al. (2023) 25.5M 4.5G 83.8 224 HiViT-T Zhang et al. (2023b) 19M 4.6G 82.1 224 Agent-PVT-S Han et al. (2024c) 20.6M 4.0G 82.2 224 LaplacianFormer-Small 25.7M 4.8G 83.8 224 8∼10G SViT-B Huang et al. (2023) 52M 9.9G 84.8 224 SOFT++-Medium Lu et al. (2024) 45M 7.2G 83.7 224 BiFormer-B Zhu et al. (2023) 56.8M 9.8G 84.3 224 Swin-S-PolaFormer Meng et al. (2025) 50M 8.7G 83.6 224 SLAB-Swin-S Guo et al. (2024) -8.7G 81.8 224 LaplacianFormer-Medium 46.3M 7.43G 85.3 224 10 ∼14G StructViT-B-8-1 Kim et al. (2024) 52M 12G 84.3 224 SOFT++-Large Lu et al. (2024) 64M 11G 84.1 224 NAT-B Hassani et al. (2023) 90M 13.7G 84.3 224 MogaNet-L Li et al. (2024) 82.5M 15.9G 84.7 224 FLatten-CSwin-S Han et al. (2023) 35M 6.9G 83.6 224 LaplacianFormer-Large 63.1M 11.2G 85.6 224
+> >14G VRWKV-B Duan et al. (2025) 93.7M 18.2G 82.0 224 SViT-L Huang et al. (2023) 95M 15.6G 85.3 224 MLLA-B Han et al. (2024b) 96M 16.2G 85.3 224 HiViT-B Zhang et al. (2023b) 66M 15.9G 83.8 224 LaplacianFormer-Huge 78.5M 15.5G 85.8 224
+
+To assess the effectiveness of our CUDA acceleration, we compare the execution time of both Lapla-cian kernel evaluation and Newton–Schulz iteration against their PyTorch counterparts Paszke et al. (2017), with and without custom CUDA kernels. As shown in Figure 5, our implementation consis-tently outperforms the baseline across various matrix sizes. The speedup is particularly prominent in backward passes, which benefit from precomputed gradients and in-place memory reuse. Numerical accuracy comparisons are provided in the appendix. 
+
+5 EXPERIMENTS 
+
+5.1 IMAGE CLASSIFICATION 
+
+Datasets and model architectures. We evaluate our model on the ImageNet-1K dataset Deng et al. (2009), which contains 1.28M training and 50K validation images across 1000 classes. Built on the PVT architecture Wang et al. (2021b), our LaplacianFormer re-designs the self-attention mechanism by constructing an injective attention function based on the Laplacian kernel. To en-sure training efficiency, we implement two custom CUDA kernels: one for computing the Laplacian kernel matrix and another for performing Newton–Schulz iteration to approximate the inverse. Ad-ditionally, RoPE Su et al. (2024a) is adopted for positional encoding. All other settings follow the original PVT configuration. Training is performed with a batch size of 1024 on multiple NVIDIA H800 GPUs. 
+
+Comparison. We compare the Top-1 accuracy and computational cost of our LaplacianFormer against state-of-the-art Vision Transformers. As shown in Table 1, models are grouped by FLOPs: <1G, 1–3G, 3–5G, 5–10G, and >10G. LaplacianFormer consistently achieves the highest Top-1 accuracy across all FLOP ranges. This result demonstrates the superiority of LaplacianFormer over existing methods. 5.2 OBJECT DETECTION AND INSTANCE SEGMENTATION 
+
+Results. Table 2 summarizes the comparison results under the 1× schedule for both Mask R-CNN He et al. (2017) and RetinaNet Lin et al. (2017). Across all scales, LaplacianFormer consis-tently surpasses previous backbone designs. For instance, LaplacianFormer-Tiny achieves 43.2 AP b
+
+8Published as a conference paper at ICLR 2026 and 40.3 AP m under Mask R-CNN, outperforming SOFT++-Tiny and FL-PVT-T. Under RetinaNet, it further achieves 42.5 AP b, ranking first among all tiny-scale counterparts. As the model size in-creases, LaplacianFormer-Medium yields 48.0 AP b and 43.5 AP m, establishing a new state-of-the-art within the medium-sized category. These results highlight the strong generalization and detection capabilities enabled by our Laplacian kernel attention mechanism. Table 2: Comparison to other backbones using RetinaNet and Mask R-CNN with “1×” schedule.                                                                                                                                                                                                                          
+
+> Backbone Mask R-CNN 1× RetinaNet 1×
+> AP bAP b
+> 50 AP b
+> 75 AP mAP m
+> 50 AP m
+> 75 AP bAP b
+> 50 AP b
+> 75 AP bSAP bMAP bL
+> Swin-T-PRepBN Guo et al. (2024) 42.9 65.8 46.8 39.3 62.6 41.9 ––––––FL-PVT-T Han et al. (2023) 38.2 61.6 41.9 37.0 57.6 39.0 ––––––SOFT++-Tiny Lu et al. (2024) 41.2 63.7 44.7 38.2 61.0 41.0 41.9 62.7 44.7 27.8 45.4 55.6 LaplacianFormer-Tiny 43.2 66.1 47.2 40.3 63.0 42.9 42.5 64.1 46.4 29.1 46.9 57.8
+> PVT-S-PolaFormer Meng et al. (2025) 43.9 66.1 47.9 40.2 63.1 43.0 43.2 64.1 46.4 –––InLine-PVT-S Han et al. (2024a) 43.4 66.4 47.1 40.1 63.1 43.3 ––––––SOFT++-Small Lu et al. (2024) 43.8 66.0 47.5 40.1 63.0 43.0 43.7 64.9 46.8 28.7 47.4 57.6 LaplacianFormer-Small 45.8 68.2 49.8 42.0 65.1 45.2 45.5 66.8 49.1 30.7 51.8 59.5
+> Agent-PVT-M Han et al. (2024c) 45.9 67.8 50.4 42.0 65.0 45.4 ––––––FL-Swin-M Han et al. (2023) 44.0 66.4 48.0 40.3 63.4 43.5 ––––––SOFT++-Medium Lu et al. (2024) 46.6 67.8 51.2 42.0 64.8 45.2 44.3 64.7 47.4 29.0 48.2 59.9 LaplacianFormer-Medium 48.0 70.3 52.5 43.5 65.8 46.5 47.2 68.5 51.5 31.8 53.0 61.4
+> Swin-T-PolaFormer Meng et al. (2025) 44.8 67.6 49.1 40.5 64.1 43.5 ––––––Agent-PVT-L Han et al. (2024c) 46.9 69.2 51.4 42.8 66.2 46.2 ––––––SOFT++-Large Lu et al. (2024) 47.0 68.3 51.7 42.2 65.2 45.4 47.0 67.8 50.4 30.2 50.9 62.0 LaplacianFormer-Large 48.2 70.5 53.0 43.8 67.1 47.4 48.5 69.3 52.4 32.6 52.3 63.8
+
+5.3 ABLATION STUDIES 
+
+Convergence Under Varying Condition Numbers. We evaluate solver convergence across vary-ing condition numbers. We measure the relative error for Newton–Schulz using the Frobenius norm 
+
+∥Xk − W †∥F /∥W †∥F , and for CG using the Euclidean norm ∥xk − x∗∥2/∥x∗∥2.As shown in Figure 6, CG converges more rapidly under well-conditioned settings (e.g., κ = 2 ) but degrades sig-nificantly as the condition number increases. In contrast, Newton–Schulz exhibits an initial warm-up phase followed by stable convergence even under ill-conditioned regimes (e.g., κ = 50 ), indicating greater robustness in practice. 
+
+Figure 6: Convergence behavior of Newton–Schulz and conjugate gradient methods under varying condition numbers. Each plot shows relative error (log scale) vs. iteration. 
+
+Inverse Solver Effect. We compare two iterative solvers—Newton–Schulz (used in our model) and conjugate gradient (CG)—for computing the kernel inverse in linear attention, both implemented with custom CUDA kernels. As shown in Table 3, Newton–Schulz achieves higher Top-1 accuracy than CG for both LaplacianFormer-Tiny (81.4% vs. 79.2%) and LaplacianFormer-Small (83.8% vs. 81.4%), likely due to better GPU convergence and numerical stability. 
+
+Effect of Laplacian Kernel Scale. We study the impact of the Laplacian kernel scale λ in the similarity function sim Lap (q, k ) = exp 
+
+
+
+− ∥q−k∥1
+
+> λ
+
+
+
+. As shown in Table 3, the model achieves the 9Published as a conference paper at ICLR 2026 best Top-1 accuracy (81.4%) when λ = 4 . Small λ values (e.g., 0.5, 1) overly suppress long-range interactions, while large values (e.g., 8) yield overly smooth attention, diluting local detail. An intermediate scale ( λ = 4 ) balances local sensitivity and global context, and is thus fixed in all experiments. Attention map visualizations (Figure 7) further validate this choice. Table 3: Ablation studies on LaplacianFormer architecture. (left) Top-1 accuracy (%) of LaplacianFormer variants using different inverse solvers: conjugate gradient (CG) vs. Newton–Schulz (NS). (right) Effects of the Laplacian kernel scale λ on LaplacianFormer-Tiny. 
+
+Model CG (%) NS (%) LaplacianFormer-Tiny 79.2 81.4 
+
+LaplacianFormer-Small 81.4 83.8 
+
+λ 0.5 1 2 4 8Top-1 Acc (%) ↑ 79.4 79.6 80.1 81.4 78.5 𝜆𝜆 =0.5  𝜆𝜆 =1  𝜆𝜆 =2  𝜆𝜆 =4  𝜆𝜆 =8 
+
+Figure 7: Visualization of attention maps under different Laplacian kernel scales λ. From left to right: λ = 0 .5, 1, 2, 4, 8. 
+
+6 CONCLUSIONS AND FUTURE WORK 
+
+We propose LaplacianFormer , a Transformer variant that employs a Laplacian kernel to construct injective and normalized attention, enabling fine-grained token discrimination with linear com-plexity. To ensure scalability, we adopt the Nystr¨ om approximation and accelerate computation via Newton–Schulz iteration, with efficient CUDA support for both forward and backward passes. LaplacianFormer strikes a balance between expressiveness and efficiency, performing well on both vision and long-sequence tasks. Moreover, it achieves strong results on downstream applications such as object detection and segmentation, further demonstrating its generalization capability. This work specifically focuses on comparing Laplacian and Gaussian kernels—the latter being the dominant choice in prior linear attention models Katharopoulos et al. (2020); Lu et al. (2021); Chen et al. (2021). Our goal is to challenge this convention through both theoretical analysis and empirical validation. Broader comparisons with other kernel families (e.g., cosine, polynomial) are left as future work. 
+
+ACKNOWLEDGMENTS 
+
+This work was supported by Beijing Natural Science Foundation (L231013, L241056, JQ23014), National Natural Science Foundation of China (Nos. 62376271, U22B2034, 62572059, and 62365014), Jiangxi Provincial Natural Science Foundation (No. 20253BAC280104), Shenzhen S&T Programme (No. CJGJZD20240729141906008), Taishan Scholars Program No.TSQN202507241, Key R&D Program of Shandong Province, China No.2025KJHZ013, Shan-dong Provincial University Youth Innovation and Technology Support Program No.2022KJ291, Shandong Provincial Natural Science Foundation for Young Scholars Program No.ZR2025QC1627, Qilu University of Technology (Shandong Academy of Sciences) Youth Outstanding Talent Program No. 2024QZJH02, Open Project of Key Laboratory of Computing Power Network and Information Security (No. 2024PY021), and the Open Project Program of State Key Laboratory of Virtual Real-ity Technology and Systems, Beihang University (No. VRLAB2025B03). 10 Published as a conference paper at ICLR 2026 
+
+REFERENCES 
+
+Long Minh Bui, Tho Tran Huu, Duy Dinh, Tan Minh Nguyen, and Trong Nghia Hoang. Revisiting kernel attention with correlated gaussian process representation. ArXiv , abs/2502.20525, 2025. Yifan Chen, Qi Zeng, Heng Ji, and Yun Yang. Skyformer: Remodel self-attention with gaussian kernel and nystr¨ om method. In Neural Information Processing Systems , 2021. Bowen Cheng, Alexander G. Schwing, and Alexander Kirillov. Per-pixel classification is not all you need for semantic segmentation. In Neural Information Processing Systems , 2021. Krzysztof Marcin Choromanski, Valerii Likhosherstov, David Dohan, Xingyou Song, Andreea Gane, Tamas Sarlos, Peter Hawkins, Jared Quincy Davis, Afroz Mohiuddin, Lukasz Kaiser, David Benjamin Belanger, Lucy J Colwell, and Adrian Weller. Rethinking attention with per-formers. In International Conference on Learning Representations , 2021. Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, K. Li, and Li Fei-Fei. Imagenet: A large-scale hierarchical image database. 2009 IEEE Conference on Computer Vision and Pattern Recognition ,pp. 248–255, 2009. Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszko-reit, and Neil Houlsby. An image is worth 16x16 words: Transformers for image recognition at scale. In 9th International Conference on Learning Representations, ICLR 2021, Virtual Event, Austria, May 3-7, 2021 , 2021. Yuchen Duan, Weiyun Wang, Zhe Chen, Xizhou Zhu, Lewei Lu, Tong Lu, Yu Qiao, Hongsheng Li, Jifeng Dai, and Wenhai Wang. Vision-rwkv: Efficient and scalable visual perception with rwkv-like architectures. 2025. Jialong Guo, Xinghao Chen, Yehui Tang, and Yunhe Wang. Slab: Efficient transformers with sim-plified linear attention and progressive re-parameterized batch normalization. In International Conference on Machine Learning , 2024. Dongchen Han, Xuran Pan, Yizeng Han, Shiji Song, and Gao Huang. Flatten transformer: Vision transformer using focused linear attention. 2023 IEEE/CVF International Conference on Com-puter Vision (ICCV) , pp. 5938–5948, 2023. Dongchen Han, Yifan Pu, Zhuofan Xia, Yizeng Han, Xuran Pan, Xiu Li, Jiwen Lu, Shiji Song, and Gao Huang. Bridging the divide: Reconsidering softmax and linear attention. In NeurIPS , 2024a. Dongchen Han, Ziyi Wang, Zhuofan Xia, Yizeng Han, Yifan Pu, Chunjiang Ge, Jun Song, Shiji Song, Bo Zheng, and Gao Huang. Demystify mamba in vision: A linear attention perspective. In 
+
+NeurIPS , 2024b. Dongchen Han, Tianzhu Ye, Yizeng Han, Zhuofan Xia, Siyuan Pan, Pengfei Wan, Shiji Song, and Gao Huang. Agent attention: On the integration of softmax and linear attention. In European Conference on Computer Vision , pp. 124–140. Springer, 2024c. Ali Hassani, Steven Walton, Jiachen Li, Shen Li, and Humphrey Shi. Neighborhood attention trans-former. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pp. 6185–6194, June 2023. Ali Hassani, Wen-mei Hwu, and Humphrey Shi. Faster neighborhood attention: Reducing the o(n2)
+
+cost of self attention at the threadblock level. In A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (eds.), Advances in Neural Information Processing Systems ,volume 37, pp. 64717–64734, 2024. Kaiming He, Georgia Gkioxari, Piotr Doll´ ar, and Ross B. Girshick. Mask r-cnn. 2017 IEEE Inter-national Conference on Computer Vision (ICCV) , pp. 2980–2988, 2017. Zhichao Hou, Weizhi Gao, Yuchen Shen, and Xiaorui Liu. Protransformer: Robustify transformers via plug-and-play paradigm. In ICLR 2024 Workshop on Reliable and Responsible Foundation Models , 2024. 11 Published as a conference paper at ICLR 2026 Huaibo Huang, Xiaoqiang Zhou, Jie Cao, Ran He, and Tieniu Tan. Vision transformer with super token sampling. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pp. 12703–12712, 2023. Siyuan Jiang, Senyan Xu, and Xingfu Wang. Rbsformer: Enhanced transformer network for raw image super-resolution. 2024 IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops (CVPRW) , pp. 6479–6488, 2024. Yosuke Kashiwagi, Emiru Tsunoo, and Shinji Watanabe. Gaussian kernelized self-attention for long sequence data and its application to ctc-based speech recognition. ICASSP 2021 - 2021 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) , pp. 6214–6218, 2021. Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and Franccois Fleuret. Transformers are rnns: Fast autoregressive transformers with linear attention. In International Conference on Ma-chine Learning , 2020. Feyza Duman Keles, Pruthuvi Maheshakya Wijewardena, and Chinmay Hegde. On the computa-tional complexity of self-attention. In International Conference on Algorithmic Learning Theory ,2022. Manjin Kim, Paul Hongsuck Seo, Cordelia Schmid, and Minsu Cho. Learning correlation structures for vision transformers. 2024 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pp. 18941–18951, 2024. Siyuan Li, Zedong Wang, Zicheng Liu, Cheng Tan, Haitao Lin, Di Wu, Zhiyuan Chen, Jiangbin Zheng, and Stan Z. Li. Moganet: Multi-order gated aggregation network. In International Con-ference on Learning Representations , 2024. Tsung-Yi Lin, Priya Goyal, Ross B. Girshick, Kaiming He, and Piotr Doll´ ar. Focal loss for dense object detection. 2017 IEEE International Conference on Computer Vision (ICCV) , pp. 2999– 3007, 2017. Ze Liu, Han Hu, Yutong Lin, Zhuliang Yao, Zhenda Xie, Yixuan Wei, Jia Ning, Yue Cao, Zheng Zhang, Li Dong, Furu Wei, and Baining Guo. Swin transformer v2: Scaling up capacity and resolution. 2022 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,pp. 11999–12009, 2021a. Ze Liu, Yutong Lin, Yue Cao, Han Hu, Yixuan Wei, Zheng Zhang, Stephen Lin, and Baining Guo. Swin transformer: Hierarchical vision transformer using shifted windows. 2021 IEEE/CVF In-ternational Conference on Computer Vision (ICCV) , pp. 9992–10002, 2021b. Jiachen Lu, Jinghan Yao, Junge Zhang, Xiatian Zhu, Hang Xu, Weiguo Gao, Chunjing Xu, Tao Xiang, and Li Zhang. Soft: Softmax-free transformer with linear complexity. Advances in Neural Information Processing Systems , 34:21297–21309, 2021. Jiachen Lu, Junge Zhang, Xiatian Zhu, Jianfeng Feng, Tao Xiang, and Li Zhang. Softmax-free linear transformers. International Journal of Computer Vision , 132(8):3355–3374, August 2024. ISSN 1573-1405. doi: 10.1007/s11263-024-02035-5. Weikang Meng, Yadan Luo, Xin Li, Dongmei Jiang, and Zheng Zhang. Polaformer: Polarity-aware linear attention for vision transformers. In The Thirteenth International Conference on Learning Representations , 2025. Adam Paszke, Sam Gross, Soumith Chintala, Gregory Chanan, Edward Yang, Zachary DeVito, Zeming Lin, Alban Desmaison, Luca Antiga, and Adam Lerer. Automatic differentiation in pytorch. 2017. Zhen Qin, Weixuan Sun, Hui Deng, Dongxu Li, Yunshen Wei, Baohong Lv, Junjie Yan, Lingpeng Kong, and Yiran Zhong. cosformer: Rethinking softmax in attention. In The Tenth International Conference on Learning Representations , 2022. 12 Published as a conference paper at ICLR 2026 Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. Roformer: En-hanced transformer with rotary position embedding. Neurocomputing , 568:127063, 2024a. ISSN 0925-2312. doi: https://doi.org/10.1016/j.neucom.2023.127063. Wei Su, Peihan Miao, Huanzhang Dou, and Xi Li. Scanformer: Referring expression comprehension by iteratively scanning. 2024 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pp. 13449–13458, 2024b. Hugo Touvron, Matthieu Cord, Matthijs Douze, Francisco Massa, Alexandre Sablayrolles, and Herv’e J’egou. Training data-efficient image transformers & distillation through attention. In 
+
+International Conference on Machine Learning , 2020. Hugo Touvron, Matthieu Cord, Alexandre Sablayrolles, Gabriel Synnaeve, and Herv’e J’egou. Go-ing deeper with image transformers. 2021 IEEE/CVF International Conference on Computer Vision (ICCV) , pp. 32–42, 2021. Hugo Touvron, Matthieu Cord, and Herv’e J’egou. Deit iii: Revenge of the vit. In European Conference on Computer Vision , 2022. Ashish Vaswani, Noam M. Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Neural Information Processing Systems , 2017. Wenhai Wang, Enze Xie, Xiang Li, Deng-Ping Fan, Kaitao Song, Ding Liang, Tong Lu, Ping Luo, and Ling Shao. Pvt v2: Improved baselines with pyramid vision transformer. Computational Visual Media , 8:415 – 424, 2021a. Wenhai Wang, Enze Xie, Xiang Li, Deng-Ping Fan, Kaitao Song, Ding Liang, Tong Lu, Ping Luo, and Ling Shao. Pyramid vision transformer: A versatile backbone for dense prediction without convolutions. 2021 IEEE/CVF International Conference on Computer Vision (ICCV) , pp. 548– 558, 2021b. Christopher K. I. Williams and Matthias W. Seeger. Using the nystr¨ om method to speed up kernel machines. In Neural Information Processing Systems , 2000. Enze Xie, Wenhai Wang, Zhiding Yu, Anima Anandkumar, Jos´ e Manuel ´ Alvarez, and Ping Luo. Segformer: Simple and efficient design for semantic segmentation with transformers. In Neural Information Processing Systems , 2021. Yunyang Xiong, Zhanpeng Zeng, Rudrasis Chakraborty, Mingxing Tan, Glenn Moo Fung, Yin Li, and Vikas Singh. Nystr¨ omformer: A nystr¨ om-based algorithm for approximating self-attention. 
+
+Proceedings of the ... AAAI Conference on Artificial Intelligence. AAAI Conference on Artificial Intelligence , 35 16:14138–14148, 2021. Hyunwoo Yu, Yubin Cho, Beoungwoo Kang, Seunghun Moon, Kyeongbo Kong, and Suk-Ju Kang. Embedding-free transformer with inference spatial reduction for efficient semantic segmentation. In Aleˇ s Leonardis, Elisa Ricci, Stefan Roth, Olga Russakovsky, Torsten Sattler, and G¨ ul Varol (eds.), Computer Vision – ECCV 2024 , pp. 92–110, 2025. Hao Zhang, Feng Li, Shilong Liu, Lei Zhang, Hang Su, Jun Zhu, Lionel Ni, and Heung-Yeung Shum. DINO: DETR with improved denoising anchor boxes for end-to-end object detection. In 
+
+The Eleventh International Conference on Learning Representations , 2023a. Michael Zhang, Kush S. Bhatia, Hermann Kumbong, and Christopher R’e. The hedgehog & the porcupine: Expressive linear attentions with softmax mimicry. In The Twelfth International Con-ference on Learning Representations , 2024. Xiaosong Zhang, Yunjie Tian, Lingxi Xie, Wei Huang, Qi Dai, Qixiang Ye, and Qi Tian. Hivit: A simpler and more efficient design of hierarchical vision transformer. In The Eleventh International Conference on Learning Representations , 2023b. Yifan Zhang, Bingyi Kang, Bryan Hooi, Shuicheng Yan, and Jiashi Feng. Deep long-tailed learning: A survey. IEEE Transactions on Pattern Analysis and Machine Intelligence , 45:10795–10816, 2021. 13 Published as a conference paper at ICLR 2026 Sixiao Zheng, Jiachen Lu, Hengshuang Zhao, Xiatian Zhu, Zekun Luo, Yabiao Wang, Yanwei Fu, Jianfeng Feng, Tao Xiang, Philip H. S. Torr, and Li Zhang. Rethinking semantic segmenta-tion from a sequence-to-sequence perspective with transformers. 2021 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pp. 6877–6886, 2020. Lei Zhu, Xinjiang Wang, Zhanghan Ke, Wayne Zhang, and Rynson Lau. Biformer: Vision trans-former with bi-level routing attention. Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2023. Xizhou Zhu, Weijie Su, Lewei Lu, Bin Li, Xiaogang Wang, and Jifeng Dai. Deformable DETR: deformable transformers for end-to-end object detection. In 9th International Conference on Learning Representations, ICLR 2021, Virtual Event, Austria, May 3-7, 2021 , 2021. 14 Published as a conference paper at ICLR 2026 
+
+A GRADIENT BEHAVIOR OF GAUSSIAN VS . L APLACIAN KERNELS 
+
+Proposition 1 (Gradient Magnitude Decay in High Dimensions) . Let x, y ∈ Rd. As the distance 
+
+∥x − y∥ → 0, the gradient magnitude of the Gaussian kernel decays linearly to zero. In contrast, the gradient magnitude of the Laplacian kernel remains at a constant non-zero order proportional to √d.Proof. Let t = x − y ∈ Rd. We analyze the ℓ2 norm of the gradient with respect to x, denoted as 
+
+∥∇ xk(x, y)∥2.
+
+1. Gaussian kernel 
+
+The multi-dimensional Gaussian kernel is defined as: 
+
+kGauss (x, y) = exp 
+
+
+
+− ∥t∥22
+
+2σ2
+
+
+
+The gradient vector with respect to x is: 
+
+∇xkGauss = − t
+
+σ2 exp 
+
+
+
+− ∥t∥22
+
+2σ2
+
+
+
+Taking the ℓ2 norm of the gradient yields: 
+
+∥∇ xkGauss ∥2 = ∥t∥2
+
+σ2 exp 
+
+
+
+− ∥t∥22
+
+2σ2
+
+
+
+As ∥t∥2 → 0, the exponential term approaches 1, resulting in: 
+
+∥∇ xkGauss ∥2 ∼ ∥t∥2
+
+σ2
+
+This confirms that the gradient magnitude of the Gaussian kernel diminishes linearly to zero as 
+
+x → y.
+
+2. Laplacian kernel 
+
+The multi-dimensional Laplacian kernel is defined as: 
+
+kLaplace (x, y) = exp 
+
+
+
+− ∥t∥1
+
+λ
+
+
+
+For ti̸ = 0 (∀i ∈ { 1, . . . , d }), the gradient vector is: 
+
+∇xkLaplace = − 1
+
+λ sign (t) exp 
+
+
+
+− ∥t∥1
+
+λ
+
+
+
+where sign (t) ∈ {− 1, 1}d is applied element-wise. The ℓ2 norm of this sign vector is ∥sign (t)∥2 =√d. Taking the ℓ2 norm of the gradient yields: 
+
+∥∇ xkLaplace ∥2 =
+
+√dλ exp 
+
+
+
+− ∥t∥1
+
+λ
+
+
+
+As t → 0, the exponential term approaches 1, resulting in: 
+
+∥∇ xkLaplace ∥2 ∼√dλ
+
+Thus, in a d-dimensional space, the gradient magnitude of the Laplacian kernel is bounded away from zero and remains at a constant order √d/λ .
+
+B MATHEMATICAL PROOF 
+
+This section offers mathematical proofs for the propositions outlined in the main paper. 15 Published as a conference paper at ICLR 2026 
+
+Proposition 2 (Injectivity of Laplacian-based Kernel Embedding) . Let qi, qj ∈ Rd, and define their kernel similarity vectors as 
+
+gi = [ k(qi, k1), . . . , k (qi, kN )] ⊤ ,
+
+where k(q, k) = exp 
+
+
+
+− ∥q−k∥1
+
+> λ
+
+
+
+is the Laplacian kernel, and {k1, . . . , kN } ⊂ Rd is a fixed set of anchor points. Define the normalized feature mapping 
+
+zi = Σ−1/2 gi − 1
+
+N
+
+> N
+
+X
+
+> k=1
+
+gki · 1
+
+!
+
++ 1
+
+N 1,
+
+where Σ is the empirical covariance matrix over {gi}. Suppose the key set is sufficiently rich such that qi̸ = qj ⇒ gi̸ = gj . Assume further that for any qi̸ = qj and c ∈ R, gi − gj̸ = c1 (no constant-vector degeneracy). Then the mapping qi 7 → zi ∈ RN is injective. Proof. We proceed by contradiction. Assume that qi̸ = qj but zi = zj .For notational convenience, let μi = 1
+
+> N
+
+PNk=1 gki denote the mean of the components of gi. We can then rewrite the normalized feature mapping as: 
+
+zi = Σ−1/2(gi − μi1) + 1
+
+N 1.
+
+Expanding the assumed equality zi = zj , we obtain: 
+
+Σ−1/2(gi − μi1) + 1
+
+N 1 = Σ−1/2(gj − μj 1) + 1
+
+N 1.
+
+Subtracting the constant vector 1 
+
+> N
+
+1 from both sides yields: 
+
+Σ−1/2(gi − μi1) = Σ−1/2(gj − μj 1).
+
+Assuming non-degenerate cases where the covariance matrix Σ is strictly positive definite, Σ−1/2
+
+is invertible. Left-multiplying both sides by Σ1/2 gives: 
+
+gi − μi1 = gj − μj 1.
+
+Rearranging the terms gives: 
+
+gi − gj = ( μi − μj )1.
+
+Let c = μi − μj , where c ∈ R is a scalar. Then the equation becomes: 
+
+gi − gj = c1. (10) We now consider two mutually exclusive cases for the value of c:
+
+Case 1: c = 0 .
+
+Equation (10) implies gi = gj . However, since we assumed qi̸ = qj , this directly contradicts the proposition’s assumption that qi̸ = qj ⇒ gi̸ = gj .
+
+Case 2: c̸ = 0 .
+
+Equation (10) implies gi − gj = c1 for some scalar c. Since qi̸ = qj , this directly contradicts the assumption of no constant-vector degeneracy. In both cases, we arrive at a contradiction. Therefore, our initial assumption must be false. The only possibility is that zi = zj ⇒ qi = qj . Thus, the mapping is injective. 
+
+Proposition 3 (Linear-Time Computation of Laplacian Feature Map via Nystr¨ om Approximation) .
+
+Let qi ∈ Rd be a query and {˜k1, . . . , ˜km} ⊂ Rd be a set of m landmark keys sampled via the Nystr¨ om method, where m ≪ N . Define the Laplacian kernel k(q, k) = exp 
+
+
+
+− ∥q−k∥1
+
+> λ
+
+
+
+, and let 
+
+˜gi =
+
+h
+
+k(qi, ˜k1), . . . , k (qi, ˜km)
+
+i⊤
+
+∈ Rm
+
+16 Published as a conference paper at ICLR 2026 
+
+be the landmark kernel similarity vector for the i-th query. Assuming input dimension d and the number of landmarks m are constants with respect to the sequence length N , the normalized em-bedding 
+
+zi = Σ−1/2
+
+˜gi − 1
+
+m
+
+> m
+
+X
+
+> j=1
+
+˜gji · 1
+
+ + 1
+
+m 1 (11) 
+
+can be computed in O(m) time and space. Consequently, computing the feature maps for all N
+
+queries achieves an overall O(N ) time and space complexity at inference time , provided that Σ−1/2
+
+is approximated by an m × m diagonal whitening matrix estimated offline. Proof. The proof proceeds by analyzing the time and space complexity of computing the sequence of embeddings z1, . . . , zN at inference time, based on the m sampled landmarks. 
+
+Step 1: Computation of the landmark similarity vector ˜gi.
+
+For each landmark key ˜kj (j = 1, . . . , m ), computing the Laplacian kernel element ˜gji =exp 
+
+
+
+− ∥qi−˜kj ∥1
+
+> λ
+
+
+
+requires: 1. Vector subtraction qi − ˜kj in Rd, which takes O(d) time. 2. Computing the L1 norm of the resulting difference vector, taking O(d) time. 3. Scalar division by λ and exponentiation, taking O(1) time. Since the input dimension d is assumed to be constant, computing one element ˜gji is bounded by 
+
+O(d) = O(1) . Computing all m elements for the vector ˜gi therefore takes O(m) time. Storing the resulting vector ˜gi requires O(m) space. 
+
+Step 2: Centering the feature vector. 
+
+Let μi = 1
+
+> m
+
+Pmj=1 ˜gji . Summing the m elements of ˜gi and dividing by m takes O(m) time. Sub-tracting this scalar mean from each component of ˜gi to compute the centered vector ˜gi − μi1 takes an additional O(m) time. The space required for the centered vector is O(m).
+
+Step 3: Applying the whitening transformation. 
+
+By assumption, the m×m matrix Σ−1/2 is approximated by a diagonal matrix computed offline. Let 
+
+D = diag (d1, . . . , d m) be this diagonal approximation. The matrix-vector multiplication D(˜ gi −
+
+μi1) reduces to an element-wise multiplication (Hadamard product) between the diagonal entries of 
+
+D and the centered vector. This element-wise operation takes O(m) time. Storing the diagonal of D
+
+requires O(m) space, and the resulting transformed vector also takes O(m) space. (Note: Without the diagonal assumption, a full matrix-vector multiplication would require O(m2) time) .
+
+Step 4: Adding the final bias term. 
+
+Adding the scalar constant 1 
+
+> m
+
+to each element of the resulting vector to obtain the final normalized embedding zi ∈ Rm requires O(m) time. 
+
+Conclusion: 
+
+For a single query qi, summing the time complexities yields O(m) + O(m) + O(m) + O(m) = 
+
+O(m) inference time. Extending this operation to the entire sequence of N queries results in a total inference time of N × O (m) = O(N · m). Because the number of Nystr¨ om landmarks m is a predefined parameter such that m ≪ N , m acts as a constant with respect to the sequence length. Thus, the overall computation of the feature maps scales linearly, achieving O(N ) time and space complexity. 17
