@@ -6,85 +6,92 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-30
-- 运行时间：2026-04-30 21:00:52 UTC
+- 最新运行日期：2026-05-01
+- 运行时间：2026-05-01 20:11:31 UTC
 - 运行状态：成功
-- 本次总论文数：21
-- 精读区：9
+- 本次总论文数：23
+- 精读区：11
 - 速读区：12
 
 ### 今日简报（AI）
-今日精选21篇前沿成果，重点攻克视频理解效率瓶颈与大规模自动化标注难题。
-满分论文 $\text{PKS}^4$ 提出并行运动选择性扫描架构，DenseStep2M 则实现了百万级教学视频的无训练密集标注。
-建议深入探索视频大模型在长视频解析与高质量数据生产中的工程化落地。
-- 详情：[/202604/30/README](/202604/30/README)
+- 今日共生成 23 篇推荐（精读 11 篇，速读 12 篇）
+- 精读：《Report of the 5th PVUW Challenge: Towards More Diverse Modalities in Pixel-Level Understanding》（9.5/10）, 《EgoMAGIC- An Egocentric Video Field Medicine Dataset for Training Perception Algorithms》（9.0/10）
+- 速读：《HOI-aware Adaptive Network for Weakly-supervised Action Segmentation》（8.5/10）, 《CurEvo: Curriculum-Guided Self-Evolution for Video Understanding》（8.5/10）, 《All Eyes on the Workflow: Automated and Efficient Event Discovery from Video Streams》（8.0/10）
+- 这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。
+- 详情：[/202605/01/README](/202605/01/README)
 
 ### 精读区论文标签
-1. [$\text{PKS}^4$:Parallel Kinematic Selective State Space Scanners for Efficient Video Understanding](/202604/30/2604.26461v1-textpks4parallel-kinematic-selective-state-space-scanners-for-efficient-video-understanding)  
-   标签：评分：10.0/10、query:lvu
-   evidence：用于长视频时间建模的线性复杂度高效状态空间模型
-2. [DenseStep2M: A Scalable, Training-Free Pipeline for Dense Instructional Video Annotation](/202604/30/2604.26565v1-densestep2m-a-scalable-training-free-pipeline-for-dense-instructional-video-annotation)  
-   标签：评分：10.0/10、query:lvu
-   evidence：长视频理解与程序性活动推理
-3. [CRC-SAM: SAM-Based Multi-Modal Segmentation and Quantification of Colorectal Cancer in CT, Colonoscopy, and Histology Images](/202604/30/2604.24793v1-crc-sam-sam-based-multi-modal-segmentation-and-quantification-of-colorectal-cancer-in-ct-colonoscopy-and-histology-images)  
+1. [Report of the 5th PVUW Challenge: Towards More Diverse Modalities in Pixel-Level Understanding](/202605/01/2604.26031v1-report-of-the-5th-pvuw-challenge-towards-more-diverse-modalities-in-pixel-level-understanding)  
+   标签：评分：9.5/10、query:lvu
+   evidence：总结了具有多模态轨道的像素级视频理解挑战赛的目标和方法
+2. [EgoMAGIC- An Egocentric Video Field Medicine Dataset for Training Perception Algorithms](/202605/01/2604.22036v1-egomagic--an-egocentric-video-field-medicine-dataset-for-training-perception-algorithms)  
    标签：评分：9.0/10、query:medvid
-   evidence：结肠镜和CT影像中结直肠癌的多模态分割
-4. [Opto-Atomic Spatio-Temporal Holographic Correlators for High-Speed 3D CNNs](/202604/30/2604.24800v1-opto-atomic-spatio-temporal-holographic-correlators-for-high-speed-3d-cnns)  
+   evidence：用于训练感知算法的第一视角医疗活动数据集
+3. [DiffuSAM: Diffusion-Based Prompt-Free SAM2 for Few-Shot and Source-Free Medical Image Segmentation](/202605/01/2604.24719v1-diffusam-diffusion-based-prompt-free-sam2-for-few-shot-and-source-free-medical-image-segmentation)  
+   标签：评分：9.0/10、query:medvid
+   evidence：基于扩散模型的SAM2医学图像分割适配
+4. [FCMBench-Video: Benchmarking Document Video Intelligence](/202605/01/2604.25186v2-fcmbench-video-benchmarking-document-video-intelligence)  
    标签：评分：9.0/10、query:lvu
-   evidence：高效的视频时间建模架构
-5. [OmniVTG: A Large-Scale Dataset and Training Paradigm for Open-World Video Temporal Grounding](/202604/30/2604.25276v1-omnivtg-a-large-scale-dataset-and-training-paradigm-for-open-world-video-temporal-grounding)  
-   标签：评分：9.0/10、query:lvu
-   evidence：用于视频时间定位的大规模数据集和训练范式
-6. [CoRE: Concept-Reasoning Expansion for Continual Brain Lesion Segmentation](/202604/30/2604.25376v1-core-concept-reasoning-expansion-for-continual-brain-lesion-segmentation)  
+   evidence：评估时序定位与推理的文档视频智能基准
+5. [CoRE: Concept-Reasoning Expansion for Continual Brain Lesion Segmentation](/202605/01/2604.25376v1-core-concept-reasoning-expansion-for-continual-brain-lesion-segmentation)  
    标签：评分：9.0/10、query:medvid
-   evidence：MRI中的持续性脑病变分割
-7. [Image Compression with Bubble-Aware Frame Rate Adaptation for Energy-Efficient Video Capsule Endoscopy](/202604/30/2604.25464v2-image-compression-with-bubble-aware-frame-rate-adaptation-for-energy-efficient-video-capsule-endoscopy)  
+   evidence：利用概念推理扩展进行MRI脑损伤持续分割
+6. [TopoMamba: Topology-Aware Scanning and Fusion for Segmenting Heterogeneous Medical Visual Media](/202605/01/2604.25545v1-topomamba-topology-aware-scanning-and-fusion-for-segmenting-heterogeneous-medical-visual-media)  
    标签：评分：9.0/10、query:medvid
-   evidence：胶囊内镜视频图像压缩与帧率自适应
-8. [TopoMamba: Topology-Aware Scanning and Fusion for Segmenting Heterogeneous Medical Visual Media](/202604/30/2604.25545v2-topomamba-topology-aware-scanning-and-fusion-for-segmenting-heterogeneous-medical-visual-media)  
+   evidence：用于分割异构医学视觉媒体的拓扑感知扫描融合框架
+7. [A Data-Centric Framework for Intraoperative Fluorescence Lifetime Imaging for Glioma Surgical Guidance](/202605/01/2604.26147v1-a-data-centric-framework-for-intraoperative-fluorescence-lifetime-imaging-for-glioma-surgical-guidance)  
    标签：评分：9.0/10、query:medvid
-   evidence：用于异构医学视觉媒体分割的拓扑感知扫描
-9. [DepthPilot: From Controllability to Interpretability in Colonoscopy Video Generation](/202604/30/2604.26232v1-depthpilot-from-controllability-to-interpretability-in-colonoscopy-video-generation)  
+   evidence：用于手术指导和肿瘤切除的术中荧光成像
+8. [MedSynapse-V: Bridging Visual Perception and Clinical Intuition via Latent Memory Evolution](/202605/01/2604.26283v1-medsynapse-v-bridging-visual-perception-and-clinical-intuition-via-latent-memory-evolution)  
    标签：评分：9.0/10、query:medvid
-   evidence：结肠镜检查视频生成的解释性框架
+   evidence：用于医疗VLM和长程信息消散的潜记忆演化
+9. [A Real-time Scale-robust Network for Glottis Segmentation in Nasal Transnasal Intubation](/202605/01/2604.27383v1-a-real-time-scale-robust-network-for-glottis-segmentation-in-nasal-transnasal-intubation)  
+   标签：评分：9.0/10、query:medvid
+   evidence：插管视频中的实时声门分割
+10. [Assessing Pancreatic Ductal Adenocarcinoma Vascular Invasion: the PDACVI Benchmark](/202605/01/2604.27582v1-assessing-pancreatic-ductal-adenocarcinoma-vascular-invasion-the-pdacvi-benchmark)  
+   标签：评分：9.0/10、query:medvid
+   evidence：胰腺癌血管侵犯评估基准
+11. [Stop Holding Your Breath: CT-Informed Gaussian Splatting for Dynamic Bronchoscopy](/202605/01/2604.28179v1-stop-holding-your-breath-ct-informed-gaussian-splatting-for-dynamic-bronchoscopy)  
+   标签：评分：9.0/10、query:medvid
+   evidence：将内窥镜视频注册到CT扫描以进行支气管镜导航
 
 ### 速读区论文标签
-1. [FCMBench-Video: Benchmarking Document Video Intelligence](/202604/30/2604.25186v1-fcmbench-video-benchmarking-document-video-intelligence)  
+1. [HOI-aware Adaptive Network for Weakly-supervised Action Segmentation](/202605/01/2604.26227v1-hoi-aware-adaptive-network-for-weakly-supervised-action-segmentation)  
    标签：评分：8.5/10、query:lvu
-   evidence：评估时间定位和推理的文档视频智能基准
-2. [Seeing Further and Wider: Joint Spatio-Temporal Enlargement for Micro-Video Popularity Prediction](/202604/30/2604.20311v2-seeing-further-and-wider-joint-spatio-temporal-enlargement-for-micro-video-popularity-prediction)  
+   evidence：利用全局时序人机交互作为视频级先验进行动作分割
+2. [CurEvo: Curriculum-Guided Self-Evolution for Video Understanding](/202605/01/2604.26707v1-curevo-curriculum-guided-self-evolution-for-video-understanding)  
+   标签：评分：8.5/10、query:lvu
+   evidence：课程引导的视频理解自我演化框架
+3. [All Eyes on the Workflow: Automated and Efficient Event Discovery from Video Streams](/202605/01/2604.22476v1-all-eyes-on-the-workflow-automated-and-efficient-event-discovery-from-video-streams)  
    标签：评分：8.0/10、query:lvu
-   evidence：短视频中的时间动态和历史相关性
-3. [Building a Precise Video Language with Human-AI Oversight](/202604/30/2604.21718v1-building-a-precise-video-language-with-human-ai-oversight)  
+   evidence：从视频流中高效发现事件和时序分割
+4. [Video Analysis and Generation via a Semantic Progress Function](/202605/01/2604.22554v1-video-analysis-and-generation-via-a-semantic-progress-function)  
    标签：评分：8.0/10、query:lvu
-   evidence：用于精确视频描述和推理的视频语言模型
-4. [Seeing Fast and Slow: Learning the Flow of Time in Videos](/202604/30/2604.21931v1-seeing-fast-and-slow-learning-the-flow-of-time-in-videos)  
-   标签：评分：8.0/10、query:lvu
-   evidence：学习视频中的时间结构和对时间流逝的推理
-5. [Micro-DualNet: Dual-Path Spatio-Temporal Network for Micro-Action Recognition](/202604/30/2604.21011v1-micro-dualnet-dual-path-spatio-temporal-network-for-micro-action-recognition)  
-   标签：评分：7.0/10、query:lvu
-   evidence：用于细粒度视频理解的时空网络
-6. [Latent Denoising Improves Visual Alignment in Large Multimodal Models](/202604/30/2604.21343v1-latent-denoising-improves-visual-alignment-in-large-multimodal-models)  
-   标签：评分：7.0/10、query:lvu
-   evidence：通过潜空间去噪提高大型多模态模型的理解能力
-7. [Efficient Logic Gate Networks for Video Copy Detection](/202604/30/2604.21694v1-efficient-logic-gate-networks-for-video-copy-detection)  
-   标签：评分：7.0/10、query:lvu
-   evidence：用于大规模视频复制检测的高效逻辑门网络
-8. [Anatomy-Aware Unsupervised Detection and Localization of Retinal Abnormalities in Optical Coherence Tomography](/202604/30/2604.22139v1-anatomy-aware-unsupervised-detection-and-localization-of-retinal-abnormalities-in-optical-coherence-tomography)  
-   标签：评分：7.0/10、query:medvid
-   evidence：用于诊断视网膜疾病的医学影像自动分析
-9. [Radiomics-Guided Vision Transformers for Survival Analysis](/202604/30/2604.21056v1-radiomics-guided-vision-transformers-for-survival-analysis)  
+   evidence：用于分析视频序列随时间演变的语义进度函数
+5. [Learning from Noisy Prompts: Saliency-Guided Prompt Distillation for Robust Segmentation with SAM](/202605/01/2604.23314v1-learning-from-noisy-prompts-saliency-guided-prompt-distillation-for-robust-segmentation-with-sam)  
+   标签：评分：7.5/10、query:medvid
+   evidence：利用基础模型和解剖先验在医学影像中进行鲁棒分割
+6. [MMEB-V3: Measuring the Performance Gaps of Omni-Modality Embedding Models](/202605/01/2604.23321v1-mmeb-v3-measuring-the-performance-gaps-of-omni-modality-embedding-models)  
+   标签：评分：7.5/10、query:lvu
+   evidence：评估文本、图像、视频和音频嵌入的综合基准
+7. [Caries DETR: Tooth Structure-aware Prior and Lesion-aware Dynamic Loss Refinement for DETR Based Caries Detection](/202605/01/2604.23718v1-caries-detr-tooth-structure-aware-prior-and-lesion-aware-dynamic-loss-refinement-for-detr-based-caries-detection)  
+   标签：评分：7.5/10、query:medvid
+   evidence：用于口腔内图像龋齿检测的专用Transformer框架
+8. [Zoom In, Reason Out: Efficient Far-field Anomaly Detection in Expressway Surveillance Videos via Focused VLM Reasoning Guided by Bayesian Inference](/202605/01/2604.23724v2-zoom-in-reason-out-efficient-far-field-anomaly-detection-in-expressway-surveillance-videos-via-focused-vlm-reasoning-guided-by-bayesian-inference)  
+   标签：评分：7.5/10、query:lvu
+   evidence：通过聚焦VLM推理实现监控视频中的高效异常检测
+9. [Misinformation Span Detection in Videos via Audio Transcripts](/202605/01/2604.21767v1-misinformation-span-detection-in-videos-via-audio-transcripts)  
+   标签：评分：6.5/10、query:lvu
+   evidence：利用多模态音频转录检测视频中的虚假信息片段
+10. [NeuroAPS-Net: Neuro-Anatomically Aware Point Cloud Representation for Efficient Alzheimer's Disease Classification](/202605/01/2604.22883v1-neuroaps-net-neuro-anatomically-aware-point-cloud-representation-for-efficient-alzheimers-disease-classification)  
    标签：评分：6.5/10、query:medvid
-   evidence：用于高维医学影像数据和生存分析的视觉Transformer
-10. [HumanScore: Benchmarking Human Motions in Generated Videos](/202604/30/2604.20157v1-humanscore-benchmarking-human-motions-in-generated-videos)  
+   evidence：用于阿尔茨海默病分类的MRI衍生点云时空分析
+11. [Breaking the Resource Wall: Geometry-Guided Sequence Modeling for Efficient Semantic Segmentation](/202605/01/2604.23399v1-breaking-the-resource-wall-geometry-guided-sequence-modeling-for-efficient-semantic-segmentation)  
+   标签：评分：6.5/10、query:medvid
+   evidence：使用线性复杂度算子的高效语义分割架构
+12. [GenMatter: Perceiving Physical Objects with Generative Matter Models](/202605/01/2604.22160v1-genmatter-perceiving-physical-objects-with-generative-matter-models)  
    标签：评分：6.0/10、query:lvu
-   evidence：生成视频中人体动作与时间稳定性的基准测试
-11. [UniCVR: From Alignment to Reranking for Unified Zero-Shot Composed Visual Retrieval](/202604/30/2604.20318v1-unicvr-from-alignment-to-reranking-for-unified-zero-shot-composed-visual-retrieval)  
-   标签：评分：6.0/10、query:lvu
-   evidence：统一的零样本组合视频检索
-12. [LaplacianFormer:Rethinking Linear Attention with Laplacian Kernel](/202604/30/2604.20368v1-laplacianformerrethinking-linear-attention-with-laplacian-kernel)  
-   标签：评分：6.0/10、query:lvu
-   evidence：用于将Transformer扩展到高分辨率视觉的高效线性注意力
+   evidence：用于基于运动的场景解释和运动线索分组的生成模型
 
 
 <div class="dpr-home-promo-card">
