@@ -1,0 +1,391 @@
+Title: SS3D: End2End Self-Supervised 3D from Web Videos
+
+URL Source: https://arxiv.org/pdf/2604.22686v1
+
+Published Time: Mon, 27 Apr 2026 01:02:55 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# SS3D: End2End Self-Supervised 3D from Web Videos 
+
+Marwane Hariat 1, Gianni Franchi 1,2, David Filliat 2, and Antoine Manzanera 1 
+
+> 1
+
+U2IS, ENSTA – Institut Polytechnique de Paris, Palaiseau, France 
+
+{marwane.hariat,antoine.manzanera, gianni.franchi}@ensta.fr  
+
+> 2
+
+Pôle Recherche, Agence Ministérielle pour l’IA de Défense, Palaiseau, France 
+
+{david.filliat}@polytechnique.edu 
+
+Fig. 1: SS3D reconstructs both the exterior (left) and interior (right) of the Sagrada Familia from two casual videos: one recorded outside and one inside (see Appendix E for the link towards both videos). The reconstruction relies on self-supervised estimates of depth, camera pose, and intrinsics. Depth maps and camera trajectories are visualized, with each camera shown along its corresponding viewpoint. Thumbnail frames above each point cloud give an overview of the video used to generate that 3D reconstruction. All point clouds are rendered with Open3D. 
+
+Abstract. We present SS3D, a web-scale SfM-based self-supervision pretraining pipeline for feed-forward 3D estimation from monocular video. Our model jointly predicts depth, ego-motion, and intrinsics in a single forward pass and is trained/evaluated as a coherent end-to-end 3D es-timator. To stabilize joint learning, we use an intrinsics-first two-stage schedule and a unified single-checkpoint evaluation protocol. Scaling SfM self-supervision to unconstrained web video is challenging due to weak multi-view observability and strong corpus heterogeneity; we address these with a multi-view signal proxy (MVS) used for filtering and cur-riculum sampling, and with expert training distilled into a single stu-dent. Pretraining on YouTube-8M ( ∼ 100 M frames after filtering) yields strong cross-domain zero-shot transfer and improved fine-tuning per-formance over prior self-supervised baselines. We release the pretrained checkpoint and code.  
+
+> arXiv:2604.22686v1 [cs.CV] 24 Apr 2026 2M. Hariat et al.
+
+## 1 Introduction 
+
+Recent progress in AI such as VGGT [53] and MapAnything [23] show that a single network can infer multiple geometric quantities from monocular video, in-cluding depth, camera motion, and camera intrinsics, without running a classical SfM pipeline [47], photometric stereo [21], or shape-from-shading [40, 52]. However, despite their effectiveness, current 3D-centric foundation models share a critical limitation: they require large-scale curated datasets with high-quality depth or 3D annotations, which are costly and time-consuming to collect. Ob-taining dense ground-truth depth, precise multi-view camera poses, or accurate 3D point maps typically relies on specialized sensors, structured light systems, or expensive multi-camera rigs [44]. As a result, existing 3D/4D foundation models remain constrained by the availability and coverage of such annotated datasets [39]. This bottleneck is in stark contrast with the success of 2D and vision-language foundation models, which scale through self-supervised learning on massive and uncurated image corpora, such as DINO [33] for images and JEPA [2] for videos. Motivated by the scalability of self-supervised learning, we focus on SfM-based [67] (reprojection-based) self-supervision from monocular video, where depth, pose, and intrinsics are learned via view synthesis. Together, these components allow us to back-project pixels to 3D and align them across views, yielding a 3D reconstruction up to an overall scale. And we ask a simple question: Can a 3D-aware feed-forward model be trained at scale without any explicit 3D annotations in a fully self-supervised way? 
+
+SfM-based self-supervision ultimately induces a 3D reconstruction from depth, pose, and intrinsics, yet prior work has largely emphasized depth estimation, with pose and intrinsics often treated as supporting variables or assumed known. This makes it unclear whether the learned components can be combined into a coher-ent end-to-end 3D estimator. We therefore reframe the objective as end-to-end 3D estimation, where the goal is the quality and consistency of the downstream induced 3D reconstruction. Concretely, we train a single model that jointly pre-dicts depth, pose, and intrinsics, and stabilize joint learning with a two-stage schedule: we first learn intrinsics, then freeze them while learning depth and pose. We show that this tri-task optimization yields more consistent 3D recon-structions. A second challenge is scale: naively applying reprojection losses to unconstrained web video is unstable due to weak multi-view signal (e.g., low parallax) and het-erogeneous video statistics. We propose a web-scale recipe that stabilizes train-ing along two axes: (i) we introduce a lightweight multi-view signal strength proxy (MVS) that estimates how well a scene is observable from multiple views, and we shape the MVS distribution over training by enforcing a minimum floor via filtering and using a curriculum that gradually broadens the distribution as learning stabilizes, (ii) we address heterogeneity by restructuring the corpus into homogeneous sub-domains where SfM-based self-supervision is reliable, training self-supervised experts on each sub-domain, and distilling them into a single de-ployable student model. Abbreviated paper title 3
+
+Using this recipe, we pretrain on a multi-million-video corpus derived from YouTube-8M [1] ( ∼6M videos) and release the resulting pretrained weights and code. The pretrained model shows strong zero-shot transfer across diverse do-mains and provides a substantially stronger initialization for in-domain fine-tuning compared to prior self-supervised baselines. By unifying the estimator (depth/pose/intrinsics) and stabilizing SfM-based self-supervision for web-scale heterogeneity, we enable large-scale 3D pretraining from casual video and unlock the full potential of self-supervised learning. It supports both the possibility of having a single foundation model with strong cross-domain zero-shot generalization and getting a specialized model optimized for a specific target distribution through fine-tuning. To summarize, our main contributions are: 1. A Unified 3D Estimator: We introduce a single feed-forward model that jointly predicts depth, ego-motion, and intrinsics; we stabilize training with a two-stage intrinsics-first schedule and evaluate all outputs under a unified single-checkpoint protocol. 2. Scaling SfM-based self-supervision to multi-domain web videos: 
+
+We stabilize web-scale SfM-based self-supervision training with a multi-view signal strength proxy-based curriculum sampling and mitigate domain het-erogeneity via experts distilled into a single student, enabling multi-million-video pretraining. 3. A Pretrained model release with code: We release code, pretrained checkpoints, and data-processing scripts to support reproducibility and fa-cilitate follow-up research. 
+
+## 2 Related works 
+
+Depth-centric SfM-based self-supervision. Following the view-synthesis framework of Zhou et al. [67], many self-supervised methods learn a depth network together with an ego-motion network (and occasionally intrinsics [14], though these are often assumed known) to reconstruct a target frame from a source frame, using a photometric reconstruction loss as supervision. A large body of work improves robustness via additional mechanisms, including uncer-tainty [37], indoor-specific adaptations [11], semantic guidance [16, 29, 46, 68], backbone architectural changes [15, 20, 22, 32, 56, 63, 64], and handling violations of the photometric model such as occlusions [13], dynamic objects [17, 25, 26], low-texture regions [18, 49, 59]. Despite this coupled formulation, progress is still reported primarily on depth, with pose and intrinsics often treated as auxiliary variables estimated by separate networks and evaluated under separate protocols, when reported at all. In several works [30,62], depth is reported from models trained for depth benchmarks (e.g., KITTI), whereas pose is reported from separately trained variants optimized for odometry evaluation (e.g., KITTI Odometry), and intrinsics may be evaluated on yet another dataset [14] (e.g., EuRoC). Additionally, even when a method jointly trains depth and pose, results are sometimes obtained via task-specific 4 M. Hariat et al. 
+
+checkpoint selection [43] rather than reporting all outputs from one shared check-point. These practices make it difficult to assess whether depth–pose–intrinsics form a coherent end-to-end 3D estimator. This motivates evaluating depth, pose, and intrinsics jointly from a single trained feed-forward model checkpoint under a unified protocol that reflects end-to-end 3D consistency. 
+
+Scaling to a large and heterogeneous video corpus. Recent supervised depth methods have improved substantially by training on mixtures of large la-beled datasets [35,42,60] and scaling model capacity [4,41], and recent “foundation-style” 3D models leverage large amounts of annotated multi-domain 3D data [23, 31, 53, 54, 57] to reach outstanding performance. In contrast, SfM-based self-supervision methods remain tied to narrowly curated data or closely related mix-tures (e.g., KITTI + Cityscapes [5] or mixture of indoor datasets [8]). However, scaling SfM-based self-supervision methods to unconstrained, multi-domain web video has not yet been demonstrated for two reasons. First, reprojection-based supervision is only reliable when the scene is sufficiently observable from multi-ple views (e.g., parallax). In much of web video this multi-view signal is weak or unstable. Prior in-the-wild attempts often require substantial post-processing to obtain reliable estimates [9], or focus on restricted subsets of web video (e.g., training only on a specific YouTube-8M category such as “quadcopter”, like [14]). Second, in a multi-domain corpus, reprojection-based self-supervision behaves differently across regimes, yielding gradients with incompatible scales and statistics. A single model trained naïvely on the mixture struggles to recon-cile these conflicting cues as shown in [25]. These challenges motivate our web-scale approach, which uses a multi-view signal proxy to guide curriculum-based training and expert distillation to handle corpus heterogeneity. While curriculum learning [55] and mixture-of-experts distillation [58] are broadly used concepts, we show how to adapt them to the specific failure modes of SfM-based self-supervision on unconstrained web video. 
+
+Zero-shot Abilities. Most SfM-based self-supervision methods are developed and evaluated in an in-domain regime: models are typically trained and tested on the same benchmark distribution (e.g., KITTI for outdoor driving [61, 69], NYUv2 for indoor [11]), or on closely related datasets (e.g., Cityscapes →KITTI [17, 28] or NYUv2 →ScanNet [18, 30]), with the goal of maximizing benchmark performance and producing a benchmark-specialized model. As a consequence, robustness to large domain shifts has not been a primary design target in this literature, and performance often degrades out-of-domain [8,36]. In contrast, our multi-domain web-video pretraining yields a single released model that exhibits strong cross-domain zero-shot transfer. 
+
+In-Domain specialization. Fine-tuning to a specific target domain remains essential in many practical settings, yet traditional SfM-based self-supervision pipelines are commonly trained from scratch or initialized from generic visual pretraining [13, 17, 63] (e.g., ImageNet [45] or more recently from vision trans-former models [10, 19, 33]). As a result, these models start with limited trans-ferable 3D geometric prior, leaving accuracy and sample-efficiency on the table. We find that our pretrained model consistently improves in-domain fine-tuning Abbreviated paper title 5
+
+performance compared to prior self-supervised baselines. 
+
+## 3 Method 
+
+We introduce SS3D the first self-supervised 3D foundation model trained at web scale. Our objective is to learn a single feed-forward model that jointly estimates depth, camera motion, and intrinsics from raw video, without any 3D ground-truth supervision, and that generalizes across domains. Let C denote a large corpus of unconstrained web videos. Our goal is to learn a parametric model 
+
+fθ : {Ii}Ni=1 −→ { (Di, T i, K i)}Ni=1 
+
+that maps a short clip of N consecutive RGB frames to per-frame depth, pose, and intrinsics. The model is trained entirely via structure-from-motion (SfM) self-supervision (see Sec. 3.1). Our approach consists of three key components: (i) a unified 3D estimator trained with multi-view photometric supervision, (ii) a web-scale stabilization strategy based on multi-view observability, and (iii) expert distillation to address large-scale domain heterogeneity. 
+
+3.1 Problem Setup and Self-Supervised Objective 
+
+Let It : Ω → R3 denote the RGB image at time t, defined over pixel domain 
+
+Ω ⊂ R2. A pixel p ∈ Ω is written in homogeneous coordinates p = ( u, v, 1) ⊤.We denote: 
+
+– Dt(p) ∈ R+: the predicted depth at pixel p,
+
+– Tt = [ Rt | tt] ∈ SE (3) : the camera pose with Rt ∈ SO (3) and tt ∈ R3,
+
+– Kt ∈ R3×3: the camera intrinsics matrix. 
+
+3D Back-Projection. A pixel p is lifted to 3D in camera coordinates as 
+
+Xt(p) = Dt(p)K−1 
+
+> t
+
+p ∈ R3. (1) 
+
+Relative Pose. Given two frames i and j, the relative transformation is 
+
+Ti→j = T −1 
+
+> i
+
+Tj . (2) 
+
+View Synthesis. We synthesize frame Ii from Ij via differentiable warping: 
+
+ˆIi(p) = Ij (π(Kj Ti→j Xi(p))) , (3) where π(x, y, z ) = ( x/z, y/z ) denotes perspective projection and bilinear sam-pling is used for interpolation. 6 M. Hariat et al. 
+
+Photometric Self-Supervision. The reconstruction loss between synthesized and target images is: 
+
+Ψi→j = X
+
+> p∈Ω
+
+ρ  ˆIi(p) − Ii(p), (4) where ρ(·) is a robust penalty (Charbonnier + SSIM). Unlike classical pairwise training, we sample all ordered pairs (i, j ) within a clip of length N , leading to the multi-view objective: 
+
+Ψ = X
+
+> i̸=j
+
+Ψi→j . (5) This objective implicitly reconstructs a consistent 3D scene across the clip. 
+
+3.2 Unified 3D Foundation Model 
+
+Prior SfM-based self-supervision methods typically use separate networks for depth and pose and assume known intrinsics. In contrast, we train a single feed-forward transformer that jointly predicts depth, pose, and intrinsics: 
+
+fθ
+
+ {Ii}Ni=1 
+
+ = {(Di, T i, K i)}Ni=1 . (6) 
+
+Intrinsics Parameterization. We assume a pinhole camera with centered princi-pal point: 
+
+Ki =
+
+
+
+f ix 0 W/ 20 f iy H/ 20 0 1
+
+ . (7) Intrinsics are predicted per frame but assumed constant within a clip (see below). 
+
+Two-Stage Optimization. Joint optimization of (D, T, K ) is unstable. We there-fore adopt a two stage approach: 
+
+– Stage 1: We begin with a brief warm-up that trains depth and pose while keeping intrinsics fixed to provided calibration; and then optimize intrinsics head while freezing depth and pose. 
+
+– Stage 2: freeze intrinsics and optimize depth and pose. At inference and during Stage 2, we use averaged intrinsics 
+
+¯K = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+Ki.
+
+See Appendix A for statistics on the estimated intrinsics over sequence of suc-cessive images. During evaluation, we use the same checkpoint to evaluate all components: depth, pose and intrinsics. We show that our unified estimator translates into better downstream 3D reconstruction. Abbreviated paper title 7
+
+3.3 Scaling Self-Supervision to Web-Scale Video 
+
+We now scale our unified 3D estimator (Sec. 3.2) from small curated datasets to large and diverse web videos. Scaling SfM-based self-supervision to unconstrained web video fails as shown on Fig. 3 and Tab. 1 for two main reasons. (A) Weak geometric signal. Many videos contain little useful multi-view information. For example, the camera may be almost static, or it may only rotate or zoom. In such cases, reprojection pro-vides weak or misleading training signals. (B) Strong domain heterogeneity. 
+
+Web videos cover many different scenes, motions, and camera settings. As a re-sult, loss statistics vary significantly across videos, and naïvely mixing everything together often leads to unstable training. We address (A) by estimating the multi-view observability of each video using a simple geometric score. This score is used to filter and schedule training data through a curriculum. We address (B) by training domain-specific experts and then distilling them into a single model. 
+
+Multi-View Signal Proxy (MVS) We introduce a simple score called Multi-View Signal (MVS) whose goal is to measure whether a video contains enough parallax to provide useful geometric supervision. Intuitively, when there is strong parallax, correspondences between frames are better explained by an epipolar model (fundamental matrix F ) than by a planar model (homography H). We use this idea to define a simple observability score. Let C be our video corpus and v ∈ C a video. For two consecutive frames 
+
+(It, I t+1 ), we extract M correspondences: 
+
+M = {(xti, x t+1  
+
+> i
+
+)}Mi=1 .
+
+From these matches, we estimate a fundamental matrix F and a homography 
+
+H. We compute the geometric error of each model. Epipolar error: 
+
+dF (i) = (xt+1 
+
+> i
+> ⊤
+
+F x ti)2
+
+(F x ti)21 + ( F x ti)22 + ( F ⊤xt+1  
+
+> i
+
+)21 + ( F ⊤xt+1  
+
+> i
+
+)22
+
+. (8) Homography error (We omit the homogeneous normalization  π (·) in the notation for simplicity): 
+
+dH (i) = ∥xt+1  
+
+> i
+
+− Hx ti∥22 + ∥xti − H−1xt+1  
+
+> i
+
+∥22. (9) We average the errors: 
+
+rF = 1
+
+M
+
+X
+
+> i
+
+dF (i), rH = 1
+
+M
+
+X
+
+> i
+
+dH (i). (10) We define a frame-level parallax score: 
+
+Pt,t +1 = rH
+
+rF
+
+. (11) 8 M. Hariat et al. 
+
+If F explains the matches better than H, then rF is small and the score is high, indicating strong parallax. The video-level MVS score is the temporal average: 
+
+MVS (v) = 1
+
+N
+
+X
+
+> t
+
+Pt,t +1 . (12) High MVS indicates strong multi-view geometry. Low MVS indicates weak trans-lation or mostly planar scene. See Appendix B for a discussion on the correlation between MVS proxy and real parallax in videos. 
+
+Curriculum sampling . We use MVS to guide training: First, we remove videos with extremely weak geometric signal. Then, we train using high-MVS videos first, and progressively include lower-MVS videos as training becomes stable. Let F (·) be the cumulative distribution function of MVS over the corpus. For a threshold α ∈ [0 , 1] , we define: 
+
+Sα = {v ∈ C | F (MVS (v)) ≥ α}. (13) Training starts with large α (strong geometry only) and gradually decreases α
+
+to include harder videos. We show in Tab. 1 and Appendix B that this curriculum stabilizes training and improves robustness. 
+
+3.4 Distillation of Experts 
+
+Even with MVS-based curriculum, web videos remain very diverse. Training a single model directly on the full mixture can be unstable, as different domains may interfere with each other. We address this in two steps. 
+
+Domain-Specific Experts. We automatically partition the corpus C into K
+
+more homogeneous subsets using a simple K-Means clustering (more details in Sec. 3.5 and Appendix C). 
+
+{C k}Kk=1 .
+
+For each subset Ck, we train an expert model Ek using the same self-supervised objective. Since each subset is more consistent, training is more stable and each expert can specialize to its domain. 
+
+Distillation into a Single Student. We then train a single student model on the full corpus. For each training clip, we: (1) identify its sub-domain k, (2) obtain the expert predictions (D∗, T ∗, K ∗), (3) use them as soft targets. The student is trained with the photometric loss plus a distillation loss: 
+
+L = Ψ + λdistill Ldistill . (14) Abbreviated paper title 9
+
+The distillation loss encourages the student to match the expert predictions up to scale ambiguity: 
+
+Ldistill = ρ(D, D ∗) + ρ(t, t ∗) + ∥R⊤R∗ − I∥F + ∥K−1K∗ − I∥F . (15) Here ρ(·, ·) is a scale-and-shift invariant matching function similar to [42]. At inference time, we discard the experts and use only the distilled student model.  
+
+> Fig. 2: Overview of SS3D (1) Train self-supervised, sub-domain experts on multi-domain web video. (2) Distill expert predictions into a single deployable student model. (3) At inference, the student predicts depth, pose, and intrinsics, which together induce a 3D reconstruction (e.g., point cloud) displayed on the far right. For illustration, “domains” are schematic and may not match the clustering used in training.
+
+3.5 Training on YouTube-8M 
+
+In this section, we instantiate SS3D at scale by pretraining on YouTube-8M, a multi-million-video corpus spanning diverse scenes, motions, and camera char-acteristics. This setting directly stress-tests the two challenges identified earlier: (i) observability, since much casual video contains weak multi-view geometry, and (ii) heterogeneity, since the corpus mixes domains with very different motion and intrinsics statistics. Our training pipeline combines the unified 3D estimator (Sec. 3.2) with MVS-based filtering/curriculum (Sec. 3.3) and expert distillation 10 M. Hariat et al. 
+
+(Sec. 3.4), yielding a single deployable student model trained entirely without ground-truth 3D labels. Below we describe the details used to produce our pre-trained checkpoint. 
+
+Implementation details Our architecture follows a VGGT-style transformer design, initialized with a pretrained DINOv2 image encoder, and uses three lightweight heads to predict depth, ego-motion, and intrinsics. The network is composed of 24 attention blocks, each containing a frame-wise self-attention layer and a global self-attention layer. Following the ViT-L configuration used in DINOv2, every attention layer operates with a 1024-dimensional feature rep-resentation and 16 attention heads. To improve training stability, QKNorm and LayerScale are incorporated in every attention layer, initializing the LayerScale parameters to 0.01. For image tokenization, we use DINOv2 features and augment them with po-sitional embeddings. Tokens from the 4th, 11th, 17th, and 23rd blocks are for-warded to DPT for the upsampling stage. We train on  518 ×518  crops and sample clips at 10 FPS. Videos are segmented into short clips using shot boundary detec-tion, which supports our assumption of approximately constant intrinsics within each clip. Shot detection and constant fps is achieved using the library PyAv. More details on the software used to preprocess YouTube-8M are provided in Appendix C. After shot segmentation and MVS-based filtering, our training cor-pus contains approximately 100M frames. We form  K = 5  sub-domains by clustering the corpus videos using K-Means over frame-level CLIP [38] embeddings, averaged per clip (more details in Ap-pendix C). We use a sequence length of  N = 8 . We use a batch size 8 composed of 4 different sub-domains and we follow the method proposed in [48] to com-pute Pareto-optimal gradients. We first train the  K experts and then distill them into a single student. Experts and student share the same architecture. Experts were trained on 2 NVIDIA RTX A6000 GPUs, and the student was trained on 64 H100 GPUs. We use standard augmentations (horizontal flips; random brightness/contrast/saturation/hue) following [13]. Our method is implemented in PyTorch [34]. Training is done using the Adam optimiser [24] with  β1 = 0 .99 
+
+and  β2 = 0 .999 . We use  λdistill = 0 .2. At test time, we resize inputs so that the shorter side is 518 and run a single forward pass of the distilled student. We release the resulting pretrained checkpoint together with training code and data-processing scripts to enable reproducibility and facilitate future work on scalable self-supervised 3D pretraining. 
+
+## 4 Experiments 
+
+We evaluate SS3D as an end-to-end 3D estimator trained with SfM-based self-supervision at web scale. In contrast to depth-centric evaluation, we report per-formance across the three outputs our model jointly predicts: depth, camera mo-tion, and intrinsics, using a unified protocol. In particular, all zero-shot results are produced from a single YouTube-8M pretrained checkpoint, and fine-tuning results start from that same checkpoint unless stated otherwise. This section val-Abbreviated paper title 11 
+
+idates the three claims of the paper: (i) training a unified depth–pose–intrinsics estimator yields more coherent induced 3D reconstructions, (ii) stable web-scale training requires MVS-aware sampling and heterogeneity handling, and (iii) the resulting pretrained model transfers zero-shot across domains and provides a strong fine-tuning initialization 
+
+4.1 Data 
+
+We evaluate across benchmarks spanning diverse benchmarks. For depth, we focus on KITTI [12] and NYUv2 [50] , the most widely used outdoor and indoor depth benchmarks. We intentionally pair them because they differ sharply in scene scale, camera motion patterns, and intrinsics, making them a strong test of cross-domain generalization. For camera motion, we evaluate in more challenging regimes: Sintel [7] (synthetic, complex motion and appearance changes) and TUM-RGBD [51] (real-world, dynamic scenes). 
+
+4.2 Naïve scaling fails without stability mechanisms 
+
+Before presenting final results, we first validate a core motivation of SS3D: simply feeding more web videos to SfM-based self-supervision does not reliably improve performance. Figure 3 illustrates this failure mode: when trained naively on a heterogeneous mixture, optimization becomes unstable, and the model struggles to learn from all regimes simultaneously. In contrast, handling heterogeneity with expert training followed by distillation enables the student to improve on both indoor and outdoor contexts instead of oscillating or forgetting. 
+
+4.3 Ablation: each component matters 
+
+Table 1 decomposes the full pipeline and provides two key takeaways. First, naïve web-scale mixing alone is not sufficient: pretraining on YouTube-8M with-out the proposed stabilization mechanisms yields limited gains, consistent with the instability shown earlier. Second, performance improves monotonically as we add the components that correspond directly to our story: the unified estimator (+U), distillation (+D), and finally MVS-based filtering and curriculum (Full). Importantly, improve-ments are visible both in zero-shot transfer (ZS) and after fine-tuning (FT), demonstrating that our method is not merely “more data,” but rather a recipe that makes web-scale SfM training reliable. 
+
+4.4 Zero-shot cross-domain transfer 
+
+We now evaluate generalization without any target-domain training. All zero-shot results are reported from the same pretrained checkpoint after YouTube-8M pretraining, using the unified single-checkpoint protocol. 12 M. Hariat et al. 
+
+Fig. 3: Training dynamics for indoor and outdoor contexts. We can see that naively scaling to more data yields few to no gains. Experiments done with distillation of two experts: indoor and outdoor.                                              
+
+> ID MVS+Curr Ldistill YTB8M Unified 3D KITTI Abs Rel ↓NYU Abs Rel ↓
+> ZS FT ZS FT
+> B1 –0.082 –0.115 B2 –0.080 –0.117 +U ✓–0.078 –0.111 +YT ✓✓0.19 0.079 0.26 0.112 +D ✓✓✓0.101 0.072 0.125 0.098
+> Full ✓✓✓✓0.092 0.064 0.116 0.090
+
+Table 1: Ablation study on KITTI and NYU in zero-shot (ZS) and fine-tuning (FT) w/ VGGT architecture. B1 follows [18] that uses a slightly different head, so we report B2 with our slightly modified VGGT. B1/B2: no pretraining on YTB8M(FT only), no distillation, no MVS+Curr, no Unified 3D. +U: add Unified 3D. +YT: naive YTB8M mixing. +D: add distillation. Full: add MVS+Curr filtering. 
+
+Depth. Tables 2 and 4 show that SS3D achieves strong zero-shot depth estima-tion across both outdoor and indoor domains. While fully supervised methods remain an upper bound, our self-supervised pretrained model approaches the performance of strong supervised baselines, and does so without any 3D ground truth. Compared to prior self-supervised methods (which are typically evaluated in-domain), our zero-shot results are already competitive, indicating that web-scale pretraining learns transferable geometric priors rather than benchmark-specific shortcuts. The fact that this holds on both KITTI and NYUv2, despite their substantial differences in scene scale and camera intrinsics, supports our main claim that SS3D learns domain-robust geometry from raw video. 
+
+Camera motion. Table 6 reports zero-shot pose results on Sintel and dynamic TUM-RGBD and compares to AnyCam, which is designed to leverage strong pre-trained depth/flow estimators. SS3D is competitive with AnyCam, despite being trained fully self-supervised and predicting depth, pose, and intrinsics jointly. 
+
+Intrinsics. Table 8 evaluates focal estimation on Sintel. SS3D predicts intrinsics directly from raw monocular video and achieves competitive focal accuracy with-out any calibration supervision. These results further reinforce the strength of our whole framework and show that we can infer camera intrinsics quite precisely from raw monocular videos. Abbreviated paper title 13                                                    
+
+> Method Supervised Lower is better ↓Higher is better ↑
+> Abs Rel Sq Rel RMSE RMSE log δ1δ2δ3
+> DPT [41] ✓0.100 N/A N/A N/A 0.901 N/A N/A
+> MidASv3.1 [6] ✓0.127 N/A N/A N/A 0.850 N/A N/A
+> DepthAnything [60] ✓0.076 N/A N/A N/A 0.947 N/A N/A
+> VGGT(Depth+Cam) [53] ✓0.093 N/A N/A N/A 0.917 N/A N/A
+> Ours ✗0.092 0.678 4.016 0.166 0.928 0.968 0.984
+
+Table 2: KITTI ZS. Zero-shot on KITTI. Light-blue metrics are the most challenging ones.                                                                                              
+
+> Method Supervised Lower is better ↓Higher is better ↑
+> Abs Rel Sq Rel RMSE RMSE log δ1δ2δ3
+> Monodepth2 [13] ✗0.110 0.831 4.642 0.187 0.883 0.962 0.982 MonoViT [63] ✗0.099 0.708 4.372 0.175 0.900 0.967 0.984 HR-Depth [32] ✗0.109 0.792 4.632 0.185 0.884 0.962 0.983 RA-Depth [20] ✗0.096 0.613 4.216 0.171 0.903 0.968 0.985 DIFFNet [65] ✗0.102 0.764 4.483 0.180 0.896 0.965 0.983 Hariat et al. [18] ✗0.082 0.604 4.108 0.162 0.928 0.968 0.985 Adabins [3] ✓0.058 N/A 2.360 0.088 0.964 0.995 0.999 DPT [41] ✓0.062 N/A 2.573 0.092 0.959 0.9995 0.999 DepthAnything [60] ✓0.046 N/A 1.896 0.069 0.982 0.9998 0.9999
+> Ours ✗0.064 0.530 3.212 0.138 0.946 0.977 0.986
+
+Table 3: KITTI FT. Fine-tuning on KITTI [12] and evaluating on KITTI. 
+
+Method Supervised Lower is better ↓ Higher is better ↑
+
+Abs Rel RMSE log δ1 δ2 δ3
+
+DPT [41] ✓ 0.098 N/A N/A 0.903 N/A N/A 
+
+MidASv3.1 [6] ✓ 0.048 N/A N/A 0.980 N/A N/A 
+
+DepthAnything [60] ✓ 0.043 N/A N/A 0.981 N/A N/A 
+
+VGGT(Depth+Cam) [53] ✓ 0.036 N/A N/A 0.980 N/A N/A 
+
+Ours ✗ 0.116 0.523 0.055 0.822 0.947 0.967 
+
+Table 4: NYU ZS. Zero-shot on NYUv2. 
+
+Method Supervised Lower is better ↓ Higher is better ↑
+
+Abs Rel RMSE RMSE log δ1 δ2 δ3
+
+MovingIndoor [66] ✗ 0.208 0.712 0.086 0.674 0.900 0.968 StructDepth [27] ✗ 0.140 0.540 0.060 0.817 0.955 0.988 MonoIndoor++ [30] ✗ 0.132 0.517 N/A 0.834 0.961 0.990 IndoorDepth [11] ✗ 0.126 0.494 0.054 0.845 0.965 0.991 Hariat et al. [18] ✗ 0.115 0.458 0.054 0.859 0.970 0.992 Adabins [3] ✓ 0.103 0.364 0.044 0.903 0.984 0.997 DPT [41] ✓ 0.110 0.357 0.045 0.904 0.988 0.998 DepthAnything [60] ✓ 0.056 0.206 0.024 0.984 0.998 1.000 
+
+Ours ✗ 0.090 0.418 0.049 0.866 0.970 0.992 
+
+Table 5: NYU FT. Fine-tuning on NYUv2 [50] and evaluating on NYUv2. 
+
+Category Method No sup. Time Sintel TUM-RGBD (dyn.) ATE ↓ RPE t ↓ RPE r ↓ ATE ↓ RPE t ↓ RPE r ↓
+
+AnyCam w/o ref. ✓ < 20 s 0.099 0.045 0.567 0.095 0.025 1.050 
+
+Ours w/o ref. ✓ < 20 s 0.090 0.043 0.601 0.092 0.026 1.064 
+
+Table 6: Pose estimation comparison to AnyCam [57] in zero-shot. Absolute trajectory error (ATE) and relative pose error for translation (RPE t) and rotation (RPE r ) on Sintel and TUM-RGBD. 
+
+4.5 In-domain fine-tuning and specialization 
+
+We next evaluate whether web-scale self-supervised pretraining also improves the standard in-domain benchmark protocol. In these experiments, we initialize from the YouTube-8M pretrained checkpoint and fine-tune on the target dataset. Tables 3 and 5 show that SS3D provides a substantially stronger initialization than prior self-supervised baselines, yielding clear gains after fine-tuning on both KITTI and NYUv2. Notably, these improvements hold in both outdoor and in-door settings, suggesting that the pretrained model captures transferable geo-metric structure that improves sample efficiency and final accuracy. This directly supports our claim that large-scale video pretraining benefits not only cross-domain transfer (zero-shot) but also in-domain specialization. Table 7 further quantifies the role of experts + distillation: increasing the num-ber of experts improves downstream fine-tuning performance, consistent with the hypothesis that experts reduce cross-domain interference during pretraining and that distillation successfully consolidates these domain-specific cues into a single student. 14 M. Hariat et al.                                    
+
+> # Experts AbsRel ↓δ1(%) ↑
+> Baseline 0.080 0.928 No expert 0.079 0.930
+> 2Experts 0.069 0.939
+> 5Experts 0.064 0.946 Table 7: Expert ablation. Abla-tion on the number of experts dis-tilled to the student during pretraining on YouTube8M. Performance is evalu-ated by fine-tuning and evaluating on KITTI. The baseline corresponds to no pretraining on YouTube8M.
+> Method AFE (px) ↓RFE (%) ↓
+> UniDepth 447.4 0.357 Dust3r 434.0 0.364 AnyCam 252.2 0.181
+> Ours 256.6 0.167 Table 8: Intrinsic parameter esti-mation on Sintel. Mean absolute fo-cal error (AFE) and mean relative focal error (RFE).
+
+4.6 Qualitative Results 
+
+We visualize qualitative depth predictions and the corresponding 3D reconstruc-tions induced by the predicted depth, pose, and intrinsics in Fig. 4. Additional qualitative results and comparisons to prior self-supervised methods are provided in Appendix D. Overall, our predictions are sharp and geometrically coherent, supporting our claim that a unified estimator translates into improved down-stream 3D reconstruction. 
+
+## 5 Conclusion 
+
+In this work, we have presented SS3D, the first framework to successfully scale self-supervised depth, pose, and intrinsics estimation using a web-scale video dataset (YouTube-8M). Our experiments demonstrate that while "more data" is often viewed as a panacea, naïve scaling in the context of Structure-from-Motion (SfM) self-supervision leads to optimization instability and poor generalization due to scene heterogeneity. Ultimately, SS3D proves that the vast, non curated repository of web videos can serve as a powerful signal for learning universal geometric priors that lead to SotA performance. This shifts the bottleneck of 3D computer vision from expensive lidar/RGB-D data collection to the intelligent curation and stabilization of existing video data. Abbreviated paper title 15 
+
+Fig. 4: Qualitative results on KITTI after finetuning. Each row shows (left to right): 
+
+Input , Point Cloud , Depth .
+
+## References 
+
+1. Abu-El-Haija, S., Kothari, N., Lee, J., Natsev, P., Toderici, G., Varadarajan, B., Vijayanarasimhan, S.: Youtube-8m: A large-scale video classification benchmark. arXiv preprint arXiv:1609.08675 (2016) 2. Assran, M., Bardes, A., Fan, D., Garrido, Q., Howes, R., Muckley, M., Rizvi, A., Roberts, C., Sinha, K., Zholus, A., et al.: V-jepa 2: Self-supervised video models enable understanding, prediction and planning. arXiv preprint arXiv:2506.09985 (2025) 3. Bhat, S.F., Alhashim, I., Wonka, P.: Adabins: Depth estimation using adaptive bins. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 4009–4018 (2021) 4. Bhat, S.F., Birkl, R., Wofk, D., Wonka, P., Müller, M.: Zoedepth: Zero-shot transfer by combining relative and metric depth. arXiv preprint arXiv:2302.12288 (2023) 5. Bian, J., Li, Z., Wang, N., Zhan, H., Shen, C., Cheng, M.M., Reid, I.: Unsupervised scale-consistent depth and ego-motion learning from monocular video. Advances in neural information processing systems 32 (2019) 6. Birkl, R., Wofk, D., Müller, M.: Midas v3. 1–a model zoo for robust monocular relative depth estimation. arXiv preprint arXiv:2307.14460 (2023) 7. Butler, D.J., Wulff, J., Stanley, G.B., Black, M.J.: A naturalistic open source movie for optical flow evaluation. In: European conference on computer vision. pp. 611– 625. Springer (2012) 8. Chen, T., An, S., Zhang, Y., Ma, C., Wang, H., Guo, X., Zheng, W.: Improving monocular depth estimation by leveraging structural awareness and complemen-tary datasets. In: European Conference on Computer Vision. pp. 90–108. Springer (2020) 9. Chen, Y., Schmid, C., Sminchisescu, C.: Self-supervised learning with geometric constraints in monocular video: Connecting flow, depth, and camera. In: Proceed-ings of the IEEE/CVF international conference on computer vision. pp. 7063–7072 (2019) 16 M. Hariat et al. 10. Dosovitskiy, A., Beyer, L., Kolesnikov, A., Weissenborn, D., Zhai, X., Unterthiner, T., Dehghani, M., Minderer, M., Heigold, G., Gelly, S., et al.: An image is worth 16x16 words: Transformers for image recognition at scale. arXiv preprint arXiv:2010.11929 (2020) 11. Fan, C., Yin, Z., Li, Y., Zhang, F.: Deeper into self-supervised monocular indoor depth estimation. arXiv preprint arXiv:2312.01283 (2023) 12. Geiger, A., Lenz, P., Stiller, C., Urtasun, R.: Vision meets robotics: The kitti dataset. The international journal of robotics research 32 (11), 1231–1237 (2013) 13. Godard, C., Mac Aodha, O., Firman, M., Brostow, G.J.: Digging into self-supervised monocular depth estimation. In: Proceedings of the IEEE/CVF in-ternational conference on computer vision. pp. 3828–3838 (2019) 14. Gordon, A., Li, H., Jonschkowski, R., Angelova, A.: Depth from videos in the wild: Unsupervised monocular depth learning from unknown cameras. In: Proceedings of the IEEE/CVF international conference on computer vision. pp. 8977–8986 (2019) 15. Guizilini, V., Ambrus, R., Pillai, S., Raventos, A., Gaidon, A.: 3d packing for self-supervised monocular depth estimation. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 2485–2494 (2020) 16. Guizilini, V., Hou, R., Li, J., Ambrus, R., Gaidon, A.: Semantically-guided representation learning for self-supervised monocular depth. arXiv preprint arXiv:2002.12319 (2020) 17. Hariat, M., Manzanera, A., Filliat, D.: Rebalancing gradient to improve self-supervised co-training of depth, odometry and optical flow predictions. In: Pro-ceedings of the IEEE/CVF winter conference on applications of computer vision. pp. 1267–1276 (2023) 18. Hariat, M., Manzanera, A., Filliat, D.: Improved monocular depth prediction us-ing distance transform over pre-semantic contours with self-supervised neural net-works. In: Proceedings of the Computer Vision and Pattern Recognition Confer-ence. pp. 21868–21879 (2025) 19. He, K., Chen, X., Xie, S., Li, Y., Dollár, P., Girshick, R.: Masked autoencoders are scalable vision learners. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 16000–16009 (2022) 20. He, M., Hui, L., Bian, Y., Ren, J., Xie, J., Yang, J.: Ra-depth: Resolution adaptive self-supervised monocular depth estimation. In: European Conference on Computer Vision. pp. 565–581. Springer (2022) 21. Hernandez, C., Vogiatzis, G., Cipolla, R.: Multiview photometric stereo. IEEE Transactions on Pattern Analysis and Machine Intelligence 30 (3), 548–554 (2008) 22. Jia, S., Pei, X., Yao, W., Wong, S.C.: Self-supervised depth estimation leveraging global perception and geometric smoothness using on-board videos. arXiv preprint arXiv:2106.03505 (2021) 23. Keetha, N., Müller, N., Schönberger, J., Porzi, L., Zhang, Y., Fischer, T., Knapitsch, A., Zauss, D., Weber, E., Antunes, N., et al.: Mapanything: Univer-sal feed-forward metric 3d reconstruction. arXiv preprint arXiv:2509.13414 (2025) 24. Kingma, D.P.: Adam: A method for stochastic optimization. arXiv preprint arXiv:1412.6980 (2014) 25. Klingner, M., Termöhlen, J.A., Mikolajczyk, J., Fingscheidt, T.: Self-supervised monocular depth estimation: Solving the dynamic object problem by semantic guidance. In: European conference on computer vision. pp. 582–600. Springer (2020) 26. Lee, S., Im, S., Lin, S., Kweon, I.S.: Learning monocular depth in dynamic scenes via instance-aware projection consistency. In: Proceedings of the AAAI conference on artificial intelligence. vol. 35, pp. 1863–1872 (2021) Abbreviated paper title 17 27. Li, B., Huang, Y., Liu, Z., Zou, D., Yu, W.: Structdepth: Leveraging the struc-tural regularities for self-supervised indoor depth estimation. In: Proceedings of the IEEE/CVF international conference on computer vision. pp. 12663–12673 (2021) 28. Li, H., Gordon, A., Zhao, H., Casser, V., Angelova, A.: Unsupervised monocular depth learning in dynamic scenes. In: Conference on Robot Learning. pp. 1908– 1917. PMLR (2021) 29. Li, R., Xue, D., Su, S., He, X., Mao, Q., Zhu, Y., Sun, J., Zhang, Y.: Learning depth via leveraging semantics: Self-supervised monocular depth estimation with both implicit and explicit semantic guidance. Pattern Recognition 137 , 109297 (2023) 30. Li, R., Ji, P., Xu, Y., Bhanu, B.: Monoindoor++: Towards better practice of self-supervised monocular depth estimation for indoor environments. IEEE Transac-tions on Circuits and Systems for Video Technology 33 (2), 830–846 (2022) 31. Lin, H., Chen, S., Liew, J., Chen, D.Y., Li, Z., Shi, G., Feng, J., Kang, B.: Depth anything 3: Recovering the visual space from any views. arXiv preprint arXiv:2511.10647 (2025) 32. Lyu, X., Liu, L., Wang, M., Kong, X., Liu, L., Liu, Y., Chen, X., Yuan, Y.: Hr-depth: High resolution self-supervised monocular depth estimation. In: Proceedings of the AAAI conference on artificial intelligence. vol. 35, pp. 2294–2301 (2021) 33. Oquab, M., Darcet, T., Moutakanni, T., Vo, H., Szafraniec, M., Khalidov, V., Fernandez, P., Haziza, D., Massa, F., El-Nouby, A., et al.: Dinov2: Learning robust visual features without supervision. arXiv preprint arXiv:2304.07193 (2023) 34. Paszke, A., Gross, S., Massa, F., Lerer, A., Bradbury, J., Chanan, G., Killeen, T., Lin, Z., Gimelshein, N., Antiga, L., et al.: Pytorch: An imperative style, high-performance deep learning library. Advances in neural information processing sys-tems 32 (2019) 35. Piccinelli, L., Yang, Y.H., Sakaridis, C., Segu, M., Li, S., Van Gool, L., Yu, F.: Unidepth: Universal monocular metric depth estimation. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 10106– 10116 (2024) 36. Pinard, C., Manzanera, A.: Does it work outside this benchmark? introducing the rigid depth constructor tool: Depth validation dataset construction in rigid scenes for the masses. Multimedia Tools and Applications 82 (27), 41641–41667 (2023) 37. Poggi, M., Aleotti, F., Tosi, F., Mattoccia, S.: On the uncertainty of self-supervised monocular depth estimation. In: Proceedings of the IEEE/CVF conference on com-puter vision and pattern recognition. pp. 3227–3237 (2020) 38. Radford, A., Kim, J.W., Hallacy, C., Ramesh, A., Goh, G., Agarwal, S., Sastry, G., Askell, A., Mishkin, P., Clark, J., et al.: Learning transferable visual models from natural language supervision. In: International conference on machine learning. pp. 8748–8763. PmLR (2021) 39. Rajapaksha, U., Sohel, F., Laga, H., Diepeveen, D., Bennamoun, M.: Deep learning-based depth estimation methods from monocular image and videos: A comprehensive survey. ACM Comput. Surv. 56 (12) (oct 2024). https://doi.org/ 10.1145/3677327 
+
+40. Ramachandran, V.S.: Perception of shape from shading. Nature 331 (6152), 163– 166 (1988) 41. Ranftl, R., Bochkovskiy, A., Koltun, V.: Vision transformers for dense prediction. In: Proceedings of the IEEE/CVF international conference on computer vision. pp. 12179–12188 (2021) 18 M. Hariat et al. 42. Ranftl, R., Lasinger, K., Hafner, D., Schindler, K., Koltun, V.: Towards robust monocular depth estimation: Mixing datasets for zero-shot cross-dataset transfer. IEEE transactions on pattern analysis and machine intelligence 44 (3), 1623–1637 (2020) 43. Ranjan, A., Jampani, V., Balles, L., Kim, K., Sun, D., Wulff, J., Black, M.J.: Com-petitive collaboration: Joint unsupervised learning of depth, camera motion, optical flow and motion segmentation. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 12240–12249 (2019) 44. Rohan, A., Hasan, M.J., Petrovski, A.: A systematic literature review on deep learning-based depth estimation in computer vision (2025), https://arxiv.org/ abs/2501.05147 
+
+45. Russakovsky, O., Deng, J., Su, H., Krause, J., Satheesh, S., Ma, S., Huang, Z., Karpathy, A., Khosla, A., Bernstein, M., et al.: Imagenet large scale visual recog-nition challenge. International journal of computer vision 115 (3), 211–252 (2015) 46. Saeedan, F., Roth, S.: Boosting monocular depth with panoptic segmentation maps. In: Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision. pp. 3853–3862 (2021) 47. Schonberger, J.L., Frahm, J.M.: Structure-from-motion revisited. In: Proceedings of the IEEE conference on computer vision and pattern recognition. pp. 4104–4113 (2016) 48. Sener, O., Koltun, V.: Multi-task learning as multi-objective optimization. Ad-vances in neural information processing systems 31 (2018) 49. Shu, C., Yu, K., Duan, Z., Yang, K.: Feature-metric loss for self-supervised learning of depth and egomotion. In: European Conference on Computer Vision. pp. 572– 588. Springer (2020) 50. Silberman, N., Hoiem, D., Kohli, P., Fergus, R.: Indoor segmentation and support inference from rgbd images. In: European conference on computer vision. pp. 746– 760. Springer (2012) 51. Sturm, J., Engelhard, N., Endres, F., Burgard, W., Cremers, D.: A benchmark for the evaluation of rgb-d slam systems. In: 2012 IEEE/RSJ international conference on intelligent robots and systems. pp. 573–580. IEEE (2012) 52. Tankus, Sochen, Yeshurun: A new perspective [on] shape-from-shading. In: Pro-ceedings of IEEE International Conference on Computer Vision. pp. 862–869. IEEE (2003) 53. Wang, J., Chen, M., Karaev, N., Vedaldi, A., Rupprecht, C., Novotny, D.: Vggt: Visual geometry grounded transformer. In: Proceedings of the Computer Vision and Pattern Recognition Conference. pp. 5294–5306 (2025) 54. Wang, S., Leroy, V., Cabon, Y., Chidlovskii, B., Revaud, J.: Dust3r: Geometric 3d vision made easy. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 20697–20709 (2024) 55. Wang, Y., Yue, Y., Lu, R., Liu, T., Zhong, Z., Song, S., Huang, G.: Efficient-train: Exploring generalized curriculum learning for training visual backbones. In: Proceedings of the IEEE/CVF International Conference on Computer Vision. pp. 5852–5864 (2023) 56. Watson, J., Mac Aodha, O., Prisacariu, V., Brostow, G., Firman, M.: The temporal opportunist: Self-supervised multi-frame monocular depth. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 1164–1174 (2021) 57. Wimbauer, F., Chen, W., Muhle, D., Rupprecht, C., Cremers, D.: Anycam: Learn-ing to recover camera poses and intrinsics from casual videos. In: Proceedings of the Computer Vision and Pattern Recognition Conference. pp. 16717–16727 (2025) Abbreviated paper title 19 58. Xie, Z., Zhang, Y., Zhuang, C., Shi, Q., Liu, Z., Gu, J., Zhang, G.: Mode: A mixture-of-experts model with mutual distillation among the experts. In: Proceed-ings of the AAAI Conference on Artificial Intelligence. vol. 38, pp. 16067–16075 (2024) 59. Xu, W., Zou, L., Wu, L., Fu, Z.: Self-supervised monocular depth learning in low-texture areas. Remote Sensing 13 (9), 1673 (2021) 60. Yang, L., Kang, B., Huang, Z., Xu, X., Feng, J., Zhao, H.: Depth anything: Un-leashing the power of large-scale unlabeled data. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 10371–10381 (2024) 61. Yin, Z., Shi, J.: Geonet: Unsupervised learning of dense depth, optical flow and camera pose. In: Proceedings of the IEEE conference on computer vision and pat-tern recognition. pp. 1983–1992 (2018) 62. Zhan, H., Garg, R., Weerasekera, C.S., Li, K., Agarwal, H., Reid, I.: Unsupervised learning of monocular depth estimation and visual odometry with deep feature reconstruction. In: Proceedings of the IEEE conference on computer vision and pattern recognition. pp. 340–349 (2018) 63. Zhao, C., Zhang, Y., Poggi, M., Tosi, F., Guo, X., Zhu, Z., Huang, G., Tang, Y., Mattoccia, S.: Monovit: Self-supervised monocular depth estimation with a vision transformer. In: 2022 international conference on 3D vision (3DV). pp. 668–678. IEEE (2022) 64. Zhou, H., Greenwood, D., Taylor, S.: Self-supervised monocular depth estimation with internal feature fusion. arXiv preprint arXiv:2110.09482 (2021) 65. Zhou, H., Greenwood, D., Taylor, S.: Self-supervised monocular depth estimation with internal feature fusion. In: British Machine Vision Conference (BMVC) (2021) 66. Zhou, J., Wang, Y., Qin, K., Zeng, W.: Moving indoor: Unsupervised video depth learning in challenging environments. In: Proceedings of the IEEE/CVF interna-tional conference on computer vision. pp. 8618–8627 (2019) 67. Zhou, T., Brown, M., Snavely, N., Lowe, D.G.: Unsupervised learning of depth and ego-motion from video. In: Proceedings of the IEEE conference on computer vision and pattern recognition. pp. 1851–1858 (2017) 68. Zhu, S., Brazil, G., Liu, X.: The edge of depth: Explicit constraints between seg-mentation and depth. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 13116–13125 (2020) 69. Zou, Y., Luo, Z., Huang, J.B.: Df-net: Unsupervised joint learning of depth and flow using cross-task consistency. In: Proceedings of the European conference on computer vision (ECCV). pp. 36–53 (2018)
