@@ -6,79 +6,66 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-02
-- 运行时间：2026-05-02 20:04:40 UTC
+- 最新运行日期：2026-05-03
+- 运行时间：2026-05-03 20:03:38 UTC
 - 运行状态：成功
-- 本次总论文数：19
-- 精读区：7
+- 本次总论文数：15
+- 精读区：3
 - 速读区：12
 
 ### 今日简报（AI）
-今日深挖19篇AI前沿进展，重点聚焦医学影像精准配准与多模态癌症分割技术。
-核心推荐CRC-SAM框架在结直肠癌多模态量化上的突破，以及CT引导的PET全身配准新方案。
-建议关注医疗大模型从判别式向生成式预训练的演进，探索多模态验证在复杂流程理解中的潜力。
-- 详情：[/202605/02/README](/202605/02/README)
+今日精选 15 篇前沿论文，重点聚焦病理图像分割优化与极端环境下的视频增强技术。
+核心突破在于利用全局比例正则化提升病
+- 详情：[/202605/03/README](/202605/03/README)
 
 ### 精读区论文标签
-1. [CT-Guided Spatially-varying Regularization for Voxel-Wise Deformable Whole-Body PET Registration](/202605/02/2604.22905v1-ct-guided-spatially-varying-regularization-for-voxel-wise-deformable-whole-body-pet-registration)  
-   标签：评分：9.0/10、query:medvid
-   evidence：全身PET配准的空间变化正则化
-2. [CRC-SAM: SAM-Based Multi-Modal Segmentation and Quantification of Colorectal Cancer in CT, Colonoscopy, and Histology Images](/202605/02/2604.24793v1-crc-sam-sam-based-multi-modal-segmentation-and-quantification-of-colorectal-cancer-in-ct-colonoscopy-and-histology-images)  
-   标签：评分：9.0/10、query:medvid
-   evidence：结肠镜图像中结直肠癌的多模态分割
-3. [OCR-Memory: Optical Context Retrieval for Long-Horizon Agent Memory](/202605/02/2604.26622v1-ocr-memory-optical-context-retrieval-for-long-horizon-agent-memory)  
-   标签：评分：9.0/10、query:lvu
-   evidence：视觉模态作为长程智能体记忆的高密度表示
-4. [TransVLM: A Vision-Language Framework and Benchmark for Detecting Any Shot Transitions](/202605/02/2604.27975v1-transvlm-a-vision-language-framework-and-benchmark-for-detecting-any-shot-transitions)  
-   标签：评分：9.0/10、query:lvu
-   evidence：检测连续时间转换片段的基准和框架
-5. [StoryTR: Narrative-Centric Video Temporal Retrieval with Theory of Mind Reasoning](/202605/02/2604.23198v1-storytr-narrative-centric-video-temporal-retrieval-with-theory-of-mind-reasoning)  
+1. [Semantic Segmentation for Histopathology using Learned Regularization based on Global Proportions](/202605/03/2604.24347v1-semantic-segmentation-for-histopathology-using-learned-regularization-based-on-global-proportions)  
+   标签：评分：8.5/10、query:medvid
+   evidence：基于全局比例的组织病理学语义分割
+2. [BVI-Mamba: Video Enhancement Using a Visual State-Space Model for Low-Light and Underwater Environments](/202605/03/2604.23655v1-bvi-mamba-video-enhancement-using-a-visual-state-space-model-for-low-light-and-underwater-environments)  
    标签：评分：8.0/10、query:lvu
-   evidence：针对叙事内容和推理的视频片段检索基准
-6. [ReVSI: Rebuilding Visual Spatial Intelligence Evaluation for Accurate Assessment of VLM 3D Reasoning](/202605/02/2604.24300v1-revsi-rebuilding-visual-spatial-intelligence-evaluation-for-accurate-assessment-of-vlm-3d-reasoning)  
+   evidence：Visual Mamba框架旨在减少视频处理中的内存使用和计算时间
+3. [IntentVLM: Open-Vocabulary Intention Recognition through Forward-Inverse Modeling with Video-Language Models](/202605/03/2604.24002v1-intentvlm-open-vocabulary-intention-recognition-through-forward-inverse-modeling-with-video-language-models)  
    标签：评分：8.0/10、query:lvu
-   evidence：视频评估和视觉语言模型推理的基准测试
-7. [OmniShotCut: Holistic Relational Shot Boundary Detection with Shot-Query Transformer](/202605/02/2604.24762v1-omnishotcut-holistic-relational-shot-boundary-detection-with-shot-query-transformer)  
-   标签：评分：8.0/10、query:lvu
-   evidence：镜头边界检测与用于视频分析的稠密视频Transformer
+   evidence：用于意图识别和推理的视频语言框架
 
 ### 速读区论文标签
-1. [DualFact+: A Multimodal Fact Verification Framework for Procedural Video Understanding](/202605/02/2604.25584v1-dualfact-a-multimodal-fact-verification-framework-for-procedural-video-understanding)  
-   标签：评分：8.0/10、query:lvu
-   evidence：过程视频理解的多模态事实验证
-2. [ClipTBP: Clip-Pair based Temporal Boundary Prediction with Boundary-Aware Learning for Moment Retrieval](/202605/02/2604.27591v1-cliptbp-clip-pair-based-temporal-boundary-prediction-with-boundary-aware-learning-for-moment-retrieval)  
-   标签：评分：8.0/10、query:lvu
-   evidence：视频片段检索中的时序边界预测
-3. [CheXmix: Unified Generative Pretraining for Vision Language Models in Medical Imaging](/202605/02/2604.22989v1-chexmix-unified-generative-pretraining-for-vision-language-models-in-medical-imaging)  
+1. [Adaptive Swin Transformer Partitioning over AI-RAN Networks](/202605/03/2604.23554v1-adaptive-swin-transformer-partitioning-over-ai-ran-networks)  
+   标签：评分：7.5/10、query:lvu
+   evidence：实时视频目标检测和视频模型的高效激活压缩
+2. [2nd of the 5th PVUW MeViS-Audio Track: ASR-SaSaSa2VA](/202605/03/2604.23935v1-2nd-of-the-5th-pvuw-mevis-audio-track-asr-sasasa2va)  
+   标签：评分：7.5/10、query:lvu
+   evidence：基于音频的视频对象分割的多模态方法
+3. [Instance Awareness of Multi-class Semantic Segmentation Loss Functions](/202605/03/2604.24276v1-instance-awareness-of-multi-class-semantic-segmentation-loss-functions)  
    标签：评分：7.5/10、query:medvid
-   evidence：医学影像视觉语言模型的统一生成式预训练
-4. [EAD-Net: Emotion-Aware Talking Head Generation with Spatial Refinement and Temporal Coherence](/202605/02/2604.23325v1-ead-net-emotion-aware-talking-head-generation-with-spatial-refinement-and-temporal-coherence)  
-   标签：评分：7.5/10、query:lvu
-   evidence：长视频中的全局运动感知和时间相干性
-5. [AMAVA: Adaptive Motion-Aware Video-to-Audio Framework for Visually-Impaired Assistance](/202605/02/2604.23909v1-amava-adaptive-motion-aware-video-to-audio-framework-for-visually-impaired-assistance)  
-   标签：评分：7.5/10、query:lvu
-   evidence：用于环境感知的实时视频转音频框架
-6. [Uni-Encoder Meets Multi-Encoders: Representation Before Fusion for Brain Tumor Segmentation with Missing Modalities](/202605/02/2604.22177v1-uni-encoder-meets-multi-encoders-representation-before-fusion-for-brain-tumor-segmentation-with-missing-modalities)  
+   evidence：针对小病灶的多类语义分割损失函数
+4. [CNN-ViT Fusion with Adaptive Attention Gate for Brain Tumor MRI Classification: A Hybrid Deep Learning Model](/202605/03/2604.23137v1-cnn-vit-fusion-with-adaptive-attention-gate-for-brain-tumor-mri-classification-a-hybrid-deep-learning-model)  
    标签：评分：7.0/10、query:medvid
-   evidence：使用ViT单编码器进行缺失模态的多模态MRI脑肿瘤分割
-7. [EV-CLIP: Efficient Visual Prompt Adaptation for CLIP in Few-shot Action Recognition under Visual Challenges](/202605/02/2604.22595v1-ev-clip-efficient-visual-prompt-adaptation-for-clip-in-few-shot-action-recognition-under-visual-challenges)  
+   evidence：用于医学图像分类的CNN-ViT混合架构
+5. [Keypoint-based Dynamic Object 6-DoF Pose Tracking via Event Camera](/202605/03/2604.23387v1-keypoint-based-dynamic-object-6-dof-pose-tracking-via-event-camera)  
+   标签：评分：7.0/10、query:medvid
+   evidence：通过事件相机流进行动态物体姿态追踪
+6. [Latent Inter-Frame Pruning: A Training-Free Method Bridging Traditional Video Compression and Modern Diffusion Transformers for Efficient Generation](/202605/03/2604.23858v1-latent-inter-frame-pruning-a-training-free-method-bridging-traditional-video-compression-and-modern-diffusion-transformers-for-efficient-generation)  
    标签：评分：7.0/10、query:lvu
-   evidence：视频动作识别中用于时间推理的高效视觉提示适配
-8. [SS3D: End2End Self-Supervised 3D from Web Videos](/202605/02/2604.22686v1-ss3d-end2end-self-supervised-3d-from-web-videos)  
-   标签：评分：7.0/10、query:lvu
-   evidence：从大规模网络视频中进行高效3D估计
-9. [From Pixels to Explanations: Interpretable Diabetic Retinopathy Grading with CNN-Transformer Ensembles, Visual Explainability and Vision-Language Models](/202605/02/2604.23079v1-from-pixels-to-explanations-interpretable-diabetic-retinopathy-grading-with-cnn-transformer-ensembles-visual-explainability-and-vision-language-models)  
-   标签：评分：6.5/10、query:medvid
-   evidence：可解释的糖尿病视网膜病变分级和临床背景
-10. [Kwai Summary Attention Technical Report](/202605/02/2604.24432v1-kwai-summary-attention-technical-report)  
+   evidence：沿时间轴剪枝冗余潜变量块以实现高效生成
+7. [Tuna-2: Pixel Embeddings Beat Vision Encoders for Multimodal Understanding and Generation](/202605/03/2604.24763v1-tuna-2-pixel-embeddings-beat-vision-encoders-for-multimodal-understanding-and-generation)  
    标签：评分：6.5/10、query:lvu
-   evidence：用于长上下文建模和序列处理的高效注意力机制
-11. [Learning from Medical Entity Trees: An Entity-Centric Medical Data Engineering Framework for MLLMs](/202605/02/2604.25296v1-learning-from-medical-entity-trees-an-entity-centric-medical-data-engineering-framework-for-mllms)  
+   evidence：用于视觉理解和生成的原生统一多模态模型
+8. [Generalizable 3D Gaussian Splatting enabled Semantic Coding for Real-Time Immersive Video Communications](/202605/03/2604.25330v1-generalizable-3d-gaussian-splatting-enabled-semantic-coding-for-real-time-immersive-video-communications)  
+   标签：评分：6.5/10、query:lvu
+   evidence：实时沉浸式视频通信和高效数据传输
+9. [Robustness Evaluation of a Foundation Segmentation Model Under Simulated Domain Shifts in Abdominal CT: Implications for Health Digital Twin Deployment](/202605/03/2604.25685v1-robustness-evaluation-of-a-foundation-segmentation-model-under-simulated-domain-shifts-in-abdominal-ct-implications-for-health-digital-twin-deployment)  
    标签：评分：6.5/10、query:medvid
-   evidence：用于多模态大语言模型的医学数据工程框架
-12. [Learning Reactive Human Motion Generation from Paired Interaction Data Using Transformer-Based Models](/202605/02/2604.22164v1-learning-reactive-human-motion-generation-from-paired-interaction-data-using-transformer-based-models)  
-   标签：评分：6.0/10、query:lvu
-   evidence：拳击比赛视频运动序列的时间建模
+   evidence：对腹部CT卷中脾脏分割的SAM模型进行鲁棒性审计
+10. [Toward Multimodal Conversational AI for Age-Related Macular Degeneration](/202605/03/2604.25720v1-toward-multimodal-conversational-ai-for-age-related-macular-degeneration)  
+   标签：评分：6.5/10、query:medvid
+   evidence：用于医学诊断和推理的多模态对话AI
+11. [Multi-Stage Bi-Atrial Segmentation Framework from 3D Late Gadolinium-Enhanced MRI using V-Net Family Models](/202605/03/2604.26251v1-multi-stage-bi-atrial-segmentation-framework-from-3d-late-gadolinium-enhanced-mri-using-v-net-family-models)  
+   标签：评分：6.5/10、query:medvid
+   evidence：3D MRI序列的分割框架
+12. [MemOVCD: Training-Free Open-Vocabulary Change Detection via Cross-Temporal Memory Reasoning and Global-Local Adaptive Rectification](/202605/03/2604.26774v1-memovcd-training-free-open-vocabulary-change-detection-via-cross-temporal-memory-reasoning-and-global-local-adaptive-rectification)  
+   标签：评分：6.5/10、query:lvu
+   evidence：图像序列变化检测中的跨时域记忆推理
 
 
 <div class="dpr-home-promo-card">
