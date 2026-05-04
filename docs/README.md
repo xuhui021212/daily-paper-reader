@@ -6,66 +6,78 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-03
-- 运行时间：2026-05-03 20:03:38 UTC
+- 最新运行日期：2026-05-04
+- 运行时间：2026-05-04 20:49:03 UTC
 - 运行状态：成功
-- 本次总论文数：15
-- 精读区：3
+- 本次总论文数：19
+- 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日精选 15 篇前沿论文，重点聚焦病理图像分割优化与极端环境下的视频增强技术。
-核心突破在于利用全局比例正则化提升病
-- 详情：[/202605/03/README](/202605/03/README)
+今日精选19篇前沿论文，重点聚焦多智能体协作下的视频理解与高精度医疗影像修复。
+满
+- 详情：[/202605/04/README](/202605/04/README)
 
 ### 精读区论文标签
-1. [Semantic Segmentation for Histopathology using Learned Regularization based on Global Proportions](/202605/03/2604.24347v1-semantic-segmentation-for-histopathology-using-learned-regularization-based-on-global-proportions)  
-   标签：评分：8.5/10、query:medvid
-   evidence：基于全局比例的组织病理学语义分割
-2. [BVI-Mamba: Video Enhancement Using a Visual State-Space Model for Low-Light and Underwater Environments](/202605/03/2604.23655v1-bvi-mamba-video-enhancement-using-a-visual-state-space-model-for-low-light-and-underwater-environments)  
+1. [Scaling Video Understanding via Compact Latent Multi-Agent Collaboration](/202605/04/2605.00444v1-scaling-video-understanding-via-compact-latent-multi-agent-collaboration)  
+   标签：评分：10.0/10、query:lvu
+   evidence：多智能体协作实现可扩展的长视频理解与推理
+2. [Multi-frame Restoration for High-rate Lissajous Confocal Laser Endomicroscopy](/202605/04/2605.00527v1-multi-frame-restoration-for-high-rate-lissajous-confocal-laser-endomicroscopy)  
+   标签：评分：9.0/10、query:medvid
+   evidence：高速共聚焦激光显微内窥镜修复的基准和循环框架
+3. [Static and Dynamic Graph Alignment Network for Temporal Video Grounding](/202605/04/2605.00684v1-static-and-dynamic-graph-alignment-network-for-temporal-video-grounding)  
+   标签：评分：9.0/10、query:lvu
+   evidence：使用图对齐在未修剪视频中进行时序视频定位
+4. [Membership Inference Attacks Against Video Large Language Models](/202605/04/2604.27002v1-membership-inference-attacks-against-video-large-language-models)  
+   标签：评分：8.5/10、query:lvu
+   evidence：针对视频大语言模型的隐私攻击
+5. [LearnPruner: Rethinking Attention-based Token Pruning in Vision Language Models](/202605/04/2604.23950v1-learnpruner-rethinking-attention-based-token-pruning-in-vision-language-models)  
    标签：评分：8.0/10、query:lvu
-   evidence：Visual Mamba框架旨在减少视频处理中的内存使用和计算时间
-3. [IntentVLM: Open-Vocabulary Intention Recognition through Forward-Inverse Modeling with Video-Language Models](/202605/03/2604.24002v1-intentvlm-open-vocabulary-intention-recognition-through-forward-inverse-modeling-with-video-language-models)  
+   evidence：VLM中的令牌剪枝以高效处理长视觉序列
+6. [ESICA: A Scalable Framework for Text-Guided 3D Medical Image Segmentation](/202605/04/2604.24876v1-esica-a-scalable-framework-for-text-guided-3d-medical-image-segmentation)  
+   标签：评分：8.0/10、query:medvid
+   evidence：文本引导的3D医学图像分割框架
+7. [Persistent Visual Memory: Sustaining Perception for Deep Generation in LVLMs](/202605/04/2605.00814v1-persistent-visual-memory-sustaining-perception-for-deep-generation-in-lvlms)  
    标签：评分：8.0/10、query:lvu
-   evidence：用于意图识别和推理的视频语言框架
+   evidence：用于在LVLM中维持感知的持久视觉记忆
 
 ### 速读区论文标签
-1. [Adaptive Swin Transformer Partitioning over AI-RAN Networks](/202605/03/2604.23554v1-adaptive-swin-transformer-partitioning-over-ai-ran-networks)  
-   标签：评分：7.5/10、query:lvu
-   evidence：实时视频目标检测和视频模型的高效激活压缩
-2. [2nd of the 5th PVUW MeViS-Audio Track: ASR-SaSaSa2VA](/202605/03/2604.23935v1-2nd-of-the-5th-pvuw-mevis-audio-track-asr-sasasa2va)  
-   标签：评分：7.5/10、query:lvu
-   evidence：基于音频的视频对象分割的多模态方法
-3. [Instance Awareness of Multi-class Semantic Segmentation Loss Functions](/202605/03/2604.24276v1-instance-awareness-of-multi-class-semantic-segmentation-loss-functions)  
-   标签：评分：7.5/10、query:medvid
-   evidence：针对小病灶的多类语义分割损失函数
-4. [CNN-ViT Fusion with Adaptive Attention Gate for Brain Tumor MRI Classification: A Hybrid Deep Learning Model](/202605/03/2604.23137v1-cnn-vit-fusion-with-adaptive-attention-gate-for-brain-tumor-mri-classification-a-hybrid-deep-learning-model)  
-   标签：评分：7.0/10、query:medvid
-   evidence：用于医学图像分类的CNN-ViT混合架构
-5. [Keypoint-based Dynamic Object 6-DoF Pose Tracking via Event Camera](/202605/03/2604.23387v1-keypoint-based-dynamic-object-6-dof-pose-tracking-via-event-camera)  
-   标签：评分：7.0/10、query:medvid
-   evidence：通过事件相机流进行动态物体姿态追踪
-6. [Latent Inter-Frame Pruning: A Training-Free Method Bridging Traditional Video Compression and Modern Diffusion Transformers for Efficient Generation](/202605/03/2604.23858v1-latent-inter-frame-pruning-a-training-free-method-bridging-traditional-video-compression-and-modern-diffusion-transformers-for-efficient-generation)  
+1. [EXACT: an explainable anomaly-aware vision foundation model for analysis of 3D chest CT](/202605/04/2604.24146v1-exact-an-explainable-anomaly-aware-vision-foundation-model-for-analysis-of-3d-chest-ct)  
+   标签：评分：8.0/10、query:medvid
+   evidence：用于3D胸部CT卷分析的可解释基础模型
+2. [IntentVLM: Open-Vocabulary Intention Recognition through Forward-Inverse Modeling with Video-Language Models](/202605/04/2604.24002v1-intentvlm-open-vocabulary-intention-recognition-through-forward-inverse-modeling-with-video-language-models)  
    标签：评分：7.0/10、query:lvu
-   evidence：沿时间轴剪枝冗余潜变量块以实现高效生成
-7. [Tuna-2: Pixel Embeddings Beat Vision Encoders for Multimodal Understanding and Generation](/202605/03/2604.24763v1-tuna-2-pixel-embeddings-beat-vision-encoders-for-multimodal-understanding-and-generation)  
+   evidence：用于意图识别的视频语言框架
+3. [SemiSAM-O1: How far can we push the boundary of annotation-efficient medical image segmentation?](/202605/04/2604.24109v1-semisam-o1-how-far-can-we-push-the-boundary-of-annotation-efficient-medical-image-segmentation)  
+   标签：评分：7.0/10、query:medvid
+   evidence：高效标注的医学图像分割
+4. [Salca: A Sparsity-Aware Hardware Accelerator for Efficient Long-Context Attention Decoding](/202605/04/2604.24820v1-salca-a-sparsity-aware-hardware-accelerator-for-efficient-long-context-attention-decoding)  
+   标签：评分：7.0/10、query:lvu
+   evidence：用于高效长上下文注意力解码的硬件加速器
+5. [Subjective Portrait Region Cropping in Landscape Videos with Temporal Annotation Smoothing](/202605/04/2604.24947v1-subjective-portrait-region-cropping-in-landscape-videos-with-temporal-annotation-smoothing)  
+   标签：评分：7.0/10、query:lvu
+   evidence：用于时间视频裁剪任务的大规模数据库
+6. [QFlash: Bridging Quantization and Memory Efficiency in Vision Transformer Attention](/202605/04/2604.25306v1-qflash-bridging-quantization-and-memory-efficiency-in-vision-transformer-attention)  
+   标签：评分：7.0/10、query:lvu
+   evidence：视觉Transformer注意力机制中的量化与内存效率
+7. [CUDA Kernel Optimization and Counter-Free Performance Analysis for Depthwise Convolution in Cloud Environments](/202605/04/2604.25422v2-cuda-kernel-optimization-and-counter-free-performance-analysis-for-depthwise-convolution-in-cloud-environments)  
+   标签：评分：7.0/10、query:lvu
+   evidence：结构化状态空间模型卷积的CUDA内核优化
+8. [Toward Multimodal Conversational AI for Age-Related Macular Degeneration](/202605/04/2604.25720v1-toward-multimodal-conversational-ai-for-age-related-macular-degeneration)  
+   标签：评分：7.0/10、query:medvid
+   evidence：用于视网膜疾病诊断的多模态对话AI
+9. [Time-series Meets Complex Motion Modeling: Robust and Computational-effective Motion Predictor for Multi-object Tracking](/202605/04/2605.00362v1-time-series-meets-complex-motion-modeling-robust-and-computational-effective-motion-predictor-for-multi-object-tracking)  
    标签：评分：6.5/10、query:lvu
-   evidence：用于视觉理解和生成的原生统一多模态模型
-8. [Generalizable 3D Gaussian Splatting enabled Semantic Coding for Real-Time Immersive Video Communications](/202605/03/2604.25330v1-generalizable-3d-gaussian-splatting-enabled-semantic-coding-for-real-time-immersive-video-communications)  
-   标签：评分：6.5/10、query:lvu
-   evidence：实时沉浸式视频通信和高效数据传输
-9. [Robustness Evaluation of a Foundation Segmentation Model Under Simulated Domain Shifts in Abdominal CT: Implications for Health Digital Twin Deployment](/202605/03/2604.25685v1-robustness-evaluation-of-a-foundation-segmentation-model-under-simulated-domain-shifts-in-abdominal-ct-implications-for-health-digital-twin-deployment)  
-   标签：评分：6.5/10、query:medvid
-   evidence：对腹部CT卷中脾脏分割的SAM模型进行鲁棒性审计
-10. [Toward Multimodal Conversational AI for Age-Related Macular Degeneration](/202605/03/2604.25720v1-toward-multimodal-conversational-ai-for-age-related-macular-degeneration)  
-   标签：评分：6.5/10、query:medvid
-   evidence：用于医学诊断和推理的多模态对话AI
-11. [Multi-Stage Bi-Atrial Segmentation Framework from 3D Late Gadolinium-Enhanced MRI using V-Net Family Models](/202605/03/2604.26251v1-multi-stage-bi-atrial-segmentation-framework-from-3d-late-gadolinium-enhanced-mri-using-v-net-family-models)  
-   标签：评分：6.5/10、query:medvid
-   evidence：3D MRI序列的分割框架
-12. [MemOVCD: Training-Free Open-Vocabulary Change Detection via Cross-Temporal Memory Reasoning and Global-Local Adaptive Rectification](/202605/03/2604.26774v1-memovcd-training-free-open-vocabulary-change-detection-via-cross-temporal-memory-reasoning-and-global-local-adaptive-rectification)  
-   标签：评分：6.5/10、query:lvu
-   evidence：图像序列变化检测中的跨时域记忆推理
+   evidence：用于追踪的时间卷积运动预测器
+10. [Multi-View Synergistic Learning with Vision-Language Adaption for Low-Resource Biomedical Image Classification](/202605/04/2604.23977v1-multi-view-synergistic-learning-with-vision-language-adaption-for-low-resource-biomedical-image-classification)  
+   标签：评分：6.0/10、query:medvid
+   evidence：生物医学图像分类的视觉语言适配
+11. [Hierarchical Prototype-based Domain Priors for Multiple Instance Learning in Multimodal Histopathology Analysis](/202605/04/2604.23982v1-hierarchical-prototype-based-domain-priors-for-multiple-instance-learning-in-multimodal-histopathology-analysis)  
+   标签：评分：6.0/10、query:medvid
+   evidence：组织病理学分析和全切片图像的多模态方法
+12. [Structural Pruning of Large Vision Language Models: A Comprehensive Study on Pruning Dynamics, Recovery, and Data Efficiency](/202605/04/2604.24380v1-structural-pruning-of-large-vision-language-models-a-comprehensive-study-on-pruning-dynamics-recovery-and-data-efficiency)  
+   标签：评分：6.0/10、query:lvu
+   evidence：用于高效大型视觉语言模型的结构化剪枝
 
 
 <div class="dpr-home-promo-card">

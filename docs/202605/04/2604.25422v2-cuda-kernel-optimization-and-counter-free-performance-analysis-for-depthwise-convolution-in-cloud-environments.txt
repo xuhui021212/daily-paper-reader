@@ -1,0 +1,595 @@
+Title: CUDA Kernel Optimization and Counter-Free Performance Analysis for Depthwise Convolution in Cloud Environments
+
+URL Source: https://arxiv.org/pdf/2604.25422v2
+
+Published Time: Thu, 30 Apr 2026 00:29:39 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+> IEEE TRANSACTIONS ON PARALLEL AND DISTRIBUTED SYSTEMS 1
+
+# CUDA Kernel Optimization and Counter-Free Performance Analysis for Depthwise Convolution in Cloud Environments 
+
+Huriyeh Babak Melanie Schaller 
+
+Abstract —Efficient GPU execution of convolution operators is governed by memory-access efficiency, on-chip data reuse, and execution mapping rather than arithmetic throughput alone. This paper presents a controlled operator-level study of CUDA kernel optimization for the depthwise convolution used in Struc-tured State Space Model Convolutional Diagonal (S4ConvD), together with a cloud-compatible, counter-free performance anal-ysis methodology. The operator, model, dataset, and training configuration are fixed, and only the CUDA kernel implementation is varied. The evaluated CUDA kernels comprise naive, global-memory-coalesced, shared-memory cache-blocked, and warp-tiled vari-ants, covering forward, input-gradient, and weight-gradient ex-ecution paths under steady-state training conditions. Performance is characterized using a counter-free methodology that combines CUDA-event timing, execution-path decompo-sition, analytically derived memory-traffic modeling, effective-bandwidth estimation, and roofline analysis. This enables profiling-like architectural insights without requiring hardware performance counters or privileged profiling access. The warp-tiled kernel reduces convolution runtime by 3.26 × relative to the naive CUDA baseline, while end-to-end training speedup reaches 1.29 ×. A PyTorch implementation is used separately for numerical validation and runtime context, but is not treated as a controlled architectural baseline. Forward and input-gradient paths benefit substantially from improved locality and on-chip data reuse, whereas the reduction-dominated weight-gradient path remains the primary bottleneck. The results demonstrate that meaningful architecture-level GPU kernel analysis can be performed reproducibly in restricted cloud environments, even without access to hardware performance counters. 
+
+Index Terms —CUDA kernel optimization, GPU architectures, depthwise convolution, warp-level execution, performance anal-ysis, GPU runtime behavior 
+
+I. I NTRODUCTION 
+
+# PERFORMANCE in GPU-accelerated systems is shaped not only by algorithmic complexity, but also by how computations are mapped to the GPU execution model and memory hierarchy. For memory-sensitive operators, runtime is often dominated by memory-access patterns, thread mapping, and on-chip data reuse rather than peak arithmetic throughput [1]–[4]. 
+
+Institute for Information Processing (TNT), Leibniz University Hannover, Germany. Email: huriyeh.babak@stud.uni-hannover.de Institute for Information Processing (TNT) and L3S Research Center, Leibniz University Hannover, Germany. Email: melanie.schaller@tnt.uni-hannover.de Manuscript submitted to IEEE Transactions on Parallel and Distributed Systems (TPDS). 
+
+Recent hardware-aware operators such as FlashAttention and Mamba show that substantial gains can be achieved by reducing data movement and improving locality [5], [6]. However, the behavior of individual GPU kernels remains less well characterized under controlled conditions, especially across forward and backward execution. Backward paths often contain reduction-dominated computations that introduce syn-chronization and accumulation overhead, causing optimization effectiveness to differ across execution paths [7]–[9]. Cloud-based GPU platforms such as Kaggle, Google Colab, and AWS further complicate performance analysis because access to low-level hardware counters and profiling tools such as Nsight Compute is often restricted. This raises a practical question: how much architecture-level performance insight can be recovered without hardware-level profiling support? As such platforms become increasingly common, reproducible analysis methods that remain effective under these constraints are needed. In this work, we address this question through a controlled operator-level study of the depthwise convolution in Structured State Space Model Convolutional Diagonal (S4ConvD) [10], [11]. The operator, model, dataset, and training configura-tion are fixed, while four CUDA kernel variants are evalu-ated: naive, global-memory-coalesced, shared-memory cache-blocked, and warp-tiled. Forward, input-gradient, and weight-gradient paths are analyzed separately to expose execution-path-specific bottlenecks. Fig. 1 illustrates the study design and the interaction be-tween operator structure, kernel variants, and execution paths. The main contributions of this work are as follows:  
+
+> •
+
+A cloud-compatible, counter-free methodology for GPU kernel analysis that reconstructs architecture-level per-formance characteristics using only portable runtime measurements and analytical modeling. The approach integrates CUDA-event timing, execution-path decom-position, memory-traffic estimation, effective-bandwidth analysis, and roofline modeling into a unified workflow, enabling profiling-like insights without hardware perfor-mance counters.  
+
+> •
+
+A controlled operator-level evaluation framework that isolates the impact of CUDA kernel implementation by fixing the operator, model, dataset, and training config-uration, enabling direct attribution of performance dif-ferences to execution mapping and memory-hierarchy utilization.    
+
+> arXiv:2604.25422v2 [cs.DC] 29 Apr 2026 IEEE TRANSACTIONS ON PARALLEL AND DISTRIBUTED SYSTEMS 2
+> Fig. 1. Conceptual overview of the study design and execution-path bot-tlenecks in depthwise convolution kernels. The figure illustrates the fixed operator-level scope, evaluated CUDA kernel variants, distinct execution paths, and the resulting architectural bottlenecks that govern performance.
+> •
+
+An execution-path-aware characterization of depthwise convolution that systematically distinguishes throughput-oriented forward and input-gradient computations from the reduction-dominated weight-gradient path, revealing different optimization limits across execution paths.  
+
+> •
+
+A quantitative analysis linking kernel design to memory traffic, effective bandwidth, and end-to-end performance, demonstrating that reducing redundant data movement yields substantially larger gains than access alignment alone, and explaining the non-linear translation from kernel-level acceleration to training speedup. Although the individual CUDA optimization techniques are well established, the novelty of this work lies in the unified, execution-path-aware, and counter-free analysis methodology. The study links kernel design, analytical memory traffic, effective bandwidth, roofline behavior, and end-to-end training impact, showing that meaningful architectural insights can be obtained even in restricted cloud environments. The imple-mentation and validation code are available online. 1
+
+II. R ELATED WORK 
+
+This work relates to architecture-aware GPU kernel op-timization, structured operators on parallel hardware, and performance limits caused by memory traffic and reductions. Unlike model-centric studies that emphasize end-to-end ac-celeration, we focus on controlled operator-level analysis of CUDA kernel behavior. 
+
+A. Architecture-Aware GPU Kernel Optimization 
+
+GPU performance depends on the interaction between SIMT execution, warp scheduling, and the hierarchical memory system [1], [3], [4], [8], [9], [12], [13]. Optimization strategies such as memory coalescing, shared-memory tiling, register blocking, and warp-centric execution improve bandwidth uti-lization, latency hiding, and data locality [4], [14], [15]. Highly optimized libraries such as cuBLAS and cuDNN achieve near-peak performance for compute-intensive work-loads [16], [17]. For memory-bound operators with limited   
+
+> 1Code repository: https://github.com/HuriyehBabak/CUDA Kernels S4ConvD
+
+data reuse, however, performance is primarily constrained by data movement and synchronization rather than arithmetic throughput [2], [18]. 
+
+B. Structured Operators and Reduction Constraints 
+
+Structured sequential and convolutional operators benefit from hardware-aware design, as shown by FlashAttention, Mamba, and efficient convolutional architectures [5], [6], [11], [19], [20]. These approaches highlight the importance of IO-awareness and data reuse [2]. However, prior work largely focuses on fused operators or end-to-end acceleration rather than isolated kernel analysis. The Roofline model identifies memory bandwidth as the key limitation for low-arithmetic-intensity workloads [2], while backward execution introduces reduction-related synchroniza-tion and aggregation costs [7]–[9]. Reduction operations fur-ther introduce numerical sensitivity due to accumulation order [21], leading to less favorable scaling compared to forward computation. 
+
+C. Positioning of This Work 
+
+In contrast to prior studies focusing on end-to-end accelera-tion or fused operator design [5], [6], [16], this work presents a controlled operator-level evaluation of CUDA kernels without modifying the underlying model. Using the depthwise con-volution in S4ConvD [10], [11], we analyze forward, input-gradient, and weight-gradient execution. By isolating kernel implementations, the study reveals operator-specific bottlenecks and shows how memory-access patterns, data reuse, and reduction structure govern perfor-mance beyond end-to-end runtime observations. Unlike prior work that relies on hardware performance counters or vendor-specific profiling tools, this work demonstrates that compara-ble architectural insights can be obtained using only portable runtime measurements and analytical modeling in restricted environments. III. E XPERIMENTAL METHODOLOGY AND EVALUATION 
+
+SETUP 
+
+CUDA kernel variants are evaluated under controlled condi-tions using a cloud-compatible, counter-free methodology that combines CUDA-event timing, runtime decomposition, and analytical modeling to characterize kernel behavior without hardware performance counters [2], [4], [8], [18]. The oper-ator, model, dataset, and training configuration are fixed to ensure comparability with prior Structured State Space Model Convolutional Diagonal (S4ConvD) work [10] and to isolate the impact of CUDA kernel implementation. 
+
+A. Dataset and Workload 
+
+Experiments use the ASHRAE Great Energy Predictor III (GEPIII) dataset [22], which contains hourly energy consump-tion and meteorological features. Its low feature dimensional-ity and fixed sequence length make the depthwise convolution the dominant computational component, enabling controlled kernel-level analysis. IEEE TRANSACTIONS ON PARALLEL AND DISTRIBUTED SYSTEMS 3                
+
+> TABLE I EXPERIMENTAL GPU H ARDWARE PLATFORM
+> Parameter Specification
+> GPU model NVIDIA Tesla P100-PCIE-16GB Architecture Pascal Compute capability 6.0 Streaming multiprocessors 56 Warp size 32 threads Max. threads per SM 2048 Max. threads per block 1024 Shared memory per SM 64 KB Max. shared memory per block 48 KB Registers per SM 65,536 L2 cache 4 MB Global memory 16 GB HBM2 Memory interface width 4096 bit
+
+1) Input Representation: For each building bi and timestep 
+
+tj , the input vector is 
+
+u(i) 
+
+> tj
+
+= R(i) 
+
+> tj
+
+, T (i) 
+
+> a,t j
+
+, CC (i) 
+
+> tj
+
+, T (i)
+
+> d,t j
+
+⊤, (1) where R denotes energy consumption and Ta, CC , and Td
+
+denote meteorological variables [22]. All experiments use sequence length L = 48 and input dimension F = 4 .
+
+B. Model Configuration 
+
+The evaluated model is S4ConvD, based on diagonal state-space sequence modeling [10], [11], [23]. Inputs are projected to latent dimension H = 128 and processed by stacked S4ConvD blocks with nonlinear activation, channel-wise pro-jection, and dropout rate 0.01. All architectural parameters are fixed across experiments. 
+
+C. Training Configuration and Input Pipeline 
+
+Training uses SGD with momentum 0.9, learning rate 10 −3,gradient clipping with norm 1.0, RMSLE loss, and batch size B = 16 ,384 . Multi-worker loading and prefetching reduce data stalls so that measured runtime primarily reflects computation rather than input loading [4], [24], [25]. 
+
+D. Hardware Platform 
+
+Experiments are conducted on an NVIDIA Tesla P100-PCIE-16GB GPU based on the Pascal architecture [26], [27]. Table I summarizes the hardware specifications relevant to CUDA parallelism, memory hierarchy, and resource con-straints [3], [18]. Fig. 2 illustrates the simplified memory hierarchy of the evaluated GPU. 
+
+E. Numerical Validation 
+
+All CUDA kernels are validated against a PyTorch reference implementation [24]. Forward outputs and input gradients match within numerical precision. Weight gradients show small deviations due to floating-point accumulation order, as expected for parallel reductions, and do not affect training stability [21].  
+
+> Fig. 2. Simplified memory hierarchy of the NVIDIA Tesla P100 used in the experiments [28].
+
+F. Performance Measurement 
+
+Kernel runtime is the primary metric, complemented by epoch time and peak GPU memory usage. Runtimes are measured with CUDA events and explicit synchronization after warm-up [4]. Forward, input-gradient, and weight-gradient kernels are measured separately to expose execution-path-specific behavior. We do not rely on PyTorch Profiler for execution-path decomposition. Instead, forward, input-gradient, and weight-gradient runtimes are measured explicitly using CUDA-event instrumentation, which keeps the methodology applicable in restricted cloud environments. Measurements exclude data loading, optimizer updates, host-device transfers, and unrelated framework overhead where possible. Results are averaged over multiple runs, and steady-state training measurements exclude the warm-up epoch. 
+
+G. Roofline Model Construction 
+
+The roofline model is constructed from analytical operation counts, estimated data movement, and CUDA-event runtimes [2], [4]. Arithmetic intensity is defined as floating-point oper-ations per byte moved. For forward and input-gradient computations, the operation count is FLOPs fwd/bwd in = B · H · L · 2K, (2) where each multiply–add pair is counted as two floating-point operations. For the weight-gradient computation, FLOPs bwd k = H · K · B · L · 2. (3) Data movement is estimated from tensor sizes, access patterns, and kernel structure. Optimized kernels account for reduced redundancy from on-chip reuse, while the naive baseline uses logical data movement as a lower-bound proxy because redundant accesses depend on caching and scheduling behavior. IEEE TRANSACTIONS ON PARALLEL AND DISTRIBUTED SYSTEMS 4
+
+Achieved throughput and arithmetic intensity are computed as GFLOP/s = FLOPs runtime , AI = FLOPs bytes moved . (4) The memory and compute roofs use the P100 peak memory bandwidth of 732 GB/s and peak single-precision throughput of 10.6 TFLOP/s [26]. Small horizontal offsets are used only to avoid point overlap in the plot. 
+
+H. Data Selection and Evaluation Protocol 
+
+Development experiments use a reproducible 10% subset with preserved temporal ordering. Since kernel runtime de-pends primarily on tensor dimensions, this subset is repre-sentative for implementation comparison. Final evaluation is performed on the full test set. Forward and backward paths are analyzed separately to dis-tinguish throughput-oriented from reduction-dominated work-loads and to interpret the effects of coalescing, shared-memory reuse, and warp-level execution. IV. D EPTHWISE CONVOLUTION OPERATOR AND CUDA KERNEL VARIANTS 
+
+This section presents CUDA kernel variants for the depth-wise 1D convolution in Structured State Space Model Con-volutional Diagonal (S4ConvD), designed to enable con-trolled, execution-path-aware characterization of kernel behav-ior. The variants range from a simple baseline to increasingly architecture-aware implementations based on global-memory coalescing, shared-memory cache blocking, and warp-tiled execution. Across all variants, the mathematical operator remains unchanged; only execution mapping and memory-hierarchy utilization differ. This isolates the impact of thread-block configuration, memory-access organization, and on-chip data reuse on performance under hardware constraints such as register allocation and shared-memory usage [3], [4]. Performance is therefore governed not only by occupancy but also by memory-access efficiency, data reuse, synchro-nization overhead, and execution structure [2], [8]. The re-sulting effects are analyzed quantitatively in Section V. The relationship between the CUDA execution hierarchy and the underlying hardware organization is illustrated in Fig. 3, which provides a conceptual reference for the execution mappings used in the following kernel designs. 
+
+A. Common Problem Definition and Memory Layout 
+
+The depthwise convolution kernels operate on the projected latent representation 
+
+x ∈ RB×H×L, (5) obtained after the input projection in Section III-B, where 
+
+B, H, and L denote batch size, number of channels, and sequence length, respectively. The corresponding kernel and output tensors are 
+
+k ∈ RH×K , y ∈ RB×H×L, (6)  
+
+> Fig. 3. Conceptual relationship between the CUDA execution hierarchy and the underlying GPU hardware organization. Thread blocks are scheduled onto streaming multiprocessors, where warps execute in parallel and share on-chip resources such as shared memory [29].
+
+with kernel length K. Since the convolution is depthwise, each channel h is processed independently using a one-dimensional kernel kh, :, with no cross-channel interaction. Let 
+
+p =
+
+ K
+
+2
+
+
+
+(7) denote the padding width. The forward operator is defined as 
+
+yb,h,t =
+
+> K−1
+
+X
+
+> j=0
+
+˜xb,h,t +j−p kh,j , (8) where ˜x denotes zero-padded input. The corresponding input-gradient and kernel-gradient computations are 
+
+∇xb,h,t =
+
+> K−1
+
+X
+
+> j=0
+
+∇yb,h,t +j−p kh,K −1−j , (9) and 
+
+∇kh,j =
+
+> B−1
+
+X
+
+> b=0
+> L−1
+
+X
+
+> t=0
+
+∇yb,h,t xb,h,t +j−p, (10) respectively. All tensors are stored in row-major order in global memory and processed in float32 precision. For fixed (b, h ), the temporal index t is the stride-1 dimension, so elements along 
+
+t are contiguous, and kernel weights are stored contiguously within each channel. This layout enables efficient stride-1 access and naturally supports coalesced global-memory trans-actions for adjacent threads [3], [4], forming the basis for the optimization strategies developed in the following subsections. 
+
+B. Naive CUDA Baseline 
+
+A simple CUDA baseline is implemented for the depthwise 1D convolution in (8). Unlike optimized libraries such as cuDNN [16], this implementation explicitly exposes thread mapping, memory-access behavior, and reduction structure, providing a transparent reference point for isolating the im-pact of subsequent execution-mapping and memory-hierarchy optimizations. Fig. 4 illustrates the one-output-per-thread parallelization strategy. Each thread independently loads the input elements IEEE TRANSACTIONS ON PARALLEL AND DISTRIBUTED SYSTEMS 5 
+
+> Fig. 4. Naive CUDA parallelization strategy. Each thread computes one output element yb,h,t , with the temporal dimension parallelized and the reduction over kernel width performed sequentially [15].
+
+required for its convolution window and performs the re-duction over the kernel width sequentially. Consequently, overlapping temporal regions lead to repeated global-memory accesses, and no parallelism is exposed across the reduction dimension. 
+
+1) Forward Kernel: The forward kernel assigns one output element to each thread according to 
+
+b = blockIdx.z ,h = blockIdx.y ,t = blockIdx.x · blockDim.x + threadIdx.x .
+
+(11) One-dimensional thread blocks with 512 threads are used, resulting in a grid of size ⌈L/ 512 ⌉ × H × B. This mapping exposes temporal parallelism without inter-thread cooperation, shared-memory staging, or on-chip data reuse. 
+
+2) Backward Kernels: The backward pass consists of input-gradient and kernel-gradient computations. The input-gradient kernel uses the same mapping as the forward pass and follows (9), resulting in similar memory-access behavior. The kernel-gradient computation follows (10). Each thread is assigned to one coefficient (h, j ),
+
+h = blockIdx.y ,j = blockIdx.x · blockDim.x + threadIdx.x ,
+
+(12) and performs the accumulation over B · L sequentially. This design avoids atomic operations but does not expose paral-lelism across the reduction domain. 
+
+3) Role as Reference Implementation: The naive implemen-tation serves as the primary CUDA baseline for all subsequent comparisons. Correctness is verified against a PyTorch refer-ence implementation [24], while CUDA-event measurements provide the runtime reference for evaluating the optimized kernel variants. 
+
+C. Optimization via Global-Memory Coalescing 
+
+The naive baseline is dominated by redundant global-memory accesses and limited data reuse, making memory-access organization a primary optimization target [3], [4]. This  
+
+> Fig. 5. Warp-level coalesced memory access. Consecutive threads access contiguous temporal elements, reducing the number of global-memory trans-actions [15].
+
+variant improves access efficiency at warp granularity without modifying the operator or introducing shared-memory staging. The key idea is to align thread mapping with the memory layout such that consecutive threads access consecutive tem-poral elements. This enables coalesced global-memory trans-actions, reducing memory-transaction overhead and improving effective bandwidth utilization. While redundant loads across overlapping convolution windows remain, access efficiency is significantly improved. Fig. 5 illustrates the resulting warp-level access pattern. 
+
+1) Forward: The forward kernel uses one-dimensional thread blocks with 256 threads, organized as a tile over temporal and channel dimensions with TTILE = 32 and 
+
+HTILE = 8 . The mapping is 
+
+t = blockIdx.x ·TTILE +( threadIdx.x mod TTILE ),
+
+(13) 
+
+h = blockIdx.y · HTILE +
+
+ threadIdx.x TTILE 
+
+
+
+, (14) with b = blockIdx.z .The launch configuration is 
+
+grid =
+
+ L
+
+TTILE 
+
+
+
+,
+
+ H
+
+HTILE 
+
+
+
+, B 
+
+
+
+, block = (256 , 1, 1) .
+
+(15) Each thread computes one output element according to (8). Because TTILE = 32 matches the warp size, threads within a warp access contiguous memory locations, resulting in coalesced global-memory transactions. Kernel coefficients are accessed in a broadcast pattern and served efficiently by the cache hierarchy [3]. 
+
+2) Backward: The input-gradient kernel uses the same mapping and exhibits similar access behavior. The kernel-gradient computation remains reduction domi-nated. The reduction domain over B · L is partitioned into chunks processed independently by thread blocks. Each block computes partial sums using warp-level shuffle reduction, which are stored in an intermediate tensor and combined in a second reduction stage. This design avoids atomic operations while exposing parallelism across the reduction domain. IEEE TRANSACTIONS ON PARALLEL AND DISTRIBUTED SYSTEMS 6
+
+3) Discussion: Global-memory coalescing improves effec-tive bandwidth utilization by aligning memory accesses with warp execution. However, since redundant data movement is not eliminated, the overall performance gain remains limited compared to later stages that introduce on-chip data reuse. 
+
+D. Optimization via Shared-Memory Cache Blocking 
+
+While global-memory coalescing improves access regu-larity, it does not eliminate redundant data movement, as overlapping temporal regions are still repeatedly loaded from global memory. This limits effective bandwidth utilization. To address this limitation, this variant introduces shared-memory cache blocking. The key idea is to stage reusable input data and kernel coefficients on chip, enabling inter-thread data reuse and reducing redundant global-memory accesses. 
+
+1) Forward: The implementation operates on the tensors defined in Section IV-A. The batch and channel dimensions are flattened into a single index s = bH +h, preserving contiguous access along the temporal dimension. Each thread block processes a temporal tile of length T P B ,with mapping 
+
+t = blockIdx.x · T P B + threadIdx.x .
+
+An extended tile of size T P B + K − 1 is staged in shared memory to cover the convolution window, including halo elements. Input data and kernel coefficients are cooperatively loaded into shared memory. After synchronization, each thread com-putes one output element using only shared-memory operands, eliminating redundant global-memory accesses within the con-volution loop. The shared-memory footprint is approximately 1404 B per block, well below hardware limits, allowing full occupancy while enabling efficient on-chip data reuse. Halo-loading over-head is amortized across threads. 
+
+2) Backward: The input-gradient computation follows the same tiling strategy and benefits from identical data reuse. The kernel-gradient computation remains reduction dom-inated. The reduction domain is partitioned across thread blocks, which compute partial sums over subsets of the batch dimension. These partial results are stored and combined in a second reduction stage, avoiding atomic operations while exposing parallelism across the accumulation domain. 
+
+3) Discussion: Shared-memory cache blocking reduces re-dundant global-memory traffic by enabling on-chip reuse of overlapping temporal regions. This leads to a substantial increase in effective bandwidth utilization and performance for forward and input-gradient computations. In contrast, the weight-gradient remains constrained by its reduction structure, highlighting the fundamental difference between throughput-oriented and reduction-dominated kernels. Algorithmic changes to the reduction (e.g., hierarchical or fused approaches) are intentionally avoided to preserve comparability across kernel variants and isolate the impact of execution mapping and memory-hierarchy utilization.                
+
+> x[B, H, L ]k[H, K ]y[B, H, L ]
+> forward block (32 threads, one (b, h )pair) sx [L]sk [K]
+> lane 0
+> t= 0 ,32
+> lane 1
+> t= 1 ,33 · · · lane 31
+> t= 31
+> Fig. 6. Warp-centric mapping with full on-chip data reuse. Each warp processes one (b, h )pair.
+
+E. Warp-Tiled Execution 
+
+This variant adopts a warp-centric design that maps one warp to a single (b, h ) instance. Because the temporal footprint fits entirely in shared memory, the complete working set can be staged on chip, enabling full data reuse without inter-warp coordination. This aligns the computation with the hardware warp abstraction and minimizes scheduling and synchroniza-tion overhead. 
+
+1) Warp-Level Mapping: A warp of W = 32 threads is assigned to each (b, h ) pair, with b = blockIdx.x ,
+
+h = blockIdx.y , and lane = threadIdx.x . Each lane computes up to two temporal positions, 
+
+t0 = lane , t1 = lane + W, (16) where t1 is evaluated only if t1 < L . This mapping covers the full temporal domain for one (b, h ) pair using a single warp. This mapping eliminates inter-warp communication and reduces control divergence, enabling efficient warp-level exe-cution. 
+
+2) On-Chip Data Staging: For each (b, h ) pair, the full input slice and kernel coefficients are staged in shared memory. All subsequent accesses are served from on-chip storage, eliminating repeated global-memory transactions. The shared-memory footprint per block is 
+
+SMEM block = ( L + K) · 4 bytes , (17) which is approximately 384 B for the evaluated configuration. This small footprint enables high occupancy while maximizing data locality. 
+
+3) Forward and Backward-Input Execution: Both computa-tions follow the same warp-level execution pattern. Each lane computes one or two output elements using shared-memory operands and fused multiply–add operations according to (8) and (9). This design achieves full on-chip reuse and avoids redundant global-memory accesses. 
+
+4) Backward Weight Gradient: The kernel-gradient com-putation remains reduction dominated. The reduction is paral-lelized across thread blocks by partitioning the batch dimen-sion. Each block stages inputs and gradients in shared memory, computes partial sums, and performs warp- and block-level reductions before writing results to global memory. This design increases parallelism and reduces global-memory traffic, but synchronization and accumulation over-head remain due to the reduction structure. IEEE TRANSACTIONS ON PARALLEL AND DISTRIBUTED SYSTEMS 7      
+
+> ∇yx
+> sGY sX
+> block (h, tile)
+> warp/block reduction ∇k
+> Fig. 7. Warp-level reduction for kernel-gradient computation.
+
+5) Discussion: The warp-tiled design maximizes on-chip data reuse and aligns execution with warp granularity, reducing both memory traffic and scheduling overhead. As a result, for-ward and input-gradient computations achieve high efficiency. In contrast, the weight-gradient path remains constrained by its reduction-dominated structure. V. E XPERIMENTAL RESULTS 
+
+This section evaluates the CUDA kernel variants and iden-tifies the architectural factors governing their performance. The analysis combines CUDA-event timing, execution-path decomposition, analytically derived memory-traffic modeling, and roofline analysis to relate observed speedups to memory-access efficiency, on-chip data reuse, and reduction structure. All measurements are performed without access to hard-ware performance counters. Instead, the evaluation relies on a counter-free methodology based on portable runtime mea-surements and analytical modeling, enabling architecture-level interpretation in restricted cloud environments. 
+
+A. Numerical Validation and Stability 
+
+All CUDA kernel variants are validated against a Py-Torch reference implementation [24] across multiple problem sizes, including the full training configuration (B, H, L ) = (16384 , 128 , 48) .Forward outputs match the reference within machine pre-cision, and input gradients exhibit maximum absolute error below 10 −7. Small deviations are observed in the weight-gradient computation due to differences in floating-point accu-mulation order inherent to parallel reductions. For the largest configuration, the maximum absolute error is 4.96 × 10 −4,corresponding to a relative error on the order of 10 −6.These deviations are consistent with floating-point non-associativity in finite-precision arithmetic [21] and are ex-pected for parallel reduction patterns on GPUs. Importantly, they do not affect training convergence or numerical stability in practice. Additional validation results for the warp-tiled kernel are provided in Appendix A. 
+
+B. Cross-Variant Runtime Summary 
+
+Table II summarizes steady-state performance across the CUDA implementations. The PyTorch implementation is not                              
+
+> TABLE II STEADY -STATE S4C ONV DTRAINING PERFORMANCE (E POCHS 2–5,
+> EXCLUDING WARM -UP ).
+> Method FWD BWD in BWD k Conv Total Epoch
+> Naive CUDA 29.97 30.25 73.26 133.47 44.82 GMC 28.23 28.78 49.64 106.65 40.31 Shared 16.36 16.03 34.17 66.57 36.91 Warp-tiled 10.46 10.61 19.91 40.99 34.74
+> Kernel runtimes are reported in milliseconds; epoch time is reported in seconds. FWD denotes forward execution, BWD in input-gradient execution, BWD k weight-gradient execution, GMC the global-memory-coalesced ker-nel, and Shared the shared-memory cache-blocked kernel.
+
+used as a baseline for the controlled kernel comparison, but is included separately in Appendix A for numerical validation and runtime context. For completeness, its execution time was measured, but it is excluded from the main table since it relies on backend library implementations that are not directly controlled in this study. The naive CUDA baseline requires 133.47 ms for the convolution operator and 44.82 s per epoch. Global-memory coalescing reduces convolution time to 106.65 ms, corresponding to a 1.25 × speedup over the naive CUDA baseline, indicating that improved access align-ment alone provides only limited benefit. In contrast, shared-memory cache blocking reduces runtime to 66.57 ms by enabling on-chip data reuse. The warp-tiled implementa-tion achieves the best CUDA-kernel performance, reaching 40.99 ms, corresponding to a 3.26 × speedup over the naive CUDA baseline and demonstrating the combined effect of warp-aligned execution and full data staging. 
+
+a) Architectural interpretation.: The results reveal aclear transition from access optimization to data-movement reduction. Coalescing improves transaction efficiency at the warp level but does not eliminate redundant global-memory traffic caused by overlapping convolution windows. In con-trast, shared-memory cache blocking and warp-tiled execution reduce this redundancy by enabling explicit on-chip reuse, leading to substantially larger performance gains. Across all variants, the weight-gradient path remains the dominant bottleneck. This limitation arises from the reduction-dominated structure of the computation, where accumulation across the batch and temporal dimensions limits parallelism and introduces synchronization overhead, thereby constraining achievable throughput despite improved memory locality. 
+
+1) Kernel-Level and End-to-End Runtime Contribution: 
+
+Kernel-level acceleration does not translate linearly into end-to-end training speedup. While the warp-tiled implementation reduces total convolution runtime from 133.47 ms to 40.99 ms, corresponding to a 3.26 × improvement over the naive CUDA baseline, epoch time decreases only from 44.82 s to 34.74 s, corresponding to a 1.29 × improvement. This discrepancy indicates that, as the convolution kernels become faster, non-kernel components such as framework overhead, synchronization, memory management, optimizer updates, and remaining model operations account for an increasingly large fraction of the total runtime. Therefore, kernel-level optimization must be interpreted together with IEEE TRANSACTIONS ON PARALLEL AND DISTRIBUTED SYSTEMS 810    
+
+> 15
+> 20
+> 25
+> 30
+> 35
+> Runtime (ms)
+> Forward
+> 10
+> 15
+> 20
+> 25
+> 30
+> 35
+> Runtime (ms)
+> Input Gradient
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> Runtime (ms)
+> Weight Gradient
+> Naive
+> GMC
+> Shared
+> WarpTiled
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+> 3.5
+> 4.0
+> 4.5
+> Speedup vs. Naive
+> Forward
+> Naive
+> GMC
+> Shared
+> WarpTiled
+> 0.75
+> 1.00
+> 1.25
+> 1.50
+> 1.75
+> 2.00
+> 2.25
+> 2.50
+> 2.75
+> Speedup vs. Naive
+> Input Gradient
+> Naive
+> GMC
+> Shared
+> WarpTiled
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+> 3.5
+> Speedup vs. Naive
+> Weight Gradient
+> CUDA Kernel Variant
+> Naive GMC Shared WarpTiled
+
+Fig. 8. Kernel runtime distribution and speedup across execution paths. The top row shows per-run runtime samples and mean runtimes for forward, input-gradient, and weight-gradient kernels. The bottom row shows the corresponding speedup relative to the naive CUDA baseline. Exact mean runtimes are reported in Table II. 
+
+application-level measurements. 
+
+2) Runtime Distribution and Speedup: Table II reports absolute runtime values, while Fig. 8 visualizes the corre-sponding per-path runtime reductions and speedups relative to the naive CUDA baseline. This separation keeps the numerical summary and visual analysis complementary. Fig. 8 shows that optimization effects are strongly de-pendent on the execution path. Forward and input-gradient computations benefit substantially from shared-memory cache blocking and warp-tiled execution, reaching approximately 
+
+2.9× speedup over the naive CUDA baseline. The weight-gradient path achieves the largest relative speedup, 3.68 ×, but remains the slowest absolute component because it is domi-nated by reduction over the batch and temporal dimensions. Global-memory coalescing provides only modest gains in forward and input-gradient execution because it improves access alignment without eliminating redundant loads across overlapping convolution windows. In contrast, shared-memory cache blocking and warp-tiled execution reduce redundant global-memory traffic by enabling explicit on-chip reuse. This explains the larger runtime reductions observed for these variants. The figure also highlights why kernel-level acceleration does not translate directly into proportional end-to-end training speedup: even after optimization, the weight-gradient path remains a substantial component of convolution runtime, while non-kernel components increasingly account for the remaining epoch time. 
+
+3) Counter-Free Effective Memory Bandwidth: Table III reports counter-free effective memory-bandwidth estimates derived from CUDA-event runtimes and analytically modeled memory traffic. Since the experiments are conducted in a restricted cloud environment without access to hardware per-formance counters, these values should not be interpreted as direct DRAM-throughput measurements. Instead, they provide relative indicators of memory-access efficiency across the optimized kernel variants. The estimated effective bandwidth increases from the global-memory coalescing kernel to the warp-tiled implemen-tation. This trend is consistent with the observed reduction in total convolution runtime and indicates that performance 
+
+TABLE III COUNTER -FREE EFFECTIVE MEMORY -BANDWIDTH ESTIMATES DERIVED FROM CUDA-EVENT TIMING AND ANALYTICAL MEMORY -TRAFFIC MODELING . V ALUES INDICATE RELATIVE MEMORY -ACCESS EFFICIENCY RATHER THAN DIRECT HARDWARE -COUNTER MEASUREMENTS .
+
+Variant Eff. BW (GB/s) Peak Util. 
+
+Naive CUDA N/A N/A GMC ∼42 ∼6% Shared ∼75 ∼10% Warp-tiled ∼115 ∼16% The naive baseline is reported as N/A because its effective memory bandwidth cannot be estimated reliably from logical traffic alone. Overlapping convo-lution windows generate redundant global-memory accesses, and the actual number of memory transactions depends on cache behavior and scheduling effects that are not observable without hardware counters. 40 50 60 70 80 90 
+
+> Effective Memory Bandwidth (GB/s)
+> 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+> Total Runtime Across Phases (ms)
+> GMC
+> Shared
+> WarpTiled
+> GMC
+> Shared
+> WarpTiled
+
+Fig. 9. Runtime bandwidth relationship for the optimized CUDA variants. The naive baseline is excluded because its redundant global-memory transactions cannot be reliably quantified without hardware counters. The inverse trend indicates that higher counter-free effective bandwidth corresponds to lower total convolution runtime. 
+
+is governed primarily by effective data movement rather than peak arithmetic throughput. Fig. 9 visualizes the relationship between effective band-width and total convolution runtime for the optimized CUDA variants. The naive baseline is excluded from this plot because its effective memory bandwidth cannot be estimated reliably without hardware counters. In the naive implementation, over-lapping convolution windows generate substantial redundant global-memory accesses, while the realized number of mem-ory transactions depends on cache behavior and scheduling effects that are not directly observable in the target environ-ment. Across the optimized variants, an inverse relationship be-tween runtime and effective bandwidth is visible: higher effec-tive bandwidth corresponds to lower total convolution runtime. Global-memory coalescing improves transaction efficiency but does not eliminate redundant data movement, resulting in only moderate gains. Shared-memory cache blocking and warp-tiled execution increase effective bandwidth more substantially by enabling on-chip data reuse and reducing global-memory traffic. This interpretation is consistent with the runtime distri-butions in Fig. 8, where forward and input-gradient kernels IEEE TRANSACTIONS ON PARALLEL AND DISTRIBUTED SYSTEMS 910 1 10 0 10 1              
+
+> Arithmetic Intensity
+> (FLOP/byte, log scale)
+> 10 2
+> 10 3
+> 10 4
+> Achieved Throughput
+> (GFLOP/s, log scale)
+> Naive GMC
+> Shared
+> WarpTiled
+> Forward
+> 10 110 010 1
+> Arithmetic Intensity
+> (FLOP/byte, log scale)
+> Naive GMC
+> Shared
+> WarpTiled
+> Input Gradient
+> 10 110 010 1
+> Arithmetic Intensity
+> (FLOP/byte, log scale)
+> Naive
+> GMC
+> Shared
+> WarpTiled
+> Weight Gradient
+> Roofline bound Memory roof Compute roof Naive GMC Shared WarpTiled
+
+Fig. 10. Roofline analysis of CUDA kernel variants across forward, input-gradient, and weight-gradient execution paths. 
+
+benefit strongly from improved locality, while the weight-gradient path remains the dominant contributor due to its reduction-dominated structure. The roofline analysis in Fig. 10 further confirms that all variants remain in the memory-bound regime, indicating that performance improvements arise from reduced data movement rather than increased computational throughput. Although the estimated bandwidth values remain well below the theoretical peak of the P100 GPU, this gap is expected for low-arithmetic-intensity workloads with short sequence length, boundary handling, and reduction overhead. Therefore, the key result is not the absolute bandwidth value, but the consistent trend across kernel variants: reducing redundant data move-ment has a substantially larger impact than improving access alignment alone. Overall, the results show that dominant architectural bottle-necks can be identified even without hardware performance counters. The combination of CUDA-event timing and analyt-ical memory-traffic modeling is sufficient to reveal inefficient data movement as the primary performance limitation in this workload. 
+
+4) Roofline Analysis: Fig. 10 presents the counter-free roofline analysis of the evaluated CUDA kernel variants across all execution paths. The roofline model relates achieved throughput to arithmetic intensity and provides a compact visualization of whether performance is limited by memory bandwidth or compute throughput. All kernel variants lie well below the compute roof and remain in the memory-bound region. The naive CUDA im-plementation exhibits low arithmetic intensity due to redun-dant global-memory accesses across overlapping convolution windows, which results in inefficient utilization of memory bandwidth. Global-memory coalescing improves access regularity but does not significantly change arithmetic intensity, as redundant data movement remains largely unchanged. In contrast, shared-memory cache blocking and warp-tiled execution increase arithmetic intensity by enabling explicit on-chip data reuse. This shifts the kernels upward and slightly to the right in the roofline plot, reflecting improved bandwidth utilization. Despite these improvements, none of the variants approach the compute roof, confirming that compute throughput is not the limiting factor and that the depthwise convolution remains memory-bound under the evaluated configuration. This observation is consistent with the effective-bandwidth analysis in Section V-B3, where performance improvements are primarily attributed to reduced redundant data movement. The weight-gradient kernel achieves the largest relative speedup, but remains the slowest absolute component. This indicates that the optimizations reduce memory traffic, while the reduction-dominated structure continues to impose syn-chronization and accumulation overhead. As a result, even with improved data locality, its position in the roofline plot remains constrained compared to the forward and input-gradient paths. Overall, the roofline analysis confirms that performance gains are driven by improved data reuse and reduced memory traffic rather than increased computational throughput. Im-portantly, this characterization is obtained without hardware performance counters, demonstrating that counter-free analysis is sufficient to capture the dominant performance behavior in restricted cloud environments. 
+
+5) Implications for Memory-Bound Operators: The results have broader implications beyond the evaluated S4ConvD operator. Across all kernel variants, performance is governed primarily by data movement rather than arithmetic throughput, as consistently indicated by both the roofline analysis and effective-bandwidth trends. This behavior is characteristic of memory-bound operators with low arithmetic intensity, where redundant memory traffic and limited on-chip reuse dominate execution cost. In such settings, improving memory-access alignment alone, for exam-ple through global-memory coalescing, provides only limited benefit. In contrast, reducing total data movement through shared-memory reuse yields substantially larger gains. The observed progression from the naive baseline to the warp-tiled implementation shows that performance improve-ments are strongly correlated with the degree of data reuse and locality. Although demonstrated on S4ConvD, this trend is expected to generalize to other depthwise and channel-wise operators with similar access patterns, including depthwise convolutions in CNNs and structured state-space models. At the same time, the persistent dominance of the weight-gradient kernel highlights a fundamental limitation of reduction-dominated workloads. Even with improved memory locality, large-scale accumulation introduces synchronization and serialization overhead that limits scalability on SIMT architectures. These observations indicate that further performance im-provements require algorithmic restructuring, such as more efficient reduction schemes or kernel fusion, rather than addi-tional low-level memory-access optimizations alone. This suggests that optimization efforts for similar opera-tors should prioritize data reuse over purely access-alignment strategies. 
+
+C. Counter-Free Performance Characterization 
+
+A central contribution of this work is to demonstrate that architecture-level performance insights can be obtained with-out access to hardware performance counters. The proposed methodology combines CUDA-event timing, execution-path decomposition, analytical memory-traffic modeling, effective-bandwidth estimation, and roofline analysis. IEEE TRANSACTIONS ON PARALLEL AND DISTRIBUTED SYSTEMS 10 
+
+Together, these components expose the same dominant performance mechanisms typically identified using hardware-counter-based profiling, including redundant data movement, limited on-chip reuse, reduction overhead, and the gap between kernel-level and end-to-end performance. This approach enables reproducible and portable perfor-mance analysis in cloud-based environments where access to low-level profiling tools is restricted, while preserving archi-tectural interpretability. Importantly, it shows that meaningful architectural insights can be derived without privileged access to GPU internals. 
+
+1) Bottleneck Characterization: The analysis identifies two dominant architectural bottlenecks. First, the naive and coa-lesced kernels are limited by redundant global-memory traf-fic caused by repeated accesses to overlapping convolution windows. Second, the weight-gradient path remains reduction dominated, requiring aggregation across large batch and tem-poral domains. Shared-memory cache blocking addresses the first bottle-neck by enabling explicit data reuse and reducing redun-dant global-memory accesses. Warp-tiled execution further improves locality, load balance, and warp-level data reuse. In contrast, the second bottleneck is structural and persists across all kernel variants. 
+
+2) System-Level Implications: As kernel efficiency im-proves, system-level overheads increasingly dominate runtime. This limits the translation of kernel-level speedups into end-to-end training gains and highlights the importance of evaluating both kernel-level and application-level performance. The results suggest that further acceleration requires struc-tural changes to reduction-dominated computations rather than additional improvements in memory-access organization alone. 
+
+D. Main Empirical Findings  
+
+> •
+
+Memory-access alignment alone provides limited benefit for memory-bound operators.  
+
+> •
+
+On-chip data reuse is the dominant factor driving perfor-mance improvement.  
+
+> •
+
+Optimization effectiveness depends strongly on the exe-cution path.  
+
+> •
+
+Kernel-level speedup translates sublinearly to end-to-end performance.  
+
+> •
+
+Counter-free analysis is sufficient to identify the dominant architectural bottlenecks in the evaluated cloud-based setting. VI. C ONCLUSION 
+
+This paper presented a controlled operator-level study of CUDA kernel optimization for the depthwise convolution in Structured State Space Model Convolutional Diagonal (S4ConvD). By fixing the operator, model, dataset, and train-ing configuration, the analysis isolates the impact of execu-tion mapping, memory-access organization, and on-chip data reuse, enabling direct attribution of performance differences to architectural factors. The results consistently show that performance is governed primarily by data movement rather than arithmetic throughput. Improving access regularity through global-memory coalesc-ing yields only moderate gains, as it reduces transaction overhead but does not eliminate redundant data movement. In contrast, shared-memory staging and warp-aligned execution reduce the number of global-memory transactions per output element by enabling explicit data reuse, resulting in a 3.26 ×
+
+kernel-level speedup over the naive CUDA baseline. The PyTorch reference implementation, reported separately for validation and runtime context, exhibits substantially higher convolution runtime but is not used as a controlled baseline due to its reliance on backend library optimizations. A key observation is the strong asymmetry across execution paths. While forward and input-gradient computations benefit directly from improved locality and warp-level execution, the weight-gradient path remains constrained by its reduction-dominated structure. This structural bottleneck introduces syn-chronization and accumulation overhead that persists across all optimization stages and ultimately dominates overall runtime. The study further shows that occupancy alone is not a reliable predictor of performance for memory-bound kernels. High-occupancy kernels can remain inefficient when memory accesses are redundant, whereas lower-occupancy kernels can achieve higher performance by reducing data movement and improving locality. This highlights the importance of memory efficiency over raw parallelism for memory-bound workloads. Another key finding is the systematic gap between kernel-level acceleration and end-to-end performance. Even substan-tial reductions in convolution runtime translate only partially into training acceleration, as system-level overheads such as framework execution, memory management, and synchroniza-tion become increasingly dominant. 
+
+a) Implications.: These results generalize to memory-bound operators with low arithmetic intensity and reduction-heavy execution patterns. In such workloads, reducing re-dundant data movement and increasing on-chip reuse are more effective than improving access alignment or increasing parallelism alone. The observed behavior is therefore expected to extend to other depthwise and channel-wise operators with similar memory-access characteristics. 
+
+b) Counter-free performance analysis.: A central contri-bution of this work is to demonstrate that architecture-level performance bottlenecks can be identified without relying on hardware performance counters. By combining CUDA-event timing, execution-path decomposition, analytical memory-traffic modeling, effective-bandwidth estimation, and roofline analysis, the proposed methodology provides insights consis-tent with profiling-based analysis in restricted environments. The consistency between runtime trends, effective-bandwidth estimates, and roofline positioning further supports the validity of this counter-free approach. Although the individual optimization techniques are well es-tablished, the main contribution lies in the unified, execution-path-aware analysis enabled by the proposed workflow, which links kernel design, data movement, and performance behavior under restricted conditions. IEEE TRANSACTIONS ON PARALLEL AND DISTRIBUTED SYSTEMS 11 
+
+This partially reframes restricted cloud environments from a limitation into a reproducibility opportunity by enabling standardized, portable, and hardware-agnostic performance analysis workflows. Cloud-based GPU environments can re-duce variability in the hardware class, driver stack, CUDA version, and software configuration, enabling more consistent experimental conditions than many heterogeneous local setups. 
+
+c) Future directions.: The persistent dominance of the weight-gradient computation suggests that further performance improvements require algorithmic restructuring, such as more efficient reduction strategies or kernel fusion. Future work may extend the proposed counter-free methodology to more com-plex operators, multi-kernel pipelines, and automated analysis workflows, enabling broader adoption of reproducible GPU performance characterization in cloud environments. APPENDIX AADDITIONAL NUMERICAL VALIDATION OF THE 
+
+WARP -T ILED KERNEL 
+
+As discussed in Section V-B, the warp-tiled kernel achieves the best performance among the evaluated CUDA implementa-tions. This appendix provides additional numerical validation and reference runtime context to confirm correctness and clarify the role of the PyTorch implementation. 
+
+A. Validation Protocol 
+
+The warp-tiled kernel is validated against a PyTorch grouped conv1d implementation, which serves as a reference for numerical correctness. It is important to note that this reference is used exclusively for validation purposes and is not part of the controlled kernel-level performance comparison. Validation covers forward execution, input-gradient, and weight-gradient computations. Experiments span a range of configurations by varying batch size B, channel dimension 
+
+H, sequence length L, and kernel size K. Smaller validation cases use different kernel sizes to test correctness across multiple shapes, while the main benchmark configuration uses 
+
+(B, H, L ) = (16384 , 128 , 48) with a convolution kernel length of K = 48 .For each configuration, outputs and gradients produced by the warp-tiled kernel are compared element-wise against the reference. The maximum absolute difference is reported for all quantities. For the weight-gradient path, which is most sensi-tive to accumulation order, the relative error is additionally evaluated. For even kernel sizes such as K = 48 , the PyTorch reference uses zero padding of K/ 2, and the output is cropped to the input sequence length to match the custom CUDA kernel convention. 
+
+B. Reference Runtime Context 
+
+Although the PyTorch grouped conv1d implementation is used only as a numerical reference and is not included in the controlled CUDA-kernel comparison, its execution time was measured to provide additional runtime context. For the full benchmark configuration (B, H, L ) =(16384 , 128 , 48) with K = 48 , the PyTorch reference requires B2_H4_L16_K8         
+
+> B2_H4_L17_K8
+> B4_H8_L31_K16
+> B8_H16_L48_K24
+> B16_H32_L48_K32
+> B32_H64_L48_K48
+> B128_H64_L48_K48
+> B512_H128_L48_K48
+> B4096_H128_L48_K48
+> B8192_H128_L48_K48
+> B16384_H128_L48_K48
+> 10 10
+> 10 9
+> 10 8
+> 10 7
+> 10 6
+> 10 5
+> 10 4
+> 10 3
+> Max absolute difference (log scale)
+> Forward abs diff
+> Backward x abs diff
+> Backward k abs diff
+
+Fig. 11. Maximum absolute difference between the warp-tiled implementation and the PyTorch reference across problem sizes. Forward and input-gradient errors remain at the numerical precision floor, while weight-gradient error increases gradually due to accumulation-order differences. Values below the plotting threshold are clipped only for visualization. 
+
+28.44 ms for the forward pass, 25.62 ms for the input-gradient computation, and 141.73 ms for the weight-gradient compu-tation, resulting in a total convolution runtime of 195.79 ms. These measurements are not used to attribute architectural effects, since the PyTorch implementation relies on backend library behavior that is not directly controlled in this study. Instead, they serve as a sanity-check reference and provide context for the scale of execution-path runtimes. 
+
+C. Observed Numerical Behavior 
+
+Across all tested configurations, forward outputs match the reference within float32 numerical precision, and input gradients remain numerically stable with negligible deviations. The weight-gradient exhibits small differences that increase with problem size. This behavior is expected and results from variations in floating-point accumulation order inherent to parallel reduction on GPU architectures. For the largest configuration (B, H, L ) = (16384 , 128 , 48) with K = 48 , the maximum absolute difference is 4.96 × 10 −4, corresponding to a relative error of approximately 1.05 × 10 −6.These deviations remain well within the tolerance of single-precision training workloads and are consistent with estab-lished numerical properties of floating-point reductions. Overall, the results confirm that the warp-tiled implementa-tion preserves numerical correctness across all execution paths. 
+
+D. Error Trend Across Problem Sizes 
+
+Fig. 11 shows the maximum absolute differences for for-ward, input-gradient, and weight-gradient computations as a function of problem size. Forward and input-gradient errors remain at the numer-ical precision floor across all configurations. In contrast, the weight-gradient error increases gradually with accumu-lation depth, reflecting the expected sensitivity of reduction-dominated computations to floating-point ordering effects. For visualization on a logarithmic scale, values below a fixed threshold are clipped for display purposes only; all reported values are computed from the original outputs without modification. IEEE TRANSACTIONS ON PARALLEL AND DISTRIBUTED SYSTEMS 12 
+
+E. Module-Level Validation 
+
+In addition to operator-level validation, the warp-tiled kernel is evaluated within the full S4ConvKernel module forward path. For the tested configuration, the custom implementation produces outputs that match the reference implementation within float32 numerical precision, with no observable devia-tion in maximum absolute error. This confirms that the kernel is not only correct in isolation but also integrates consistently within the model-level execu-tion. 
+
+F. Summary 
+
+The presented validation results demonstrate that the warp-tiled kernel maintains numerical correctness across all exe-cution paths and problem scales. The observed deviations in the weight-gradient are consistent with expected floating-point reduction effects and remain well within acceptable tolerance. These findings confirm that the performance improvements achieved by the warp-tiled design do not compromise numer-ical stability, supporting the validity of the proposed counter-free performance analysis. REFERENCES [1] J. D. Owens, M. Houston, D. Luebke, S. Green, J. E. Stone, and J. C. Phillips, “GPU computing,” Proceedings of the IEEE , vol. 96, no. 5, pp. 879–899, 2008. [2] S. Williams, A. Waterman, and D. Patterson, “Roofline: An insightful visual performance model for multicore architectures,” Communications of the ACM , vol. 52, no. 4, pp. 65–76, 2009. [3] NVIDIA, CUDA C++ Programming Guide , NVIDIA, 2026, release 13.2. [4] ——, CUDA C++ Best Practices Guide , NVIDIA, 2026, cUDA Toolkit Documentation. [5] T. Dao, D. Fu, S. Ermon, A. Rudra, and C. R´ e, “FlashAttention: Fast and memory-efficient exact attention with IO-awareness,” Advances in Neural Information Processing Systems , vol. 35, pp. 16 344–16 359, 2022. [6] A. Gu and T. Dao, “Mamba: Linear-time sequence modeling with selective state spaces,” in First Conference on Language Modeling , 2024. [7] M. Harris, “Optimizing parallel reduction in CUDA,” 2007, nVIDIA Developer Technology, Technical Report. [8] Z. Jia, M. Maggioni, B. Staiger, and D. P. Scarpazza, “Dissecting the NVIDIA volta GPU architecture via microbenchmarking,” arXiv preprint arXiv:1804.06826 , 2018. [9] S. Markidis, S. W. Der Chien, E. Laure, and I. B. Peng, “Nvidia tensor core programmability, performance & precision,” in IPDPSW , 2018. [10] M. Schaller and B. Rosenhahn, “S4ConvD: Adaptive scaling and frequency adjustment for energy-efficient sensor networks in smart buildings,” arXiv preprint arXiv:2502.21035 , 2025. [Online]. Available: https://arxiv.org/abs/2502.21035 [11] A. Gu, K. Goel, A. Gupta, and C. R´ e, “On the parameterization and initialization of diagonal state space models,” in Advances in Neural Information Processing Systems ,vol. 35. Curran Associates, Inc., 2022, pp. 35 971–35 983. [Online]. Available: https://proceedings.neurips.cc/paper files/paper/ 2022/file/e9a32fade47b906de908431991440f7c-Paper-Conference.pdf [12] D. Kirk and W.-m. Hwu, Programming Massively Parallel Processors: A Hands-on Approach . Morgan Kaufmann, 2016. [13] V. Volkov and J. W. Demmel, “Benchmarking GPUs to tune dense linear algebra,” in SC’08: Proceedings of the 2008 ACM/IEEE Conference on Supercomputing . IEEE, 2008, pp. 1–11. [14] M. Harris, “An introduction to optimizing CUDA applications,” https: //developer.nvidia.com/blog/even-easier-introduction-cuda/, 2013. [15] S. Bøhm, “How to optimize a CUDA matmul kernel,” https://siboehm. com/articles/22/CUDA-MMM, 2022, accessed: 2025-01-10. [16] S. Chetlur, C. Woolley, P. Vandermersch, J. Cohen, J. Tran, B. Catanzaro, and E. Shelhamer, “cuDNN: Efficient primitives for deep learning,” 
+
+arXiv preprint arXiv:1410.0759 , 2014. [17] NVIDIA, Matrix Multiplication Background User’s Guide , NVIDIA, 2023, nVIDIA Documentation. [18] X. Mei and X. Chu, “Dissecting GPU memory hierarchy through microbenchmarking,” IEEE Transactions on Parallel and Distributed Systems , vol. 28, no. 1, pp. 72–86, 2016. [19] X. Zhang, X. Zhou, M. Lin, and J. Sun, “Shufflenet: An extremely effi-cient convolutional neural network for mobile devices,” in Proceedings of the IEEE conference on computer vision and pattern recognition ,2018, pp. 6848–6856. [20] A. G. Howard et al. , “Mobilenets: Efficient convolutional neural networks for mobile vision applications,” in arXiv preprint arXiv:1704.04861 , 2017. [Online]. Available: https: //arxiv.org/abs/1704.04861 [21] N. J. Higham, Accuracy and stability of numerical algorithms . SIAM, 2002. [22] C. Miller, P. Arjunan, A. Kathirgamanathan, C. Fu, J. Roth, J. Y. Park, C. Balbach, K. Gowri, Z. Nagy, A. D. Fontanini, and J. Haberl, “The ASHRAE great energy predictor III competition: Overview and results,” Science and Technology for the Built Environment , vol. 26, no. 10, pp. 1427–1447, 2020. [Online]. Available: https://doi.org/10.1080/23744731.2020.1795514 [23] A. Gu, K. Goel, and C. R´ e, “Efficiently modeling long sequences with structured state spaces. 10.48550,” arXiv preprint arXiv.2111.00396 ,2022. [24] A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga et al. , “PyTorch: An imperative style, high-performance deep learning library,” Advances in Neural Information Processing Systems , vol. 32, 2019. [25] Y. LeCun, Y. Bengio, and G. Hinton, “Deep learning,” Nature , vol. 521, no. 7553, pp. 436–444, 2015. [26] NVIDIA, Tesla P100 for PCIe Data Sheet , NVIDIA, 2016, tesla P100 PCIe 16GB datasheet. [Online]. Available: https://images.nvidia.com/ content/tesla/pdf/nvidia-tesla-p100-PCIe-datasheet.pdf [27] ——, NVIDIA Tesla P100: The Most Advanced Datacenter Accelerator Ever Built , NVIDIA, 2016, pascal GP100 architecture whitepaper. [Online]. Available: https://images.nvidia.com/content/pdf/ tesla/whitepaper/pascal-architecture-whitepaper.pdf [28] NVIDIA Corporation, “CUDA refresher: The CUDA programming model,” https://developer.nvidia.com/blog/ cuda-refresher-cuda-programming-model/, 2020, accessed: 2025-12-10. [29] Alpaka Developers, “Warp abstraction,” https://alpaka.readthedocs.io/en/ 0.5.0/usage/abstraction/warp.html, 2023, accessed: 2025-01-22. 
+
+Huriyeh Babak Huriyeh Babak is currently pursuing the M.Sc. degree in computer science at Leibniz-University Hannover, Hannover, Germany. Her research interests include high-performance computing, GPU programming, and deep learning systems. 
+
+Melanie Schaller Melanie Schaller received the Ph.D. from the University of W¨ urzburg in 2023 and worked as Researcher for the Center of Artificial Intelligence and Data Science (CAIDAS) at the University of W¨ urzburg from 2021 till 2024. Her research interests include machine learning systems, anomaly detection in multivariate time series, graph signal processing, and sensor network applications as well as sequential modelling with deep state-space models. She has contributed to several research projects in machine learning for engineering purposes, including anomaly detection in structural health monitoring and leakage detection in water distribution networks. Since 2024 she works as a research group leader at the Institute for Information Processing (tnt) at Leibniz-University Hannover and is also a member of the Management Board of the L3S Research Center.

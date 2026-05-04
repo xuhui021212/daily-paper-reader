@@ -1,0 +1,1027 @@
+Title: QFlash: Bridging Quantization and Memory Efficiency in Vision Transformer Attention
+
+URL Source: https://arxiv.org/pdf/2604.25306v1
+
+Published Time: Wed, 29 Apr 2026 00:37:38 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# QFlash: Bridging Quantization and Memory Efficiency in Vision Transformer Attention 
+
+## Sehyeon Oh 1,2 , Yongin Kwon 3 , Jemin Lee 4∗
+
+> 1
+
+## University of Science and Technology, Daejeon, Republic of Korea 
+
+> 2
+
+## Electronics and Telecommunications Research Institute, Daejeon, Republic of Korea 
+
+> 3
+
+## Pusan National University, Busan, Republic of Korea 
+
+> 4
+
+## Jeonbuk National University, Jeonju-si, Republic of Korea somae0604@gmail.com, yongin@pusan.ac.kr, jemin.lee@jbnu.ac.kr 
+
+## Abstract 
+
+FlashAttention improves efficiency through tiling, but its online softmax still relies on floating-point arithmetic for numerical stability, making full quantization difficult. We identify three main ob-stacles to integer-only FlashAttention: (1) scale ex-plosion during tile-wise accumulation, (2) ineffi-cient shift-based exponential operations on GPUs, and (3) quantization granularity constraints requir-ing uniform scales for integer comparison. To ad-dress these challenges, we propose QFlash , an end-to-end integer FlashAttention design that performs softmax entirely in the integer domain and runs as a single Triton kernel. On seven attention workloads from ViT, DeiT, and Swin models, QFlash achieves up to 6.73 × speedup over I-ViT and up to 8.69 ×
+
+speedup on Swin, while reducing energy consump-tion by 18.8% compared to FP16 FlashAttention, without sacrificing Top-1 accuracy on ViT/DeiT and remaining competitive on Swin under per-tensor quantization. Our code is publicly available at https://github.com/EfficientCompLab/qflash. 
+
+## 1 Introduction 
+
+Transformer self-attention provides strong representational power, but its computation and memory cost grow as O(N 2)
+
+with sequence length. This growth incurs a memory bottle-neck in Vision Transformers (ViTs), where intermediate ten-sors must be transferred between on-chip and off-chip mem-ory. FlashAttention [Dao et al. , 2022] was proposed to reduce this problem by splitting the sequence into tiles. Each tile is computed on-chip, and only the final outputs are written to off-chip memory. However, FlashAttention and later works [Dao et al. , 2022; Dao, 2023; Shah et al. , 2024] cannot compute the softmax in one step because of the tile-based design. They update the row-wise maximum for each tile, rescale the past results, and then add the new tile results. This process needs numerical stability and therefore depends on floating-point operations. Other works on quantizing attention include I-BERT [Kim 
+
+et al. , 2021], I-ViT [Li and Gu, 2023], QAttn [Kluska et al. ,
+
+> ∗
+
+Corresponding author MatMul(INT8)     
+
+> Q(INT8) K(INT8) V(INT8)
+> MatMul(INT8)
+> Ex p(FP32)
+> Dequantize
+> Quantize
+> Partial Quantization
+> INT32
+> FP32
+> FP32
+> INT8
+> MatMul(INT8)
+> Q(INT8) K(INT8) V(INT8)
+> MatMul(INT8)
+> Ex p(INT32)
+> QFlash
+> INT32
+> INT8
+> INT32 INT32
+> #tiles
+> #tiles
+
+Figure 1: Comparison of partial quantization and the proposed QFlash method. 
+
+2024], and INT-FlashAttention [Chen et al. , 2024]. Although I-BERT and I-ViT quantize the Softmax operation, they do not consider a tile-based fused attention design like FlashAt-tention [Dao et al. , 2022], leaving memory bottlenecks un-resolved. QAttn and INT-FlashAttention quantize only the matrix multiplications, while the softmax still runs in floating point. As a result, there has been no work on a fully integer-only fused attention that reduces memory cost and removes floating-point operations. Through our analysis of integer-only FlashAttention, we identify three key challenges. (C1) Scale Explosion : In tile-wise accumulation, approximation errors and scale changes from integer exponential operations propagate across tiles, causing numerical instability. (C2) GPU Inefficiency : The shift-based exponential approximation requires integer divi-sion to separate integer and fractional parts, which is signifi-cantly slower than multiplication or shift operations on GPUs. 
+
+(C3) Quantization Granularity : Fused attention requires uni-form scales across tiles for direct integer comparison; per-token quantization introduces scale mismatches that necessi-tate costly dequantization. In this paper we propose QFlash, an integer-only fused at-tention on tile-based computation that addresses these chal-lenges. As shown in Figure 1, QFlash keeps the tile-based design but quantizes all operators including the softmax, thus the full kernel runs in the integer domain. First , we imple-
+
+> arXiv:2604.25306v1 [cs.LG] 28 Apr 2026
+
+ment online softmax [Milakov and Gimelshein, 2018] with shift-based exponential approximation and row-wise max up-dates, addressing C1 by carefully managing scale propagation across tiles. Second , we optimize the shift-based exponential computation to minimize GPU inefficiency (C2) through ef-ficient integer arithmetic. Third , we adopt per-tensor quan-tization granularity to maintain uniform scales across the en-tire attention computation, enabling direct integer comparison without dequantization (C3). This full kernel fusion reduces off-chip memory use, improves scheduling, and raises GPU utilization. QFlash therefore keeps the benefits of fused atten-tion while providing a fully integer path that improves both latency and energy efficiency. To validate the proposed method, we implement QFlash as an integer-only kernel in Triton and evaluate it on an NVIDIA GeForce RTX 5090 with TVM 0.8, PyTorch 2.7.1 with CUDA 12.8, and Triton 3.3.1. We extract seven repre-sentative attention workloads (A1–A7) from ViT, DeiT, and Swin models at 224 × 224 resolution to systematically eval-uate latency performance. On DeiT and ViT workloads (A1– A3), QFlash achieves up to 4.54 × speedup at batch 1 and 
+
+6.73 × at batch 8 compared with I-ViT. On Swin workloads (A4–A7), the speedup reaches 7.69 × and 8.69 × respectively. We also observe that QFlash’s IMMA utilization is 8.0%, lower than FlashAttention-2’s HMMA utilization of 13.08%, but since IMMA provides twice the peak throughput on RTX 5090, QFlash delivers higher absolute performance. For the same workload, QFlash reduces energy consump-tion by 18.8%, from 929.6 μJ with FP16 FlashAttention-2 to 754.6 μJ. In terms of accuracy, QFlash improves SQNR by up to 6.7dB over I-ViT. It also maintains Top-1 accuracy close to FP32 on ViT and DeiT models evaluated on ImageNet-1K. These results show that an integer-only design can achieve high speed and efficiency without sacrificing accuracy in real inference. 
+
+## 2 Background & Related Work 
+
+2.1 FlashAttention 
+
+Standard self-attention requires computing the similarity be-tween all query key pairs and storing the results in a matrix, leading to memory and computational complexity of O(N 2)
+
+with respect to the sequence length. As a result, both the computation cost and GPU mem-ory usage increase rapidly when processing long sequences. FlashAttention was proposed to address this issue by lever-aging the GPU memory hierarchy to avoid storing the inter-mediate similarity matrix in memory and instead performing computations in a tile-based manner. The key idea is to use online softmax [Milakov and Gimelshein, 2018], which in-crementally updates the softmax normalization as each block is processed. In standard softmax, all similarity values must be collected at once to compute the denominator. In contrast, online softmax processes similarity values block by block, updating the running maximum and exponen-tial sum as new blocks are computed. This approach main-tains numerical stability while eliminating the need to store the entire similarity matrix in memory. Thanks to this design, FlashAttention performs computations directly in high-speed GPU memory and writes results to global memory only when necessary. As a result, the number of memory accesses is significantly reduced, and the overall memory complexity is relaxed from O(N 2) to O(N ).
+
+2.2 Vision Transformer Quantization 
+
+Prior work on Vision Transformer (ViT) compression has pre-dominantly targeted linear operators, notably matrix multipli-cations [Li et al. , 2023; Yuan et al. , 2022; Zhong et al. , 2024; Ramachandran et al. , 2024]. Subsequent studies extended quantization to non-linear components (Softmax, GELU, and LayerNorm) using polynomial, log-domain, or bit-shift ap-proximations [Kim et al. , 2021; Lin et al. , 2021; You et al. ,2024; Hu et al. , 2024; Kim et al. , 2024]. These contributions, however, remain at the algorithmic level and do not translate the approximations into kernel-level speedups. I-ViT [Li and Gu, 2023] advances the state of the art by bit-shift approximating Softmax and GELU and applying TVM-based intra-operator optimizations. Nevertheless, it forgoes inter-operator fusions akin to FlashAttention, leaving mem-ory traffic largely unoptimized and thereby preserving con-siderable headroom for further latency reduction in quantized ViTs. There have been some efforts to optimize quantized atten-tion kernels by fusing attention operators [Kluska et al. , 2024; Chen et al. , 2024]. These approaches reduce computation and memory usage by quantizing the key matrix multipli-cations in attention. However, the core operation of atten-tion—Softmax—is still computed in the floating-point do-main, which limits their applicability for integer-only infer-ence. More recent works accelerate attention and nonlinear op-erators through hardware–software co-design. Fused Ten-sor Core [Jahadi et al. , 2025] fuses matrix multiplication and Softmax on GPUs by offloading max and sum operations to Tensor Cores, but still relies on floating-point exponentiation. PICACHU [Qin et al. , 2025] and QUARK [Zhao et al. , 2025] accelerate Softmax, GELU, and LayerNorm using dedicated hardware or CGRA-based designs. While effective, these ap-proaches either keep Softmax in the floating-point domain or depend on specialized hardware support, limiting their gener-ality for software-only, integer-only attention on commodity GPUs. To address these limitations, this work proposes a fully integer-only FlashAttention kernel that quantizes all attention operations, including Softmax, using a software-only design on commodity GPUs. 
+
+2.3 Advantages of Integer-only Quantization 
+
+Peak performance of CUDA cores and Tensor Cores. For CUDA cores, the latency of integer and floating-point opera-tions is almost the same, so full quantization is not very use-ful [Arafa et al. , 2019]. On the RTX 5090, however, mea-surements show that Tensor Cores can run 174K operators per cycle with HMMA (FP16) and 348K with IMMA (INT8), which is two times higher 1. Applying quantization to all op-
+
+> 1Calculated based on 170 SMs configuration of RTX 5090 archi-tecture.
+
+erators therefore increases IMMA use and reduces data com-munication, giving a clear benefit. 
+
+Performance per watt of Tensor Cores. Half-precision matrix multiply and accumulate (HMMA) uses less energy per operation, but the instruction overhead is still high, which reduces the overall performance per watt. Integer matrix mul-tiply (IMMA) may consume a bit more energy per operation, but the instruction overhead is lower, so it reaches higher compute density in real workloads [Dally, 2023]. From this view, quantizing the model to use IMMA improves both en-ergy efficiency and performance density. In this work, we show that using IMMA with quantization improves not only latency and throughput but also energy efficiency. 
+
+Use of integer-only accelerators. In mixed-precision de-signs, matrix multiplications are quantized, but key opera-tions such as softmax still depend on floating-point units. This causes extra communication cost between integer and floating-point hardware, which limits the acceleration and adds inefficiency from floating-point units. Low-cost integer-only accelerators cannot support such mixed-precision needs, so extra floating-point units must be added in a heterogeneous chip. This increases chip area and power budget, which raises the cost of model deployment. 
+
+## 3 Challenges of Fully Integer FlashAttention 
+
+3.1 C1: Scale Explosion in Tile-wise Integer Accumulation 
+
+The first challenge is how to manage scaling in a tile-wise accumulation setting to avoid overflow and severe accuracy degradation. FlashAttention computes attention outputs tile by tile and incrementally accumulates each partial result into the running output. Since the accumulated result from pre-vious tiles is reused as input for subsequent tiles, numeri-cal stability becomes critical once quantization is applied. In integer-based FlashAttention, the exponential function is re-placed with an integer approximation. The resulting approxi-mation errors and scale variations are repeatedly injected into the accumulation process across tiles, which can lead to rapid scale growth and instability if not carefully controlled. A de-tailed comparison of scale management strategies is provided in Appendix B.1. 
+
+3.2 C2: Inefficiency of Shift-based Exp/Softmax on GPU 
+
+The integer softmax proposed in I-ViT [Li and Gu, 2023] typically transforms the exponential function into an exp 2( ·)
+
+form and implements it using shift operations combined with linear approximations. While this approach is theoretically efficient, it introduces practical inefficiencies on GPUs when applied to integer inputs. Specifically, computing exp 2( x) requires decomposing the input into integer and fractional parts. For quantized inte-ger inputs, this decomposition involves integer division. On GPUs, integer division has significantly higher latency than multiplication or shift operations, making it a major perfor-mance bottleneck for softmax computation. Implementation details of our GPU-friendly solution are discussed in Ap-pendix B.2. 
+
+3.3 C3: Quantization Granularity in Integer Fused Attention 
+
+Attention inputs have a multi-dimensional structure, and quantization granularity can be applied at the tensor, head, or token level. The choice of granularity directly affects both accuracy and performance. In FlashAttention, stable exponential computation requires subtracting the maximum value from QK ⊤ scores, with the maximum being updated at every tile. When this process is performed in an integer-only setting, updating the maximum requires either all tiles to be computed under the same scale or the values to be dequantized into floating point for compar-ison. However, dequantization introduces additional compu-tation and memory accesses, which significantly undermines the performance benefits of fused attention kernels. For this reason, we aim to maintain a shared scale that en-ables direct comparison of integer values without dequantiza-tion. From this perspective, per-token quantization generates different scales for each token, making it difficult to apply in integer fused attention during max updates and accumu-lation. As a result, per-tensor and per-head quantization are the practical granularity choices for integer-based FlashAt-tention. A visual illustration of granularity constraints is pre-sented in Appendix B.3. 
+
+## 4 Integer-Only Fused Attention Method 
+
+In this section, we describe in detail how the proposed QFlash algorithm operates. We first define the notation used in the de-scription. Let b denote the bit-width, and let Iint( b) denote the set of signed b-bit integers as defined in Equation (1). Let sX
+
+be the scale factor, and let ˆX denote the integer quantization of X.
+
+Iint( b) := {z ∈ Z | − 2b−1 ≤ z ≤ 2b−1 − 1}. (1) For a real matrix X ∈ Rm×n, the scale factor sX and the quantized matrix ˆX are defined as in Equation (2). 
+
+sX = ∥X∥∞
+
+2b−1 − 1 ∈ R, ˆX =
+
+ X
+
+sX
+
+
+
+∈ Im×n
+
+> int( b)
+
+. (2) QFlash maintains the tile-based fused attention computa-tion of FlashAttention [Dao et al. , 2022] while quantizing all operators, including the softmax, to achieve both data size reduction and compute efficiency. The detailed procedure follows Figure 2 and Algorithm 1. One execution of the outer loop in Algorithm 1 computes a single output tensor ˆOi.As shown in Figure 2, the process consists of the following eleven steps: 1 Compute Query–Key Score → 2 Compute Row-Max → 3 Update Max → 4 Compute Score Intensity 
+
+→ 5 Compute Max-Offset Factor → 6 Requantization → 
+
+> 7
+
+Compute Row-Sum → 8 Compute Value MatMul → 9
+
+Accumulate Denominator → 10 Accumulate Numerator → 
+
+> 11
+
+Normalize. 
+
+4.1 MatMul 
+
+QFlash performs integer matrix multiplications for 1 Com-pute Query–Key MatMul and 8 Compute Value MatMul. 𝑚 " 𝑙 $
+
+> Inner Loop
+> Inner Loop
+> Outer Loop
+> Outer Loop
+> S&!
+> (#)
+> K(#
+> %
+> Q(!
+> O(!
+> V(!
+> Off -Chip Mem
+> On -Chip Mem
+> O(!
+> (&)
+
+/        
+
+> 𝑙 $!
+> (&)
+> Normalize
+> 𝐵 '
+> 𝐵 (
+> (𝟏  ≤ 𝒊  ≤ 𝑻 𝒓 )
+> (𝟏 ≤𝒊 ≤𝑻 𝒄 )
+> (𝟏  ≤ 𝒊  ≤ 𝑻 𝒄 )
+> (𝟏 ≤𝒊 ≤𝑻 𝒓 )
+> 𝐵 (
+> 𝐵 '
+> S"!
+> (#)
+
+, MatMul     
+
+> INT8 INT32
+> Compute Query -Key MatMul
+> Q$!K$#
+> %
+> S"!
+> (#)𝑚 '!
+> (&!'() )
+> RowMax
+> INT32 INT32
+> Compute Row -Max
+> 𝑚 '!
+> (#*+)
+> 𝑚 '!
+> (&!'() )
+
+, max    
+
+> 𝑚 '!
+> (#)
+> INT32 INT32
+> Update Max
+> S"!
+> (#)𝑚 '!
+> (#)
+> ShiftExp2
+> P"!
+> (&!'() )
+> INT32 INT32
+
+- 
+
+> Compute Score Intensity
+> 𝑚 '!
+> (#)
+> ShiftExp2
+> α'!
+> (#)
+> 𝑚 '!
+> (#*+)
+> INT32 INT32
+
+- 
+
+> Compute Max -Offset Factor
+> O$!
+> (&!'() )
+
++
+
+> O$!
+> (#*+)
+
+· 
+
+> α'!
+> (#)O$!
+> (#)
+> INT32
+> Accumulate Numerator
+> 𝑙 ,!
+> (&!'() )
+
++
+
+> 𝑙 ,!
+> (#*+)
+
+·    
+
+> α'!
+> (#)𝑀 ,𝑙 ,!
+> (#)
+> INT32
+> Accumulate Denominator
+> P"!
+> (#)V$(#)O$!
+> (&!'() )
+
+, MatMul      
+
+> INT8 INT32
+> Compute Value MatMul
+> P"!
+> (#)
+> RowSum
+> 𝑙 ,!
+> (&!'() )
+> INT8 INT32
+> Compute Row -Sum
+> P"!
+> (&!'() )
+> Requantize
+> P"!
+> (#)
+> INT32 INT8
+> Requantization
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10 
+
+11 
+
+1 …
+
+2, 10 
+
+·( ) ≫ 𝑛 
+
+· ) ≫ 𝑛 (
+
+> 𝑀 ,
+
+Figure 2: Proposed QFlash forward pass (Algorithm 1), showing the integer-based attention pipeline with quantization, shift-exp softmax approximation, and blockwise accumulation. 
+
+These operations can be expressed as the dot product of two quantized matrices ˆA ∈ IBr ×d 
+
+> int 8
+
+and ˆB ∈ Id×Bc 
+
+> int 8
+
+. Here, Br
+
+denotes the size of the query block, Bc denotes the size of the key/value block, and d represents the inner dimension of the multiplication. The inputs are given in int8 format, and the results are accumulated in int32 format. Equation (3) defines the scaling relationship corresponding to this integer matrix multiplication. 
+
+ˆC = ˆA · ˆB ∈ IBr ×Bc 
+
+> int 32
+
+, sC = sA · sB ∈ R. (3) This operation can be highly optimized on GPUs and dedi-cated accelerators, replacing floating-point multiplications to significantly reduce both computational cost and memory ac-cess overhead. 
+
+4.2 Compute Row-Max and Update Max 
+
+For a matrix ˆX ∈ IBr ×Bc 
+
+> int 32
+
+, the 2 Compute Row-Max step calculates the maximum value of each row to obtain a vec-tor ˆm ∈ IBr
+
+> int32
+
+. Subsequently, in the 3 Update Max step, these values are compared with those from the previous tile to update the row-wise maxima progressively. 
+
+ˆmi = max 
+
+> 0≤j<B c
+
+ˆX[i, j ], ˆm =  ˆm1, . . . , ˆmBr
+
+ ∈ IBr
+
+> int32
+
+. (4) Equation (4) defines the extraction of the maximum value from each row, which serves as the reference point for the subsequent softmax computation. By subtracting the row-wise maximum from all elements, potential overflow in the exponential calculation is prevented. In addition, Update Max incorporates the running maximum across tiles during block-wise operations, ensuring stable numerical computa-tion throughout the entire sequence. This tile-wise max up-date requires consistent scaling for direct integer comparison, which motivates Challenge C3. 
+
+4.3 Compute Score Intensity and Max-Offset Factor 
+
+In QFlash, the exponential operation is used in step 4 Com-pute Score Intensity and step 5 Compute Max-Offset Factor. The Score Intensity step computes the exponential term of softmax in integer form to measure attention strength. The Max-Offset Factor step uses the Row-Max value to keep the exponential operation stable. We adapt the ShiftExp algorithm from I-ViT to approxi-mate the exponential function of softmax with integer arith-metic. The key of softmax is the ex computation. By multi-plying with the constant log 2(e), we can rewrite it as a power of two. The input matrix is ˆX ∈ Im×n 
+
+> int 32
+
+with scale factor 
+
+sX ∈ R. After Row-Max is applied, ˆX always has negative values; therefore, the exponential is applied only to negative inputs. This process is given in Equation (5). 
+
+## esX · ˆX = 2 (sX ·log 2 e)· ˆX = 2 ˜sX · ˆX, (5) Here, ˜sX = sX · log 2 e. Equation (6) rewrites the input 
+
+ˆX as an integer part Q ∈ Z≤0 and a fractional part R. This decomposition typically requires integer division on GPUs, which motivates Challenge C2. 
+
+## 2˜sX · ˆX = 2 (˜ sX ·R)+ Q (6) Since the fractional part R lies in (−1, 0] , it can be replaced with a simple linear approximation as in Equation (7). 
+
+## 2(˜ sX ·R) ≈ ˜sX ·R
+
+2 + 1 = ˜ sX ·
+
+##  R
+
+2 +
+
+## j 1˜sX
+
+## m 
+
+(7) Note that 
+
+j 1˜sX
+
+m
+
+is a constant determined only by ˜sX . Thus, it is precomputed outside the kernel, and the kernel performs Algorithm 1 QFlash Algorithm 
+
+1: Require: ˆQ, ˆK, ˆV ∈ IN ×d 
+
+> int8
+
+, scale factors sQ, s K , s V ∈ R and s = sQ · sK · d−1/2 · log 2 e, block sizes Bc, B r , multiplier 
+
+Mr , shift bits r.
+
+2: Divide ˆQ into Tr = ⌈N/B r ⌉ blocks ˆQ1, . . . , ˆQTr of size Br × d, and divide ˆK, ˆV into Tc = ⌈N/B c⌉ blocks ˆK1, . . . , ˆKTc
+
+and ˆV1, . . . , ˆVTc of size Bc × d each. 
+
+3: Divide output ˆO ∈ IN ×d 
+
+> int 8
+
+into Tr blocks ˆO1, . . . , ˆOTr of size Br × d each. 
+
+4: for i = 1 to Tr do 
+
+5: Load ˆQi from ˆQ[( i − 1) Br : iB r , :] from off-chip to SRAM 
+
+6: On chip, initialize ˆOi = 0 ∈ ZBr ×d, ˆl(0)  
+
+> i
+
+= 0 ∈ ZBr , ˆm(0)  
+
+> i
+
+= −221 ∈ ZBr
+
+7: for j = 1 to Tc do 
+
+8: Load ˆK⊤ 
+
+> j
+
+from ˆK⊤[: , (j − 1) Bc : jB c] and ˆVj from ˆV[( j − 1) Bc : jB c, :] from off-chip to SRAM 
+
+9: On chip, compute ˆS(j) 
+
+> i
+
+← ˆQi ˆK⊤ 
+
+> j
+
+▷ 1
+
+10: On chip, compute ˆm(j) 
+
+> i
+
+← max( ˆ m(j−1)  
+
+> i
+
+, rowmax( ˆS(j) 
+
+> i
+
+)) ▷ 2 , 3
+
+11: On chip, compute ˆα(j) 
+
+> i
+
+← ShiftExp2( ˆ m(j−1)  
+
+> i
+
+− ˆm(j) 
+
+> i
+
+, s ) ▷ 4
+
+12: On chip, compute ˆP(tiled ) 
+
+> i
+
+← ShiftExp2( ˆS(j) 
+
+> i
+
+− ˆm(j) 
+
+> i
+
+, s ) ▷ 5
+
+13: On chip, compute ˆP(j) 
+
+> i
+
+← Requantization( ˆP(tiled ) 
+
+> i
+
+, M, b ) ▷ 6
+
+14: On chip, compute ˆl(j) 
+
+> i
+
+← ScaleRelease( ˆl(j−1)  
+
+> i
+
+, ˆα(j) 
+
+> i
+
+, s ) + rowsum( ˆP(j) 
+
+> i
+
+) ▷ 7 , 9
+
+15: On chip, compute ˆO(j) 
+
+> i
+
+← ScaleRelease( ˆO(j−1)  
+
+> i
+
+, ˆα(j) 
+
+> i
+
+, s ) + ˆP(j) 
+
+> i
+
+ˆVj ▷ 8 , 10 
+
+16: end for 
+
+17: On chip, compute ˆOi ← ⌊ ˆOTc 
+
+> i
+
+/ˆlTc 
+
+> i
+
+⌋ ▷ 11 
+
+18: Write ˆOi to off-chip as the i-th block of ˆO
+
+19: end for 
+
+20: Return the output ˆO ∈ IN ×d 
+
+> int8
+
+and the output scale factor sO = sV .only element-wise integer operations. Finally, Equation (8) shows the combination of the integer part and the approxi-mated fractional part to compute the exponential. 
+
+## esX · ˆX ≈ ˜sX ·
+
+##  R 
+
+> 2
+
+## +
+
+## j 1˜sX
+
+## m 
+
+## · 2Q (8) This formulation enables an efficient integer-only approx-imation of the exponential operation using simple arithmetic and bit-shift operations. 
+
+4.4 Requantization 
+
+The result of the matrix multiplication is stored as ˆX ∈
+
+IBr ×Bc 
+
+> int 32
+
+. To be used in subsequent operations, this value must be converted back into the range of ˆY ∈ IBr ×Bc 
+
+> int 8
+
+through the  
+
+> 6
+
+Requantization step. This is achieved by applying a scal-ing transformation that reduces the integer range. First, we define a fixed-point multiplier as in Equation (9). Here, the scale ratio is converted into a binary logarithm to compute n,and the shift size r is set by considering the bit-width b.
+
+n =
+
+
+
+log 2
+
+ sX
+
+sY
+
+ 
+
+, r = b − n. (9) Based on this, the requantization is performed as shown in Equation (10). 
+
+Mr =
+
+ sX
+
+sY
+
+· 2r
+
+
+
+, ˆY =
+
+ ˆX · Mr
+
+
+
+≫ r. (10) We precompute n, r, and 
+
+j sX 
+
+> sY
+
+· 2r
+
+m
+
+outside the kernel, since they depend only on the scale factors and bit-width and are independent of the input ˆX.
+
+4.5 Compute Row-Sum 
+
+For softmax normalization, the denominator requires the sum of each row. Thus, for the matrix ˆX ∈ IBr ×Bc 
+
+> int 8
+
+, the 7 Com-pute Row-Sum step calculates the element-wise sum of each row. 
+
+ˆsi =
+
+> Bc
+
+X
+
+> j=1
+
+ˆX[i, j ], ˆs = ˆs1, . . . , ˆsBr
+
+ ∈ IBr
+
+> int 8
+
+. (11) Equation (11) describes the computation of the row-wise sums, where ˆsi represents the sum of the elements in the i-th row. These values serve as the key denominator terms in the softmax normalization. 
+
+4.6 Accumulate Numerator and Denominator 
+
+For softmax normalization, steps 9 Accumulate Denomina-tor and 10 Accumulate Numerator must be performed. If these accumulations are carried out directly in the quan-tized domain, overflow may occur. A common approach dequantizes values before accumulation, but this introduces floating-point operations and weakens integer-only benefits. Related to Challenge C1, we approximate the inverse scale as an integer to perform division, enabling stable numera-tor/denominator accumulation and integer-only softmax nor-malization without overflow. We refer to this operation as Table 1: Unique attention workload configurations used in ViT/DeiT and Swin inference at 224 × 224 . #W in denotes the number of windows (only applicable to Swin), H the number of heads, N the context length, and D the head dimension.                                                                                       
+
+> Workload Source #Win HNDShape ( W×H×N×D)
+> A1 ViT/DeiT-Tiny ✗3197 64 (3 ×197 ×64)
+> A2 ViT/DeiT-Small ✗6197 64 (6 ×197 ×64)
+> A3 ViT/DeiT-Base ✗12 197 64 (12 ×197 ×64)
+> A4 Swin-T/S Stage-1 64 349 32 (64 ×3×49 ×32)
+> A5 Swin-T/S Stage-2 16 649 32 (16 ×6×49 ×32)
+> A6 Swin-T/S Stage-3 412 49 32 (4 ×12 ×49 ×32)
+> A7 Swin-T/S Stage-4 124 49 32 (1 ×24 ×49 ×32)
+
+ScaleRelease , whose definition and analysis are provided in Appendix B.1. 
+
+4.7 Normalization 
+
+After the inner loop, step 11 performs normalization . Both the numerator and denominator are accumulated as integers, and their ratio corresponds to softmax normalization with-out explicitly materializing the full score matrix. Since the scale factors cancel out during normalization, dequantization is implicitly handled. Importantly, we implement this divi-sion entirely in integer arithmetic , eliminating floating-point operations while producing int8 outputs directly usable for downstream computation. 
+
+## 5 Evaluation 
+
+All experiments were run on an NVIDIA GeForce RTX 5090 GPU with TVM 0.8, PyTorch 2.7.1 (CUDA 12.8), and Tri-ton 3.3.1. We evaluated latency, energy, and accuracy at the operator level and then tested Top-1 accuracy against I-ViT, I-BERT, FQ-ViT, FlashAttention-2, INT-FlashAttention (Full/Half), and QAttn. We extract seven unique attention workloads from different ViT/DeiT/Swin model variants, as summarized in Table 1. In addition, we evaluate both batch size 1 and batch size 8 to cover real-time inference and throughput-oriented inference settings, respectively. 
+
+5.1 Inference Latency 
+
+Latency comparison. Figure 3 compares the latency of dif-ferent attention kernels across the seven attention workloads listed in Table 1. Since I-ViT is a representative integer-only 
+
+attention kernel, we measure speedup primarily against I-ViT to assess the effectiveness of our fully integer QFlash design. In the batch-1 case, QFlash achieves up to 4.54 × and 7.69 ×
+
+speedup over I-ViT on ViT/DeiT and Swin workloads, re-spectively. In the batch-8 case, QFlash is up to 6.73 × and 
+
+8.69 × faster than I-ViT on ViT/DeiT and Swin workloads, respectively. Despite the overhead of fully integer execu-tion, QFlash consistently outperforms the integer-only base-line and remains generally faster or comparable to FP16 and mixed-precision kernels across workloads. 
+
+Tensor Core utilization. To analyze the latency improve-ment of our kernel code, we used NVIDIA Nsight Com-pute [Leinhauser et al. , 2021] to profile Tensor Core utiliza-tion. We report utilization as a ratio to the peak throughput, 45       
+
+> QFlash [INT8]
+> FlashAttention-2 [FP16]
+> INT-Flash-Full [Mixed]
+> INT-Flash-Half [Mixed]
+> I-ViT TVM [INT8]
+> QAttn [Mixed]
+> Torch [FP32]
+> A1 A2 A3 A4 A5 A6 A7
+> 0
+> 5
+> 10
+> 15
+> Latency (ms)
+
+(a) 110       
+
+> 115
+> A1 A2 A3 A4 A5 A6 A7
+> 0
+> 10
+> 20
+> Latency (us)
+
+(b) Figure 3: Latency comparison of different attention kernels across the seven attention workloads (A1–A7) listed in Table 1. Results are reported for (a) batch size 1 and (b) batch size 8. Table 2: Tensor Core utilization (Peak %) for different attention im-plementations on workloads A2 and A7 with batch size 8.                          
+
+> Method A2 A7 IMMA HMMA IMMA HMMA
+> Flash-2 –13.08% –4.69% QAttn 3.75% 7.51% 1.25% 2.51% INT-Flash-Half 3.38% 6.75% 1.12% 2.25% INT-Flash-Full 7.18% –2.13% –
+> QFlash (Ours) 8.00% –2.55% –
+
+using two workloads (A2 and A7) with batch size 8. The re-sults are summarized in Table 2. The key observation is that on the RTX 5090, Tensor Cores achieve 174K operators per cycle with HMMA (FP16) and 348K with IMMA (INT8), meaning the peak throughput of IMMA is exactly twice that of HMMA. Therefore, even though the IMMA utilization of QFlash is only 8.0% compared to 13.08% HMMA utilization in FlashAttention-2, the higher peak throughput of IMMA means that QFlash still delivers greater overall performance. The same conclusion holds for A7. 
+
+5.2 Energy Consumption 
+
+We compared the energy consumption of five kernels on workload A2 with batch size 8. Power consumption was recorded using nvidia-smi [Yu et al. , 2023; Bridges et al. , 2016], and the number of operations was measured with Nsight Compute. All kernels executed the same to-tal amount of computation. As listed in Table 3, QFlash shows the lowest energy consumption. There are two rea-sons for this result. First, QFlash achieves shorter execu-tion time for the same workload, which reduces the inte-grated energy. Second, QFlash consistently uses the IMMA instruction for Tensor Cores, which provides higher energy efficiency per operation compared to HMMA [Dally, 2023; Horowitz, 2014]. The combination of these two effects makes Table 3: Energy consumption ( μJ) on workload A2 (Batch = 8).           
+
+> Workload Flash INT-Flash (Full) INT-Flash (Half) QAttn QFlash (Ours) A2 (B=8) 929.6 840.0 920.5 795.2 754.6
+
+Table 4: Quantitative evaluation of attention implementations in terms of SQNR and MSE.                         
+
+> Method A2 A7 SQNR MSE SQNR MSE
+> I-ViT 25.80 7.05e-3 25.22 9.38e-3 QAttn 34.12 1.04e-3 34.75 1.04e-3 INT-Flash-Half 38.19 4.04e-4 39.07 3.86e-4 INT-Flash-Full 36.92 5.41e-4 37.80 5.17e-4
+> QFlash (Ours) 32.50 1.51e-3 31.02 2.47e-3
+
+QFlash the kernel with the lowest energy consumption under identical conditions. 
+
+5.3 Accuracy Evaluation 
+
+Quantization-level accuracy. Accuracy was measured with Signal-to-Quantization-Noise Ratio (SQNR), which indicates the relative signal-to-noise ratio after quantization, and Mean Squared Error (MSE), which quantifies the absolute error. Table 4 reports the results for two attention workloads, A2 and A7, evaluated with batch size 8. For both input sizes, QFlash shows SQNR above 30dB and MSE around 10 −3,which means the distortion from quantization is small. The quality is higher than the baseline integer method I-ViT, but slightly lower than INT-Flash-Half and INT-Flash-Full due to their mixed-precision design. QFlash chooses a design that favors speed and energy efficiency, while still giving accept-able accuracy and a balanced trade-off. 
+
+Top-1 evaluation setup. We measure the end-to-end Top-1 accuracy by running ViT, DeiT, and Swin models with quantized attention applied during inference. Specifically, we quantize only the attention modules while keeping the remaining layers in floating point to isolate the impact of attention quantization. For activation scaling, we use dy-namic quantization, where scaling factors are computed on-the-fly during inference. Since I-ViT, I-BERT, FQ-ViT, INT-FlashAttention, and QAttn assume different quantization granularities, we use their original implementations without any modification for a fair comparison. As shown in Table 5, I-ViT, I-BERT, FQ-ViT, and QAttn use ▽ per-tensor quanti-zation, while INT-FlashAttention uses △ per-token and ◦ per-head quantization. In general, finer granularity requires more scaling factors, which leads to a trade-off between accuracy and efficiency. 
+
+Top-1 accuracy results. Top-1 classification accuracy is reported in Table 5. QFlash maintains accuracy close to FP32 on ViT and DeiT models, and achieves better accu-racy than I-ViT, I-BERT, and FQ-ViT on ViT backbones. However, on Swin models, QFlash shows lower Top-1 ac-curacy than I-BERT and FQ-ViT, since window partitioning is also parallelized and thus amplifies quantization error un-der ▽ per-tensor scaling. These results indicate that QFlash effectively mitigates quantization error by stabilizing scaling 
+
+Table 5: Accuracy and efficiency comparison across quantization granularities. Symbols indicate granularity: △ per-token, ◦ per-head, ▽ per-tensor. For fairness, we use each prior work’s original algorithm and kernel implementation, which are tailored to their tar-get granularity.                                                                                                                                                                  
+
+> Model (FP32 Acc) Method BOPs (G) Int-Only Acc QKV
+> ViT-S (FP32: 81.38) QFlash 17.2 ✓82.24
+> I-ViT 17.2 ✓81.19 I-BERT 17.2 ✓81.00 FQ-ViT 17.2 ✓81.06 INT-Flash-Full 17.2 ✗80.60 INT-Flash-Half 34.3 ✗80.62 –QAttn 34.3 ✗80.23 ViT-B (FP32: 85.10) QFlash 34.3 ✓86.84
+> I-ViT 34.3 ✓85.02 I-BERT 34.3 ✓83.97 FQ-ViT 34.3 ✓84.82 INT-Flash-Full 34.3 ✗84.74 INT-Flash-Half 68.7 ✗84.83 –QAttn 68.7 ✗84.68 DeiT-T (FP32: 72.21) QFlash 17.2 ✓71.70
+> I-ViT 17.2 ✓71.70 I-BERT 17.2 ✓71.20 FQ-ViT 17.2 ✓71.53 INT-Flash-Full 17.2 ✗71.64 INT-Flash-Half 34.3 ✗71.64 –QAttn 34.3 ✗71.25 DeiT-S (FP32: 79.85) QFlash 34.3 ✓79.46 I-ViT 34.3 ✓79.53 I-BERT 34.3 ✓79.48 FQ-ViT 34.3 ✓79.39 INT-Flash-Full 34.3 ✗79.64 INT-Flash-Half 68.7 ✗79.68 –QAttn 68.7 ✗79.43 DeiT-B (FP32: 81.85) QFlash 68.7 ✓81.59 I-ViT 68.7 ✓81.47 I-BERT 68.7 ✓81.59 FQ-ViT 68.7 ✓81.72 INT-Flash-Full 68.7 ✗81.85 INT-Flash-Half 137.0 ✗81.90 –QAttn 137.0 ✗81.85 Swin-T (FP32: 81.35) QFlash 13.5 ✓80.06 I-ViT 13.5 ✓80.83 I-BERT 13.5 ✓81.11
+> FQ-ViT 13.5 ✓80.90 INT-Flash-Full 13.5 ✗80.04 INT-Flash-Half 26.9 ✗80.05 –QAttn 26.9 ✗80.13 Swin-S (FP32: 83.20) QFlash 22.0 ✓81.86 I-ViT 22.0 ✓82.81 I-BERT 22.0 ✓83.09 FQ-ViT 22.0 ✓83.15 INT-Flash-Full 22.0 ✗82.11 INT-Flash-Half 43.9 ✗83.20 –QAttn 43.9 ✗82.24
+
+factors within each tile, even under ▽ per-tensor quantization with only a small number of scaling factors. Overall, QFlash enables an efficient integer-only attention kernel with mini-mal scaling overhead via per-tensor quantization. 
+
+## 6 Conclusion 
+
+In this paper, we proposed QFlash to address the depen-dence of Transformer attention on floating-point operations and the off-chip memory bottleneck from intermediate ten-sors. QFlash implemented the full attention process, in-cluding softmax, using INT8/INT32 integer-only operations with shift-based log/exp approximations and integer normal-ization. Experiments showed that QFlash achieved higher speed and precision than I-ViT and improved energy effi-ciency compared to FP16 FlashAttention, providing a prac-tical solution for efficient and accurate integer-only attention in large-scale Transformer inference. References 
+
+[Arafa et al. , 2019] Yehia Arafa, AH Badawy, Gopinath Chennupati, Nandakishore Santhi, and Stephan Eiden-benz. Instructions’ latencies characterization for nvidia gpgpus. arXiv preprint arXiv:1905.08778 , 2019. [Bridges et al. , 2016] Robert A Bridges, Neena Imam, and Tiffany M Mintz. Understanding gpu power: A survey of profiling, modeling, and simulation methods. ACM Com-puting Surveys (CSUR) , 49(3):1–27, 2016. [Chen et al. , 2024] Shimao Chen, Zirui Liu, Zhiying Wu, Ce Zheng, Peizhuang Cong, Zihan Jiang, Yuhan Wu, Lei Su, and Tong Yang. Int-flashattention: Enabling flash attention for int8 quantization. arXiv preprint arXiv:2409.16997 , 2024. [Dally, 2023] Bill Dally. Hardware for deep learning. In 
+
+2023 IEEE Hot Chips 35 Symposium (HCS) , pages 1–58. IEEE Computer Society, 2023. [Dao et al. , 2022] Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher R´ e. Flashattention: Fast and memory-efficient exact attention with io-awareness. 
+
+Advances in neural information processing systems ,35:16344–16359, 2022. [Dao, 2023] Tri Dao. Flashattention-2: Faster attention with better parallelism and work partitioning. arXiv preprint arXiv:2307.08691 , 2023. [Horowitz, 2014] Mark Horowitz. 1.1 computing’s energy problem (and what we can do about it). In 2014 IEEE international solid-state circuits conference digest of tech-nical papers (ISSCC) , pages 10–14. IEEE, 2014. [Hu et al. , 2024] Xing Hu, Yuan Cheng, Dawei Yang, Zhihang Yuan, Jiangyong Yu, Chen Xu, and Sifan Zhou. I-llm: Efficient integer-only inference for fully-quantized low-bit large language models. arXiv preprint arXiv:2405.17849 , 2024. [Jahadi et al. , 2025] Reza Jahadi, Phil Munz, and Ehsan Atoofian. Fused tensor core: A hardware–software co-design for efficient execution of attentions on gpus. IEEE Embedded Systems Letters , 17(5):317–320, 2025. [Kim et al. , 2021] Sehoon Kim, Amir Gholami, Zhewei Yao, Michael W Mahoney, and Kurt Keutzer. I-bert: Integer-only bert quantization. In International conference on ma-chine learning , pages 5506–5518. PMLR, 2021. [Kim et al. , 2024] Gihwan Kim, Jemin Lee, Sihyeong Park, Yongin Kwon, and Hyungshin Kim. Mixed non-linear quantization for vision transformers. In European Confer-ence on Computer Vision , pages 97–112. Springer, 2024. [Kluska et al. , 2024] Piotr Kluska, Adri´ an Castell´ o, Flo-rian Scheidegger, A Cristiano I Malossi, and Enrique S Quintana-Ort´ ı. Qattn: Efficient gpu kernels for mixed-precision vision transformers. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 3648–3657, 2024. [Leinhauser et al. , 2021] Matthew Leinhauser, Jeffrey Young, Sergei Bastrakov, Ren´ e Widera, Ronnie Chatter-jee, and Sunita Chandrasekaran. Performance analysis of picongpu: particle-in-cell on gpus using nvidia’s nsight systems and nsight compute. Technical report, Oak Ridge National Laboratory (ORNL), Oak Ridge, TN (United States), 2021. [Li and Gu, 2023] Zhikai Li and Qingyi Gu. I-vit: Integer-only quantization for efficient vision transformer infer-ence. In Proceedings of the IEEE/CVF International Con-ference on Computer Vision , pages 17065–17075, 2023. [Li et al. , 2023] Zhikai Li, Junrui Xiao, Lianwei Yang, and Qingyi Gu. Repq-vit: Scale reparameterization for post-training quantization of vision transformers. In Proceed-ings of the IEEE/CVF International Conference on Com-puter Vision , pages 17227–17236, 2023. [Lin et al. , 2021] Yang Lin, Tianyu Zhang, Peiqin Sun, Zheng Li, and Shuchang Zhou. Fq-vit: Post-training quantization for fully quantized vision transformer. arXiv preprint arXiv:2111.13824 , 2021. [Milakov and Gimelshein, 2018] Maxim Milakov and Na-talia Gimelshein. Online normalizer calculation for soft-max. arXiv preprint arXiv:1805.02867 , 2018. [Qin et al. , 2025] Jiajun Qin, Tianhua Xia, Cheng Tan, Jeff Zhang, and Sai Qian Zhang. Picachu: Plug-in cgra han-dling upcoming nonlinear operations in llms. In Proceed-ings of the 30th ACM International Conference on Archi-tectural Support for Programming Languages and Oper-ating Systems, Volume 2 , pages 845–861, 2025. [Ramachandran et al. , 2024] Akshat Ramachandran, Souvik Kundu, and Tushar Krishna. Clamp-vit: Contrastive data-free learning for adaptive post-training quantization of vits. In European Conference on Computer Vision , pages 307–325. Springer, 2024. [Shah et al. , 2024] Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao. Flashattention-3: Fast and accurate attention with asyn-chrony and low-precision. Advances in Neural Informa-tion Processing Systems , 37:68658–68685, 2024. [You et al. , 2024] Haoran You, Yipin Guo, Yichao Fu, Wei Zhou, Huihong Shi, Xiaofan Zhang, Souvik Kundu, Amir Yazdanbakhsh, and Yingyan Celine Lin. Shiftaddllm: Ac-celerating pretrained llms via post-training multiplication-less reparameterization. Advances in Neural Information Processing Systems , 37:24822–24848, 2024. [Yu et al. , 2023] Junyeol Yu, Jongseok Kim, and Euiseong Seo. Know your enemy to save cloud energy: Energy-performance characterization of machine learning serv-ing. In 2023 IEEE International Symposium on High-Performance Computer Architecture (HPCA) , pages 842– 854. IEEE, 2023. [Yuan et al. , 2022] Zhihang Yuan, Chenhao Xue, Yiqi Chen, Qiang Wu, and Guangyu Sun. Ptq4vit: Post-training quan-tization for vision transformers with twin uniform quanti-zation. In European conference on computer vision , pages 191–207. Springer, 2022. [Zhao et al. , 2025] Zhixiong Zhao, Haomin Li, Fangxin Liu, Yuncheng Lu, Zongwu Wang, Tao Yang, Li Jiang, and Haibing Guan. Quark: Quantization-enabled circuit shar-ing for transformer acceleration by exploiting common patterns in nonlinear operations. In 2025 IEEE/ACM In-ternational Conference On Computer Aided Design (IC-CAD) , pages 1–9. IEEE, 2025. [Zhong et al. , 2024] Yunshan Zhong, Jiawei Hu, You Huang, Yuxin Zhang, and Rongrong Ji. Erq: Error reduction for post-training quantization of vision transformers. In Forty-first International Conference on Machine Learning , 2024. Appendix A Step-wise Application of Integer Operations to the Kernel 
+
+Figure 4 illustrates the speedup achieved by progressively ap-plying integer operations to the FlashAttention-2 kernel. The experiment is conducted on the A2 workload with a batch size of 1024. V0 is the baseline FlashAttention-2 kernel. V1 re-places the QK matrix multiplication with an INT8 GEMM, yielding a 41.4% speedup. V2 further replaces both QK and PV matrix multiplications with INT8 GEMMs, achiev-ing a 46.0% speedup. V3 additionally applies an integer-approximated exponential operation, resulting in a 61.0% speedup. Finally, V4 applies integer operations to QK, PV, the approximated exponential, and tile-wise accumulation, achieving up to a 62.4% speedup. V0 V1 V2 V3 V4   
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> Latency (ms)
+> 41.7% 45.5%
+> 60.6% 62.2%
+> Figure 4: Kernel optimization results
+
+## B Detailed Analysis of QFlash Challenges 
+
+B.1 C1: Extended Analysis of Tile-wise Accumulation under Integer Quantization 
+
+FlashAttention computes attention outputs in a tile-wise man-ner and progressively accumulates partial results from each tile into the running output. Since the output from previ-ous tiles is reused as input for subsequent tiles, maintain-ing numerical stability throughout the accumulation process is critical. In integer-quantized FlashAttention, the expo-nential function is replaced with an integer approximation, and the approximation error can repeatedly propagate dur-ing tile-wise accumulation. Therefore, the key challenge is how to manage scaling factors in the tile-based accumulation scheme. 
+
+Comparison between Scale Accumulation and Scale Release 
+
+For each query position i, O(j−1)  
+
+> i
+
+denotes the accumulated at-tention output computed up to tile j − 1. To ensure numerical stability in the numerator accumulation of FlashAttention, the running maximum is updated from m(j−1)  
+
+> i
+
+to m(j) 
+
+> i
+
+, and the scale of the previously accumulated output is adjusted accord-ingly. Specifically, we define α(j) 
+
+> i
+
+= exp 
+
+
+
+m(j−1)  
+
+> i
+
+− m(j)
+
+> i
+
+
+
+,rescale the previous output O(j−1)  
+
+> i
+
+by multiplying α(j) 
+
+> i
+
+, and then add the current tile contribution P(j) 
+
+> i
+
+Vj to obtain the updated accumulated output O(j) 
+
+> i
+
+.
+
+O(j) 
+
+> i
+
+← O(j−1)  
+
+> i
+
+· α(j) 
+
+> i
+
++ P(j) 
+
+> i
+
+Vj (12) If we perform integer accumulation and approximate the exponential function with integer arithmetic, we can choose one of the following two approaches. The Scale Accumulation approach continuously accumu-lates the scale of ˆO(j) 
+
+> i
+
+.
+
+ˆO(j) 
+
+> i
+
+← ˆO(j−1)  
+
+> i
+
+· ˆα(j) 
+
+> i
+
++
+
+$ ˆP(j) 
+
+> i
+
+ˆVj
+
+sα
+
+%
+
+(13) This approach works reliably for operator-wise indepen-dent integer kernels. However, in FlashAttention, where tile-wise accumulation is repeatedly performed, the value range grows rapidly as the number of accumulation steps increases, leading to overflow and severe accuracy degradation. The Scale Release approach releases the scale of the expo-nential term at each accumulation step, keeping the scale of 
+
+ˆO(j) 
+
+> i
+
+constant. 
+
+ˆO(j) 
+
+> i
+
+← ⌊ ˆO(j−1)  
+
+> i
+
+· ˆα(j) 
+
+> i
+
+· sα⌋ + ˆP(j) 
+
+> i
+
+ˆVj (14) Figure 5 compares the SQNR trends with respect to the number of inner-loop iterations. While both approaches ex-hibit decreasing SQNR as the iteration count increases, the scale accumulation approach shows a rapid SQNR collapse as accumulation progresses. In contrast, the scale release ap-proach remains relatively stable even under repeated tile-wise accumulation. Therefore, we adopt the scale release approach as it is better suited for tile-based integer FlashAttention. 2 4 6 8 10 12 14 16  
+
+> Inner Loop Iteration
+> 0
+> 20
+> SQNR (dB)
+> Scale Release
+> Scale Accumulation
+> Figure 5: Comparison of SQNR for scale accumulation vs. scale release.
+
+B.2 C2: Implementation Details of GPU-Friendly Shiftmax 
+
+Shiftmax reduces the computational complexity of softmax by approximating its key operation, the exponential function, using integer arithmetic and bit-shifts instead of the floating-point exp . In particular, by converting the exponential into a base-2 form, the exponential computation can be replaced with a combination of multiplication and shift operations, en-abling a hardware-friendly implementation. In this work, we implement the base-2 exponential using only integer operations by decomposing the input ˆx into a quotient ( q) and a remainder ( r), and generating the output 
+
+ˆy via shift operations. Algorithm 2 summarizes the integer-based base-2 exponential procedure. Here, M is a constant quantized with a 2N scaling factor for fixed-point multiplica-tion, and on GPUs the computation consists only of integer multiplication (int × int) and shift operations. A conventional method to compute q is given as follows: 
+
+q =
+
+ ˆx
+
+−s(inv )
+
+> x
+
+
+
+(15) However, this method requires integer division, which is expensive on GPUs and may become a bottleneck in the over-all runtime of ShiftExp2. Therefore, instead of performing integer division directly, we approximate q using integer mul-tiplication and shift operations with a fixed-point constant M .That is, we replace the division with a mul+shift form as fol-lows. 
+
+M = (−sx) · 2N  , q = (ˆ x · M ) ≫ N (16) Algorithm 2 describes the ShiftExp2 procedure, which ap-proximates the base-2 exponential of the input ˆx using only integer operations. In particular, to avoid expensive integer division on GPUs, the quotient q is computed using integer multiplication and shift operations with a fixed-point constant 
+
+M . The remainder r is then derived, and the final output ˆy is generated via shift-based operations. 
+
+Algorithm 2 Integer-only Base-2 Exponential 
+
+1: Input: ˆx, s x: quantized input and scale 
+
+2: Output: ˆy, s y : quantized output and scale 
+
+3: function ShiftExp2 (ˆ x, s x)
+
+4: s(inv ) 
+
+> x
+
+← ⌊ 1/s x⌉
+
+5: M ← (−sx) · 2N 
+
+6: q ← (ˆ x · M ) ≫ N
+
+7: r ← ˆx + q · s(inv) 
+
+> x
+
+8: ˆy ← (( r ≫ 1) + s(inv)  
+
+> x
+
+) ≫ q
+
+9: sy ← sx
+
+10: return ˆy, s y
+
+11: end function 
+
+Figure 6 compares the throughput of integer division and mul+shift operations on GPUs. Integer division exhibits sig-nificantly lower throughput than mul+shift, indicating that computing q via integer division in ShiftExp2 can become a performance bottleneck. Therefore, in our ShiftExp2 im-plementation, we avoid direct integer division and instead compute q using a mul+shift formulation based on fixed-point multiplication and shift operations. 3 × 10 6 4 × 10 6
+
+> Elements
+> 2 × 10 11
+> 3 × 10 11
+> Elements/s  int x float
+> int // int
+> int x int >> int
+
+Figure 6: Throughput comparison of three arithmetic operations. 
+
+B.3 C3: Granularity Analysis for Integer Fused Attention 
+
+The input tensor for attention computation consists of the batch size, the number of heads, the sequence length, and the per-head dimension. For quantization granularity, we can choose among per-tensor, per-head, and per-token schemes, as illustrated in Figure 7. Per-tensor quantization applies a single scale to the entire input tensor, offering the simplest implementation and the lowest scale storage cost. Per-head quantization assigns different scales to each head, capturing head-wise distribution differences and providing a balanced trade-off between accuracy and overhead. Per-token quanti-zation applies a separate scale for each token, best reflecting distribution variations, but it introduces additional overhead for scale computation and application. Head 1 
+
+> Head 2
+> …
+> Head N
+
+Tensor -wise 
+
+> …
+
+Head -wise Token -wise 
+
+> …
+
+Figure 7: Quantization granularity options for attention inputs. 
+
+Figure 8 illustrates that applying per-token granularity re-sults in different scales across tiles of the QK transposed GEMM output, making integer-based accumulation diffi-cult. In an integer fused attention kernel, the QK transposed GEMM output is computed tile by tile and repeatedly accu-mulated along the outer loop. For integer comparison and accumulation to remain semantically consistent, all accumu-lated tiles must share the same scale. If each tile has a differ-ent scale as shown in Figure 8, integer operations would ef-fectively add or compare values represented in different units, which can introduce errors in the accumulated result. There-fore, when maintaining a simple integer-only execution path, the per-token scheme is limited in practice, and per-tensor or per-head granularity becomes a more feasible choice. 0.1 0.2 0.15          
+
+> 0.12
+> 0.3
+> 0.12
+> 0.012 0.024 0.018
+> 0.030 0.060 0.045
+> 0.012 0.024 0.018
+> Query
+> Scale
+> Key
+> Scale
+> Tile 1 Tile 2 Tile 3
+> resul
+> t1
+> resul
+> t2
+> resul
+> t3
+> accumulation
+> Outer Loop 1
+> Outer Loop 2
+> Outer Loop 3
+
+Figure 8: Impossibility of integer accumulation with per-token gran-ularity
