@@ -1,0 +1,860 @@
+Title: Decouple and Cache: KV Cache Construction for Streaming Video Understanding
+
+URL Source: https://arxiv.org/pdf/2605.01858v1
+
+Published Time: Tue, 05 May 2026 01:23:11 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# Decouple and Cache: KV Cache Construction for Streaming Video Understanding 
+
+Zhanzhong Pang 1 Dibyadip Chatterjee 1 Fadime Sener Angela Yao 1
+
+Code: https://github.com/pangzhan27/DSCache 
+
+## Abstract 
+
+Streaming video understanding requires process-ing unbounded video streams with limited mem-ory and computation, posing two key challenges. First, continuously constructing new and evict-ing old key-value (KV) caches is required for un-bounded streams. Secondly, due to the high cost of collecting and training on unbounded streams, models must learn from short sequences while generalizing to long streams. Existing streaming VideoVLLMs fail to scale to unbounded video streams or focus on cache reuse strategies, leaving the impact of cache construction underexplored. In this paper, we propose Decoupled Stream-ing Cache (DSCache), a training-free cache con-struction mechanism that adapts pretrained offline models to streaming settings. DSCache maintains a cumulative past KV cache while constructing a separate instant cache on-demand, decoupled from past caches to preserve the informativeness of recent inputs. To enable position extrapolation beyond the training length, DSCache further in-corporates a position-agnostic encoding strategy, ensuring KV caches to support unseen positions and preventing position overflow. Experiments on Streaming Video QA benchmarks demonstrate DSCache’s state-of-the-art performance, with an average 2.5% accuracy gains over prior methods. 
+
+## 1. Introduction 
+
+Streaming video understanding is central to perception in robotics, surveillance, and autonomous driving (Supancic III & Ramanan, 2017; Muhammad et al., 2019; Wei et al., 2022; Shao et al., 2024; Pang et al., 2025). However, it remains highly challenging, as models must process continuous, un-bounded video streams and make real-time predictions from   
+
+> 1National University of Singapore. Correspondence to: Zhanzhong Pang <pang@comp.nus.edu.sg >.
+> Preprint.
+
+incomplete observations. Many deployed applications also operate under strict memory and computational constraints. Existing streaming VideoLLMs (Zhang et al., 2024; Yao et al., 2025; Fu et al., 2025; Li et al., 2025) adopt proactive and asynchronous LLM invocation designs, but most remain quasi-streaming, as they process fixed, pre-defined segments and lack explicit designs that scale to unbounded streams. Real unbounded streaming introduces two major challenges. First, streaming inference requires maintaining KV caches to preserve past context for efficient prediction. Under un-bounded streams, these caches must be continuously up-dated and evicted to meet resource limits. Existing meth-ods (Li et al., 2024b; Xu et al., 2025; Ning et al., 2025) adopt uniform KV cache construction , updating caches in the same manner for each incoming input, with older caches evicted, compressed, or offloaded and later retrieved (Zhang et al., 2023; Di et al., 2025; Kim et al., 2025). While these approaches prioritize efficient cache utilization, the quality and reliability of constructed caches remain underexplored. Second, models are typically trained on short sequences due to the high cost of collecting and training on unbounded data, yet are expected to generalize to long streams at infer-ence time (Press et al., 2021; Yang et al., 2025). To align inference behavior with training, prior works (Xiao et al., 2023; Xu et al., 2025) introduced attention sinks to stabilize streaming inference after cache eviction, and addressed po-sition extrapolation beyond the training length, relying on empirical strategies and lacking formal analysis. In this paper, we adapt pretrained offline models for Streaming Video Question Answering (StreamingVQA) in a training-free setting, and investigate key factors that limit such adaptation. As shown in Figure 1, a naive approach di-rectly processes sampled frames at each time step (Yao et al., 2025; Pang et al., 2026), incurring redundant recomputation, higher latency, and limited temporal context. Alternatively, offline models can maintain a uniform KV cache (Xiao et al., 2023), where each new cache is updated in the same manner based on past caches. This avoids costly recomputa-tion and enables long-context utilization. However, under uniform KV cache construction, we observe a cumulative effect in which new caches are built on past caches that 1         
+
+> arXiv:2605.01858v1 [cs.CV] 3 May 2026 Decouple and Cache: KV Cache Construction for Streaming Video Understanding
+> Figure 1. Illustration of DSCache vs. existing methods. Inference over a video stream of length Twith a full context of size Wand a separate recent context of size C≪W. Offline models sample frames from the past, whereas the streaming baseline uniformly updates the KV cache while evicting older ones. DSCache decouples the cumulative past and instant cache constructions to better preserve fine-grained recent information. Accuracy is reported on StreamingBench using Llava-OV-7B.
+
+retain residual information from earlier, evicted ones. This issue arises in the presence of cache eviction and depends on how caches are constructed and encoded. Since pretrained models exhibit strong recency biases (Liu et al., 2023; Tian et al., 2025), this indirect accumulation causes new caches to retain excessive historical information, reducing their informativeness for current inputs (see Supplementary for further analysis). In addition, as inputs are processed in-crementally, token positions eventually exceeds those seen during training, resulting in out-of-distribution and over-flow. Cache eviction further introduces discontinuities in positions between visual and system tokens, violating the continuity assumption made during training. Enabling KV caching at out-of-distribution positions while maintaining continuity in positions is critical for unbounded streaming. Based on these observations, we propose a training-free, cache construction mechanism, Decoupled Streaming Cache (DSCache), to mitigate the cumulative effect dur-ing cache construction, and to support unbounded streams by handling discontinuous and out-of-distribution posi-tions beyond those seen during training. Specifically, DSCache maintains a cumulative past KV cache while con-structing a separate instant cache on demand for incoming inputs. Using a feature buffer, it encodes recent inputs without cumulative interference from the past KV cache, thereby preserving their informativeness. We further inte-grate DSCache with a position-agnostic encoding strategy. Unlike standard position-encoded KV caches, this strategy stores caches without positional information and assigns them only at usage time, allowing models to reinitialize positions, thereby handling positions that are discontinuous or beyond training lengths, preventing position overflow. We formally prove that, for RoPE-based LLMs, position-agnostic encoding with reassigned positions produces out-puts equivalent to standard positional encoding. This guaran-tees correctness while supporting flexible cache operations, e.g. partitioning, disassembling, and selective reuse. We evaluate DSCache on StreamingVQA, which requires real-time understanding of continuous video streams to an-swer user queries. DSCache achieves state-of-the-art per-formance, with an average 2.5% accuracy improvement over existing methods on standard benchmarks (Lin et al., 2024; Niu et al., 2025), while enabling stable memory utilization and low-latency inference. Summarizing our contributions, • We propose a training-free method that adapts offline pretrained models to unbounded streaming. • We reveal a cumulative effect in uniform streaming KV caches, where residuals from earlier caches degrade the quality of encoding recent inputs. • We introduce DSCache, separating cumulative and in-stant caches to preserve informativeness of recent in-puts while maintaining accumulated context. • We present a position-agnostic encoding strategy with a formal equivalence proof, enabling position extrapo-lation beyond training lengths and supporting flexible cache operations. 
+
+## 2. Related works 
+
+Streaming VideoLLMs extend large multi-modal models to process continuous video streams and support timely in-teractions and responses. VideoLLM-online (Chen et al., 2024) first introduced proactive online video interaction by invoking LLMs at every step. Subsequent works, Stream-Mind (Ding et al., 2025) and StreamBridge (Wang et al., 2025), improved efficiency by selectively triggering the LLMs only on relevant events. Dispider (Qian et al., 2025) and ViSpeak (Fu et al., 2025) further enabled asynchronous processing by decoupling perception and response genera-tion. Complementary works, such as Timechat-online (Yao et al., 2025), improved efficiency by reducing visual redun-dancy through token filtering (Li et al., 2025), compres-sion (Zhang et al., 2024), or adaptive selection (Wu et al., 2024). These models typically emphasize responsiveness 2Decouple and Cache: KV Cache Construction for Streaming Video Understanding 
+
+and efficiency, and are evaluated under quasi-streaming setup, processing discrete segments without scalable KV cache design. In contrast, we focus on unbounded streaming inference with continuous KV cache management. 
+
+Streaming Inference shifts the focus from model-level behavior to inference length generalization and cache man-agement. Early works, such as StreamingLLM (Xiao et al., 2023) and LM-Infinite (Han et al., 2024), investigated atten-tion bottlenecks and provided theoretical insights for infinite-length inference without finetuning. LongLoRA (Chen et al., 2023b) adapted LLMs to long sequences via sparse local attention and LoRA fine-tuning. StreamingVLM (Xu et al., 2025) extended StreamingLLM to video, reusing KV caches of sinks, visual and text tokens. To preserve long-range de-pendencies and reduce redundancy, recent works focus on improving KV cache management. ProVideLLM (Chatter-jee et al., 2025) introduced an interleaved multimodal cache, using verbalized text caches to retain long-range visual in-formation. ReKV (Di et al., 2025) stored processed KV caches in RAM and dynamically retrieving query-relevant entries. Other training-free approaches applied cache prun-ing or compression based on user queries (Ning et al., 2025) or attention scores (Kim et al., 2025; Yang et al., 2025) to improve efficiency. However, existing methods assume a standard, uniform KV cache construction, and ignore how the construction quality affects downstream performance. Our method fills the gap by focusing on cache construction, enhancing cache quality to improve inference performance. 
+
+## 3. Preliminaries 
+
+We consider unbounded streaming inference, where a model incrementally processes video streams and answers user queries solely based on observed information under resource constraints. Since collecting data and training in this un-bounded regime is costly, we adopt a training-free setup that adapts a pretrained offline model for streaming infer-ence. To avoid redundant computation, the model maintains a compact key-value cache (KV cache) that summarizes the past context, rather than recomputing over sliding windows at each time step. 
+
+3.1. Streaming Inference Scheme 
+
+At each time step t, the model receives current input tokens 
+
+Xt = {xi+lP }lX −1 
+
+> i=0
+
+, which include newly arriving frame tokens and any posed question tokens, with the past KV cache P = {P (r)}N −1 
+
+> r=0
+
+, |P (r)| = lP . Here, N denotes the number of transformer layers, lP the total history length processed up to t, and lX the input sequence length. Due to memory constraints, the past KV cache is truncated to a fixed context window of length lW ≤ lP . In addition, atten-tion sinks (Xiao et al., 2023), where early tokens dispropor-tionately attract high attention, can dominate the model’s focus in streaming inference. To mitigate their effect, the KV cache for the first lA tokens is maintained separately as Ca = {C (r) 
+
+> a
+
+}N −1 
+
+> r=0
+
+= {P (r)0: lA }N −1 
+
+> r=0
+
+. The KV cache used at time t is then Ct = {[C(r) 
+
+> a
+
+, P(r)   
+
+> lP−lW:lP
+
+]}N −1 
+
+> r=0
+
+, where [·] de-notes concatenation. Slicing and concatenation are applied independently to the key and value caches at each layer along the sequence dimension. 
+
+Stream Encoding (Prefilling). The model encodes input tokens while updating the corresponding KV cache, typi-cally serving as a prefilling stage when the input includes a user question. Let Z(r) 
+
+> t
+
+denote the input to the rth trans-former layer with Z(0)  
+
+> t
+
+= Xt. For higher layers, the input is computed as Z(r+1)  
+
+> t
+
+= gr (Z(r) 
+
+> t
+
+, C(r) 
+
+> t
+
+) where gr denotes the computation of the rth layer, and C(r) 
+
+> t
+
+= ( K(r) 
+
+> t
+
+, V (r) 
+
+> t
+
+) is the KV cache at that layer r. During attention calculation, queries and keys are encoded with positional information. The resulting keys and the corresponding values are con-catenated with the reused past KV cache C(r) 
+
+> t
+
+, forming the updated KV cache for the layer. 
+
+Q(r) 
+
+> t+1
+
+= f (W (r) 
+
+> q
+
+Z(r) 
+
+> t
+
+, l P ), K (r) 
+
+> t+1
+
+= [ K(r) 
+
+> t
+
+, f (W (r) 
+
+> k
+
+Z(r) 
+
+> t
+
+, l P )] ,V (r) 
+
+> t+1
+
+= [ V (r) 
+
+> t
+
+, W (r) 
+
+> v
+
+Z(r) 
+
+> t
+
+] (1) where f (· , m ) applies positional encoding using contiguous position IDs starting from m. W (r) 
+
+> q
+
+, W (r) 
+
+> k
+
+, and W (r) 
+
+> v
+
+are the parameters of the rth layer. After encoding, the past KV cache P is updated to length 
+
+lP + lX to include the newly added entries. At the next time step t + 1 , the reused cache Ct+1 is constructed by concatenating the attention sinks with the most recent lW
+
+tokens from the updated past cache, evicting older entries as needed, yielding Ct+1 = {[C(r) 
+
+> a
+
+, P(r)     
+
+> lP−lW+lX:lP+lX
+
+]}N −1 
+
+> r=0
+
+.
+
+Decoding. When the input includes a question, autoregres-sive decoding is performed using the KV cache Ct+1 built incrementally in encoding stage to generate responses. 
+
+3.2. Position Re-indexing 
+
+Concatenating attention sinks with truncated past caches after eviction results in discontinuous position indices. In addition, position IDs grow linearly over time, leading to positions unseen during training and potential index over-flow. These issues may cause generalization failures and out-of-distribution behavior (Chen et al., 2023a). To stabilize unbounded streaming inference, position indices must there-fore remain within a bounded range. However, in standard KV caches, keys are encoded with positional information during cache construction, as in Equation (1), which fixes positional transformations and prevents later modification. To address this limitation, prior works (Xiao et al., 2023; Han et al., 2024) on RoPE-based LLMs store KV caches before positional transformations, allowing positional infor-3Decouple and Cache: KV Cache Construction for Streaming Video Understanding                     
+
+> Figure 2. Streaming video inference with DSCache. DSCache maintains a feature buffer Bthat stores recent inputs Xin FIFO order, and a cumulative past KV cache U. At each time step t, new features Xtenter the buffer and older features Xt−2are evicted to update the cumulative past KV cache Ut. When inference is required at t+ 1 , e.g. due to an incoming query, the buffer and the cumulative past KV cache are updated first. The instance cache It+1 is then constructed from the buffer Bt+1 alone to preserve detailed recent context, and then combined with the cumulative past cache Ut+1 to generate the response.
+
+mation to be applied at use time. Specifically, positional transformations are applied to the concatenation of reused and newly generated keys starting from position 0, and to queries derived from new inputs starting from lA + lW .
+
+Q′(r) 
+
+> t+1
+
+= f (W (r) 
+
+> q
+
+Z(r) 
+
+> t
+
+, l A + lW ),K′(r) 
+
+> t+1
+
+= f ([ K′(r) 
+
+> t
+
+, W (r) 
+
+> k
+
+Z(r) 
+
+> t
+
+], 0) . (2) This formulation enables modified position IDs, allowing positions to be shifted upon cache eviction while remaining contiguous, bounded, and in-distribution. However, this strategy is based on empirical heuristics and lacks formal proof of its correctness. 
+
+## 4. Methodology 
+
+We propose Decoupled Streaming Cache (DSCache), a mechanism for KV cache construction and maintenance in streaming settings. To enable position extrapolation be-yond the training length, DSCache incorporates a position-agnostic encoding strategy, enabling flexible cache construc-tion for unbounded streaming (Section 4.1). At each time step, DSCache updates a cumulative past KV cache based on the incoming inputs, aggregating historical context while maintaining a fixed memory budget via cache eviction (Sec-tion 4.2). When a user query arrives, an instant KV cache is created on demand to capture fine-grained details for in-ference, during which the model generates responses using both the cumulative and instant KV caches (Section 4.3). Importantly, DSCache operates solely at the KV cache con-struction stage and is orthogonal to existing cache utilization techniques, such as compression, pruning, or retrieval. 
+
+4.1. Position-Agnostic Encoding 
+
+To support unseen positions beyond training lengths and pre-vent position overflow, we introduce the position-agnostic encoding, which enables flexible position handling during cache construction for unbounded streaming inference. 
+
+Definition 4.1. Position-agnostic encoding stores a KV cache prior to applying positional transformations, requiring positional information to be reintroduced at use time. We establish the correctness properties of position-agnostic encoding. Notably, the practical reassignment of contiguous position IDs to attention sinks and reused caches in Equa-tion (2) slightly alters relative distances and is therefore not covered by the formal proposition. 
+
+Proposition 4.2. For RoPE-based LLMs, position-agnostic encoding with shifted position IDs that preserve relative token distances produces outputs identical to standard posi-tional encoding with absolute position IDs. 
+
+Corollary 4.3. Under position-agnostic encoding, cache entries can be partitioned, recombined, or selectively reused through reassignment of position IDs. 
+
+The proof is provided in the Supplementary. These prop-erties form the foundation for flexible cache utilization in streaming inference. We adopt position-agnostic encoding as the default formulation for the remainder of the paper. 
+
+4.2. Cumulative Past KV Cache Update 
+
+Standard streaming inference with uniform KV caches suf-fers from a cumulative effect, where evicted caches con-tinue to influence the construction of newly added caches, degrading the informativeness of encoded recent inputs. To enhance the quality of recent input encoding while maintain accumulated past context, we decouple the storage of recent input features from cumulative KV cache update. Specif-ically, at time step t, DSCache maintains a feature buffer 
+
+Bt−1 with fixed size lI that stores the most recent inputs. Upon arrival of the new input Xt, the buffer is updated in a first-in-first-out (FIFO) manner by appending Xt and 4Decouple and Cache: KV Cache Construction for Streaming Video Understanding 
+
+evicting the oldest entry Xt−lI when full: 
+
+Bt =
+
+( Bt−1, {Xt}, |B t−1| < l I ,
+
+Bt−1 \ { Xt−lI }, {Xt}, |B t−1| = lI . (3) The evicted input Xt−lI is then used to update the cumula-tive past KV cache. To formalize this process, we introduce a KV cache construction operator φ, which generates KV caches for newly added tokens under the position-agnostic encoding. Given an input X and past KV caches C, let 
+
+Z(0) = X and Z(r+1) = gr (Z(r), C(r)) denote the input of layer r + 1 . The operator projects the input Z(r) of each layer into KV caches. 
+
+φ(X, C) = (W (r) 
+
+> k
+
+Z(r), W (r) 
+
+> v
+
+Z(r)) N −1 
+
+> r=0
+
+, (4) where φ produces KV caches only for newly added tokens and excludes previously stored caches. Given the previous cumulative past KV cache Ut−1, the attention sink KV cache Ca, and evicted feature Xt−lI , the cumulative KV cache is updated as 
+
+Ut = Ut−1, φ (Xt−lI , [Ca, ζ (Ut−1)]) , (5) where ζ denotes a subsampling operator that selects a sub-set of the cumulative KV cache of length lL. For the cu-mulative KV cache, we explicitly distinguish between the stored length lU and the active length lL used during cache construction, with lL ≤ lU . This formulation retains an ex-tended history while selectively conditioning cache updates on only a subset of past KV caches. In practice, we define ζ
+
+to select the most recent lL KV caches. If the updated caches exceed the budget lU , older tokens are evicted in FIFO order along the sequence-length axis, applied independently for each transformer layer r.
+
+U(r) 
+
+> t
+
+=
+
+
+
+U(r) 
+
+> t
+
+, |U (r) 
+
+> t
+
+| ≤ lU ,
+
+{(K(r) 
+
+> i
+
+, V (r) 
+
+> i
+
+)}|U (r)  
+
+> t|− 1
+> i=|U (r)
+> t|− lU
+
+, |U (r) 
+
+> t
+
+| > l U . (6) In addition, when the evicted input Xt−lI contains text (e.g. previous queries or responses), the corresponding text KV caches can be removed from Ut to avoid interference with subsequent visual caching. This is useful for settings where subsequent queries are independent of prior text. 
+
+4.3. KV Cache-based Inference 
+
+Building on the updated cumulative KV cache and the fea-ture buffer, DSCache supports inference by constructing an instant KV cache from the buffer, which is then used jointly with the cumulative past KV cache. When inference is required, e.g. upon a user query at t+1 , af-ter the cumulative past KV cache update, the instant cache is constructed solely from the current feature buffer Bt+1 , inde-pendent of the cumulative cache Ut+1 . During construction, the buffer inputs may be temporarily re-encoded, e.g. using a higher-resolution version of Xt+1 , without modifying the buffer itself, ensuring consistent features for subsequent cumulative cache updates. The feature buffer preserves fine-grained recency information, ensuring that the instant KV cache construction remains isolated from the cumulative cache. To align with training, attention sink caches Ca are included during the instant cache construction: 
+
+It+1 = φ(Bt+1 , Ca), (7) where φ is applied to the buffer independently of Ut+1 .The final KV cache for inference is formed by concatenating the attention sink, cumulative, and instant caches as 
+
+Ct+1 = [ Ca, Ut+1 , It+1 ] (8) As in the cumulative cache construction, cache selection (e.g. subsampling or retrieval) may be applied before concatena-tion. After inference, the buffer can be augmented with the response to Xt+1 for reuse in subsequent steps. Admittedly, recomputing the instant cache incurs additional computa-tion, but the overhead is minor for a small buffer. By decou-pling cumulative and instant KV caches, DSCache balances efficiency and informativeness. In all, DSCache involves three distinct attention compu-tations at different stages of streaming, where positional information is applied at use time: the cumulative KV cache update, the instant cache construction, and inference using the final KV cache. For all three, we adopt RoPE-based LLMs with position-agnostic encoding and assign consec-utive positional indices starting at zero to each entry in the active KV cache. With appropriate cumulative cache and feature buffer sizes, positional indices remain bounded during streaming inference. In addition, by assigning con-secutive positional IDs across attention sinks and the cumu-lative KV cache, streaming inference mimics a contiguous training sequence, thereby mitigating the train–inference discrepancy. 
+
+## 5. Experiments 
+
+5.1. Experimental Setup Benchmarks. We primarily evaluate our approach on mul-tiple StreamingVQA benchmarks. StreamingBench (Lin et al., 2024) is widely adopted; we focus on the real-time visual understanding task, which contains 500 videos with 2500 QA-pairs. OVO-Bench (Niu et al., 2025) evaluates real-time perception along with complementary capabili-ties of backward tracing and forward active responding, comprising 644 videos with 3035 QA-pairs. RVS-Ego and RVS-Movie (Zhang et al., 2024) serve as additional 5Decouple and Cache: KV Cache Construction for Streaming Video Understanding                                                                                                                                                                                                      
+
+> Table 1. Comparisons on StreamingBench Real-Time Visual Understanding task, evaluated by accuracy. Uniform cache denotes the base-line with uniform streaming KV caching. This task is organized into 10 subtasks: Object Perception (OP), Causal Reasoning (CR), Clips Summarization (CS), Attribute Perception (ATP), Event Understanding (EU), Text-Rich Understanding (TR), Prospective Reasoning (PR), Spatial Understanding (SU), Action Perception (ACP), and Counting (CT). Model #Frames OP CR CS ATP EU TR PR SU ACP CT All
+> Proprietary MLLMs
+> Gemini 1.5 pro (Team et al., 2024) 1 fps 79.02 80.47 83.54 79.67 80.00 84.74 77.78 64.23 71.95 48.70 75.69 GPT-4o 64 77.11 80.47 83.91 76.47 70.19 83.80 66.67 62.19 69.12 49.22 73.28
+> Open-source Online VideoLLMs
+> Flash-VStream-7B (Zhang et al., 2024) -25.89 43.57 24.91 23.87 27.33 13.08 18.52 25.20 23.87 48.70 23.23 VideoLLM-online-8B (Chen et al., 2024) 2 fps 39.07 40.06 34.49 31.05 45.96 32.40 31.48 34.16 42.49 27.89 35.99 Dispider-7B (Qian et al., 2025) 1 fps 74.92 75.53 74.10 73.08 74.44 59.92 76.14 62.91 62.16 45.80 67.63 TimeChat-Online-7B (Yao et al., 2025) 1 fps 80.22 82.03 79.50 83.33 76.10 78.50 78.70 64.63 69.60 57.98 75.36 StreamBridge (Wang et al., 2025) 1 fps 84.74 82.68 88.92 89.77 77.36 85.36 84.26 69.92 71.67 35.75 77.04
+> Open-source Offline VideoLLMs (+ Streaming-Adapted)
+> LLaVA-OneVision-7B (uniform sampling) 32 80.38 74.22 76.03 80.72 72.67 71.65 67.59 65.45 65.72 45.08 71.12 (Li et al., 2024a) (sliding window) 32 84.28 78.91 90.22 85.26 81.13 77.88 73.15 71.14 76.14 37.23 77.40 + Uniform cache 1 fps 84.82 81.25 89.27 83.65 76.10 78.50 76.85 72.76 73.30 36.70 76.92 + DSCache 1 fps 86.72 78.12 86.12 89.00 79.62 84.42 77.78 74.39 77.84 36.70 79.12
+> Qwen2.5-VL-7B (uniform sampling) 32 78.32 80.47 78.86 80.45 76.73 78.50 79.63 63.41 66.19 53.19 73.68 (Bai et al., 2025) (sliding window) 32 81.30 81.10 88.01 86.17 81.01 83.18 81.48 70.73 71.02 43.09 77.61 + Uniform cache 1 fps 87.53 81.25 88.33 85.26 77.99 86.29 81.48 68.29 70.74 45.21 78.56 + DSCache 1 fps 88.62 79.69 90.85 89.00 78.98 92.52 82.41 79.67 79.55 40.43 82.32
+
+streaming testbeds for long videos up to one hour in du-ration, featuring timestamped open-ended questions on 10 Ego4D videos (Grauman et al., 2022) and 22 MovieNet videos (Huang et al., 2020). 
+
+Evaluation. StreamingBench and OVO-Bench consist of multiple-choice questions and are evaluated using accuracy. RVS-Ego and RVS-Movie contain open-ended questions; model responses are assessed by an LLM for correctness (ac-curacy) and overall answer quality (score). 
+
+Implementation Details. We apply our method to two types of state-of-the-art MLLMs for long-video understand-ing; LLaVA-OV (Li et al., 2024a) and Qwen-2.5-VL (Bai et al., 2025). For feature encoding in the feature buffer, we adopt the default vision tower of each MLLM, specifically SigLIP for Llava-OV and Qwen2.5-VL’s own pretrained Vision Transformer(ViT). Following prior work (Yao et al., 2025; Di et al., 2025), videos are processed at 1 FPS for StreamingBench and OVO-Bench, and 0.5 FPS for RVS-Ego and RVS-Movie. By default, the context window length is lW = lI + lU = 32 frames. Within this win-dow, DSCache maintains a feature buffer of lI = 4 frames, and a cumulative KV cache of lU = 28 frames, which is fully utilized, i.e. lL = lU . The streaming baseline with standard uniform KV caches corresponds to a special case of DSCache with lI = 0 , and lU = lW . The total token budget is bounded by the context window length. For LLaVA-OV-7B, each frame produces 196 tokens ( ∼6.3K max), and for Qwen2.5-VL (448×448), 286 tokens ( ∼9.2K max). This ex-cludes system prompt and query tokens, which add a small overhead. Additional implementation details (e.g. resolution scaling and temporal subsampling) are in Supplementary. 
+
+5.2. Main Results 
+
+Results on StreamingBench and OVO-Bench are reported in Table 1 and Table 2, where DSCache achieves state-of-the-art performance. By adapting offline models to stream-ing inference, DSCache consistently outperforms their of-fline counterparts with uniform sampling by an average of 7.5%, and surpasses the state-of-the-art online VideoLLM, StreamBridge and Timechat-online, by 5.0% on Stream-ingBench and 10.8% on OVO-Bench, respectively. The streaming also outperforms prior methods on OVO-Bench. Compared with this baseline, DSCache yields a further im-provement of 2.5%, demonstrating the effectiveness of en-hancing informativeness of encoded recent inputs. In partic-ular, DSCache achieves substantial gains on subtasks that depend on rencency information. For instance, on Stream-ingBench, it improves attribute perception (ATP), text-rich understanding (TR), spatial understanding (SU), and action perception (ACP) by 4.5%, 6%, 6.5%, and 6.7%, respec-tively. These gains are accompanied by modest trade-offs on subtasks emphasizing long-range reasoning, such as causal reasoning (CR) and counting (CT). Notably, the improve-6Decouple and Cache: KV Cache Construction for Streaming Video Understanding                                                                          
+
+> Table 2. Comparisons on OVO-Bench, evaluated by accuracy. Uniform cache denotes uniform KV caching baseline. Model #Frames Real-Time Percep. Backward Tracing Forward Resp. Overall
+> Proprietary MLLMs
+> Gemini 1.5 pro (Team et al., 2024) 1 fps 70.8 62.3 57.2 65.3 GPT-4o 64 63.6 58.7 53.4 58.6
+> Open-source Online VideoLLMs
+> Flash-VStream-7B (Zhang et al., 2024) 1 fps 29.9 25.4 44.2 33.2 VideoLLM-online-8B (Chen et al., 2024) 2 fps 20.8 17.7 --TimeChat-Online-7B (Yao et al., 2025) 1 fps 61.9 41.7 36.7 46.7
+> Open-source Offline VideoLLMs (+ Streaming-Adapted)
+> LLaVA-OneVision-7B (uniform sampling) 32 63.8 43.1 51.7 52.9 (sliding window) 32 70.9 44.1 49.8 54.9 + Uniform cache 1 fps 68.4 46.0 52.9 55.6 + DSCache 1 fps 71.5 47.8 53.1 57.5
+> Qwen2.5-VL-7B (uniform sampling) 32 59.6 39.4 40.4 46.6 (sliding window) 32 70.6 43.3 44.3 52.7 + Uniform cache 1 fps 67.8 42.3 46.6 52.2 + DSCache 1 fps 71.7 44.8 49.7 55.4
+
+ment does not stem from using stronger offline models. State-of-the-art methods, such as Timechat-online, also use competitive pretrained models (e.g. Qwen2.5-VL-7B). We further provide detailed comparisons with existing cache optimization methods in Table 4, showing our strong perfor-mance with minimum memory usage and modest latency increase. The results show that compared to cache optimiza-tion, targeting construction yields more consistent gains. We evaluate DSCache on RVS-Ego and RVS-Movie in Ta-ble 3 using LLaVA-OV variants. RVS-Ego emphasizes long-range recall, benefiting the streaming baseline with accumulated KV caches, while offline models are limited by sparse sampling. RVS-Movie focuses on recent con-tent, favoring offline models that use dense raw features. Across both datasets, DSCache achieves consistently strong performance, demonstrating its effectiveness in combining fine-grained recency modeling with accumulated past. We also provide additional results on the captioning task to show its scalability in the presence of text caches (chat history); please refer to the Supplementary for further details.                                        
+
+> Table 3. Comparisons on the RVS-Ego and RVS-Movie bench-marks. ’Acc.’ indicates accuracy, and ’Score’ is the open-ended answer rating by gpt-3.5-turbo on a scale of 1 ∼5. Method #Frames RVS-Ego RVS-Movie Acc. Score Acc. Score LLaVA-OV-7B 32 57.5 3.94 48.7 3.47 + Uniform cache 0.5 fps 58.9 3.93 48.1 3.46 + DSCache 0.5 fps 59.5 3.97 49.4 3.50
+> LLaVA-OV-0.5B 32 53.6 3.82 41.1 3.36 + Uniform cache 0.5 fps 53.2 3.78 41.2 3.34 + DSCache 0.5 fps 54.9 3.89 41.9 3.38
+
+5.3. Ablation Study Cumulative KV cache length lU . We study the impact of cumulative KV cache length lU by fixing the feature buffer length lI , and varying the context length lW = lI + LU .For DSCache , we fix lI = 4 frames, while the uniform streaming baseline is equivalent to set lI = 0 . As shown in Figure 3a, under DSCache , OVO-Bench consistently ben-efits from increasing lU , whereas performance on Stream-ingBench degrades when lU becomes large. For the stream-ing baseline, we observe a clear trade-off with respect to 
+
+lU : short caches lack sufficient context, while overly long caches accumulate redundant or noisy information, degrad-ing performance. In contrast, DSCache decouples instant and cumulative cache construction, making it more robust to variations in lU .
+
+Feature buffer size lI . The buffer size lI directly affects the informativeness of the instant caches. In Figure 3b, we fix lU = 28 frames and analyze the impact of varying 
+
+lI . Small lI preserves higher fidelity but fails to capture sufficient temporal context. A moderate buffer size provides a better balance, effectively capturing informative recent dynamics while remaining efficient. Notably, OVO-Bench shows larger gains with smaller lI , indicating a stronger dependence on fine-grained recency context. 
+
+Attention sinks Ca. Prior work highlights the importance of attention sinks, implemented as initial tokens. We exam-ine their role in constructing both cumulative and instant caches in Table 5. Removing attention sinks leads to a clear performance degradation, with a larger impact on instant cache construction, reflecting the strong dependence of these tasks to recent context. This behavior is expected, as models are trained with attention sinks, and removing them intro-7Decouple and Cache: KV Cache Construction for Streaming Video Understanding 
+
+Table 4. Comparison with existing cache optimization methods. Runtime and memory are tested on NVIDIA H200 GPU with 1 FPS. StreamingVLM adopts uniform caching, equivalent to our uniform cache baseline. Method Backbone StreamingBench (Real-time) OVO-Bench (Real / Backward / Forward) Latency Memory DSCache LLaVA-OV-7B 79.12 57.5 (71.5 / 47.8 / 53.1) 0.30s 16 GB ReKV (Di et al., 2025) 71.06 53.9 (62.0 / 48.5 / 51.2) 0.23s 21 GB StreamingVLM (Xu et al., 2025) 76.92 55.6 (68.4 / 46.0 / 52.9) 0.21s 16 GB DSCache Qwen2.5-VL-7B 82.32 55.4 (71.7 / 44.8 / 49.7) 0.49s 17 GB InfiniPot-V (Kim et al., 2025) 76.40 53.6 (65.9 / 47.6 / 47.9) 0.37s 17 GB StreamingVLM (Xu et al., 2025) 78.56 52.2 (67.8 / 42.3 / 46.6) 0.31s 17 GB 32 24 16 8  
+
+> Context Length (frames)
+> 76.5
+> 77.0
+> 77.5
+> 78.0
+> 78.5
+> 79.0
+> 79.5
+> StreamingBench Accuracy  StreamingBench OVOBench
+> 55.0
+> 55.5
+> 56.0
+> 56.5
+> 57.0
+> 57.5
+> 58.0
+> 58.5
+> OVOBench Accuracy
+> DSCache Stream
+
+(a) Cumulative KV cache 12 842  
+
+> Feature buffer size (frames)
+> 78.0
+> 78.5
+> 79.0
+> 79.5
+> 80.0
+> StreamingBench Accuracy  StreamingBench OVOBench
+> 56.5
+> 57.0
+> 57.5
+> 58.0
+> 58.5
+> 59.0
+> OVOBench Accuracy
+
+(b) Feature buffer 32-0 24-8 16-16 8-24 4-28 0-32   
+
+> Instant-Cumulative Context Length (frames)
+> 76
+> 77
+> 78
+> 79
+> StreamingBench Accuracy
+> Offline
+> Uniform Streaming
+> StreamingBench OVOBench
+> 54
+> 55
+> 56
+> 57
+> 58
+> OVOBench Accuracy
+
+(c) Offline vs. uniform streaming trade-off 
+
+Figure 3. Ablations on cumulative past KV cache and feature buffer for instant KV cache construction using LLava-OV-7B. 
+
+Table 5. Ablations on the effect of attention sinks in instant and cumulative cache construction. Base Model Attention sink StreamingBench OVO-Bench cum. instant Llava OV 7B 
+
+✓ ✓ 79.12 57.52 
+
+✗ ✓ 79.06 57.09 
+
+✓ ✗ 74.27 55.20 Qwen2.5 VL 7B 
+
+✓ ✓ 82.32 55.40 
+
+✗ ✓ 81.80 53.41 
+
+✓ ✗ 76.31 50.15 
+
+duces a training–inference mismatch that adversely affects performance. 
+
+Sliding-window offline vs. uniform streaming trade-off. 
+
+Offline models with sliding-window sampling focus on re-cent context, whereas the streaming baseline with uniform KV caches accumulates long-range history. Given a context window of lU + lI , setting lI = 0 reduces DSCache to the streaming baseline, while setting lU = 0 degenerates it to a sliding-window offline model. In Figure 3c, we illustrate this trade-off by fixing the context window to 32 frames and varying lI and lU . DSCache combines the strengths of both, preserving informative recent context while maintaining cumulative KV caches, leading to superior performance. 
+
+Compatibility with cache optimization methods. Ex-isting methods, e.g. ReKV (Di et al., 2025) and InfiniPot-V (Kim et al., 2025), focus on cache compression/retrieval over long contexts. DSCache is complementary, prioritizing recency encoding to better capture current events. It can be combined with these methods to improve long-range mod-
+
+Table 6. Combining DSCache with pior methods (LLaVA-OV-7B). Method StreamingBench OVO-Bench (Real / Backward / Forward) DSCache 79.12 57.5 (71.5 / 47.8 / 53.1) + ReKV 79.41 58.5 (72.4 / 49.1 / 53.8) + InfiniPot-V 79.60 58.4 (71.8 / 48.9 / 54.7) 
+
+eling. We observe further gains when applying these to the cumulative past cache in Table 6. 
+
+5.4. Runtime Analysis 
+
+DSCache maintains the cumulative KV cache as in the streaming baseline but recomputes the instant cache on de-mand, trading computational efficiency for recent context informativeness. We evaluate runtime and memory usage on StreamingBench using an NVIDIA H200 GPU (Table 7). We report per-query latency, when a response is generated and latency is most relevant; the overhead for non-query frames is negligible for DSCache and comparable to the streaming baseline. Offline models process 32 sampled frames at query time, while DSCache and the streaming baseline use the streaming implementation and maintain constant memory, enabling deployment on unbounded streams. Offline models must recompute all 32 sampled frames per query, resulting in high latency; for the streaming baseline and DSCache, latency is split into a prefilling stage for KV cache construction and a decoding stage for response generation. DSCache matches 8Decouple and Cache: KV Cache Construction for Streaming Video Understanding       
+
+> (a) Successful cases.
+> (b) Failure cases.
+> Figure 4. Qualitative analysis. Red text shows incorrect predictions; green text denotes the ground truth. S: uniform streaming baseline.
+> D: DSCache.
+
+the streaming baseline in decoding latency but incurs addi-tional prefilling cost to compute the instant cache. Nonethe-less, the overall overhead remains much lower than offline inference and comparable to the streaming baseline, yield-ing a favorable performance–efficiency trade-off. Notably, this extra computation is triggered only when a user query arrives and is not performed at every time step. Admittedly, recomputing the instant cache in DSCache adds latency, which increases with respect to buffer size. How-ever, latency remains within the input temporal resolution (1 FPS), making it suitable for streaming. We further propose an approximate variant that avoids full recomputation at each query, achieving computational complexity compara-ble to the uniform cache with only a minor performance trade-off. See more details in Supplementary.                  
+
+> Table 7. Runtime analysis on StreamingBench dataset using LLava-OV-7B with an NVIDIA H200 GPU. Model GPU Memory Latency(s) Prefilling Decoding Overall Offline 19 GB --2.85 Uniform 16 GB 0.07 0.14 0.21 DSCache 16 GB 0.16 0.14 0.30
+
+5.5. Qualitative Results 
+
+Figure 4 shows qualitative results on StreamingBench. Due to the cumulative nature of uniform KV caching, the streaming baseline either attends to outdated context (left) or misses fine-grained visual details (right), highlighting the importance of preserving recent context, as achieved by DSCache. We further analyze attention distributions over 50 cases where DSCache is correct but the uniform base-line is not. Splitting the cache into recent (buffer) and past, DSCache allocates 67% of attention to recent, compared to 45% for the baseline, indicating stronger recency focus and better capture of current events in streaming scenarios. However, cases requiring extensive long-range reason-ing remain challenging for DSCache. Failure cases of DSCache are shown in Figure 4, where required information lies in distant context or demands comprehensive long-range reasoning. These results highlight the inherent trade-off be-tween capturing detailed recent information and retaining long-range dependencies. 
+
+## 6. Conclusion 
+
+This paper presents DSCache, a training-free method for adapting offline models to streaming inference under strict resource and efficiency constraints. Building on a position-agnostic encoding strategy, DSCache enables unbounded streaming by mitigating the issue of position extrapolation. Meanwhile, by decoupling cumulative and instant cache construction, it prevents the cumulative past KV cache from interfering with the instant cache construction, preserving informative recent context while enabling leverage the cu-mulative past KV cache. DSCache achieves superior per-formance on streaming video understanding tasks, espe-cially those heavily rely on recent context. Future efforts will focus on improving the efficiency of the instant cache construction and augmenting DSCache with better cache optimization strategies to further enhance cumulative past KV cache construction and usage. 9Decouple and Cache: KV Cache Construction for Streaming Video Understanding 
+
+## References 
+
+Bai, S., Chen, K., Liu, X., Wang, J., Ge, W., Song, S., Dang, K., Wang, P., Wang, S., Tang, J., et al. Qwen2. 5-vl technical report. arXiv preprint arXiv:2502.13923 , 2025. Chatterjee, D., Remelli, E., Song, Y., Tekin, B., Mittal, A., Bhatnagar, B., Camg ˜Ak¸ z, N. C., Hampali, S., Sauser, E., Ma, S., et al. Memory-efficient streaming videollms for real-time procedural video understanding. arXiv preprint arXiv:2504.13915 , 2025. Chen, J., Lv, Z., Wu, S., Lin, K. Q., Song, C., Gao, D., Liu, J.-W., Gao, Z., Mao, D., and Shou, M. Z. Videollm-online: Online video large language model for streaming video. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pp. 18407– 18418, 2024. Chen, J., Zeng, Z., Lin, Y., Li, W., Ma, Z., and Shou, M. Z. Livecc: Learning video llm with streaming speech tran-scription at scale. In Proceedings of the Computer Vision and Pattern Recognition Conference , pp. 29083–29095, 2025. Chen, S., Wong, S., Chen, L., and Tian, Y. Extending context window of large language models via positional interpolation. arXiv preprint arXiv:2306.15595 , 2023a. Chen, Y., Qian, S., Tang, H., Lai, X., Liu, Z., Han, S., and Jia, J. Longlora: Efficient fine-tuning of long-context large language models. arXiv preprint arXiv:2309.12307 ,2023b. Di, S., Yu, Z., Zhang, G., Li, H., Zhong, T., Cheng, H., Li, B., He, W., Shu, F., and Jiang, H. Streaming video question-answering with in-context video kv-cache re-trieval. arXiv preprint arXiv:2503.00540 , 2025. Ding, X., Wu, H., Yang, Y., Jiang, S., Zhang, Q., Bai, D., Chen, Z., and Cao, T. Streammind: Unlocking full frame rate streaming video dialogue through event-gated cog-nition. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pp. 13448–13459, 2025. Fu, S., Yang, Q., Li, Y.-M., Peng, Y.-X., Lin, K.-Y., Wei, X., Hu, J.-F., Xie, X., and Zheng, W.-S. Vispeak: Visual instruction feedback in streaming videos. arXiv preprint arXiv:2503.12769 , 2025. Grauman, K., Westbury, A., Byrne, E., Chavis, Z., Furnari, A., Girdhar, R., Hamburger, J., Jiang, H., Liu, M., Liu, X., et al. Ego4d: Around the world in 3,000 hours of egocentric video. In Proceedings of the IEEE/CVF con-ference on computer vision and pattern recognition , pp. 18995–19012, 2022. Han, C., Wang, Q., Peng, H., Xiong, W., Chen, Y., Ji, H., and Wang, S. Lm-infinite: Zero-shot extreme length generalization for large language models. In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , pp. 3991–4008, 2024. Huang, Q., Xiong, Y., Rao, A., Wang, J., and Lin, D. Movienet: A holistic dataset for movie understanding. In European conference on computer vision , pp. 709–727. Springer, 2020. Kim, M., Shim, K., Choi, J., and Chang, S. Infinipot-v: Memory-constrained kv cache compression for streaming video understanding. arXiv preprint arXiv:2506.15745 ,2025. Li, B., Zhang, Y., Guo, D., Zhang, R., Li, F., Zhang, H., Zhang, K., Zhang, P., Li, Y., Liu, Z., et al. Llava-onevision: Easy visual task transfer. arXiv preprint arXiv:2408.03326 , 2024a. Li, W., Hu, B., Shao, R., Shen, L., and Nie, L. Lion-fs: Fast & slow video-language thinker as online video assistant. In Proceedings of the Computer Vision and Pattern Recognition Conference , pp. 3240–3251, 2025. Li, Y., Huang, Y., Yang, B., Venkitesh, B., Locatelli, A., Ye, H., Cai, T., Lewis, P., and Chen, D. Snapkv: Llm knows what you are looking for before generation. Advances in Neural Information Processing Systems , 37:22947– 22970, 2024b. Lin, J., Fang, Z., Chen, C., Wan, Z., Luo, F., Li, P., Liu, Y., and Sun, M. Streamingbench: Assessing the gap for mllms to achieve streaming video understanding. arXiv preprint arXiv:2411.03628 , 2024. Liu, N. F., Lin, K., Hewitt, J., Paranjape, A., Bevilacqua, M., Petroni, F., and Liang, P. Lost in the middle: How lan-guage models use long contexts, 2023. URL https://arxiv. org/abs/2307.03172 , 2023. Muhammad, K., Hussain, T., Del Ser, J., Palade, V., and De Albuquerque, V. H. C. Deepres: A deep learning-based video summarization strategy for resource-constrained industrial surveillance scenarios. IEEE Transactions on Industrial Informatics , 16(9):5938–5947, 2019. Ning, Z., Liu, G., Jin, Q., Ding, W., Guo, M., and Zhao, J. Livevlm: Efficient online video understanding via streaming-oriented kv cache and retrieval. arXiv preprint arXiv:2505.15269 , 2025. 10 Decouple and Cache: KV Cache Construction for Streaming Video Understanding 
+
+Niu, J., Li, Y., Miao, Z., Ge, C., Zhou, Y., He, Q., Dong, X., Duan, H., Ding, S., Qian, R., et al. Ovo-bench: How far is your video-llms from real-world online video un-derstanding? In Proceedings of the Computer Vision and Pattern Recognition Conference , pp. 18902–18913, 2025. Pang, Z., Sener, F., and Yao, A. Context-enhanced memory-refined transformer for online action detection. In Pro-ceedings of the Computer Vision and Pattern Recognition Conference , pp. 8700–8710, 2025. Pang, Z., Chatterjee, D., Sener, F., and Yao, A. On discrim-inative vs. generative classifiers: Rethinking mllms for action understanding. arXiv preprint arXiv:2603.02546 ,2026. Press, O., Smith, N. A., and Lewis, M. Train short, test long: Attention with linear biases enables input length extrapolation. arXiv preprint arXiv:2108.12409 , 2021. Qian, R., Ding, S., Dong, X., Zhang, P., Zang, Y., Cao, Y., Lin, D., and Wang, J. Dispider: Enabling video llms with active real-time interaction via disentangled perception, decision, and reaction. In Proceedings of the Computer Vision and Pattern Recognition Conference , pp. 24045– 24055, 2025. Shao, H., Hu, Y., Wang, L., Song, G., Waslander, S. L., Liu, Y., and Li, H. Lmdrive: Closed-loop end-to-end driving with large language models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pp. 15120–15130, 2024. Supancic III, J. and Ramanan, D. Tracking as online decision-making: Learning a policy from streaming videos with reinforcement learning. In Proceedings of the IEEE international conference on computer vision ,pp. 322–331, 2017. Team, G., Georgiev, P., Lei, V. I., Burnell, R., Bai, L., Gulati, A., Tanzer, G., Vincent, D., Pan, Z., Wang, S., et al. Gemini 1.5: Unlocking multimodal understand-ing across millions of tokens of context. arXiv preprint arXiv:2403.05530 , 2024. Tian, X., Zou, S., Yang, Z., and Zhang, J. Identifying and mitigating position bias of multi-image vision-language models. In Proceedings of the Computer Vision and Pattern Recognition Conference , pp. 10599–10609, 2025. Wang, H., Feng, B., Lai, Z., Xu, M., Li, S., Ge, W., De-hghan, A., Cao, M., and Huang, P. Streambridge: Turning your offline video large language model into a proactive streaming assistant. arXiv preprint arXiv:2505.05467 ,2025. Wei, F., Wang, B., Ge, T., Jiang, Y., Li, W., and Duan, L. Learning pixel-level distinctions for video highlight detection. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pp. 3073– 3082, 2022. Wu, S., Chen, J., Lin, K. Q., Wang, Q., Gao, Y., Xu, Q., Xu, T., Hu, Y., Chen, E., and Shou, M. Z. Videollm-mod: Ef-ficient video-language streaming with mixture-of-depths vision computation. Advances in Neural Information Processing Systems , 37:109922–109947, 2024. Xiao, G., Tian, Y., Chen, B., Han, S., and Lewis, M. Ef-ficient streaming language models with attention sinks. 
+
+arXiv preprint arXiv:2309.17453 , 2023. Xu, R., Xiao, G., Chen, Y., He, L., Peng, K., Lu, Y., and Han, S. Streamingvlm: Real-time understanding for infinite video streams. arXiv preprint arXiv:2510.09608 , 2025. Yang, Y., Zhao, Z., Shukla, S. N., Singh, A., Mishra, S. K., Zhang, L., and Ren, M. Streammem: Query-agnostic kv cache memory for streaming video understanding. arXiv preprint arXiv:2508.15717 , 2025. Yao, L., Li, Y., Wei, Y., Li, L., Ren, S., Liu, Y., Ouyang, K., Wang, L., Li, S., Li, S., et al. Timechat-online: 80% visual tokens are naturally redundant in streaming videos. In Proceedings of the 33rd ACM International Conference on Multimedia , pp. 10807–10816, 2025. Zhang, H., Wang, Y., Tang, Y., Liu, Y., Feng, J., Dai, J., and Jin, X. Flash-vstream: Memory-based real-time understanding for long video streams. arXiv preprint arXiv:2406.08085 , 2024. Zhang, Z., Sheng, Y., Zhou, T., Chen, T., Zheng, L., Cai, R., Song, Z., Tian, Y., R ´e, C., Barrett, C., et al. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Processing Systems , 36:34661–34710, 2023. 11 Decouple and Cache: KV Cache Construction for Streaming Video Understanding 
+
+## A. Cumulative Effect in Uniform Streaming Cache 
+
+Figure 5 compares three KV cache constructions for a newly arriving frame: 1) single frame, 2) offline (recomputed from sampled frames), and 3) streaming (uniform KV cache). Using the single-frame construction as reference, we evaluate how faithfully the latter two encode the frame, measuring cache similarity and the resulting performance. As shown in the figure, the streaming cache deviates more from this reference, indicating a cumulative effect from residual past information that weakens new caches. This effect is further reflected in the performance drop observed with the uniform cache baseline. To further quantify this, we fix the cache size for inference and vary how the current frame cache is constructed. As in Table 8, increasing context length in streaming cumulative cache increases residual accumulation, which reduces cache similarity and degrades performance. This indicates a strong correlation between cache similarity and task performance. 0 200 400 600 800    
+
+> Processed Frames
+> 0.75
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+> 1.00
+> Cosine Similarity
+> Qwen 2.5-VL (offline)
+> Qwen 2.5-VL (streaming)
+> Llava-OV (offline)
+> Llava-OV (streaming)
+> Figure 5. Value-cache similarity for the arriving frame, using single-frame cache as the reference. Compared to offline caches, uniform streaming caches accumulate past context, resulting in lower similarity, indicating that newly arriving frames are captured less accurately (the context window length is set to 32 frames).
+> Table 8. Similarity vs. performance on StreamingBench (LLaVA-OV-7B).
+
+Setting Context Cosine Similarity Accuracy 
+
+Offline 0.82 77.96 Streaming 4s 0.81 77.76 Streaming 8s 0.79 77.20 Streaming 16s 0.74 76.79 Streaming 32s 0.71 76.67 
+
+## B. Proof 
+
+Proposition 3.2. For RoPE-based LLMs, using position-agnostic encoding with shifted position IDs that preserve relative distances between tokens produces identical outputs to standard positional encoding with absolute position IDs. 
+
+Proof. We compare two KV cache encoding strategies for RoPE-based LLMs with different treatment of positional information in attention calculation. • Standard positional encoding : keys incorporate positional information at construction using absolute position IDs. • Position-agnostic encoding : keys are stored before applying position transformation, and position IDs are reassigned starting from 0 when used, preserving relative distances. Values are position-agnostic and thus identical under both strategies. For simplicity, we assume contiguous position IDs. The proof extends to non-contiguous cases as long as the same relative distances are preserved across these two strategies. As positional information affects the model only via self-attention, while subsequent residual connections and feed-forward networks are position-agnostic, it suffices to show that self-attention outputs are identical. We prove equivalence by induction over layers and time. 1) Layer-wise: the first transformer layer receives identical inputs under both strategies and produces identical outputs; these outputs form the inputs to the next layer. By induction over 12 Decouple and Cache: KV Cache Construction for Streaming Video Understanding 
+
+layers, the outputs of each corresponding layer are identical across the two strategies. 2) Time-wise: the same reasoning applies at past or future steps, implying equivalence for all time steps. 
+
+Eviction-free. Let the current input be Xu = {xi+lu }nu−1 
+
+> i=0
+
+with xi ∈ Rd being the token embedding, and the past KV cache constructed from previous inputs {Xj }u−1 
+
+> j=0
+
+, where lu denotes the total number of observed tokens up to u, and nu
+
+denotes the length of Xu. Let r index the transformer layers, Denote the standard KV cache as P = {(K(r), V (r))}N −1 
+
+> r=0
+
+,and the position-agnostic cache as P′ = {(K′(r), V (r))}N −1 
+
+> r=0
+
+. Denote Z(r) as the input of layer r, where both strategies share the same input, with Z(0) = X.We start from the first transformer layer with z(0)  
+
+> i
+
+= xi, and omit the layer index r for notational simplicity. Values are updated by concatenate the past cache with the new one, as 
+
+V = [ V, {Wv zi}lu+nu−1 
+
+> i=lu
+
+] = {Wv zi}lu+nu−1 
+
+> i=0
+
+,
+
+and keys are updated as 
+
+K = [ K, {f (Wkzi, i )}lu+nu−1 
+
+> i=lu
+
+] = {f (Wkzi, i )}lu+nu−1 
+
+> i=0
+
+,K′ = [ K′, {Wkzi}lu+nu−1 
+
+> i=lu
+
+] = {Wkzi}lu+nu−1 
+
+> i=0
+
+,
+
+where the function f incorporates position information, W is a linear projection to hidden dimension D, and [, ] denotes concatenation operation along the sequence-length dimension. Since no cache eviction occurs, the reassigned position IDs in the position-agnostic encoding coincide with the absolute position IDs. These two forms can be aligned by applying the positional transformation to the position-agnostic keys: 
+
+Ki = f (K′i, i )
+
+Given the current queries with positional information encoded, Q = {f (Wq zi, i )}lu+nu−1 
+
+> i=lu
+
+, the attention weights computed under the two strategies are identical: 
+
+aij = sof tmax 
+
+ QiKj
+
+√D
+
+
+
+= sof tmax 
+
+ f (Wq zi, i )f (Wkzj , j )) 
+
+√D
+
+
+
+= sof tmax 
+
+ Qif (K′j , j )) 
+
+√D
+
+
+
+= a′ 
+
+> ij
+
+,
+
+and the self-attention outputs are the same, 
+
+> lu+nu−1
+
+X
+
+> j=0
+
+a′ 
+
+> ij
+
+Vj =
+
+> lu+nu−1
+
+X
+
+> j=0
+
+aij Vj .
+
+Applying position-agnostic residual and FFN operations, both strategies produce identical layer-wise outputs {z(1)  
+
+> i
+
+}lu+nu−1 
+
+> i=lu
+
+,which serve as inputs to the next layer. By induction over layers, the outputs of each corresponding layer are identical across the two strategies. Similarly, by induction over time, this layer-wise equivalence extends to previous and future inputs. 
+
+Case eviction. Suppose at time step t, the past KV cache is truncated to a window of length lW to meet the resource constraints. Let Xt = {xi+lt }nt−1 
+
+> i=0
+
+be the current input. Given the total number of observed tokens lt, the KV caches under both strategies can be represented 
+
+P(r) = {K(r) 
+
+> i
+
+, V (r) 
+
+> i
+
+}lt−1 
+
+> i=lt−lW
+
+, P′(r) = {K′(r) 
+
+> i
+
+, V (r) 
+
+> i
+
+}lt−1
+
+> i=lt−lW
+
+Likewise, we first analyze the attention computation in the first transformer layer, and omit the layer index r for simplicity. • Standard KV cache. Given the new input sequence {xi}lt+nt−1 
+
+> i=lt
+
+, queries are computed using consecutive absolute position IDs starting from lt,
+
+Q = {Qi}lt+nt−1 
+
+> i=lt
+
+= {f (Wq xi, i )}lt+nt−1 
+
+> i=lt
+
+.
+
+Keys and values are updated by concatenating the cached ones with those computed from the new input: 
+
+K = {Ki}lt+nt−1 
+
+> i=lt−lW
+
+= [ {f (Wkxi, i )}lt−1 
+
+> i=lt−lW
+
+, {f (Wkxi, i )}lt+nt−1 
+
+> i=lt
+
+] = {f (Wk, x i, i )}lt+nt−1
+
+> i=lt−lW
+
+V = {Vi}lt+nt−1 
+
+> i=lt−lW
+
+= [ {Wv xi}lt−1 
+
+> i=lt−lW
+
+, {Wv xi}lt+nt−1 
+
+> i=lt
+
+] = {Wv xi}lt+nt−1
+
+> i=lt−lW
+
+13 Decouple and Cache: KV Cache Construction for Streaming Video Understanding 
+
+∀i ∈ [lt, l t + nt − 1] , j ∈ [lt − lW , l t + nt − 1] , the attention weight between the query Qi and key Kj is computed as 
+
+aij = sof tmax ( QiKj
+
+√D ),
+
+with 
+
+QiKj = < f (Wq xi, i ), f (Wkxj , j ) >= g(Wq xi, W kxj , i − j)
+
+where the last equality to the relative form g follows from the property of RoPE that the inner product depends only on the relative position i − j.• Position-agnostic KV cache. Since value caches do not encode positional information, given the new input sequence, values are updated identically to the standard strategy, 
+
+V = {Wv xi}lt+nt−1
+
+> i=lt−lW
+
+Keys are first updated to incorporate new input, after which position information is incorporated using consecutive position IDs ranging from 0 to lW + nt − 1, namely by subtracting the offset lt − lW
+
+K′ = {Wkxi}lt+nt−1
+
+> i=lt−lW
+
+K′′ = {f (Wkxi, i − lt + lW )}lW +nt−1
+
+> i=lt−lW
+
+where K′ and V will be stored as the new KV cache. Queries are computed using position IDs consistent with those of the newly added keys, i.e. from lW to lW + nt − 1.
+
+Q′ = {f (Wq xi, i − lt + lW )}lt+nt−1 
+
+> i=lt
+
+.
+
+∀i ∈ [lt, l t + nt − 1] , j ∈ [lt − lW , l t + nt − 1] , the inner product between updated keys and queries becomes 
+
+Q′
+
+> i
+
+K′′  
+
+> j
+
+= < f (Wq xi, i − lt + lW ), f (Wkxj , j − lt + lW ) >= g(Wq xi, W kxj , i − j) = QiKj
+
+Therefore, the attention weights satisfy 
+
+a′ 
+
+> ij
+
+= sof tmax 
+
+ Q′
+
+> i
+
+K′′ 
+
+> j
+
+√D
+
+
+
+= sof tmax 
+
+ QiKj
+
+√D
+
+
+
+= aij ,
+
+As shown above, because both the attention weights and value vectors are identical under the two strategies, their self-attention outputs are identical. By induction over layers and time, the outputs of each corresponding layer are identical across the two strategies. 
+
+## C. Implementation 
+
+For StreamingBench and OVO-Bench, videos are processed at 1 FPS. The context window length lW = lI + lU for these datasets is set to 32 frames. DSCache maintains a feature buffer of lI = 4 frames for recent inputs, while the cumulative past KV cache covers the remainder of the context window and is fully utilized, i.e. lL = lU . In addition, we perform an extra operation on the feature buffer by doubling the spatial resolution of the very recent frame to capture more fine-grained details. In the Qwen-2.5-VL implementation, which generates more tokens per frame, we also sample the cumulative KV cache at 0.5 FPS during decoding to reduce redundancy over the long-range context. For RVS-Ego and RVS-Movie, we use a sampling rate of 0.5 FPS. As queries in these two datasets involve long context recall, we adopt a longer context window of lW = 256 frames, while updating the cumulative KV cache using only the most recent 32 frames, i.e. lL = 32 frames. The feature buffer is set to lI = 4 frames for RVS-Ego, and lI = 8 frames for RVS-Movie. No additional operations such as increased spatial resolution or cache sampling are applied. Since all of the above streaming VQA datasets involve independent queries, the cumulative KV cache stores only visual token representations and discards the text tokens corresponding to each query. 14 Decouple and Cache: KV Cache Construction for Streaming Video Understanding 
+
+## D. Experimental Results 
+
+D.1. Captioning 
+
+We evaluate DSCache on an extra caption task using LiveCC3K-Sports-CC (Chen et al., 2025), a dataset of real-time sports commentary that captures rich spatiotemporal semantics. Models are prompted with the video title and preceding CCs to generate live commentary. Predictions from two models are compared pairwise, with GPT-4o selecting the better one based on the ground-truth CCs, and winning rates are used to rank the models. We adapt StreamingVLM (Xu et al., 2025) by replacing its uniform streaming cache with DSCache. Although StreamingVLM is pretrained and deployed with a small context window of 16 frames, which partially mitigates the cumulative effect in the streaming cache, incorporating DSCache in a training-free manner achieves an average winning rate of 50.8 ±0.2% over 3 runs, indicating a modest but consistent improvement in real-time captioning. 
+
+D.2. Extra Ablation Cache decoupling. Our design decouples the feature buffer from the cumulative past KV cache, delaying the caching of recent features. The uniform cache baseline serves as the non-decoupled case, and the effect of cache decoupling is reflected in the performance comparison with the baseline where consistent gains in DSCache show its effectiveness. 
+
+Position-agnostic encoding. It enables flexible cache operations in unbounded streams. Standard position-aware caching is incompatible with cache eviction, causing discontinuous positions; in long streams, it leads to out-of-distribution positions and overflow. We test position-aware caching in the presence of discontinuity and out-of-distribution positions on StreamingBench with LLaVA-OV-7B. Performance drops from 79.12 to 77.84, highlighting the need of our encoding. Beyond the proof, we empirically validate their equivalence. In a controlled setting without eviction and positional overflow (both encodings are applicable), we evaluate a subset of StreamingBench ( ≤ 5 minutes, 32 videos with 160 queries, LLaVA-OV-7B, 1 FPS). Results show identical performance (79.38%), confirming equivalence. 
+
+Spatial resolution In contrast to uniform streaming caches, which must operate at a fixed resolution throughout, the decoupling enables additional processing on features of recent inputs, such as increasing the spatial resolution of recent frames, without affecting the cumulative past cache construction and update efficiency. In Table 9, we study the impact of increasing the resolution of the latest frame and show that incorporating finer visual details, even for a single frame, can yield further performance gains. Notably, we observe consistent performance improvements even without any resolution increase, confirming that the gains arise from decoupling the construction of the cumulative and instant caches.                            
+
+> Table 9. Ablations on spatial resolution. Base Model Method Spatial StreamingBench OVOBench
+> Llava-OV-7B
+> Uniform -76.92 78.56 DSCache -78.88 81.32
+> ×1.5 78.98 82.03
+> ×2.0 79.12 82.32
+> Qwen2.5-VL-7B
+> Uniform -55.60 52.21 DSCache -56.68 54.33
+> ×1.5 57.02 54.95
+> ×2.0 57.52 55.40
+
+## E. Latency Overhead and Approximate Inference 
+
+In runtime analysis, we report latency at query time, i.e. per-query latency, when a response is generated and latency is most relevant; the overhead for non-query frames is negligible and comparable to the uniform cache baseline. Besides, we adopt cache eviction to maintain a fixed-size cache, bounded by a predefined context window (buffer size + cumulative past cache); so per-query latency and memory usage remains constant and does not scale with input length. Latency mainly comes from instant cache construction at query frames. Table 10 shows larger buffers increase latency. In our setting, a small buffer (e.g. 4 frames) achieves high performance over uniform cache (79.12 vs. 76.92) while keeping latency manageable (0.30s vs. 0.21s). To improve efficiency, we further propose an approximate design that avoids fully recomputing the instant cache at each 15 Decouple and Cache: KV Cache Construction for Streaming Video Understanding 
+
+Table 10. Buffer size ablation (LLaVA-OV-7B, StreamingBench). Buffer Size (#frames) Latency Accuracy 2 0.26 78.74 4 0.30 79.12 8 0.35 79.08 12 0.39 79.24 
+
+Table 11. Instant cache approximation (LLaVA-OV-7B, StreamingBench, 8-frame buffer). Larger periods lead to greater performance degradation due to residual accumulation. Method Period (s) Latency (s) Accuracy Uniform Caching – 0.21 76.92 DSCache – 0.35 79.08 DSCache (approx.) 
+
+4 0.22 78.86 
+
+8 0.23 78.98 
+
+16 0.22 78.48 
+
+query. It maintains an extra periodically refreshed cache for recent frames, enabling reuse of buffer-frame caches while preventing residual accumulation. Table 11 shows that this largely reduces latency, bringing it close to the uniform baseline. Latency also remains stable as buffer size increases(0.22s up to a 16-frame buffer). However, this approximation introduces a mild trade-off: periodic resets vary context across frames, slightly affecting performance. 
+
+## F. Qualitative Results 
+
+Figure 6 presents additional qualitative results on OVO-Bench, illustrating the benefits of maintaining informative recent context. The streaming baseline is distracted by earlier context and produces hallucinated outputs due to the uniform cumulative KV caching. 
+
+Figure 6. Successful cases on OVO-Bench. Text in red denotes the false predictions, while text in green represents the ground truth. S -Streaming baseline. D - DSCache. 
+
+16
