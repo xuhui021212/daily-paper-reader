@@ -1,0 +1,1057 @@
+Title: Learning from Compressed CT: Feature Attention Style Transfer and Structured Factorized Projections for Resource-Efficient Medical Image Analysis
+
+URL Source: https://arxiv.org/pdf/2605.00448v1
+
+Published Time: Mon, 04 May 2026 00:51:55 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# Learning from Compressed CT: Feature Attention Style Transfer and Structured Factorized Projections for Resource-Efficient Medical Image Analysis 
+
+Shadid Yousuf †, S.M. Mahbubur Rahman †, and Mohammed Imamul Hassan Bhuiyan ††Department of Electrical and Electronic Engineering, Bangladesh University of Engineering and Technology 
+
+Abstract —The deployment of artificial intelligence in medical imaging is hindered by high computational complexity and resource-intensive processing of volumetric data. Although chest computed tomography (CT) volumes offer richer diagnostic information than projection radiography, their use in AI-based diagnosis remains limited due to the computational burden of processing uncompressed volumetric images (typically stored in NIfTI or DICOM format). Addressing the growing need for low-resource deployment and efficient electronic data trans-fer, we investigate the utilization of JPEG-compressed chest CT volumes for thoracic abnormality detection. We propose Feature Attention Style Transfer (FAST), a novel distillation framework that transfers both activation patterns and structural relationships from high-fidelity CT representations to a spa-tiotemporal visual encoder operating on compressed inputs. By combining Gram-matrix-based attention style preservation with dual-attention feature alignment, FAST enables robust feature extraction from degraded volumes. Furthermore, we introduce Structured Factorized Projection (SFP), leveraging Block Ten-sor Train decomposition as a parameter-efficient alternative to dense projection layers, reducing projection-head parameters by almost half. Our contrastive learning pipeline, CT-Lite, integrates these components with a SigLIP-based multimodal alignment objective. Experiments on CT-RATE, NIDCH, and Rad-ChestCT demonstrate that CT-Lite achieves AUROC within 5-7% of the uncompressed-input baseline across all three datasets, despite op-erating on compressed inputs with significantly fewer parameters, paving the way for AI-based clinical evaluation under resource constraints. 
+
+Index Terms —Chest computed tomography · Knowledge distil-lation · Vision-language pre-training · JPEG compression · Multi-abnormality detection · Tensor decomposition · Resource-efficient deep learning 
+
+I. I NTRODUCTION 
+
+The clinical deployment of AI-based chest computed to-mography (CT) analysis is hindered by two notable chal-lenges: the computational cost of processing high-dimensional volumetric data, and the bandwidth required to transmit it. Standard volumetric formats such as DICOM and NIfTI are in-herently bandwidth-intensive, which makes them poorly suited to telemedicine and electronic data sharing. These constraints have become more pressing as global radiologist shortages [1], [2], [3] have driven a push toward AI-assisted radiological interpretation [4], [5], [6]. State-of-the-art chest CT foundation models like CT-CLIP [7], COLIPRI [8] or fVLM [9] that could meet this demand are themselves resource-intensive, requiring high-end GPU infrastructure for both training and inference, which places them out of reach for most resource-constrained clinical environments. The visual projection head of CT-CLIP alone, for example, contains roughly one billion parameters on its own [7], illustrating how the dense layers that embed volumetric features into a shared multimodal latent space can dominate the overall computational burden. A natural way to address the bandwidth bottleneck is to operate directly on JPEG-compressed CT volumes, which re-tain clinically meaningful diagnostic information at moderate compression ratios (quality factor ≥ 50 , compression ratio 
+
+≤ 15:1 ) [10]. Despite the steady growth of telemedicine, however, this direction has remained largely unexplored, since research on chest CT has largely relied on uncompressed, high-fidelity inputs [7], [11], [8], [9], [12]. Compressed CT therefore offers a promising route to closing the resource-efficiency gap, yet the irreversible loss of spatial information it introduces has, until now, discouraged systematic investiga-tion. It is infeasible to pretrain a model from scratch on large compressed CT corpora under limited-computation-resource constraints, therefore, we focus our attention on leveraging the knowledge of a pretrained model capable of understanding uncompressed CT volumes. This scenario motivates the central research question of our work: To what extent can the inherent capability of a pretrained model to understand high-fidelity volumetric medical images be transferred to another model for interpreting CT volumes degraded by lossy compression? 
+
+We show that naively fine-tuning a high-fidelity foundation model on JPEG-compressed inputs yields markedly degraded representations, because the teacher’s learned features are tightly bound to the spectral and structural characteristics of uncompressed volumes. Conventional knowledge distillation strategies [13], including naive output matching and feature-level alignment, are insufficient when teacher and student re-ceive inputs that are structurally similar but spectrally different 
+
+[14]. On top of that, fundamental distillation strategies, specif-ically designed for CNN-based models, often underperform in case of ViT-based architectures due to the vast difference between the internal state representations of the two model families [15]. To address this, we reframe the cross-fidelity distillation problem as one of style transfer. Our proposed 
+
+Feature Attention Style Transfer (FAST) framework asks the student to reproduce not only the activation patterns of a frozen high-fidelity teacher (CT-ViT from CT-CLIP, belonging to the class of spatiotemporal vision transformer [7]), but also the structural relationships encoded within its attention space, 
+
+> arXiv:2605.00448v1 [cs.CV] 1 May 2026
+
+enabling robust feature extraction even when the input has been heavily degraded by compression. Even with an effective student encoder, deploying con-trastive multimodal CT models remains computationally ex-pensive, as dense projection heads account for a substantial share of the overall parameter budget. In CT-CLIP, for in-stance, flattening a 16 ×16 ×16 ×512 visual feature tensor into a 512-dimensional embedding produces a single linear layer of approximately 1.07 billion parameters. To reduce this over-head, inspired by the concepts of Block Tensor Train (BTT) [16], we replace the dense projection with Structured Factor-ized Projection (SFP) , cutting the projection-head parameter count by almost half while preserving downstream perfor-mance. Together, FAST and SFP form CT-Lite , a contrastive learning pipeline that aligns visual and textual representations of compressed chest CT volumes through a sigmoid-based contrastive objective [17], chosen for its tolerance to the small batch sizes imposed by limited GPU memory. In summary, the contributions of this work are as follows:  
+
+> •
+
+Feature Attention Style Transfer (FAST): A distillation framework for spatiotemporal vision transformer that combines Gram-matrix-based attention style preservation with dual-attention feature alignment, enabling robust feature extraction from JPEG-compressed CT volumes.  
+
+> •
+
+Structured Factorized Projection (SFP): A Block-Tensor-Train-based projection head that reduces dense projection-layer parameters by almost half while preserv-ing downstream accuracy.  
+
+> •
+
+First systematic study of compressed-CT diagnostic learning: We demonstrate that CT-Lite recovers most of the diagnostic signal of uncompressed CT analysis under JPEG-90 compression across three datasets (CT-RATE, NIDCH, RAD-ChestCT), and substantially outperforms compressed-input fine-tuning of both CT-CLIP and COL-IPRI. II. R ELATED WORKS 
+
+The methodology proposed in this work draws on three in-tersecting strands of prior research. First, the historical trajec-tory of thoracic imaging AI helps explain why chest CT anal-ysis has only recently caught up with chest radiography, why high-fidelity volumetric inputs are taken for granted across the modern literature, and why a compressed-input pathway is timely. Second, the literature on knowledge distillation, together with its conceptual connection to neural style transfer, provides the foundation for our cross-fidelity feature alignment strategy. Third, recent advances in tensor-decomposition-based model compression motivate the parameter-efficient projection head we adopt in place of conventional dense layers. 
+
+A. Trends in Thoracic Radiology and AI 
+
+Early progress in AI for thoracic imaging was dominated by chest radiography, primarily because of the availability of large-scale public X-ray datasets, such as ChestX-ray14 [18], CheXpert [19], MIMIC-CXR [20], PadChest [21], and VinDr-CXR [22], emerged well before any comparable resource for chest CT. This data asymmetry persisted for years. Although CT volumes carry substantially more diagnostic information than projection radiographs, the absence of large annotated CT datasets restricted the progress of CT-focused AI research. The Rad-ChestCT dataset [23] represented an early step toward closing this gap by providing expert multi-abnormality labels for chest CT, but it included no paired free-text reports, leaving multimodal volume-language modeling out of reach. The release of CT-RATE [7], the first large-scale chest CT volume-report corpus, marks the point at which CT-based AI research began to catch up with its X-ray counterpart. Architecturally, the field has traversed three broad eras. The first was CNN-dominated: convolutional backbones such as ResNet [24] and DenseNet [25] inspired notable studies for chest X-ray classification [26], [27]. Draelos et al. extended this design to volumetric CT with CT-Net [23]. The second era was reshaped by Vision Transformers (ViTs) [28], which were quickly adopted in medical imaging through DeiT-style super-vised training [29], [30], [31], [32] and self-supervised pre-training strategies including masked autoencoding [33], [34], [35] and contrastive learning [36], [37], [38], [39], [40], [41]. Spatiotemporal extensions of ViTs [42], [43], [44] provided the architectural foundation for processing volumetric data, and underpin the CT-ViT encoder used as the high-fidelity teacher in the present work [7]. The third and current era is defined by multimodal and vision–language pre-training. Following CLIP [45] and SigLIP [17], report-supervised contrastive learning enabled scalable representation learning in chest radiography—ConVIRT [46], GLoRIA [47], BioViL [48], MedCLIP [49], and zero-shot extensions such as CheXzero [50]. The same paradigm has now been extended to chest CT, beginning with CT-CLIP [7] and followed by CT-FM [11], COLIPRI [8], fVLM [9], scalable 3D vision–language pre-training [51], and volume contrastive learning (VoCo) [12]. Knowledge transfer from 2D X-ray experts to 3D CT models—BIUD [52] and ViSD-Boost [53]—and multimodal large language models for radiology [54] [55] reflect ongoing efforts to bridge the residual data gap and broaden clinical applicability. Comprehensive surveys situate this rapidly growing literature [56], [57]. A common assumption underlying every model in this lin-eage is that input volumes are stored in their original uncom-pressed form, which keeps the data pipeline computationally heavy and bandwidth-intensive. CT-Lite extends this lineage into the compressed-input regime, using CT-CLIP’s CT-ViT as the high-fidelity teacher. We adopt CT-CLIP rather than the more recent COLIPRI [8], or fVLM [9] because its weights were the only publicly available 3D chest CT representation at the time of our study; our primary objective is not to surpass the latest foundation model but to demonstrate that a student trained on compressed inputs can closely track the established high-fidelity teacher under tight resource constraints. 
+
+B. Knowledge Distillation (KD) and Neural Style Transfer 
+
+Knowledge distillation (KD), first formalized by Hinton et al. [13], enables the transfer of learned representations from a teacher model to a student model, typically yielding compact and efficient networks. Beyond the original logit-matching formulation, feature-level distillation [58], attention transfer [59], contrastive representation distillation [60] and relational distillation [61] have broadened the scope of knowledge trans-fer. In the context of transformers, DeiT [29], [30] demon-strated that distillation tokens can effectively transfer knowl-edge within ViT architectures, and subsequent work has re-fined ViT-specific distillation through feature-level alignment [15], weight-multiplexing for compact students [62], scalable strong-teacher schemes [63], and self-distillation with restruc-tured teacher–student configurations [64]. However, effective KD for spatiotemporal transformers [42], [43], [44] critical for volumetric medical data remains comparatively underexplored. In the medical domain, heterogeneous KD using information flow modeling [65] enables transfer across architectures, while UniCompress [66] applies distillation to improve medical image compression without sacrificing diagnostic fidelity. Us-mani et al. proposed STKD-VViT for video deepfake detec-tion [67], a methodology with parallels for dynamic medical imaging. A further departure from convention is that nearly all of the above frameworks assume the canonical KD setup: a heavyweight teacher and a lightweight student that consume the same input. CT-Lite inverts this convention along the input axis rather than the capacity axis—teacher and student share an identical architecture but receive different inputs (uncom-pressed and compressed CT volumes), so the distillation signal must bridge a fidelity gap rather than a capacity gap. A second line of work that directly informs our methodol-ogy is neural style transfer, introduced by Gatys et al. [68], which showed that the Gram matrix of CNN feature activations captures the second-order statistics of an image’s “style” independently of its content. The Gram-matrix construction has since been used wherever the goal is to align the structural co-activation patterns of two feature distributions rather than their pointwise values. The attention-style preservation loss in our Feature Attention Style Transfer (FAST) framework is a direct adaptation of this idea: when teacher and student receive inputs that are structurally similar but spectrally different, attention maps cannot be matched value-for-value, but the relational pattern they encode, captured by their Gram matrix, can. We thus treat the teacher’s attention patterns as the “style” to be preserved across changes in input fidelity and combine this signal with dual-attention feature alignment to transfer both activation patterns and structural relationships from high-fidelity to compressed CT representations. 
+
+C. Model Compression and Efficient Architectures 
+
+Deploying deep learning models in resource-constrained clinical environments necessitates techniques for reducing parameter count and inference cost. Magnitude and con-nection pruning [69], [70] and the lottery-ticket hypothesis [71] demonstrated that large networks can be aggressively sparsified with little accuracy loss, while integer-arithmetic quantization [72] and post-training/quantization-aware variants for large transformers [73], [74] extend this efficiency to inference- and finetuning-time. Low-rank weight factorization, typically realized via singular value decomposition, offers a complementary axis of compression [75], [76], and its parameter-efficient adaptation form, Low-Rank Adaptation (LoRA) [77], has gained widespread adoption for fine-tuning of large language models by injecting trainable low-rank matrices. Knowledge distillation [78] provides a further com-plementary route by transferring representations from larger teachers to smaller students. While attention-matrix compression has received consider-able focus, dense (fully connected) layers often constitute the dominant parameter sink. Tensor decomposition methods— including Kronecker products [79], [80], Tucker decomposi-tion [81], and Tensor Train (TT) [82], [83]—offer principled approaches to compactly parameterizing large weight matrices. Among these, Block Tensor Train (BTT) decomposition [16] has been shown to be particularly effective, enabling depth expansion while maintaining stable computational costs. Our Structured Factorized Projection (SFP) builds on this line of work to address the parameter overhead of projec-tion heads in contrastive learning. In CT-CLIP, flattening a 16 ×16 ×16 ×512 volumetric feature tensor into a 512-dimensional embedding produces a single linear layer of approximately 1.07 billion parameters, dominating the model’s overall parameter footprint. SFP replaces this linear layer with a sum of BTT-factorized blocks, reducing the projection-head parameter count by almost half while preserving downstream performance. III. M ETHODOLOGY 
+
+A. Stage 1: Feature-Attention Style Transfer (FAST) 
+
+Let, Φvis,T and Φvis,S denote the teacher and student visual encoder, respectively. The teacher encoder Φvis,T is pretrained to extract rich visual features given a set of uncompressed high-fidelity chest CT volumes, {X U }. The student encoder 
+
+Φvis,S receives degraded input set {X C }, obtained from ap-plying lung window (window center = -600 HU and window width=1500 HU) to each sample in {X U }, and subsequently compressing to JPEG. The objective is to train Φvis,S to enable it extract such visual features from degraded inputs XC that is similar or very close to what Φvis,T extracts from the high-fidelity inputs {X U }, as given by equation 1. 
+
+θ∗ 
+
+> S
+
+= arg min 
+
+> θS
+
+M SE (Φ vis,T (XU ; θT ), Φvis,S (XC ; θS )) (1) Here, θT , θS , θ∗ 
+
+> S
+
+and M SE represent teacher parameters, student parameters, optimal student parameters and Mean Squared Error (MSE), respectively. We isolated the visual encoder (CT-ViT) from CT-CLIP and utilized it as our choice of both the teacher and the student encoder, where a series of spatial and causal transformer blocks enables attention calculation across all three dimensions (height, width, depth). The teacher encoder was initialized with Fig. 1: Overview of the CT-Lite framework. (Left) Stage 1: Feature Attention Style Transfer (FAST) distills the frozen high-fidelity teacher into a student encoder operating on JPEG-compressed inputs, using attention-style and dual-attention feature alignment. (Right) Stage 2: contrastive alignment of compressed-CT and report embeddings via Structured Factorized Projection (SFP) blocks and a SigLIP objective. the pretrained weights and kept frozen during training, while the student encoder was randomly initialized. The training loss that satisfies the objective in Equation 1 depends on how the information is processed in each layer of CT-ViT. To determine the optimal loss function at first, five inde-pendent experiments were carried out for 50 epochs with a small dataset of 50 CT volumes (See Figure 6). AdamW optimizer with cosine annealing scheduler with a learning rate of 1 × 10 −5 was used across all five experiments. The first approach was the naive approach that tries to directly align the end representations between the teacher and the student by calculating MSE between them, in which the student model seemed to converge with a high degree of error. A higher degree of mismatch was observed between the intermediate representations of the student and the teacher in the first experiment, which led us to apply feature-level distillation as our second approach, where the student tries to mimic the internal feature representations of the teacher model. The loss function in the first approach also acted as a component in the second approach. This approach was faced with a slower rate of convergence, forcing us to rule it out as infeasible for a larger dataset under low-resource constraint. We concluded that the failure of conventional distillation approaches arise from the fact that the student and the teacher, in our case, receives essentially different inputs, that may have different voxel values but retain a higher degree of structural similarity. This led us to find the similarity of the problem to a neural style transfer problem. We combined elements of feature-level distillation and neural style transfer to pro-pose Feature-Attention Style Transfer (FAST) framework, which enforces the student to mimic not only the activation patterns but also the structural relationships encoded within the teacher’s attention space. The FAST approach results in a much faster alignment between the encoded outputs between the student and the teacher. 
+
+FAST incorporates 3 loss components. The rest of this subsection discusses the components in detail. 
+
+1) Attention Style Preservation Loss ( LASP ): This compo-nent focuses on the relational structure of the attention maps rather than their direct values. We employ a Gram-matrix-based loss to distil the structural ’style’ of the attention maps. Given attention score Ascore = sof tmax (QK T /√dk),
+
+LASP is calculated by: 
+
+LASP = || GT − GS || (2) where G = Ascore ATscore 
+
+This loss captures the pairwise correlations between all query distributions. 
+
+2) Dual-Attention Feature Loss ( LDAF ): This loss compo-nent enforces alignment between the output of the attention mechanisms, given by: 
+
+LDAF = MSE(SA( QT , KT , VT ), SA( QS , KS , VS )) + MSE(SA( QT , KT , VT ), CA( QS , KT , VT )) ,
+
+(3) where SA( ·) and CA( ·) denote self and cross-attention, re-spectively. The first term enforces self-attention alignment, encouraging the student to reproduce the same attention pattern as the teacher. The second term introduces cross-attention fusion, enabling the student to interpret the teacher’s attention space. Together, they promote richer feature transfer between the encoders. 
+
+3) Final Representation Loss: This attempts to align the end representation by minimizing the naive distillation loss, given by: 
+
+LF R = M SE (Φ vis,T (XU ), Φvis,S (XC )) (4) The combined training loss is the linear combination of all three training objectives discussed above, given by: 
+
+Ltotal = αLASP + βLDAF + γLF R (5) It is important to note that both LDAF and LASP are calculated and cumulatively added across all the spatial and temporal transformer blocks in CT-ViT. 
+
+B. Stage 2: Contrastive Learning with Structured Factorized Projections (SFP) 
+
+In the original CT-CLIP framework, the encoded outputs of the visual encoder (CT-ViT) and the text encoder (CXR-BERT) [84] are flattened and projected into fully connected projection layers to map the encoded outputs into a shared low-dimensional (512) latent space for contrastive image-text alignment. Since CXR-Bert produces a 768-dimensional flattened embedding, the text projection layer is relatively lightweight and therefore reasonable in terms of compute and parameter count. However, the CT-ViT encoder generates a volumetric feature tensor of size 16 × 16 × 16 × 512 , which, when flattened and projected to 512 dimensions, results in a linear layer containing 16 ×16 ×16 ×512 ×512 ≈ 1.07 billion parameters, posing a major bottleneck in terms of parameters, compute and memory overhead. This challenge motivated us to introduce Structured Fac-torized Projection (SFP) block as a suitable replacement for parameter-heavy dense layers. SFP utilizes the concept of Block Tensor Train (BTT) decomposition. In a fully-connected layer, assuming no bias term for simplicity, the Matrix-Vector Multiplication (MVM) operation is given by-
+
+Y = WX (6) Given that input X ∈ Rin dim ×1 , W ∈ Rout dim ×in dim 
+
+and Y ∈ Rout dim ×1. For a special case where in dim =
+
+M × out dim , where M is a positive integer, Equation 6 can be rewritten as-
+
+Y = W1 · · · WM
+
+ X1 · · · XM
+
+T , (7) or equivalently, 
+
+Y =
+
+> M
+
+X
+
+> i=1
+
+Wi XTi . (8) where Wi ∈ Rout dim ×out dim , Xi ∈ Rout dim ×1. We re-place each square-dimensional matrix, Wi with Block-Tensor Train (BTT) matrix BTT i, so that Equation 8 becomes-
+
+Y = Yvis =
+
+> M
+
+X
+
+> i=1
+
+BTT i XTi (9) The matrix–vector multiplication (MVM) for each block is computed using a BTT-style structured factorization. Let 
+
+out dim = d1 ×d2 be a factorization of the output dimension, where d1, d 2 ∈ N. Each input chunk Xi ∈ Rout dim × 1 is reshaped into a matrix Xi ∈ Rd1×d2 .Each structured projection BTT i is parameterized by two core tensors, Li ∈ Rd1×d2×d1×r and Ri ∈ Rr×d1×d2 , where 
+
+r denotes the BTT rank. The output matrix Yi ∈ Rd1×d2 is computed element-wise as 
+
+(Yi)p,j =
+
+> d1
+
+X
+
+> q=1
+> d2
+
+X
+
+> k=1
+> r
+
+X
+
+> a=1
+
+(Li)p,j,q,a (Ri)a,q,k (Xi)q,k , (10) where p, q ∈ { 1, . . . , d 1}, j, k ∈ { 1, . . . , d 2}, and r is the BTT rank. The output matrix Yi is then flattened to obtain a vector in Rout dim ×1.
+
+Parameter Complexity. The number of parameters in an SFP layer is given by: Params SFP = 2 × r × in dim × √out dim (11) where r is the BTT-rank, in dim is the input dimension, and out dim is the output dimension. 
+
+Efficiency Bound. For SFP to yield a parameter reduction over a standard dense layer, the condition 2r × in dim ×√out dim ≤ in dim × out dim must hold, which simplifies to 
+
+r ≤√out dim 
+
+2 . (12) For our visual projection head with out dim = 512 , this implies r ≤ √512 /2 ≈ 11 .3. Our resources allow us to experiment with SFP block with a maximum rank of 6. For in dim = 16 × 16 × 16 × 512 = 2 ,097 ,152 and r = 6 , SFP yields approximately 2×6×2,097 ,152 ×√512 ≈ 569 M FLOPs (and parameters), , almost half of CT-CLIP’s dense projection head (1.07B). 
+
+Weight Initialization via SVD-based Approximation. 
+
+While the SFP layers can be trained from scratch, they can also be initialized by approximating a pre-trained dense weight matrix W ∈ Rdout ×din from a teacher model like CT-CLIP [7]. To initialize the core tensors {L i, Ri}Mi=1 , we first partition the dense weights into M sub-matrices Wi ∈ Rdout ×dout . For each block, we perform a truncated Singular Value Decompo-sition (SVD) to find a low-rank approximation of rank r:
+
+Wi ≈ UiΣiV ⊤ 
+
+> i
+
+=⇒ Wi ≈ ˆUi ˆV Ti , (13) where ˆUi = Ui, :r
+
+pΣi, :r and ˆV ⊤ 
+
+> i
+
+= pΣi, :r V Ti, :r . The core tensors are then initialized such that their contraction aligns with this low-rank structure: 
+
+(Li)p,j,q,a ← reshape ( ˆUi), (Ri)a,q,k ← reshape ( ˆV Ti ).
+
+(14) This initialization ensures that the model starts with a repre-sentation space that is functionally close to CT-CLIP’s high-fidelity projection [7]. 
+
+Algorithm 1 Structured Factorized Projection (SFP) 
+
+Require: Input feature vector X ∈ Rin dim ×1
+
+Require: Number of blocks M , output dimension out dim 
+
+Require: Output factorization out dim = d1 × d2
+
+Require: BTT-style core tensors {(Li, Ri)}Mi=1 
+
+Ensure: Projected output vector Y ∈ Rout dim ×1 
+
+> 1:
+
+Partition the input vector: 
+
+X =
+
+
+
+X1
+
+X2
+
+...
+
+XM
+
+ , Xi ∈ Rout dim ×1 
+
+> 2:
+
+Initialize output vector: 
+
+Y ← 0 ∈ Rout dim ×1 
+
+> 3:
+
+for i = 1 to M do  
+
+> 4:
+
+Reshape input block: 
+
+Xi ← reshape( Xi, d 1, d 2), so Xi ∈ Rout dim ×1 
+
+> 5:
+
+Compute BTT block output using Eq. (10): 
+
+(Yi)p,j =
+
+> d1
+
+X
+
+> q=1
+> d2
+
+X
+
+> k=1
+> r
+
+X
+
+> a=1
+
+(Li)p,j,q,a (Ri)a,q,k (Xi)q,k  
+
+> 6:
+
+Vectorize block output: 
+
+Yi ← vec( Yi) ∈ Rout dim  
+
+> 7:
+
+Accumulate output: 
+
+Yvis ← Y + Yi 
+
+> 8:
+
+end for  
+
+> 9:
+
+return Y
+
+The projected visual output is then aligned with the corre-sponding text projection vectors using a SigLIP loss, unlike the original CLIP loss used in the CT-CLIP paper, as CLIP loss requires a larger batch size for effectiveness which could not be afforded under limited-resource constraints. 
+
+C. Sigmoid Contrastive Objective (SigLIP) 
+
+We optimize multimodal alignment using the sigmoid-based contrastive loss introduced in SigLIP, which treats each image– text pair within a mini-batch as an independent binary clas-sification problem. Unlike the softmax-based CLIP objective, SigLIP does not rely on competition among in-batch negatives and is therefore less sensitive to batch size, making it well suited for training under limited GPU memory. Given a mini-batch of B paired CT volumes and corre-sponding radiology reports, we obtain projected visual and textual embeddings Yvis , Ytxt ∈ RB×out dim . Notice that Yvis 
+
+is the output of the SFP block. Prior to similarity computation, all embeddings are ℓ2-normalized along the feature dimension: 
+
+˜Yvis ,i = Yvis ,i 
+
+∥Yvis ,i ∥2
+
+, ˜Ytxt ,i = Ytxt ,i 
+
+∥Ytxt ,i ∥2
+
+. (15) Pairwise similarity logits are then computed as 
+
+Sij = ˜Y⊤ 
+
+> txt ,i
+
+˜Yvis ,j , i, j ∈ { 1, . . . , B }, (16) where ˜Ytxt ,i and ˜Yvis ,j denote the normalized textual and visual embeddings, respectively. We define a binary target matrix T ∈ RB×B such that 
+
+Tij =
+
+(
+
++1 , if i = j, 
+
+−1, otherwise . (17) The SigLIP loss is defined as 
+
+LSigLIP = − 1
+
+B
+
+> B
+
+X
+
+> i=1
+> B
+
+X
+
+> j=1
+
+log σ(Tij Sij ) , (18) where σ(·) denotes the sigmoid function. The SigLIP objective is inherently symmetric with respect to image-text pairs and is computed over all pairwise similarities within the mini-batch. 
+
+D. Inference Strategy 
+
+Contrasting textual prompts are employed to detect each abnormality using CT-Lite, given an input CT volume (See Figure 2). The visual encoder of CT-Lite, combined with the SFP block, generates a visual embedding from the input, while the text encoder and latent projection layer generate text embeddings for a positive prompt and a negative prompt (e.g., ”emphysema” and ”no emphysema”). The cosine similarity between the visual embedding and each text embedding is computed, and the abnormality is predicted as present if the difference between the two similarity scores exceeds a given threshold. The threshold is set using Youden’s J statistic. 
+
+Fig. 2: Inference strategy of CT-Lite using contrasting prompts IV. E XPERIMENTS AND RESULTS 
+
+A. Implementation Details 
+
+CT-Lite is trained on an NVIDIA L4 GPU, while the rest of the fine-tuning for evaluation is carried out on an NVIDIA A100 GPU; both accessed through Google Colab Pro+. 
+
+Hyperparameter Scaling: To maintain training stability when transitioning from the dense projection head ( in dim =2,097 ,152 ) to the SFP block, we apply the principles of Maximal Update Parameterization ( μP) [85]. The learning rate 
+
+ηSF P is chosen to ensure that the update magnitude remains invariant to the change in effective width. Given the original dense learning rate ηbase , the SFP learning rate is scaled by the ratio of the fan-ins: 
+
+ηSF P = ηbase × din 
+
+M × r (19) For r = 6 and M = 4096 , the effective fan-in is reduced from ∼ 2.1 × 10 6 to 24 ,576 . This necessitates a scaling factor of approximately 85 .33 × over the base dense learning rate to compensate for the structural bottleneck and maintain consistent update magnitudes across parameterizations. The training process is divided into two distinct stages: Feature Attention Style Transfer (FAST) and Structured Fac-torized Projection (SFP) contrastive alignment. The detailed hyperparameters for both stages are summarized in Table I. Both stages utilize the AdamW optimizer with a weight decay of 0.01 and a cosine annealing learning rate scheduler (ηmin = 10 −6) to ensure stable convergence. Due to the high memory demands of processing volumetric data, the batch size is restricted to 4 for both FAST and SFP stages, respectively. For the FAST stage, the loss weighting coefficients, after observing the individual loss component magnitudes for a number of inputs, are carefully set to α = 2 , β = 5 , and 
+
+γ = 22 , so that the loss components in Equation 5 maintain a tentative ratio of 1:1:4. For the SFP stage, establishing an appropriate learning rate was critical when transitioning from a dense projection head to a factorized architecture. Following the μP principles described above, the original dense layer possessed a fan-in of 
+
+2,097 ,152 . By setting the BTT rank to r = 6 across M = 4096 
+
+blocks, the effective SFP fan-in was reduced to 24 ,576 . To compensate for this structural bottleneck, the base learning rate of 1 × 10 −5 was multiplied by the fan-in ratio ( ≈ 85 .33 ), yielding an adjusted SFP learning rate of 8.53 × 10 −4.
+
+B. Datasets 
+
+CT-RATE: CT-RATE is the first publicly available large-scale dataset comprising chest CT volumes paired with their corresponding radiology reports, collected from Istanbul Medipol University Mega Hospital. We sampled a subset of 1,837 CT volume–report pairs, corresponding to 788 unique patients, and incorporated them into our study. The sampled data were split into non-overlapping training and validation sets, consisting of 1,333 volumes from 573 patients and 504 volumes from 215 patients, respectively. Each volume in the dataset is provided in uncompressed NIfTI format, TABLE I: Training Hyperparameters for FAST and SFP Stages                                   
+
+> Hyperparameter Value Stage 1: Feature Attention Style Transfer (FAST)
+> Optimizer AdamW Weight Decay 0.01
+> Learning Rate 5×10 −5
+> Scheduler Cosine Annealing Minimum Learning Rate ( ηmin )1×10 −6
+> Batch Size 4
+> Epochs 20
+> Loss Weights ( α, β, γ )2,5,22
+> Stage 2: Contrastive Learning with SFP
+> Block Tensor Train (BTT) Rank ( r)6
+> Number of Blocks ( M)4096
+> Optimizer AdamW Weight Decay 0.01
+> Base Learning Rate 1×10 −5
+> Effective Learning Rate ( ηSF P )8.53 ×10 −4
+> Scheduler Cosine Annealing Minimum Learning Rate ( ηmin )1×10 −6
+> Batch Size 4
+> Epochs 10
+> Objective SigLIP
+
+accompanied by metadata attributes such as voxel spacing, rescale slope, and rescale intercept. The CT scans were acquired using scanners manufactured by Philips and Siemens Healthineers. 
+
+NIDCH Chest CT Dataset: In order to introduce robustness and generalizability, we retrospectively collected and curated a dataset of 1847 JPEG-compressed (Q-factor = 90%) stacks of CT slices paired with their radiology reports, corresponding to 681 unique patients from National Institute of Diseases of the Chest and Hospital (NIDCH), Bangladesh from December 2023 to July 2024. The CT scanner model used in this hospital is a 3rd Generation Hitachi Scenaria 128-Slice CT scanner, and the workstation uses Fujifilm Synapse 3D analyzer. The training and validation splits contain 1336 and 511 volumes, corresponding to 505 and 176 unique patients, respectively. The corresponding high-fidelity counterpart in of all the volumes in the validation split were also collected (in DICOM file format) for conducting comparison against the baseline. 
+
+RAD-ChestCT: RAD-ChestCT [23] is a publicly available dataset designed for radiology report generation and multi-label abnormality detection in chest CT scans. In addition to the two data sources mentioned before, we sample 501 instances from the RAD-ChestCT dataset as an external valida-tion dataset to compare against benchmarks. The CT volumes are available in uncompressed numpy zip (.npz) format. Figure 3 illustrates the class distribution across the three datasets. 
+
+C. Image Preprocessing 
+
+The FAST training stage requires both uncompressed high-fidelity CT volumes as well as their degraded JPEG-Mosaic      
+
+> Attenuation
+> Interlobular
+> Septal Thick.
+> Pulmonary
+> Fibrotic Seq.
+> Lung
+> Nodule
+> Peribronchial
+> Thickening
+> Bronchi-
+> ectasis
+> Emphysema Atelectasis Pleural
+> Effusion
+> Consoli-
+> dation
+> Lung
+> Opacity
+> Abnormality
+> 0
+> 50
+> 100
+> 150
+> 200
+> 250
+> 300
+> 350
+> Number of Positive Samples
+> 64 58
+> 229
+> 344
+> 69
+> 93
+> 163
+> 226
+> 89
+> 158
+> 299
+> 17
+> 26
+> 145
+> 109
+> 50 57
+> 117 120
+> 61
+> 105
+> 195
+> CT-RATE: Class Distribution of Abnormalities (Train vs. Validation)
+> Train (n=884)
+> Validation (n=504)
+
+(a) CT-RATE (subset used for training and validation) Mosaic    
+
+> Attenuation
+> Pulmonary
+> Fibrotic Seq.
+> Lung
+> Nodule
+> Bronchi-
+> ectasis
+> Emphysema Pleural
+> Effusion
+> Consoli-
+> dation
+> Lung
+> Opacity
+> Abnormality
+> 0
+> 50
+> 100
+> 150
+> 200
+> 250
+> Number of Positive Samples  204
+> 169
+> 28
+> 173
+> 148
+> 258
+> 265
+> 67
+> 92
+> 121
+> 9
+> 119
+> 92
+> 122 123
+> 10
+> NIDCH: Class Distribution of Abnormalities (Train vs. Validation)
+> Train (n=815)
+> Validation (n=511)
+
+(b) NIDCH Interlobular     
+
+> septal
+> thickening
+> Pulmonary
+> Fibrotic Seq.
+> Lung
+> nodule
+> Peribronchial
+> thickening
+> Bronchiectasis Emphysema Atelectasis Pleural
+> effusion
+> Consolidation Lung
+> opacity
+> Abnormality
+> 0
+> 25
+> 50
+> 75
+> 100
+> 125
+> 150
+> 175
+> 200
+> Number of Positive Samples
+> 18
+> 52
+> 123
+> 39
+> 51
+> 108
+> 115
+> 70
+> 45
+> 195
+> RAD-ChestCT: Class Distribution of Abnormalities (n=501)
+> Validation (n=501)
+
+(c) RAD-ChestCT (subset used for validation) 
+
+Fig. 3: Class distribution histograms for the three evaluation datasets. CT-RATE and RAD-ChestCT distributions correspond to the subsets employed in this study, not the complete original datasets. compressed counterparts. Like CT-CLIP, the CT volumes are resized to achieve an anisotropic voxel spacing of 0.75 mm ×
+
+0.75 mm × 1.5 mm. Each of the CT volumes is subsequently converted to Hounsfield Unit (HU) values using the rescale slope and rescale intercept from the metadata attributes. The voxel-wise transformation is given by-
+
+PHU (x, y, z ) = m · P (x, y, z ) + b, (20) where P (x, y, z ) denotes the voxel value at coordinates 
+
+(x, y, z ), and m and b are the rescale slope and rescale intercept obtained from the volume metadata. For feeding the teacher encoder of the FAST stage, the volumes are clipped to HU values [-1000, 1000], followed by normalization to [-1,1]. All compressed data used in our pipeline are obtained by applying lung-windowing to the original CT volumes (center 
+
+= −600 HU, width = 1500 HU), followed by JPEG encoding with a fixed quality factor of 90, and normalizing the values to [-1,1]. The processed compressed or uncompressed CT volumes in CT-Lite, similar to CT-CLIP, are either center-cropped or zero-padded to a fixed resolution of 480 ×480 ×240 .While finetuning COLIPRI to the compressed dataset for comparison with our approach, the only difference in the preprocessing step is that the compressed volumes are resized to reach an isotropic voxel spacing of 2 mm, conforming with the original work, and the final resolution is set to 
+
+160 × 160 × 160 .
+
+D. Report Preprocessing 
+
+Radiology reports typically contain both normal and abnor-mal findings, with routine observations and normal impres-sions often constituting the majority of the text. When the entire report is tokenized and used for training, these frequent routine descriptions may dominate the textual representation and dilute the contribution of clinically meaningful tokens associated with abnormal findings. In our framework, image–text alignment is learned using the pairwise sigmoid loss of SigLIP, which evaluates each image–text pair independently rather than relying on softmax normalization across the batch as in CLIP. Consequently, the training objective primarily benefits from sentences that describe clinically relevant abnormalities, while routine obser-vations contribute limited supervisory signal. To emphasize abnormality-related information, we em-ployed MedGemma-4b-it [86] and utilize a few-shot prompt-ing strategy to automatically filter radiology reports. The model removes sentences describing routine observations and normal findings, retaining only statements that indicate clin-ically significant abnormalities and impressions. This pre-processing step increases the semantic relevance of the text supervision provided to the contrastive learning objective. It is worth noting that, when fine-tuning CT-CLIP and COL-IPRI for comparison with our approach, the text preprocessing procedures were kept identical to those described in the original works. Specifically, CT-CLIP utilizes full radiology Radiology Report    
+
+> FINDINGS :Emphysematous changes are
+> noted in both lungs. Fibrosis are noted in all
+> lobes of both lungs--old pulmonary lesion.
+> Trachea and both principal bronchi appear
+> normal. Heart and great vessels appear
+> normal. No mediastinal lymphadenopathy is
+> seen. No pleural effusion is seen in either of
+> the hemithorax. Bony thorax and chest walls
+> reveal no abnormality. Scanned portion of
+> abdominal organs are unremarkable.
+> IMPRESSIONS :Bilateral emphysema
+> MedGemma
+> FINDINGS :Emphysematous changes
+> are noted in both lungs. Fibrosis are
+> noted in all lobes of both lungs--old
+> pulmonary lesion.
+> IMPRESSIONS :Bilateral emphysema
+> Abnormal Findings and Impressions
+> Few-shot
+> prompting
+
+Fig. 4: Filtering out abnormal findings and impressions from radiology reports via few-shot prompting reports as textual input. In contrast, COLIPRI applies few-shot prompting of a large language model to restructure the reports into eight semantic categories and to separate positive and negative findings. Maintaining these original preprocessing strategies ensures a fair comparison with the proposed method. 
+
+E. Report Labeling 
+
+We employ the same report labeler used in CT-RATE (a finetuned RadBERT-RoBERTa-4m) [7] to extract thoracic abnormality labels from the radiology reports of the NIDCH dataset. The labeler is capable of extracting 18 abnormal-ity labels. Since we strictly constrain our study to CT-volumes having undergone Lung windowing followed by JPEG-compression, we only extract 12 abnormalities that have a fair chance of getting detected by an expert under lung window setting, namely, Mosaic Attenuation Pattern, Interlobular Septal Thickening, Pulmonary Fibrotic Sequala, Lung Nodule, Peribronchial Thickening, Bronchiectasis, Em-physema, Atelectasis, Pleural Effusion, Cardiomegaly, Con-solidation and Lung Opacity. The NIDCH dataset do contain adequate number of positive samples for Interlobular Septal Thickening, Peribronchial Thickening, Atelectasis and Car-diomegaly. Therefore we evaluate our models against the rest of the abnormalities. 
+
+F. Evaluation Criteria 
+
+At the time of writing, relatively few studies have explored the use of chest CT volumes for multi-abnormality detection. Notable foundation models trained on large-scale, high-fidelity (uncompressed) CT volumes include CT-CLIP, COLIPRI, f-VLM, and CT-Net. To the best of our knowledge, prior work on multi-label thoracic abnormality prediction has primarily relied on high-fidelity CT volumes, and no previous studies have explicitly investigated learning from compressed CT vol-umes due to the irreversible spatial information loss introduced during compression. In this work, we therefore evaluate CT-Lite against several existing foundation models fine-tuned on JPEG-compressed CT volumes. For CT-CLIP and COLIPRI, pretrained weights are publicly available, enabling end-to-end fine-tuning for a direct comparison with our proposed knowledge transfer approach. Since the primary objective of our study is to effectively transfer the learned knowledge of the CT-ViT visual encoder from CT-CLIP to a student encoder capable of analyzing degraded inputs, the original CT-CLIP model also serves as an important baseline. We compare the performance of CT-Lite with CT-CLIP evaluated on the same images prior to compression, as well as with CT-CLIP finetuned on the compressed dataset. We do not include CT-Net in our experiments because the pretrained model weights are not publicly available, and pretraining the model from scratch on large-scale datasets was infeasible under our computational constraints. Simi-larly, f-VLM relies on anatomical masking generated by To-talSegmentator, which is designed to operate on high-fidelity NIfTI volumes. Adapting this pipeline to JPEG-compressed CT stacks would introduce substantial additional complexity. Consequently, f-VLM is also not included in our comparative evaluation. Since we strictly constrain our study to CT-volumes having undergone Lung windowing followed by JPEG-compression, we only evaluate against 12 abnormalities that have a fair chance of getting detected by an expert under lung window set-ting, namely, Mosaic Attenuation Pattern, Interlobular Septal Thickening, Pulmonary Fibrotic Sequala, Lung Nodule, Peri-bronchial Thickening, Bronchiectasis, Emphysema, Atelecta-sis, Pleural Effusion, Cardiomegaly, Consolidation and Lung Opacity. However, RAD-ChestCT did not have annotations for Mosaic Attenuation Pattern, and NIDCH did not have enough positive samples for Interlobular Septal Thickening, Peribronchial Thickening, Atelectasis and Cardiomegaly. For that reason we evaluate against the rest of the abnormalities accordingly. To evaluate the model’s performance across the 18 ab-normalities, we utilize Accuracy, AUROC, and the Macro-Averaged Weighted F1-Score. 
+
+1) Area Under the ROC Curve (AUROC): The AUROC measures the model’s discriminative ability across all possible thresholds. It is defined as the area under the plot of the True Positive Rate (TPR) against the False Positive Rate (FPR): AUROC =
+
+Z 10
+
+TPR (FPR −1(t)) dt (21) Equivalently, it represents the probability that a randomly chosen positive instance ( xpos ) is ranked higher than a ran-domly chosen negative instance ( xneg ): AUROC = P (f (xpos ) > f (xneg )) (22) 
+
+2) Macro-Averaged Weighted F1-Score: For a single abnor-mality i, let L = {0, 1} represent the set of labels (Absent and Present). The Weighted F1-score accounts for class imbalance by weighting the F1-score of each label by its support: Weighted F 1i = X
+
+> j∈L
+
+ ni,j 
+
+Ni
+
+· F 1i,j 
+
+
+
+(23) where ni,j is the number of samples for label j in abnor-mality i, and Ni is the total number of samples for that task. To ensure that each abnormality contributes equally to the final evaluation, we compute the arithmetic mean of the TABLE II: Comparison of Different Models on CT-RATE, NIDCH and RAD-ChestCT.                                            
+
+> Dataset Model AUROC Macro-Average Accuracy Weighted F1-Score CT-RATE CT-CLIP †0.6958 0.6825 0.6292 CT-CLIP (JPEG FT) 0.5748 0.5158 0.5092 COLIPRI (JPEG FT) 0.5891 0.4942 0.5283
+> CT-Lite (ours) 0.6646 0.6242 0.6067 NIDCH CT-CLIP †0.6347 0.6500 0.6225 CT-CLIP (JPEG FT) 0.5232 0.4838 0.5038 COLIPRI (JPEG FT) 0.5138 0.5375 0.5288
+> CT-Lite (ours) 0.5872 0.6063 0.5463 RAD-ChestCT CT-CLIP †0.6127 0.6273 0.5818 CT-CLIP (JPEG FT) 0.4855 0.4364 0.4490 COLIPRI (JPEG FT) 0.5173 0.5218 0.4782
+> CT-Lite (ours) 0.5673 0.5536 0.5481
+> †Inferred on uncompressed input.
+
+individual Weighted F1-scores across all N abnormalities (N = 12 , 8, 11 for CT-RATE, NIDCH and RAD-ChestCT, respectively): Macro-Averaged Weighted F 1 = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+Weighted F 1i
+
+(24) 
+
+3) Accuracy: Accuracy reports the overall classification correctness: Accuracy = T P + T N T P + T N + F P + F N (25) V. R ESULT ANALYSIS 
+
+Table II compares the performance of CT-Lite (rank = 6) with different models. Note that our primary goal is to achieve performance as close to the original CT-CLIP model as possi-ble while inferring on compressed inputs, so the performance of CT-CLIP on the uncompressed high-fidelity counterpart of the same test dataset serves as a gold-standard performance ceiling for us. For that reason, although existing literature records some other approaches outperforming CT-CLIP, their performance on uncompressed input is not shown in this study. We show that CT-Lite significantly outperforms COLIPRI and CT-CLIP fine-tuned directly on JPEG-compressed inputs across all the datasets. The abnormality-wise performance comparison is provided as radar plots in Supplementary Figure S1. We observe that CT-Lite performance is relatively lower for mosaic attenua-tion pattern, interlobular septal thickening, pulmonary fibrotic sequela, lung nodule, and peribronchial thickening, where diagnosis depends on fine details that are most affected by compression. Across the remaining abnormalities, CT-Lite tracks closely with CT-CLIP on uncompressed input, sug-gesting that compression has little effect on these classes. Per-abnormality confusion matrices for all three datasets are provided in Supplementary Figures S2–S4. 
+
+Qualitative Evaluation. We qualitatively evaluate the align-ment of visual and text embeddings of CT-Lite using t-Stochastic Neighbor Embedding (t-SNE) visualizations (Sup-plementary Figure S5); both visual embeddings from input CT volumes and textual embeddings from the corresponding radi-ology reports are projected into a 2D space using all validation data. The separation between positive and negative contours is consistent with the per-abnormality performance reported in Supplementary Figure S1, and the similarity between the visual and textual embedding contours indicates successful multimodal alignment. We also visualize Principal Component Analysis (PCA) maps of the different visual encoders inferred on CT images, as shown in Figure 5. Following [8], the visual embeddings are upsampled with bicubic interpolation for visualization. The original CT-CLIP is inferred on an uncompressed input, while the remaining columns are inferred on the JPEG-compressed counterpart. CT-CLIP on high-fidelity input produces a sharp feature map, whereas CT-CLIP and COLIPRI-CRM fine-tuned on compressed data fail to recover inherent details, yielding blurry and noisy PCA maps. CT-Lite, in contrast, produces a PCA map closely resembling CT-CLIP’s despite operating on compressed input, with only minor artifacts attributable to the irreversible loss of spatial information caused by compression. VI. A BLATION STUDIES 
+
+To validate the effectiveness of our proposed components, we conducted ablation studies to quantify the contribution of each loss component in the Feature Attention Style Transfer (FAST) framework. To determine the optimal loss function, five independent experiments were carried out for 50 epochs on a small dataset of 50 CT volumes, using AdamW with a cosine annealing scheduler and a learning rate of 1 × 10 −5
+
+across all five runs. As shown in Figure 6, the full FAST framework achieves the fastest convergence and the lowest end-representation loss compared with naive knowledge dis-tillation (KD), feature-level KD, and partial variants that omit either LASP or LDAF . This demonstrates the synergistic effect of combining attention style preservation with dual-attention feature alignment: removing any single component leads to a clear degradation in the convergence behavior. Fig. 5: Principal Component Analysis maps of the visual encoder features for one chest CT slice. Compressed CT (column 1): the JPEG-compressed input. CT-CLIP (Baseline) (column 2): inferred on the uncompressed counterpart of the same slice. Remaining columns: all inferred on the JPEG-compressed input. Visual embeddings are upsampled with bicubic interpolation. 
+
+Fig. 6: End-representation MSE loss over 50 epochs for five distillation strategies, evaluated on a held-out set of 50 CT volumes: naive KD (green), feature-level KD (blue), FAST without LASP (purple), FAST without LDAF (red), and full FAST (orange). VII. S CALING LAWS 
+
+We also evaluate the impact of the rank parameter in our Structured Factorized Projection (SFP) layer. As derived in Section III, for out dim = 512 the efficiency bound requires 
+
+r ≤ √512 /2 ≈ 11 .3. We sweep over ranks r ∈ { 3, 4, 5, 6}
+
+as permitted by our resource budget, all of which satisfy the bound and guarantee parameter savings over the dense baseline. Figure 7 reports the trade-off between projection-head capacity and performance: as expected, all three metrics increase monotonically with rank, and r = 6 achieves the best results across all three datasets while remaining within the efficiency bound. Normalized against CT-CLIP’s dense visual projection, the relative floating-point operations (FLOPs) for SFPs with ranks 6, 5, 4, 3 are 0.53 , 0.44 , 0.35 , and 0.27 ,respectively. VIII. C ONCLUSION AND FUTURE WORKS 
+
+In this work, we present CT-Lite, a comprehensive frame-work for compute-efficient multimodal chest CT analysis from JPEG-compressed volumes. The Feature Attention Style Transfer (FAST) framework distills both activation patterns and structural relationships from a high-fidelity spatiotemporal teacher to a student operating on compressed inputs, while Structured Factorized Projection (SFP) replaces the dense projection head with a Block Tensor Train decomposition, cutting projection parameters from approximately 1.07 B to 569 M and lowering relative projection FLOPs to 0.27–0.53 across the rank sweep. Despite operating on degraded inputs and with substantially fewer parameters, CT-Lite stays within roughly 3–5% AUROC of the uncompressed-input CT-CLIP baseline on the in-domain CT-RATE test set and on the external NIDCH and RAD-ChestCT cohorts, the latter two acquired on different scanners and at different institutions than the training data. Several limitations remain. A measurable AUROC gap to the uncompressed baseline persists across all three datasets, the contrastive pretraining corpus is modest in size, and the framework is not yet validated prospectively in a clinical workflow; CT-Lite is therefore not yet at the level required for deployment in clinical settings. We see several natural directions for future work. First, additional studies are needed to close the residual perfor-mance gap between compressed-input and uncompressed-input pipelines, for example through stronger compression-aware distillation objectives, larger student capacities, or codec-aware pretraining. Second, more effective compression strategies for volumetric medical imaging are worth exploring beyond standard JPEG, including JPEG-XL, learned codecs, and task-aware compression. Finally, we believe the broader question of leveraging compressed inputs for volumetric medical imaging is largely open, and we hope this work motivates further inves-tigation into compressed-domain learning for other anatomies and modalities. 3 4 5 6
+
+> BTT Rank ( r)
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> 0.65
+> 0.70
+> Score
+> 0.4696
+> 0.5826
+> 0.6466
+> 0.6646
+> 0.4862
+> 0.5612
+> 0.5972
+> 0.6242
+> 0.4397
+> 0.4937
+> 0.5777
+> 0.6067
+> AUROC
+> Weighted F1
+> Accuracy
+
+(a) CT-RATE 3 4 5 6 
+
+> BTT Rank ( r)
+> 0.35
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> 0.65
+> Score
+> 0.3752
+> 0.4862
+> 0.5502
+> 0.5872
+> 0.4100
+> 0.4893
+> 0.5783
+> 0.6063
+> 0.3653
+> 0.4753
+> 0.5053
+> 0.5463
+> AUROC
+> Weighted F1
+> Accuracy
+
+(b) NIDCH 3 4 5 6 
+
+> BTT Rank ( r)
+> 0.35
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> Score
+> 0.4153
+> 0.5013
+> 0.5363
+> 0.5673
+> 0.3796
+> 0.4496
+> 0.5396
+> 0.5536
+> 0.3891
+> 0.4541
+> 0.5241
+> 0.5481
+> AUROC
+> Weighted F1
+> Accuracy
+
+(c) RAD-ChestCT 
+
+Fig. 7: AUROC (blue), Weighted F1 (orange), and Accuracy (green) of CT-Lite across Block Tensor Train ranks r ∈ { 3, 4, 5, 6}
+
+on (a) CT-RATE, (b) NIDCH, and (c) RAD-ChestCT. All metrics increase monotonically with rank across the three datasets, with r = 6 yielding the best performance. IX. A CKNOWLEDGEMENTS 
+
+This work is supported by Research and Innovation Center for Science and Engineering (RISE), Bangladesh University of Engineering and Technology (BUET), under Grant No. S2024-01-012. We extend our gratitude to Dr. Sabina Akhter, Associate Professor, and Dr. Fahmida Sharmin, Radiologist, from the Department of Radiology and Imaging, National Institute of Diseases of the Chest and Hospital (NIDCH), Dhaka, Bangladesh, for their invaluable assistance in data collection procedure. We also thank Noushin Yousuf Shanin, and M.N. Nayeem Hasan, for their assistance in data curation process. X. E THICAL STATEMENT 
+
+CT-RATE is a publicly available dataset. The NIDCH dataset was collected after ethical approval from the Director of the National Institute of Diseases of the Chest and Hospital (NIDCH) on 27 November 2023, after the data had been completely anonymized and de-identified by removing all personally identifiable information (PII) and protected health information (PHI). The dataset is intended for research pur-poses only and should not be used for commercial applications without appropriate permissions. Samples of RAD-ChestCT were accessed under an open license under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 In-ternational (CC BY-NC-ND 4.0). REFERENCES [1] K. Konstantinidis, “The shortage of radiographers: A global crisis in healthcare,” Journal of medical imaging and radiation sciences , vol. 55, no. 4, p. 101333, 2024. [2] S. A. Mirak, “The growing problem of radiologist shortages: Perspec-tives from iran,” Korean Journal of Radiology , 2025. [3] S. Jeganathan, “The growing problem of radiologist shortages: Australia and new zealand’s perspective,” Korean Journal of Radiology , vol. 24, no. 11, p. 1043, 2023. [4] N. Achour, T. Zapata, Y. Saleh, B. Pierscionek, N. Azzopardi-Muscat, D. Novillo-Ortiz, C. Morgan, and M. Chaouali, “The role of ai in mitigating the impact of radiologist shortages: a systematised review,” 
+
+Health and Technology , vol. 15, no. 3, pp. 489–501, 2025. [5] A. B. Jing, N. Garg, J. Zhang, and J. J. Brown, “Ai solutions to the radiology workforce shortage,” npj Health Systems , vol. 2, no. 1, p. 20, 2025. [6] P. J. Slanetz, “The promise of ai in advancing global radiology,” p. e230895, 2023. [7] I. E. Hamamci, S. Er, C. Wang, F. Almas, A. G. Simsek, S. N. Esirgun, I. Dogan, O. F. Durugol, B. Hou, S. Shit et al. , “Generalist foundation models from a multimodal dataset for 3d computed tomography,” Nature Biomedical Engineering , pp. 1–19, 2026. [8] T. Wald, I. E. Hamamci, Y. Gao, S. Bond-Taylor, H. Sharma, M. Ilse, C. Lo, O. Melnichenko, A. Schwaighofer, N. C. F. Codella, M. T. Wetscherek, K. H. Maier-Hein, P. Korfiatis, V. Salvatelli, J. Alvarez-Valle, and P´ erez-Garc´ ıa, “Comprehensive language-image pre-training for 3d medical image understanding,” 2026. [Online]. Available: https://arxiv.org/abs/2510.15042 [9] Z. Shui, J. Zhang, W. Cao, S. Wang, R. Guo, L. Lu, L. Yang, X. Ye, T. Liang, Q. Zhang, and L. Zhang, “Large-scale and fine-grained vision-language pre-training for enhanced CT image understanding,” in 
+
+International Conference on Learning Representations (ICLR) , 2025. [10] A. C. Flint, “Determining optimal medical image compression: psycho-metric and image distortion analysis,” BMC medical imaging , vol. 12, no. 1, p. 24, 2012. [11] S. Pai, I. Hadzic, D. Bontempi, K. Bressem, B. H. Kann, A. Fedorov, R. H. Mak, and H. J. Aerts, “Vision foundation models for computed tomography,” arXiv preprint arXiv:2501.09001 , 2025. [12] L. Wu, J. Zhuang, and H. Chen, “Voco: A simple-yet-effective volume contrastive learning framework for 3d medical image analysis,” in Pro-ceedings of the IEEE/CVF conference on computer vision and pattern recognition , 2024, pp. 22 873–22 882. [13] G. Hinton, O. Vinyals, and J. Dean, “Distilling the knowledge in a neural network,” in NIPS Deep Learning and Representation Learning Workshop , 2015. [Online]. Available: http://arxiv.org/abs/1503.02531 [14] J. Tang, S. Chen, G. Niu, H. Zhu, J. T. Zhou, C. Gong, and M. Sugiyama, “Direct distillation between different domains,” in European Conference on Computer Vision . Springer, 2024, pp. 154–172. [15] Z. Yang, Z. Li, A. Zeng, Z. Li, C. Yuan, and Y. Li, “Vitkd: Feature-based knowledge distillation for vision transformers,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,2024, pp. 1379–1388. [16] S. Qiu, A. Potapczynski, M. Finzi, M. Goldblum, and A. G. Wilson, “Compute better spent: replacing dense layers with structured matri-ces,” in Proceedings of the 41st International Conference on Machine Learning , 2024, pp. 41 698–41 716. [17] X. Zhai, B. Mustafa, A. Kolesnikov, and L. Beyer, “Sigmoid loss for language image pre-training,” in Proceedings of the IEEE/CVF international conference on computer vision , 2023, pp. 11 975–11 986. [18] X. Wang, Y. Peng, L. Lu, Z. Lu, M. Bagheri, and R. M. Summers, “Chestx-ray8: Hospital-scale chest x-ray database and benchmarks on weakly-supervised classification and localization of common thorax diseases,” CVPR , 2017. [19] J. Irvin, P. Rajpurkar, M. Ko, Y. Yu, S. Ciurea-Ilcus, C. Chute, H. Mark-lund, B. Haghgoo, R. Ball, K. Shpanskaya et al. , “Chexpert: A large chest radiograph dataset with uncertainty labels and expert comparison,” in Proceedings of the AAAI Conference on Artificial Intelligence , vol. 33, no. 01, 2019, pp. 590–597. [20] A. E. Johnson, T. J. Pollard, S. J. Berkowitz, N. R. Greenbaum, M. P. Lungren, C.-y. Deng, R. G. Mark, and S. Horng, “Mimic-cxr, a de-identified publicly available database of chest radiographs with free-text reports,” Scientific Data , vol. 6, no. 1, p. 317, 2019. [21] A. Bustos, A. Pertusa, J.-M. Salinas, and M. de la Iglesia-Vay´ a, “Padchest: A large chest x-ray image dataset with multi-label annotated reports,” Medical Image Analysis , 2020. [22] H. Nguyen et al. , “Vindr-cxr: An open dataset of chest x-rays with radiologist annotations,” Scientific Data , 2022. [23] R. L. Draelos, D. Dov, M. A. Mazurowski, J. Y. Lo, R. Henao, G. D. Rubin, and L. Carin, “Machine-learning-based multiple abnormality pre-diction with large-scale chest computed tomography volumes,” Medical image analysis , vol. 67, p. 101857, 2021. [24] K. He, X. Zhang, S. Ren, and J. Sun, “Deep residual learning for image recognition,” in Proceedings of the IEEE conference on computer vision and pattern recognition , 2016, pp. 770–778. [25] G. Huang, Z. Liu, L. Van Der Maaten, and K. Q. Weinberger, “Densely connected convolutional networks,” in Proceedings of the IEEE confer-ence on computer vision and pattern recognition , 2017, pp. 4700–4708. [26] P. Rajpurkar, J. Irvin, K. Zhu, B. Yang, H. Mehta, T. Duan, D. Ding, A. Bagul, C. Langlotz, K. Shpanskaya, M. P. Lungren, and A. Y. Ng, “CheXNet: Radiologist-level pneumonia detection on chest x-rays with deep learning,” arXiv preprint arXiv:1711.05225 , 2017. [27] I. M. Baltruschat, H. Nickisch, M. Grass, T. Knopp, and A. Saalbach, “Comparison of deep learning approaches for multi-label chest x-ray classification,” Scientific reports , vol. 9, no. 1, p. 6381, 2019. [28] A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly, J. Uszkoreit, and N. Houlsby, “An image is worth 16x16 words: Transformers for image recognition at scale,” in International Conference on Learning Representations , 2021. [Online]. Available: https://openreview.net/forum?id=YicbFdNTTy [29] H. Touvron, M. Cord, M. Douze, F. Massa, A. Sablayrolles, and H. J´ egou, “Training data-efficient image transformers & distillation through attention,” in International conference on machine learning .PMLR, 2021, pp. 10 347–10 357. [30] H. Touvron, M. Cord, and H. J´ egou, “Deit iii: Revenge of the vit,” in 
+
+European conference on computer vision . Springer, 2022, pp. 516–533. [31] S. Park, G. Kim, Y. Oh, J. B. Seo, S. M. Lee, J. H. Kim, S. Moon, J.-K. Lim, C. M. Park, and J. C. Ye, “Multi-task vision transformer using low-level chest x-ray feature corpus for COVID-19 diagnosis and severity quantification,” Medical Image Analysis , vol. 75, p. 102299, 2022. [32] A. K. Mondal, A. Bhattacharjee, P. Singla, and A. P. Prathosh, “xViT-COS: Explainable vision transformer based COVID-19 screening using radiography,” IEEE Journal of Translational Engineering in Health and Medicine , vol. 10, pp. 1–10, 2022. [33] K. He, X. Chen, S. Xie, Y. Li, P. Doll´ ar, and R. Girshick, “Masked au-toencoders are scalable vision learners,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , 2022, pp. 16 000–16 009. [34] J. Xiao, Y. Bai, A. Yuille, and Z. Zhou, “Delving into masked autoen-coders for multi-label thorax disease classification,” in Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision (WACV) , 2023, pp. 3588–3600. [35] L. Zhou, H. Liu, J. Bae, J. He, D. Samaras, and P. Prasanna, “Self pre-training with masked autoencoders for medical image classification and segmentation,” in IEEE International Symposium on Biomedical Imaging (ISBI) , 2023, pp. 1–6. [36] K. He, H. Fan, Y. Wu, S. Xie, and R. Girshick, “Momentum contrast for unsupervised visual representation learning,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , 2020, pp. 9729–9738. [37] T. Chen, S. Kornblith, M. Norouzi, and G. Hinton, “A simple framework for contrastive learning of visual representations,” in International conference on machine learning . PmLR, 2020, pp. 1597–1607. [38] M. Caron, H. Touvron, I. Misra, H. J´ egou, J. Mairal, P. Bojanowski, and A. Joulin, “Emerging properties in self-supervised vision transformers,” in Proceedings of the IEEE/CVF international conference on computer vision , 2021, pp. 9650–9660. [39] H. Sowrirajan, J. Yang, A. Y. Ng, and P. Rajpurkar, “MoCo pretraining improves representation and transferability of chest X-ray models,” in 
+
+Medical Imaging with Deep Learning (MIDL) . PMLR, 2021, pp. 728– 744. [40] S. Azizi, B. Mustafa, F. Ryan, Z. Beaver, J. Freyberg, J. Deaton, A. Loh, A. Karthikesalingam, S. Kornblith, T. Chen, V. Natarajan, and M. Norouzi, “Big self-supervised models advance medical image classi-fication,” in Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , 2021, pp. 3478–3488. [41] S. Azizi, L. Culp, J. Freyberg, B. Mustafa, S. Baur, S. Kornblith, T. Chen, N. Tomasev, J. Mitrovi´ c, P. Strachan et al. , “Robust and data-efficient generalization of self-supervised machine learning for diagnostic imaging,” Nature Biomedical Engineering , vol. 7, no. 6, pp. 756–779, 2023. [42] A. Arnab, M. Dehghani, G. Heigold, C. Sun, M. Luˇ ci´ c, and C. Schmid, “Vivit: A video vision transformer,” in Proceedings of the IEEE/CVF international conference on computer vision , 2021, pp. 6836–6846. [43] G. Bertasius, H. Wang, and L. Torresani, “Is space-time attention all you need for video understanding?” in Icml , vol. 2, no. 3, 2021, p. 4. [44] H. Fan, B. Xiong, K. Mangalam, Y. Li, Z. Yan, J. Malik, and C. Feichten-hofer, “Multiscale vision transformers,” in Proceedings of the IEEE/CVF international conference on computer vision , 2021, pp. 6824–6835. [45] A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark et al. , “Learning transferable visual models from natural language supervision,” in International conference on machine learning . PmLR, 2021, pp. 8748–8763. [46] Y. Zhang, H. Jiang, Y. Miura, C. D. Manning, and C. P. Langlotz, “Con-trastive learning of medical visual representations from paired images and text,” in Machine learning for healthcare conference . PMLR, 2022, pp. 2–25. [47] S.-C. Huang, L. Shen, M. P. Lungren, and S. Yeung, “Gloria: A multimodal global-local representation learning framework for label-efficient medical image recognition,” in Proceedings of the IEEE/CVF international conference on computer vision , 2021, pp. 3942–3951. [48] B. Boecking, N. Usuyama, S. Bannur, D. C. Castro, A. Schwaighofer, S. Hyland, M. Wetscherek, T. Naumann, A. Nori, J. Alvarez-Valle et al. ,“Making the most of text semantics to improve biomedical vision– language processing,” in European conference on computer vision .Springer, 2022, pp. 1–21. [49] Z. Wang, Z. Wu, D. Agarwal, and J. Sun, “Medclip: Contrastive learning from unpaired medical images and text,” in Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing ,2022, pp. 3876–3887. [50] E. Tiu, E. Talius, P. Patel, C. P. Langlotz, A. Y. Ng, and P. Rajpurkar, “Expert-level detection of pathologies from unannotated chest x-ray images via self-supervised learning,” Nature biomedical engineering ,vol. 6, no. 12, pp. 1399–1406, 2022. [51] C. Zhao, A. Kondepudi, Y. Lyu, A. Rao, A. Chowdury, and X. Hou, “Towards scalable language-image pre-training for 3D medical imag-ing,” arXiv preprint arXiv:2505.21862 , 2025. [52] W. Cao, J. Zhang, Y. Xia, T. C. Mok, Z. Li, X. Ye, L. Lu, J. Zheng, Y. Tang, and L. Zhang, “Bootstrapping chest CT image understanding by distilling knowledge from X-ray expert models,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2024, pp. 11 333–11 343. [53] W. Cao, J. Zhang, Z. Shui, S. Wang, Z. Chen, X. Li, L. Lu, X. Ye, T. Liang, Q. Zhang, and L. Zhang, “Boosting vision semantic density with anatomy normality modeling for medical vision-language pre-training,” in Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , 2025. [54] Y. Nam, D. Y. Kim, S. Kyung, J. Seo, J. M. Song, J. Kwon, J. Kim, W. Jo, H. Park, J. Sung et al. , “Multimodal large language models in medical imaging: Current state and future directions,” Korean Journal of Radiology , vol. 26, no. 10, pp. 900–923, 2025. [55] L. Blankemeier, A. Kumar, J. P. Cohen, J. Liu, L. Liu, D. Van Veen, S. J. S. Gardezi, H. Yu, M. Paschali, Z. Chen, J.-B. Delbrouck, E. Reis, R. Holland, C. Truyts, C. Bluethgen, Y. Wu, L. Lian, M. E. K. Jensen, S. Ostmeier, M. Varma, J. M. J. Valanarasu, Z. Fang, Z. Huo, Z. Nabulsi, D. Ardila, W.-H. Weng, E. A. Junior, N. Ahuja, J. Fries, N. H. Shah, G. Zaharchuk, M. Willis, A. Yala, A. Johnston, R. D. Boutin, A. Wentland, C. P. Langlotz, J. Hom, S. Gatidis, and A. S. Chaudhari, “Merlin: a computed tomography vision–language foundation model and dataset,” Nature , 2026. [56] N. Hayat et al. , “A survey of vision-language pretraining for medical imaging,” Medical Image Analysis , 2022. [57] H. Tang and S. Li, “Multimodal alignment and fusion: A survey,” IEEE Transactions on Pattern Analysis and Machine Intelligence , 2024. [58] A. Romero, N. Ballas, S. E. Kahou, A. Chassang, C. Gatta, and Y. Bengio, “Fitnets: Hints for thin deep nets,” in 3rd International Conference on Learning Representations (ICLR) , San Diego, CA, USA, 2015. [59] S. Zagoruyko and N. Komodakis, “Paying more attention to attention: Improving the performance of convolutional neural networks via atten-tion transfer,” in International Conference on Learning Representations ,2017. [60] Y. Tian, D. Krishnan, and P. Isola, “Contrastive representation distilla-tion,” in International Conference on Learning Representations , 2020. [61] W. Park, D. Kim, Y. Lu, and M. Cho, “Relational knowledge distilla-tion,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , 2019, pp. 3967–3976. [62] J. Zhang, H. Peng, K. Wu, M. Liu, B. Xiao, J. Fu, and L. Yuan, “MiniViT: Compressing vision transformers with weight multiplexing,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2022, pp. 12 145–12 154. [63] J. Fan, C. Li, X. Liu, and A. Yao, “Scalekd: Strong vision transformers could be excellent teachers,” Advances in Neural Information Processing Systems , vol. 37, pp. 63 290–63 315, 2024. [64] Y. Zheng, C. Wang, C. Tao, S. Lin, J. Qian, and J. Wu, “Restructuring the teacher and student in self-distillation,” IEEE Transactions on Image Processing , vol. 33, pp. 5551–5563, 2024. [65] N. Passalis, M. Tzelepi, and A. Tefas, “Heterogeneous knowledge distillation using information flow modeling,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2020, pp. 2339–2348. [66] R. Yang, Y. Chen, Z. Zhang, X. Liu, Z. Li, K. He, Z. Xiong, J. Suo, and Q. Dai, “UniCompress: Enhancing multi-data medical image com-pression with knowledge distillation,” arXiv preprint arXiv:2405.16850 ,2024. [67] S. Usmani, S. Kumar, and D. Sadhya, “Spatio-temporal knowledge dis-tilled video vision transformer (STKD-VViT) for multimodal deepfake detection,” Neurocomputing , vol. 620, p. 129256, 2025. [68] L. A. Gatys, A. S. Ecker, and M. Bethge, “Image style transfer using convolutional neural networks,” in Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , 2016, pp. 2414– 2423. [69] S. Han, J. Pool, J. Tran, and W. J. Dally, “Learning both weights and connections for efficient neural networks,” in Advances in Neural Information Processing Systems (NeurIPS) , 2015. [70] S. Han, H. Mao, and W. J. Dally, “Deep compression: Compressing deep neural networks with pruning, trained quantization and Huffman cod-ing,” in International Conference on Learning Representations (ICLR) ,2016. [71] J. Frankle and M. Carbin, “The lottery ticket hypothesis: Finding sparse, trainable neural networks,” in International Conference on Learning Representations (ICLR) , 2019. [72] B. Jacob, S. Kligys, B. Chen, M. Zhu, M. Tang, A. Howard, H. Adam, and D. Kalenichenko, “Quantization and training of neural networks for efficient integer-arithmetic-only inference,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2018, pp. 2704–2713. [73] E. Frantar, S. Ashkboos, T. Hoefler, and D. Alistarh, “GPTQ: Accurate post-training quantization for generative pre-trained transformers,” in 
+
+International Conference on Learning Representations (ICLR) , 2023. [74] T. Dettmers, A. Pagnoni, A. Holtzman, and L. Zettlemoyer, “QLoRA: Efficient finetuning of quantized LLMs,” in Advances in Neural Infor-mation Processing Systems (NeurIPS) , 2023. [75] T. N. Sainath, B. Kingsbury, V. Sindhwani, E. Arisoy, and B. Ramab-hadran, “Low-rank matrix factorization for deep neural network training with high-dimensional output targets,” in IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) , 2013, pp. 6655– 6659. [76] E. L. Denton, W. Zaremba, J. Bruna, Y. LeCun, and R. Fergus, “Exploiting linear structure within convolutional networks for efficient evaluation,” in Advances in Neural Information Processing Systems (NeurIPS) , 2014. [77] E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen, “LoRA: Low-rank adaptation of large language models,” in International Conference on Learning Representations (ICLR) , 2022. [78] J. Gou, B. Yu, S. J. Maybank, and D. Tao, “Knowledge distillation: A survey,” International Journal of Computer Vision , 2021. [79] V. Sindhwani, T. N. Sainath, and S. Kumar, “Structured transforms for small-footprint deep learning,” in Advances in Neural Information Processing Systems (NeurIPS) , 2015. [80] A. Edalati, M. Tahaei, I. Kobyzev, V. P. Nia, J. J. Clark, and M. Reza-gholizadeh, “KronA: Parameter efficient tuning with Kronecker adapter,” in NeurIPS Workshop on Transfer Learning for Natural Language Processing , 2022. [81] Y.-D. Kim, E. Park, S. Yoo, T. Choi, L. Yang, and D. Shin, “Compression of deep convolutional neural networks for fast and low power mobile applications,” in International Conference on Learning Representations (ICLR) , 2016. [82] I. V. Oseledets, “Tensor-train decomposition,” SIAM Journal on Scien-tific Computing , vol. 33, no. 5, pp. 2295–2317, 2011. [83] A. Novikov, D. Podoprikhin, A. Osokin, and D. P. Vetrov, “Tensorizing neural networks,” in Advances in Neural Information Processing Systems (NeurIPS) , 2015. [84] B. Boecking, N. Usuyama, S. Bannur, D. C. Castro, A. Schwaighofer, S. Hyland, M. Wetscherek, T. Naumann, A. Nori, J. Alvarez-Valle et al. ,“Making the most of text semantics to improve biomedical vision– language processing,” in European conference on computer vision .Springer, 2022, pp. 1–21. [85] G. Yang, E. Hu, I. Babuschkin, S. Sidor, X. Liu, D. Farhi, N. Ryder, J. Pachocki, W. Chen, and J. Gao, “Tuning large neural networks via zero-shot hyperparameter transfer,” Advances in Neural Information Processing Systems , vol. 34, pp. 17 084–17 097, 2021. [86] A. Sellergren, S. Kazemzadeh, T. Jaroensri, A. Kiraly, M. Traverse, T. Kohlberger, S. Xu, F. Jamil, C. Hughes, C. Lau et al. , “Medgemma technical report,” arXiv preprint arXiv:2507.05201 , 2025. SUPPLEMENTARY FIGURES Mosaic Att. 
+
+Interlob. Sept. 
+
+Pulm. Fibrotic 
+
+Lung Nodule 
+
+Peribronch. 
+
+Bronchiect. 
+
+Emphysema 
+
+Atelectasis 
+
+Pleu. Effusion 
+
+Cardiomegaly 
+
+Consolidation 
+
+Lung Opacity 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+AUROC 
+
+Mosaic Att. 
+
+Interlob. Sept. 
+
+Pulm. Fibrotic 
+
+Lung Nodule 
+
+Peribronch. 
+
+Bronchiect. 
+
+Emphysema 
+
+Atelectasis 
+
+Pleu. Effusion 
+
+Cardiomegaly 
+
+Consolidation 
+
+Lung Opacity 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+Accuracy 
+
+Mosaic Att. 
+
+Interlob. Sept. 
+
+Pulm. Fibrotic 
+
+Lung Nodule 
+
+Peribronch. 
+
+Bronchiect. 
+
+Emphysema 
+
+Atelectasis 
+
+Pleu. Effusion 
+
+Cardiomegaly 
+
+Consolidation 
+
+Lung Opacity 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+Weighted F1 
+
+CT-RATE 
+
+CT-CLIP† CT-CLIP (JPEG FT) COLIPRI (JPEG FT) CT-Lite (ours) 
+
+(a) Performance of different approaches on CT-RATE Mosaic Att. 
+
+Pulm. Fibrotic 
+
+GGO/Sub-solid 
+
+Bronchiect. 
+
+Emphysema 
+
+Pleu. Effusion 
+
+Consolidation 
+
+Lung Opacity 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+AUROC 
+
+Mosaic Att. 
+
+Pulm. Fibrotic 
+
+GGO/Sub-solid 
+
+Bronchiect. 
+
+Emphysema 
+
+Pleu. Effusion 
+
+Consolidation 
+
+Lung Opacity 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+Accuracy 
+
+Mosaic Att. 
+
+Pulm. Fibrotic 
+
+GGO/Sub-solid 
+
+Bronchiect. 
+
+Emphysema 
+
+Pleu. Effusion 
+
+Consolidation 
+
+Lung Opacity 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+Weighted F1 
+
+NIDCH 
+
+CT-CLIP† CT-CLIP (JPEG FT) COLIPRI-CRM (JPEG FT) CT-Lite (ours) 
+
+(b) Performance of different approaches on NIDCH Interlob. Sept. 
+
+Pulm. Fibrotic 
+
+Lung Nodule 
+
+Peribronch. 
+
+Bronchiect. 
+
+Emphysema Atelectasis 
+
+Pleu. Effusion 
+
+Cardiomegaly 
+
+Consolidation 
+
+Lung Opacity 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+AUROC 
+
+Interlob. Sept. 
+
+Pulm. Fibrotic 
+
+Lung Nodule 
+
+Peribronch. 
+
+Bronchiect. 
+
+Emphysema Atelectasis 
+
+Pleu. Effusion 
+
+Cardiomegaly 
+
+Consolidation 
+
+Lung Opacity 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+Accuracy 
+
+Interlob. Sept. 
+
+Pulm. Fibrotic 
+
+Lung Nodule 
+
+Peribronch. 
+
+Bronchiect. 
+
+Emphysema Atelectasis 
+
+Pleu. Effusion 
+
+Cardiomegaly 
+
+Consolidation 
+
+Lung Opacity 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+Weighted F1 
+
+RAD-ChestCT 
+
+CT-CLIP† CT-CLIP (JPEG FT) COLIPRI-CRM (JPEG FT) CT-Lite (ours) 
+
+(c) Performance of different approaches on RAD-ChestCT 
+
+Fig. S1: Radar plots showing per-abnormality performance of different approaches across the three evaluation datasets. † indicates uncompressed input. Fig. S2: Per-abnormality confusion matrices on the CT-RATE dataset for CT-CLIP †, CT-CLIP (JPEG FT), COLIPRI (JPEG FT), and CT-Lite (ours). Each panel corresponds to one abnormality; within each panel, the four confusion matrices compare the models. Cells are row-normalized for color and annotated with absolute counts. † indicates uncompressed input. Fig. S3: Per-abnormality confusion matrices on the RAD-ChestCT dataset for CT-CLIP †, CT-CLIP (JPEG FT), COLIPRI (JPEG FT), and CT-Lite (ours). Each panel corresponds to one abnormality; within each panel, the four confusion matrices compare the models. Cells are row-normalized for color and annotated with absolute counts. † indicates uncompressed input. Fig. S4: Per-abnormality confusion matrices on the NIDCH dataset for CT-CLIP †, CT-CLIP (JPEG FT), COLIPRI (JPEG FT), and CT-Lite (ours). Each panel corresponds to one abnormality; within each panel, the four confusion matrices compare the models. Cells are row-normalized for color and annotated with absolute counts. † indicates uncompressed input. Fig. S5: t-SNE projections of CT-Lite visual embeddings (from input CT volumes) and textual embeddings (from corresponding radiology reports), using all validation data. Black markers denote samples without a given abnormality and yellow markers denote samples with the abnormality.

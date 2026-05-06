@@ -1,0 +1,593 @@
+Title: Lightweight Distillation of SAM 3 and DINOv3 for Edge-Deployable Individual-Level Livestock Monitoring and Longitudinal Visual Analytics
+
+URL Source: https://arxiv.org/pdf/2604.27128v1
+
+Published Time: Fri, 01 May 2026 00:09:28 GMT
+
+Number of Pages: 27
+
+Markdown Content:
+# Lightweight Distillation of SAM 3 and DINOv3 for Edge-Deployable Individual-Level Livestock Monitoring and Longitudinal Visual Analytics 
+
+## Haiyu Yang ∗1 and Miel Hostens 11College of Agriculture and Life Sciences, Cornell University, Ithaca, NY 14853, USA 
+
+Abstract 
+
+Foundation-model pipelines for individual-level livestock monitoring — combining open-vocabulary detection, promptable video segmentation, and self-supervised visual embeddings — have raised the accuracy ceiling of precision livestock farming (PLF), but their GPU memory budgets exceed the envelope of commodity edge accelerators. To close this gap, the 446 M-parameter Perception Encoder (PE-ViT-L+) backbone of SAM 3 is distilled into a 40.66 M-parameter multi-scale student through three mechanisms: a Feature Pyramid Network student encoder built on TinyViT-21M-512, a four-term direction-then-scale distillation loss, and backbone-substitution inference with sliding-window session pruning that bounds streaming GPU memory growth. The DINOv3 family includes a pre-distilled ViT-S/16 variant (21.6 M parameters) released alongside a 6716 M-parameter ViT-7B teacher; the ViT-S (21M) variant is adopted as the per-individual embedder. On the Edinburgh Pig dataset, the compressed pipeline reaches 92 .29 % MOTA and 96 .15 % IDF1 against the SAM 3 teacher (1.68- and 0.84-percentage-point losses), achieves a 7.77-fold reduction in system-level parameters and a 3.01-fold reduction in peak VRAM ( 19 .52 GB → 6.49 GB ), and reaches 97 .34 % top-1 accuracy with 91 .67 % macro-F1 on nine-class pig behaviour classification. The pipeline fits inside an NVIDIA Jetson Orin NX 16 GB envelope with 
+
+4.9 GB of headroom, supporting a proposed — but not yet empirically validated — on-device embedding-pool re-identification mechanism whose per-individual footprint of approximately 
+
+94 MB per animal per year produces a longitudinal visual record amenable to retrospective association with disease, lameness, reproductive, and growth outcome labels. 
+
+Keywords: knowledge distillation; precision livestock farming; edge AI; multi-object tracking; self-supervised learning; pig behaviour recognition. 
+
+# 1 Introduction 
+
+## 1.1 Individual-level monitoring as the new target of precision livestock farm-ing 
+
+Precision livestock farming (PLF) has been transforming from a herd-level data-collection discipline into an individual-level decision-support discipline. Reviews over the past decade (Berckmans, 2014; Neethirajan and Kemp, 2021; Papakonstantinou et al., 2024; Rocchi et al., 2025) converge on a clear trend: welfare assessments, disease detection, and productivity forecasts all improve when behaviour is attributed to specific animals rather than aggregated across a group. At the same time, computer-vision pipelines have become the dominant non-invasive channel for collecting such individual-level data, because they avoid the stress, battery-life, and maintenance costs of wearable sensors while still producing per-individual signals (Neethirajan 
+
+> ∗
+
+Corresponding author. hy625@cornell.edu 
+
+1
+
+> arXiv:2604.27128v1 [cs.CV] 29 Apr 2026
+
+and Kemp, 2021; Bello and Olubummo, 2024). Group-housed species, where individuals mix freely and share space, feed, and enrichment, remain the hardest setting for this transition. Pigs in particular occlude one another, adopt near-identical postures during rest, and are difficult to distinguish by coat pattern, so maintaining consistent per-individual identity over hours of video has been the limiting factor in operationalising the technology (Bergamini et al., 2021; Yang et al., 2025). 
+
+## 1.2 Foundation-model pipelines have raised the accuracy ceiling 
+
+Recent foundation-model developments have pushed per-individual tracking and behaviour recognition substantially closer to production quality. Open-vocabulary detectors such as OWLv2 (Minderer et al., 2023) detect pigs reliably in overhead footage without task-specific annotation; promptable video-segmentation models such as SAM 2 (Ravi et al., 2024) and more recently SAM 3 (Carion et al., 2025) track individuals across minutes of video from a single bounding-box prompt; and self-supervised visual backbones such as DINOv2 (Oquab et al., 2024) and DINOv3 (Siméoni et al., 2025) produce per-crop embeddings whose quality on behaviour-classification tasks rivals or exceeds task-specific supervised features. Our prior work (Yang et al., 2025) demonstrated that assembling such foundation models into a modular pipeline — open-vocabulary detection, motion-aware video segmentation, self-supervised embedding, and a light temporal classifier — reaches 94 .2 % behaviour-classification accuracy on the Edinburgh Pig Behaviour Video Dataset (Bergamini et al., 2021), a 21.2-percentage-point improvement over the previous state of the art on the same benchmark. That pipeline serves as the reference system from which the present work departs. 
+
+## 1.3 The edge-deployment gap 
+
+The accuracy gains of foundation-model pipelines come with a compute gap that has so far prevented their deployment on the hardware that can realistically be installed in a barn. Assembling a SAM 3 tracker with a DINOv3-ViT-7B embedder co-resident on a single GPU produces a memory footprint that exceeds the 16 GB envelope of the NVIDIA Jetson Orin NX (NVIDIA, 2023). Our SAM 3 inference reached a measured peak of 19 .52 GB on a single NVIDIA A10 (§3.1.4); the published DINOv3-ViT-7B model adds another 12 .51 GB at fp16 or 25 .02 GB 
+
+at fp32 in weights alone (6716 M parameters × 2 or 4 B per parameter), before activations and tracking-session memory are considered. Continuous inference must currently be routed to a cloud GPU instance or to a workstation in a farm office, which introduces connectivity, latency, and recurring-cost problems poorly suited to rural deployments (Rocchi et al., 2025). Even on a cloud A10 GPU, SAM 3’s session-based inference at native resolution produces a tracker session that grows monotonically in memory: in our measurements, the session consumed roughly 5.6 MB 
+
+per frame per tracked object. Edge-ready pipelines reported for grassland cattle (MASM-YOLO on Jetson Orin NX at 36 Hz ; Wei et al., 2025) and for crop-harvesting robots (Kim et al., 2025) achieve on-device real-time performance by starting from small, specialised detectors such as YOLOX or YOLOv12 rather than foundation models, which sidesteps the compute gap but also forfeits the accuracy ceiling that foundation-model pipelines have established. 
+
+## 1.4 Compression for SAM-family models: relevant prior art 
+
+A body of work on compressing the Segment Anything Model (SAM; Kirillov et al., 2023) family has emerged in response to precisely this compute gap. We organise that work into three generations that match the three SAM releases. 
+
+SAM 1 distillations. MobileSAM (Zhang et al., 2023) pioneered decoupled knowledge distillation from the SAM ViT-H image encoder (632 M parameters) into a TinyViT-based 2student (9.8 M parameters) and reached 38.7 COCO zero-shot mAP. EfficientSAM (Xiong et al., 2023) used masked-image pretraining as a distillation strategy and reached 44.4 mAP with 25.3 M encoder parameters. EdgeSAM (Zhou et al., 2024) distilled into a purely CNN-based encoder with prompt-in-the-loop supervision, achieving a 37-fold speedup on desktop GPUs. EfficientViT-SAM (Zhang et al., 2024) replaced the encoder with the EfficientViT architecture and achieved up to a 48.9-fold throughput gain on TensorRT while matching SAM-ViT-H zero-shot accuracy. All four target single-image segmentation under natural-image prompts and validate on COCO, LVIS, and SA-1B. 
+
+SAM 2 / SAM 3 distillations. The video-tracking generation of SAM introduces a second computational bottleneck beyond the image encoder — the dense memory-attention module that maintains identity across frames — and the SAM-1-era recipes do not address it. Two recent efforts close that gap. EdgeTAM and EfficientTAM (referenced in Zeng et al., 2025) compress SAM 2’s encoder and memory modules for streaming use. EfficientSAM3 (Zeng et al., 2025), released contemporaneously with SAM 3 itself, introduces a three-stage Progressive Hierarchical Distillation recipe: encoder distillation on SA-1B, Perceiver-based temporal-memory distillation on SA-V, and end-to-end fine-tuning on SAM 3’s PCS data. They release a model zoo of nine students using RepViT, TinyViT, and EfficientViT backbones, benchmarked on SA-Co, SA-V, COCO, and standard VOS datasets. 
+
+What the present work targets. The two SAM-3-era efforts above both target general-purpose promptable concept segmentation, validated against natural-image and video-object-segmentation benchmarks. None of the existing distillations — across either generation — reports the two metrics that matter operationally for per-animal welfare monitoring on overhead livestock footage: identity preservation under occlusion across minutes of video (MOTA, IDF1), and downstream behaviour-classification quality of the compressed pipeline. The Edinburgh Pig benchmark exercises failure modes that natural-image benchmarks do not: heavy intra-class similarity, frequent partial occlusion, and near-identical postures during rest. The present paper therefore positions itself not as a competing general-purpose distillation, but as the first SAM-distillation effort whose target deliverable is per-animal welfare analytics on group-housed livestock, and the first published distilled SAM 3 checkpoint specialised for pig video. 
+
+## 1.5 Compression versus replacement: when to distill and when to substitute 
+
+A second observation motivated our two-track approach. The DINOv3 family (Siméoni et al., 2025) was released with a 7 B-parameter ViT-7B teacher together with several publicly available pre-distilled smaller variants, of which the smallest is ViT-S/16 (21.6 M parameters), produced by Meta through a full distillation pass on the same LVD-1689M pretraining corpus. Re-distilling such an already-distilled model within our own pipeline would at best recover the quality of the existing ViT-S checkpoint and at worst degrade it. The correct question for DINOv3 is therefore empirical rather than architectural: does the pre-distilled ViT-S variant retain enough representational capacity for our downstream behaviour-classification task? The analogous question does not have a ready-made answer for SAM 3, because no publicly available distilled variant of SAM 3 specialised for overhead livestock footage existed at the time of our work. The compression track for SAM 3 and the adoption track for DINOv3-ViT-S therefore require different treatments within the same paper. 
+
+## 1.6 Contributions 
+
+(C1) Distillation of SAM 3’s vision backbone into a lightweight multi-scale student encoder with minimal tracking degradation. We compress SAM 3’s 446 M-parameter Perception Encoder (PE-ViT-L+) image backbone into a 40.66 M-parameter student — a 10.98-fold reduction 3at the backbone and a 7.77-fold reduction at the assembled-system level — with only 1.68-percentage-point loss in MOTA and 0.84-percentage-point loss in IDF1 on held-out overhead pig-video clips. This result rests on three mechanisms introduced in Section 2: a multi-scale student encoder (StudentEncoderTinyViT) that fuses three stages of a TinyViT-21M-512 backbone (Wu et al., 2022) rather than projecting a single stage; a four-term direction-then-scale distillation loss that decouples directional alignment from scale calibration; and backbone-substitution inference together with a sliding-window session-pruning routine that bounds streaming GPU memory to the most recent eight non-conditioning frame outputs per object. (C2) Empirical validation of DINOv3-ViT-S (21M) as a behaviour-discriminative embedder. Adopting the pre-distilled ViT-S/16 variant — the smallest publicly released DINOv3 model, with 21.6 M parameters — we train only a downstream temporal classifier and report 97 .34 % 
+
+top-1 accuracy with 91 .67 % macro-F1 on nine pig behaviours across 4,292 test windows. To our knowledge this is the first reported empirical quantification of DINOv3-ViT-S on a precision-livestock-farming task, establishing the smallest DINOv3 variant as a viable embedder for on-device PLF pipelines. (C3) An embedding-pool mechanism for longitudinal per-individual visual analytics. We design and analytically size an embedding-pool re-identification loop that maintains stable identity for each animal across sessions — day to day and week to week, not only within a single video clip — by using DINOv3-ViT-S embeddings as a long-horizon identity signal. At an hourly sampling cadence the mechanism produces, for each animal, a time-indexed embedding history tagged with timestamp and behaviour context, occupying approximately 94 MB per individual per year and approximately 19 GB per year for a 200-animal barn. We present this mechanism as a substrate that future work can build on, and scope both the re-identification loop’s empirical identity-switch performance and any specific downstream analytic as follow-up work (§4.6). The mechanism is species-agnostic and extends straightforwardly from pigs to dairy cattle, beef cattle, sheep, and other commercially important group-housed species. (C4) Integrated edge-device feasibility audit. Combining the SAM 3 distillation result with the DINOv3-ViT-S adoption, the compressed pipeline’s peak VRAM is 6.49 GB on an NVIDIA A10. Combined with published memory budgets for OWLv2, the BiLSTM classifier, and the CUDA runtime, the full pipeline fits inside the 16 GB envelope of a Jetson Orin NX with 
+
+4.9 GB of headroom — sufficient to operate the embedding-pool mechanism of C3 on-device without external compute. 
+
+## 1.7 Paper organisation 
+
+Section 2 describes the dataset, the teacher pipeline, the student architecture, the DINOv3 adoption, the proposed embedding-pool re-identification mechanism, and the evaluation and computational protocols. Section 3 reports quantitative results, organised into SAM 3 distillation (§3.1), DINOv3-ViT-S adoption (§3.2), and an analytic edge-device feasibility audit (§3.3). Section 4 discusses the results, addresses the limits of our per-video analysis and the scope of the deferred re-identification validation, and outlines the principal directions for follow-up work. Section 5 concludes. Appendices A–D provide the session-pruning pseudocode, the confusion-matrix and BiLSTM training-curve figures, the re-identification pseudocode, and a hyperparameter reference. 
+
+# 2 Material and methods 
+
+We describe here the dataset, our prior teacher pipeline, the student-encoder architecture and distillation protocol for SAM 3, the adoption of DINOv3-ViT-S (21M) as the per-individual 4embedder, the proposed embedding-pool re-identification mechanism, the evaluation metrics, and the hardware and software environment used for all training and benchmarking. The section is organised so that §2.2 establishes the reference system, §2.3–§2.4 describe the two compression-and-adoption targets in detail, §2.5 introduces the forward-looking re-identification loop that the compressed pipeline enables, and §2.6–§2.7 fix the measurement and computational protocols used throughout Section 3. 
+
+## 2.1 Dataset and task 
+
+All experiments were conducted on the Edinburgh Pig Behaviour Video Dataset (Bergamini et al., 2021), publicly available at https://homepages.inf.ed.ac.uk/rbf/PIGDATA/ . The dataset was collected over six weeks in late 2019 in a single 5.8 m × 1.9 m pen at Scotland’s Rural College research pig unit, with eight growing pigs monitored by an overhead Intel RealSense D435i camera mounted 2.5 m above the floor. The present work used the annotated subset comprising nine video clips of 600 frames each, at a native resolution compatible with 1280 × 720 
+
+capture, with per-frame bounding boxes and consistent identity labels for all eight individuals in each clip. In aggregate, the nine clips yielded 5,400 annotated frames and 43 ,200 individual-pig bounding-box annotations. We used the dataset in two distinct ways, reflecting the two targets of this study. For SAM 3 distillation, we partitioned the nine clips into four training clips ( 2019_11_05_000002 ,
+
+2019_11_11_000028 , 2019_11_11_000036 , 2019_11_22_000010 ), one validation clip ( 2019_11_28_000113 ), and four held-out test clips ( 2019_12_02_000005 , 2019_12_02_000208 , 2019_12_10_000060 ,
+
+2019_12_10_000078 ). The split was fixed at the clip level rather than the frame level to pre-vent information leakage through temporal adjacency between training and evaluation frames. Distillation targets were extracted once per training and validation frame, as described in §2.3.1, and reused across every training epoch. For the DINOv3 behaviour-classification task, we used per-pig cropped frames extracted from all nine clips through our prior pipeline (Yang et al., 2025). Crops were assigned behaviour labels drawn from a nine-class label set: standing, lying, eat, drink, sitting, sleep, run, playwithtoy, and 
+
+nose-to-nose . The resulting dataset contained approximately 43 ,000 labelled crops with a highly non-uniform class distribution — in particular, sleep dominated at roughly 53 % of windows, while run and playwithtoy were rare at less than 0.5 % of windows each. This imbalance is a property of the underlying behaviour distribution in group-housed pigs rather than an artefact of the labelling protocol, and we handled it explicitly through class-weighted training (§2.4.3) rather than through resampling. 
+
+## 2.2 Teacher pipeline 
+
+The starting point of the present work is the modular vision pipeline we introduced in our earlier publication (Yang et al., 2025), which operates in four sequential stages: open-vocabulary detection of pigs using OWLv2 (Minderer et al., 2023); per-individual segmentation and tem-poral tracking using a video-segment-and-track model; per-crop feature extraction using a self-supervised vision transformer; and behaviour classification using a Long Short-Term Memory (LSTM) network operating over short sequences of per-individual embeddings. On the Edinburgh Pig dataset, that pipeline reached 94 .2 % behaviour-classification accuracy at the sequence level, representing a 21.2-percentage-point improvement over the previous state of the art on the same benchmark. For the present paper, we made two generational upgrades to the tracker and embedder before attempting compression. First, we replaced the SAM 2-era tracker used in our prior pipeline (Ravi et al., 2024) with SAM 3 (Carion et al., 2025), released by Meta in late 2025. SAM 3 introduces promptable concept segmentation and a unified image-and-video architecture consisting of an image-level detector and a memory-based video tracker that share a single 5Perception Encoder (PE) vision backbone, delivering substantially more accurate prompt-driven video segmentation and tracking than its predecessor. Second, we replaced the DINOv2-ViT backbone (Oquab et al., 2024) with DINOv3 (Siméoni et al., 2025), which provides higher-quality dense features through an updated training recipe and a 1.689-billion-image pretraining set (LVD-1689M). For the DINOv3 stage we adopted the pre-distilled DINOv3-ViT-S/16 directly (denoted DINOv3-ViT-S (21M) hereafter); we did not instantiate the 6716 M-parameter ViT-7B variant in the pipeline, because the pre-distilled smaller variants are released by Meta together with the teacher and re-distilling within our own pipeline would yield no benefit. The resulting reference pipeline — OWLv2 → SAM 3 → DINOv3-ViT-S (21M) → BiLSTM — preserves the modular structure of our prior work while being more accurate at each stage. The two heaviest modules of the reference system are SAM 3 (measured peak 19 .52 GB on A10; §3.1.4) and the SAM 3 streaming session that grows linearly with frame count; the remainder of this section describes how we brought SAM 3 within the 16 GB Jetson Orin NX envelope while preserving the pipeline’s accuracy. 
+
+## 2.3 SAM 3 backbone distillation 
+
+2.3.1 Target representation 
+
+SAM 3’s vision module consists of a Perception Encoder (PE-ViT-L+) backbone (approximately 446 M parameters) followed by a four-level Feature Pyramid Network (FPN) neck, a prompt-conditioned mask decoder, and a cross-frame memory-attention module. A natural first question in designing a distillation target is where along this path to match the student to the teacher. Matching at the decoder logits preserves the full teacher computation graph but forces the student to also absorb the neck, decoder, and memory modules — a much harder learning problem that would sacrifice most of the compression benefit. Matching at the raw backbone output, before the neck, is the opposite extreme: it localises the capacity reduction to the encoder and leaves the rest of SAM 3’s pretrained machinery untouched at inference. We took the second approach. Our distillation target is the PE-ViT-L+ backbone output at the end of the last transformer block, reshaped to spatial form as a tensor of shape [1 , 1024 , 72 , 72] at the native 1024 × 1024 
+
+input resolution. Each training and validation frame was passed once through the teacher, the backbone output was captured through a PyTorch forward hook, cast to float16 to halve the storage cost, and written to disk as a .pt tensor. This yielded 2,400 training targets and 600 validation targets, each occupying approximately 10 MB on disk. 
+
+2.3.2 Student architecture (StudentEncoderTinyViT) 
+
+The main architectural contribution of this paper is a compact student encoder, which we denote StudentEncoderTinyViT, built on top of the TinyViT-21M-512 backbone (Wu et al., 2022) available through the timm library (Wightman, 2019). TinyViT was originally distilled from a large image-classification teacher at 512 × 512 resolution and combines convolutional stem and stage-one layers with transformer stages two through four; this hybrid structure provides both the local inductive bias needed for fine pig silhouettes and the global context needed for group-housed scenes. We used TinyViT in features_only mode with out_indices = (1, 2, 3) , which exposes the outputs of stages 2, 3, and 4 at channel dimensions 192, 384, and 576, respectively. Each stage output was passed through a lateral 1 × 1 convolution followed by GroupNorm-32 (Wu and He, 2018) and a GELU nonlinearity (Hendrycks and Gimpel, 2016), projecting it to a common channel dimension of 256. The three projected stage maps were spatially resampled to a common 
+
+72 × 72 grid — matching the teacher output’s spatial resolution — and concatenated along the channel axis, yielding a 768-channel multi-scale fused representation. A 1 × 1 convolution 6projected this fused map to the teacher’s 1024-channel dimension, followed by a residual spatial-refinement block consisting of two 3 × 3 convolutions with GroupNorm-32 and GELU. The final output was modulated by a learnable per-channel affine pair ( output_scale , output_bias )initialised to (1 , 0) , which allowed the network to calibrate the global first and second moments of its output without routing this calibration through the convolutional stack. The full student output is a tensor of shape [B, 1024 , 72 , 72] , exactly matching the teacher target representation defined in §2.3.1. This design introduces approximately 40.66 M parameters in total, of which the TinyViT backbone accounts for 21.6 M, the lateral-and-fusion projections for approximately 7 M, the channel projection for 0.8 M, the spatial-refinement block for 9.4 M, and the affine output for 2,048 parameters. 
+
+2.3.3 Architectural design decisions 
+
+Three design choices in §2.3.2 deserve explicit justification because they materially affect the quality of the distilled representation. First, we replaced every BatchNorm layer in the student — including the BatchNorm layers embedded deep inside the TinyViT backbone — with GroupNorm. BatchNorm (Ioffe and Szegedy, 2015) computes its normalisation statistics over the batch dimension at training time and uses stored running estimates at evaluation time; this creates a train–eval statistical mismatch that is ordinarily benign for large batches but becomes non-trivial at our training batch size of four frames. More importantly, because our distillation targets were themselves computed in the teacher’s evaluation mode, any train–eval mismatch on the student side produced a silent, systematic bias between the input distribution seen during target matching and the input distribution seen during subsequent inference. Replacing every BatchNorm layer with GroupNorm (Wu and He, 2018) using min (32 , C ) groups eliminated this bias entirely, producing bit-identical outputs between training and evaluation modes; we verified the absence of any residual mismatch by checking that the maximum element-wise absolute difference on a random input tensor was below 10 −5.Second, we fused features from three stages rather than projecting from a single stage. Pigs in the Edinburgh dataset are large objects in the frame, but their fine silhouettes at the animal boundary — critical for SAM 3’s mask prediction — carry high-frequency content that is poorly represented in any single stage of a hybrid backbone. Lateral FPN-style fusion in the manner of Lin et al. (2017) combines the local detail of shallower stages with the semantic richness of deeper stages at the target resolution. Third, we zero-initialised the second GroupNorm layer of the residual spatial-refinement block. This initialisation makes the residual branch a no-op at the start of training, so the network first learns to match teacher direction through the lateral-fusion path alone, and the refinement block subsequently learns only the residual component needed to close the remaining gap. The scheme, borrowed from the fixup and zero-init residual-initialisation literature (Zhang et al., 2019; Goyal et al., 2017; Bachlechner et al., 2021), accelerated convergence substantially in pilot experiments. 
+
+2.3.4 Loss function 
+
+The distillation objective combines four terms arranged so that directional alignment with the teacher is learned first and scale matching is learned second: 
+
+L = 1 .0 ·
+
+> ∥∥∥∥
+
+Fs
+
+∥Fs∥2
+
+− Ft
+
+∥Ft∥2
+
+> ∥∥∥∥
+> 22
+
+(directional MSE) 
+
++0 .5 · (1 − cos( Fs, F t)) (patch-wise cosine) 
+
++0 .3 · (∥σs − σt∥22 + ∥μs − μt∥22 
+
+> )
+
+(per-channel moment match) 
+
++0 .1 · ∥ Fs − Ft∥22 (raw MSE, auxiliary) (1) 7Here Fs ∈ RB×1024 ×72 ×72 denotes the student output, Ft the teacher target of the same shape, and μc, σc the per-channel mean and standard deviation over the spatial axes. The first term is the mean-squared error between L2-normalised feature tensors and measures directional agreement at the level of whole feature maps. The second term is a patch-wise cosine-embedding loss; we reshaped both tensors to (B · 72 · 72) × 1024 before computing it, so that the similarity constraint was applied at the level of each spatial location independently. The third term encourages the student’s per-channel first and second moments to match the teacher’s. The fourth term is the raw un-normalised mean-squared error, retained at a low weight as an auxiliary signal. The specific weights ( 1.0 / 0.5 / 0.3 / 0.1) were chosen empirically on the basis of pilot training runs that exhibited a collapsed-variance failure mode at higher relative weight on the moment-matching term: when the scale-matching term was given equal weight to the directional terms, the network tended to converge to an ill-conditioned solution that matched the teacher’s variance without aligning with its direction. The weights reported here are the configuration used to produce the results in Section 3; a systematic sweep over these weights is left to follow-up work. 
+
+2.3.5 Optimisation protocol 
+
+The student was trained with AdamW (Loshchilov and Hutter, 2019) using per-group learning rates: 1 × 10 −4 for the TinyViT backbone, and 3 × 10 −4 for every other trainable parameter group (the three lateral projections, the channel projection, the spatial-refinement block, and the affine output). Weight decay was set to 10 −4 everywhere except on the affine parameters, which received no weight decay to preserve their interpretability as scale and bias. We used a cosine-annealing warm-restart schedule (Loshchilov and Hutter, 2017) with initial period 
+
+T0 = 15 epochs, period multiplier Tmult = 2 , and minimum learning rate ηmin = 10 −6. Gradient norms were clipped to 1.0 before the optimiser step. Mixed-precision training was enabled using bfloat16 autocast (Micikevicius et al., 2018), which halved the memory footprint of activations while preserving numerical stability on our NVIDIA A10 GPU. An exponential moving average (EMA) of the student parameters was maintained in parallel with the online weights using decay 0.9995, following the Polyak-averaging convention (Polyak and Juditsky, 1992). Validation loss was computed both on the online weights and on the EMA shadow, and all reported student results in Section 3 are based on the EMA weights; in our runs the EMA consistently outperformed the online weights by 1–3% on validation cosine similarity in late-training epochs. Early stopping was applied on the EMA validation loss with patience 15 epochs, and the maximum number of training epochs was 100. Training used a batch size of four at the native 1024 × 1024 resolution. Data augmentation comprised horizontal flipping of the image paired with a synchronised horizontal flip of the teacher target tensor (applied with probability 0.5), and colour jitter with brightness 0.2, contrast 0.2, saturation 0.1, and hue 0.02 applied to the image only. We did not apply vertical flipping, rotation, or crop-based augmentations, because SAM 3’s teacher features encode overhead-camera viewpoint assumptions that would be broken by any reorientation of the scene. Best EMA validation loss was reached at epoch 75 of a 100-epoch budget, and the checkpoint at epoch 75 was used for all downstream evaluation. 
+
+2.3.6 Inference-time integration (backbone substitution) 
+
+A convenient consequence of distilling at the raw backbone output (§2.3.1) is that the trained student can be inserted into SAM 3 by module substitution, without any modification to the down-stream neck, mask decoder, memory-attention, or memory-encoder components. At inference, we replaced teacher_model.vision_encoder.backbone with our trained StudentEncoderTinyViT, wrapped in a small adapter class ( DummyBackbone ) that presented the student’s output ten-8sor [B, 1024 , 72 , 72] in the [B, N, C ] contract expected by SAM 3’s vision_encoder.forward .Specifically, the adapter reshaped the spatial student output to [B, 72 ×72 , 1024] and packed it into a BaseModelOutput with the student tensor as last_hidden_state . The remainder of 
+
+vision_encoder.forward — the position-encoding application and the neck — then processed the student features exactly as it would have processed the teacher features. The original teacher backbone was moved to CPU rather than deleted, so that teacher and student could be benchmarked against each other on the same hardware with a single module-swap operation. This allowed every per-frame latency and peak-VRAM measurement reported in Section 3 to be made on identical input frames under identical stateful conditions. 
+
+2.3.7 Memory management during streaming 
+
+SAM 3 performs video-object tracking through an inference-session object that accumulates per-object mask outputs across frames; the memory-attention module consumes these accumulated outputs to maintain identity across time. In its default configuration, the session retains every frame’s output for every tracked object for the entire video, producing monotonically growing GPU memory consumption. We characterised this growth in a pilot measurement on a 60-frame prefix of a test clip with eight tracked objects and observed linear growth of approximately 
+
+5.6 MB per frame per object after the initial conditioning frame. Extrapolated to a 30 Hz live stream, the session would consume the full 16 GB of a Jetson Orin NX (NVIDIA, 2023) in roughly 12 minutes of continuous operation — before any other module was loaded. We implemented a sliding-window pruning routine, which we call prune_inference_session ,that retained only the most recent eight non-conditioning frame outputs per object, removing older entries from session.output_dict_per_obj[obj_idx]["non_cond_frame_outputs"] at every 25-frame interval. The choice of eight follows SAM 3’s internal num_maskmem constant, which bounds the number of past frames the memory-attention module actually reads from; any cached output beyond this window contributes no information to future predictions. The pruning mechanism is a property of the inference loop and is independent of whether the teacher or student backbone is in use; both configurations benefit from it. Full pseudocode is provided in Appendix A. 
+
+## 2.4 DINOv3-ViT-S (21M) adoption 
+
+2.4.1 Rationale 
+
+The DINOv3 family (Siméoni et al., 2025) includes a 6.7-billion-parameter ViT-7B teacher with 4096-dimensional patch and global embeddings, together with several smaller variants pre-distilled from that teacher on the same LVD-1689M pretraining corpus. The smallest publicly released variant is DINOv3-ViT-S/16, with 21.6 M parameters and 384-dimensional embeddings. Because this model was already distilled by Meta against the ViT-7B teacher, an additional distillation pass in our pipeline would yield no benefit. Instead, the question we addressed is whether the pre-distilled ViT-S model is of sufficient representational quality for the specific downstream task in our pipeline — nine-class pig behaviour classification from per-individual cropped image streams — and we answered it empirically by training a downstream temporal classifier on ViT-S embeddings extracted from the Edinburgh Pig dataset. 
+
+2.4.2 Embedding extraction 
+
+Per-individual crops were produced upstream of DINOv3 by the OWLv2–SAM 3–bounding-box-crop chain described in §2.2, at one crop per (frame, individual) pair. We processed each crop at the native DINOv3-ViT-S/16 input resolution of 224 × 224 using the model’s provided AutoImageProcessor (Wolf et al., 2020) for resizing and normalisation. Inference was performed in float16 on a single GPU at batch size 256; at this batch size DINOv3-ViT-S 9occupies approximately 1.5 GB of GPU memory. The pooled output (the CLS-token-equivalent representation emitted at the end of the network) of shape [384] was stored as one .pt tensor per crop, yielding files of approximately 1.5 kB each in float32 and 0.8 kB each in float16. I/O-parallel extraction using 36 worker threads for image loading and saving allowed us to saturate the GPU throughout the extraction phase. The full extraction of all 43 ,000 crops completed in a single pass at sustained throughput; the detailed benchmark is reported in Section 3. 
+
+2.4.3 Behaviour classifier (BiLSTM) 
+
+For behaviour classification we trained a lightweight bidirectional LSTM classifier (Hochreiter and Schmidhuber, 1997; Schuster and Paliwal, 1997) over short sequences of consecutive per-individual embeddings. We used a sequence length of three frames with stride one, sampled along the per-individual embedding stream; each window was labelled with the majority behaviour label among its three frames. We chose the BiLSTM over heavier sequence models because the short sequence length and small embedding dimension make attention-based aggregation unnecessary, and a single-layer BiLSTM with hidden size 128 was sufficient to saturate validation accuracy in pilot experiments. The classifier architecture was as follows: a single-layer bidirectional LSTM with input dimension 384 and hidden dimension 128 (approximately 560 k parameters), followed by Linear (256 , 128) → ReLU → Dropout (0 .3) → Linear (128 , 9) , with dropout regularisation (Sri-vastava et al., 2014). The last timestep’s bidirectional hidden state was used as the sequence representation. Training used Adam (Kingma and Ba, 2015) with learning rate 10 −3, weight decay 10 −5, batch size 128, class-weighted cross-entropy using inverse-frequency weights on the training label distribution, and early stopping with patience 8 epochs. We split the window-level dataset stratified on label into 70 /15 /15 training, validation, and test partitions. Because windows overlap with stride one, some leakage of information across adjacent windows is possible at the frame level; we mitigated this by splitting at the window level after windowing rather than at the frame level before windowing, which preserves the stratified label balance. 
+
+## 2.5 Embedding-pool re-identification 
+
+Even at Multi-Object Tracking Accuracy (MOTA) scores above 92 % , SAM 3 produces identity switches at a rate of approximately one per 500 frames per animal under the conditions of the Edinburgh dataset. Over a single 24-hour deployment at 5 Hz , this accumulates into materially wrong per-individual daily-budget statistics. To address this failure mode without introducing supervised re-identification training, we propose an embedding-pool re-identification mechanism that treats DINOv3 embeddings as a long-horizon identity signal complementary to SAM 3’s short-horizon motion-based tracking. The mechanism is proposed and analytically sized in the present paper; empirical validation on labelled long-duration video is scoped as follow-up work (§4.6). Formally, for each tracked identity i we maintain an embedding bank Ei = {ei(t0), e i(t1), . . . }
+
+consisting of exponentially-moving-average (EMA) summaries of the DINOv3 embeddings observed for identity i at a configurable sampling cadence (for example, one bank entry per hour of wall-clock time, summarised from all frames within that hour for the identity in question). At each newly processed frame, we compute the current crop’s embedding ecur , compare it via cosine similarity to Ei for the claimed identity and to Ej for every other currently tracked identity j̸ = i, and trigger a re-initialisation of the SAM 3 track for the claimed identity only if (i) the similarity to Ei falls below a threshold τlow and (ii) the maximum similarity across some other Ej exceeds τhigh . On re-initialisation, SAM 3 is re-prompted with the current crop’s bounding box under the corrected identity, and tracking proceeds from there. Each embedding occupies 768 B in float16 (384 dimensions × 2 B). At an hourly sampling cadence, one year’s worth of data per individual comprises 365 × 24 = 8760 bank entries, 10 occupying approximately 6.7 MB of raw embedding storage. Accompanying per-hour metadata (behaviour-class histogram, mean crop area, mean detection confidence) at roughly 10 kB per entry brings the total to approximately 94 MB per individual per year. A 200-animal barn therefore produces approximately 19 GB of longitudinal identity-and-behaviour history per year, which is comfortably supportable by a single consumer-grade solid-state disk. Reference pseudocode is provided in Appendix C. 
+
+## 2.6 Evaluation metrics 
+
+We report three categories of metrics throughout Section 3. First, for tracking quality, we used the standard CLEAR-MOT and ID metrics — Multi-Object Tracking Accuracy (MOTA) and Multi-Object Tracking Precision (MOTP) (Bernardin and Stiefelhagen, 2008), together with Identity F1 (IDF1) (Ristani et al., 2016) — along with precision, recall, mostly-tracked / partially-tracked / mostly-lost counts, number of fragmentations, and number of identity switches. All tracking metrics were computed at an intersection-over-union threshold of 0.5 against per-frame bounding-box ground truth, using the py-motmetrics library (Milan et al., 2016). Second, for behaviour classification, we report top-1 accuracy, macro-averaged F1, weighted F1, per-class precision, per-class recall, per-class F1, the full confusion matrix, and a ranking of the most-confused class pairs. The macro-F1 is computed as the unweighted mean across the nine classes and is the fairest scalar summary under our imbalanced class distribution. Third, for computational efficiency, we report total parameter count (backbone alone, and full system including preserved SAM 3 modules), per-frame latency (mean and standard deviation, measured via torch.cuda.synchronize() bracketing), throughput in frames per second, peak GPU memory allocation during streaming inference (via torch.cuda.max_memory_allocated ), and on-disk checkpoint size. All latency and memory measurements were preceded by at least fifty warm-up frames that were excluded from the statistics, so as to remove any CUDA-kernel-compilation or memory-allocator warm-up transients. Finally, as a distillation-quality diagnostic independent of downstream task performance, we report the student–teacher mean-squared error, cosine similarity, and scale ratio of student versus teacher feature tensors on twenty held-out frames; these are the same three quantities that appear in the loss function of §2.3.4, evaluated without their loss weights for interpretability. 
+
+## 2.7 Hardware and software environment 
+
+All training and benchmarking were performed on a single-GPU NVIDIA A10 24 GB instance (NVIDIA, 2021) within an Azure Databricks runtime (Microsoft, 2024), with PyTorch 2.x (Paszke et al., 2019), the Hugging Face transformers library’s Sam3TrackerVideoModel and 
+
+Sam3TrackerVideoProcessor classes (Wolf et al., 2020), the timm library for the TinyViT-21M-512 backbone (Wightman, 2019), the py-motmetrics library for tracking evaluation (Milan et al., 2016), and the accelerate library (Gugger et al., 2022) for device management. Dataset frames, distillation targets, student checkpoints, and evaluation artefacts were stored in Azure Blob Storage mounted through the Databricks File System. To avoid the seek-latency penalty characteristic of blob-backed file systems during streaming inference, we staged all hot data — per-frame teacher targets during training, and annotation outputs during benchmarking — through the local NVMe SSD of the worker node, copying from blob to local disk at session start and from local disk back to blob at session end. The target deployment platform for the compressed pipeline is the NVIDIA Jetson Orin NX 
+
+16 GB (NVIDIA, 2023). Deployment validation in the present paper is analytic: the compressed pipeline’s peak VRAM measured on the A10 (§3.1.4) is compared against the Orin NX memory envelope, and the remaining budget is allocated across the OWLv2, DINOv3-ViT-S, BiLSTM, and CUDA-runtime components in the memory-budget table reported in §3.3. An Orin NX 11 16 GB device was available to the authors at the time of writing, but on-device benchmarking was deliberately scoped as follow-up work because end-to-end on-device measurement requires both TensorRT export of SAM 3’s session-based inference loop and the acquisition of labelled long-duration video for joint evaluation with the re-identification mechanism of §2.5; these are substantial work packages which we did not want to conflate with the compression result reported here. 
+
+# 3 Results 
+
+Section 3.1 reports the outcome of SAM 3 backbone distillation, covering training trajectory, parameter budget, tracking quality, computational efficiency, per-video behaviour, and distillation fidelity. Section 3.2 reports the outcome of adopting DINOv3-ViT-S (21M) as the per-individual embedder and training a downstream BiLSTM classifier, covering parameter budget, classification performance, per-class behaviour, failure modes, and inference speed. Section 3.3 integrates these two result sets into an analytic edge-device feasibility assessment against the NVIDIA Jetson Orin NX 16 GB memory envelope. All tracking and classification numbers reported below are direct outputs of the evaluation protocols defined in §2.6, computed on the held-out test splits defined in §2.1. 
+
+## 3.1 SAM 3 distillation results 
+
+3.1.1 Training trajectory 
+
+Student training reached the best EMA-validation-loss checkpoint at epoch 75 of a 100-epoch budget. Over this trajectory, the student’s scale ratio relative to the teacher — defined as the ratio of student feature standard deviation to teacher feature standard deviation — rose from 0.605 at epoch 1 to a stable plateau around 0.947 from epoch 30 onward, and the mean patch-wise cosine similarity between student and teacher features improved monotonically over the same interval. On the twenty held-out diagnostic frames (§2.6), the final EMA student achieved cosine similarity 0.808 ± 0.006 , scale ratio 0.949 ± 0.003 , and mean-squared error 0.763 against the teacher backbone outputs. Both fidelity indicators fell within the a priori “good” bands we adopted before training began — cosine ≥ 0.7 and scale ratio 0.8–1.2 — and we used the epoch-75 EMA checkpoint for all downstream evaluation. 
+
+3.1.2 Parameter budget 
+
+The parameter breakdown of teacher and student is summarised in Table 1. The student’s TinyViT-based encoder contains 40.66 M parameters, a 10.98-fold reduction relative to the teacher’s PE-ViT-L+ backbone. Because the student reuses SAM 3’s native neck, mask decoder, memory-attention, and memory-encoder modules at inference (§2.3.6), the full assembled student system contains 59.98 M parameters, compared to 465.78 M for the full teacher system — a 7.77-fold reduction overall. On disk, the trained student encoder occupies 155 .09 MB in float16, compared to 888 .41 MB for the teacher encoder at the same precision. 
+
+3.1.3 Tracking quality 
+
+Table 2 summarises tracking-quality metrics averaged over the four held-out test clips. On MOTA, the student scored 92 .29 % against the teacher’s 93 .97 % — a loss of 1.68 percentage points. On IDF1, the student scored 96 .15 % against the teacher’s 96 .98 % — a loss of 0.84 percentage points. Because precision and recall were numerically identical to IDF1 under our evaluation protocol (each tracker produces one bounding box per frame per identity, so false positives and false negatives coincide), the precision and recall deltas were likewise −0.84 points. 12 Table 1: Parameter and on-disk size comparison between the teacher (SAM 3 with PE-ViT-L+ backbone) and the student (StudentEncoderTinyViT) assemblies, measured on the 4-video test set. 
+
+Component Teacher (SAM 3) Student Compression 
+
+Backbone parameters 446.24 M 40.66 M 10.98 ×
+
+Total assembled-system parameters 465.78 M 59.98 M 7.77 ×
+
+Encoder on-disk size (float16) 888.41 MB 155.09 MB 5.73 ×
+
+Neither system produced any identity switches on the test set, and fragmentation counts were comparable between teacher and student. Table 2: Tracking quality on the 4-video test set, averaged over clips. All values computed at IoU threshold 0.5 against per-frame bounding-box ground truth, using py-motmetrics .
+
+Metric Teacher (SAM 3) Student ∆ (student − teacher) 
+
+MOTA (%) 93.97 92.29 −1.68 
+
+IDF1 (%) 96.98 96.15 −0.84 
+
+Precision (%) 96.98 96.15 −0.84 
+
+Recall (%) 96.98 96.15 −0.84 
+
+MOTP (pixels) 24.53 25.82 +1 .29 
+
+MOTP increased slightly for the student, from 24.53 to 25.82 pixels of mean ground-truth-to-prediction bounding-box distance over true positives, averaged over clips. Because MOTP is a localisation-precision metric rather than an identity-preservation metric, this 1.29-pixel increase reflects the slightly less tight spatial fit of student-produced masks, not a degradation in identity tracking. Relative to the native resolution of the teacher pipeline ( 1024 × 1024 input) and the typical pig-silhouette size in overhead footage (mean segmented area ≈ 22 ,000 pixels in the test set), a 1.3-pixel boundary-localisation shift is practically negligible. 
+
+3.1.4 Computational efficiency 
+
+Table 3 summarises per-frame latency, throughput, and peak GPU memory consumption for both systems. The student reduced peak GPU memory consumption from 19 .52 GB to 6.49 GB 
+
+— a 3.01-fold reduction — and reduced mean per-frame latency from 407 .70 ms to 309 .84 ms , a 
+
+24 .0 % reduction equivalent to a 1.09-fold throughput gain. All three efficiency gains are direct consequences of the encoder substitution, because the rest of the SAM 3 inference loop (neck, mask decoder, memory attention, memory encoder, session state) is unchanged between the two configurations. The 6.49 GB peak VRAM footprint is the operative number for edge-deployment feasibility and is returned to in §3.3. Table 3: Streaming-inference efficiency on the 4-video test set, averaged over clips. 
+
+Metric Teacher (SAM 3) Student Ratio 
+
+Throughput (FPS) 1.08 1.18 1.09 ×
+
+Per-frame latency (ms) 407.70 309.84 0.76 ×
+
+Peak VRAM during streaming (GB) 19.52 6.49 0.33 ×
+
+We note that the measured throughput on our NVIDIA A10 hardware — roughly 1 FPS for both systems — is an artefact of SAM 3’s statefully sequential per-frame inference loop, not 13 of the encoder capacity. The 24% per-frame-latency reduction obtained by swapping encoders confirms that the encoder is responsible for about a quarter of the teacher pipeline’s wall-clock time; the remaining three quarters are spent in the decoder, memory attention, memory encoder, and session-state updates. These downstream modules are shared between teacher and student configurations by construction (§2.3.6). 
+
+3.1.5 Per-video analysis 
+
+Table 4 reports tracking quality for each of the four test clips individually. The student’s MOTA loss relative to the teacher varied substantially across clips, from a small loss of 0.04 points on clip 2019_12_10_000060 (where the teacher was near ceiling at 99.96% MOTA) to a larger loss of 4.29 points on clip 2019_12_02_000005 (where teacher performance was 91.04%). On clip 2019_12_02_000208 , the student marginally exceeded the teacher — MOTA 98.54% versus 98.38% — confirming that the student is not uniformly worse than the teacher on the test set, only on average. Table 4: Per-video tracking quality on the 4-video test set.                                          
+
+> Clip Teacher Student ∆Teacher Student ∆
+> MOTA (%) MOTA (%) MOTA IDF1 (%) IDF1 (%) IDF1
+> 2019_12_02_000005 91.04 86.75 −4.29 95.52 93.38 −2.14
+> 2019_12_02_000208 98.38 98.54 +0 .17 99.19 99.27 +0 .08
+> 2019_12_10_000060 99.96 99.92 −0.04 99.98 99.96 −0.02
+> 2019_12_10_000078 86.50 83.96 −2.54 93.25 91.98 −1.27
+> Mean 93.97 92.29 −1.68 96.98 96.15 −0.84
+
+Two patterns are visible in Table 4. First, student degradation correlates with teacher difficulty: the largest student loss ( −4.29 on clip 2019_12_02_000005 ) occurs on a clip the teacher already found difficult (91.04% MOTA), and the clip the teacher found easiest (99.96% MOTA on 
+
+2019_12_10_000060 ) yielded the smallest student loss ( −0.04 ). This pattern is consistent with the student preserving teacher behaviour proportionally, rather than systematically degrading the easy cases or catastrophically failing the hard cases. Second, the sign of the delta is not uniformly negative. On one test clip ( 2019_12_02_000208 ) the student produces slightly better identity preservation than the teacher. We interpret this as the noise floor of the measurement rather than as a claim that the student is functionally superior on this clip, but it does place a lower bound on the practical magnitude of our reported mean delta. 
+
+3.1.6 Distillation-fidelity summary 
+
+Per the diagnostic protocol in §2.6, we verified that the trained student’s backbone output has a cosine similarity to the teacher’s of 0.808 ± 0.006 averaged over the twenty held-out frames, and a per-channel scale ratio of 0.949 ± 0.003 . The mean absolute difference in per-channel mean was 0.012 and in per-channel standard deviation was 0.017 (both measured relative to the teacher’s own per-channel moments). These fidelity values comfortably exceed the thresholds we adopted before training (cosine ≥ 0.7, scale ratio ∈ [0 .8, 1.2] ) and are consistent with the 1.68-percentage-point MOTA degradation observed downstream: the student’s features align directionally with the teacher’s while retaining a ∼5% conservative scale bias that is absorbed by the learnable affine output layer (§2.3.2). 14 3.2 DINOv3-ViT-S (21M) results 
+
+3.2.1 Parameter and size comparison 
+
+Adopting DINOv3-ViT-S/16 as the per-crop embedder (§2.4) yields a 21.6 M-parameter backbone with 384-dimensional embeddings — the smallest publicly released DINOv3 variant, in a family whose largest variant is the 6716 M-parameter ViT-7B with 4096-dimensional embeddings. The size context is therefore a 311-fold parameter ratio and a 10.67-fold embedding-dimension ratio between the smallest and largest variants of the family, with proportional reductions in all downstream storage costs (§2.5) and in per-crop memory, disk, and bandwidth costs. On disk, the ViT-S/16 model occupies 82 .4 MB in float32 and 41 .2 MB in float16, versus approximately 
+
+25 GB for the ViT-7B model in float32 ( 6716 M × 4 B per parameter). 
+
+3.2.2 Behaviour classification 
+
+The BiLSTM classifier described in §2.4.3, trained on DINOv3-ViT-S embeddings over sequences of three per-individual frames, reached 97 .34 % top-1 accuracy on the 4,292 -window test set, with macro-averaged F1 = 91 .67 % and weighted F1 = 97 .37 % . The macro-F1 is the more informative summary given our nine-class label distribution dominated by sleep (approximately 53 % of windows), and 91 .67 % macro-F1 indicates that the classifier maintains balanced behaviour across all classes and does not collapse onto majority-class prediction. 
+
+3.2.3 Per-class performance 
+
+Table 5 reports per-class precision, recall, and F1 together with test-set support. Behaviours dominated by distinctive posture or location within the pen — eat (F1 = 99.09%), sleep (98.65%), 
+
+drink (94.95%), lying (94.87%), standing (94.36%) — were classified with high reliability. Less frequent behaviours also performed well given their support: playwithtoy (90.00%), sitting 
+
+(87.27%), and nose-to-nose (88.89%) all exceeded 87% F1 despite each having fewer than 70 test windows. The run class, with only 14 test-set windows, produced F1 = 76.92% — interpretable as support-limited rather than as a model failure (§4.6). Table 5: Per-class classification performance on the 4,292 -window test set. Support is the number of ground-truth windows of each class in the test split. 
+
+Behaviour Precision Recall F1 Support 
+
+standing 0.9907 0.9008 0.9436 474 lying 0.9112 0.9895 0.9487 477 eat 0.9820 1.0000 0.9909 819 drink 0.9126 0.9895 0.9495 95 sitting 0.7869 0.9796 0.8727 49 sleep 0.9969 0.9763 0.9865 2280 run 0.8333 0.7143 0.7692 14 playwithtoy 0.8571 0.9474 0.9000 19 nose-to-nose 0.8101 0.9846 0.8889 65 
+
+Macro avg. 0.8979 0.9424 0.9167 4292 Weighted avg. 0.9756 0.9734 0.9737 4292 3.2.4 Failure modes 
+
+Table 6 reports the five most frequent class-confusion pairs. The largest single confusion — 
+
+sleep → lying at 39 windows ( 1.7 % of all sleep cases) — is behaviourally adjacent: both classes 15 describe a pig in a prone posture with limited motion, and the visual signal distinguishing them (eye state, occasional tail or ear flicks) is subtle enough that human annotators frequently disagree on the boundary. The second-largest confusion, standing → eat at 15 windows ( 3.2 % 
+
+of all standing windows), reflects location-dependent ambiguity: pigs standing at or near the feeder trigger the feeder’s visual context in a way that the model sometimes interprets as feeding rather than as standing. The remaining confusions ( standing → nose-to-nose , sleep → sitting ,
+
+standing → drink ) share similar location- or posture-based ambiguity profiles. None of the top-five confusion pairs indicate a failure of core behaviour discrimination (e.g. sleep vs. run 
+
+or eat vs. run ), which would have signalled a serious representational deficiency in the ViT-S embedder. The full 9 × 9 confusion matrix is reproduced in Appendix B. Table 6: Five most frequent class-confusion pairs on the 4,292 -window test set. 
+
+True behaviour Predicted behaviour Count % of true class 
+
+sleep lying 39 1.7% standing eat 15 3.2% standing nose-to-nose 11 2.3% sleep sitting 11 0.5% standing drink 8 1.7% 
+
+3.2.5 Inference speed 
+
+Single-image DINOv3-ViT-S/16 inference took 7.99 ms on our NVIDIA A10 in float16 at 
+
+224 × 224 input resolution. Batched throughput improved substantially with batch size, reaching a minimum of 0.42 ms per image at batch size 16 — equivalent to 2,381 images per second — and plateauing at similar per-image times for batches of 32 and 64. The BiLSTM classifier required 0.255 ms per three-frame window at batch size 1, amortising to approximately 0.009 ms 
+
+per sample at batch size 32. At the pipeline level, the DINOv3-plus-BiLSTM pair therefore consumes on the order of half a millisecond per per-individual crop when batched, which is negligible relative to SAM 3’s per-frame cost (§3.1.4) and removes any concern that embedding extraction could become the bottleneck on edge hardware. 
+
+## 3.3 Edge-device feasibility analysis 
+
+Table 7 combines the two subsystems’ measured resource consumption into an analytic memory budget for the NVIDIA Jetson Orin NX 16 GB target platform. The distilled SAM 3 pipeline consumes 6.49 GB of VRAM during streaming inference (§3.1.4). DINOv3-ViT-S/16 occupies 
+
+41 .2 MB of weight storage in float16; with a working-set allowance of ≈ 1.5 GB for batched infer-ence at batch size 256 (which we adopted during embedding extraction; §2.4.2) or substantially less at batch size 1, DINOv3-ViT-S runs comfortably inside a 1.6 GB envelope on Orin NX. The BiLSTM classifier requires approximately 2 MB of weight storage (560 k parameters × 4 B) and negligible activation memory. OWLv2-base, retained unchanged from our prior pipeline (Yang et al., 2025), has a published parameter budget of approximately 155 M (Minderer et al., 2023) and we budget 1.5 GB for it including activations (an upper bound based on prior pipeline mea-surement: ∼310 MB weights at fp16 and ∼1.2 GB peak activation working set for single-frame inference). A conservative CUDA-runtime and driver overhead of 1.5 GB brings the total to approximately 11 .1 GB — 4.9 GB inside the 16 GB envelope. This 4.9 GB of headroom is sufficient for the re-identification embedding pool of §2.5 (which requires < 100 MB per individual even at year-scale; §2.5), for buffered input-frame queues, for concurrent logging and telemetry, and for the Orin NX system image. On-device benchmarking 16 Table 7: Analytic memory budget on NVIDIA Jetson Orin NX 16 GB for the full compressed pipeline. 
+
+Component VRAM (GB) 
+
+Distilled SAM 3 pipeline (§3.1.4) 6.49 OWLv2-base (Minderer et al., 2023) 1.5 (upper bound) DINOv3-ViT-S/16 + working set 1.6 (upper bound) BiLSTM classifier ∼0.01 
+
+CUDA runtime, driver, framework overhead 1.5 
+
+Total budgeted 11.1 
+
+Jetson Orin NX 16 GB envelope 16.0 
+
+Remaining headroom 4.9 
+
+remains outstanding and is the principal piece of deployment validation we have deferred (§2.7, §4.6). The storage footprint of the per-individual embedding pool scales favourably with herd size. At an hourly sampling cadence, one individual’s year of embedding bank plus metadata occupies approximately 94 MB on disk. A 200-animal barn accumulates approximately 19 GB per year under the same policy — well within the capacity of a single consumer-grade solid-state disk, and comfortably within the read and write bandwidth of such storage under a once-per-hour write pattern. 
+
+# 4 Discussion 
+
+## 4.1 Summary of the compression result and its operational meaning for PLF 
+
+The distilled SAM 3 backbone reduces parameters 10 .98 × at the encoder and 7.77 × at the assembled-system level, peak streaming VRAM 3.01 × (19 .52 GB → 6.49 GB ), and per-frame latency by 24 % , at a cost of 1.68 percentage points of MOTA and 0.84 percentage points of IDF1 averaged over the four held-out test clips. The per-clip deltas (Table 4) range from +0 .17 
+
+to −4.29 MOTA points, with the largest losses concentrated on clips the teacher already found difficult — a pattern consistent with the student preserving teacher behaviour proportionally rather than systematically degrading easy cases or catastrophically failing hard ones. Both the absolute compression ratio and the magnitude of the quality loss are commensurate with what has been reported for SAM-1-era distillations (Zhang et al., 2023; Xiong et al., 2023; Zhou et al., 2024; Zhang et al., 2024) and, more recently, for SAM-3 itself (Zeng et al., 2025). The contribution of the present compression result is therefore not novelty of the compression ratio but the demonstration that the SAM 3 vision backbone can be compressed without losing the identity-preservation quality required for individual-level pig monitoring — the operationally relevant metric for PLF, which prior SAM-distillation work does not report. To our knowledge this is the first SAM-distillation effort whose target deliverable is per-animal welfare analytics on group-housed livestock, and the first published distilled SAM checkpoint for pig video specifically. The intended downstream consumer of this result is not the object-tracking community — which already has a small zoo of efficient SAM students — but the PLF community, for whom the relevant question is whether a foundation-model pipeline can be made to fit on the hardware that can be installed in a barn while preserving the per-animal identity signal that downstream welfare analytics depend on. The numbers in Tables 2–7 answer that question affirmatively for pigs. A practical consequence worth stating explicitly: the Edinburgh Pig benchmark exercises failure modes that the natural-image benchmarks used by general-purpose SAM distillations do 17 not. Heavy intra-class similarity (eight pigs of the same breed, age, and coat colour), frequent partial occlusion, and near-identical postures during rest are the dominant difficulty drivers. Reaching 92 .29 % MOTA on this setting using a generic TinyViT-21M-512 encoder — together with the multi-scale fusion and direction-then-scale loss described in §2.3 — suggests that the compression recipe transfers across domains provided the distillation target is taken at the backbone output rather than at the mask-decoder logits. 
+
+## 4.2 DINOv3-ViT-S (21M) is a sufficient embedder for livestock behaviour classification 
+
+The DINOv3-ViT-S results of §3.2 are consistent with a broader pattern in the self-supervised-features literature, in which distillation from a larger teacher compresses most of the representa-tional capacity of foundation backbones into models one to two orders of magnitude smaller (Oquab et al., 2024; Siméoni et al., 2025). The 97 .34 % top-1 accuracy and 91 .67 % macro-F1 reported here on nine-class pig behaviour classification — using a 21.6 M-parameter backbone pre-distilled from a 6716 M-parameter teacher — quantify this pattern on the PLF task addressed by the present pipeline. The two largest per-class confusions in Table 6 — sleep → lying (39 windows, 1.7 % of 
+
+sleep cases) and standing → eat (15 windows, 3.2 % of standing cases) — are behaviourally adjacent rather than representationally catastrophic, and reflect intrinsic ambiguity in the label definitions rather than a failure of the embedder to separate behaviour classes in feature space. The boundary between sleep and lying is observer-dependent in group-housed pig ethology (Bergamini et al., 2021), and the boundary between standing and eat depends on the animal’s location in the pen relative to the feeder. The run class (F1 = 76.92%) is support-limited at 14 test windows. The dominant constraint on rare-behaviour F1 in this setting is therefore class imbalance in the labelled data, not backbone capacity, and the ViT-S variant is sufficient for common-behaviour classification on overhead group-housed footage. 
+
+## 4.3 Limits of the result 
+
+Test-set size. The tracking evaluation uses four held-out test clips of 600 frames each — 2,400 
+
+frames and eight pigs in total. This is adequate for bounding the mean MOTA and IDF1 deltas (Table 4) but insufficient to characterise the distribution of per-clip deltas, including the small positive delta observed on clip 2019_12_02_000208 (+0 .17 MOTA, +0 .08 IDF1). As noted in §3.1.5, this delta sits within the measurement noise floor; a larger and more diverse test set would tighten the error bars. 
+
+Deferred on-device benchmarking. The 6.49 GB peak VRAM and 1.18 Hz throughput of §3.1.4 are measured on an NVIDIA A10 data-centre GPU. The Jetson Orin NX 16 GB (NVIDIA, 2023) shares the same Ampere-generation architecture and bfloat16 support as the A10, so the per-frame memory footprint should transfer with high fidelity. Throughput will not: Orin NX offers approximately one-fifth the memory bandwidth and one-tenth the raw FLOPs of an A10, and on-device throughput depends substantially on TensorRT export quality for SAM 3’s session-based inference loop. The feasibility claim of Table 7 is therefore an analytic feasibility claim — the pipeline’s memory footprint fits inside the 16 GB envelope with 4.9 GB of headroom — rather than an end-to-end latency claim. 
+
+Scope of the re-identification contribution. The embedding-pool mechanism (C3) is proposed and analytically sized rather than empirically validated. Empirical validation of identity-switch performance requires labelled long-duration video that distinguishes the same animal across session boundaries — for example, the same individual on day 1 and day 7 — 18 which the Edinburgh Pig dataset does not provide (its clips are 100 seconds each). C3’s empirical evaluation is scoped as follow-up work (§4.6). 
+
+## 4.4 What the headroom and embedding-pool mechanism jointly enable 
+
+The 4.9 GB of VRAM headroom on a Jetson Orin NX 16 GB (§3.3) makes continuous on-device operation of the embedding-pool mechanism of §2.5 feasible. A PLF system that writes per-individual embeddings to local storage at ≈ 94 MB per animal per year requires only that (i) the embedder runs on-device at approximately video-rate, (ii) the per-individual bank remains resident in working memory across session boundaries, and (iii) long-term storage scales linearly with the number of animals and the observation horizon. The efficiency audit of §3.3 satisfies (i) and (ii) directly; (iii) is satisfied by the 19 GB -per-year footprint at 200 animals (within the capacity of a single consumer-grade solid-state disk). A time-indexed per-individual embedding archive, maintained continuously over months to a year, is a new kind of longitudinal data object for PLF. It is neither a tracking record (which discards per-crop appearance), nor a per-frame classification stream (which discards identity across sessions), nor a set of still images at discrete timepoints (which discards temporal structure). It preserves per-individual visual appearance and posture as a dense time series, at a compression ratio that reduces a year of observation to a file small enough to share over email. Three classes of downstream analysis become accessible to such an archive. Retrospective association : when outcome labels later become available for disease onset, lameness episodes, reproductive events, or growth trajectories, the archive can be mined for the visual signatures that preceded those events without requiring that the original footage still exist. Unsupervised and weakly-supervised phenotyping : clustering in the embedding space, change-point detection on per-individual trajectories, and rare-event detection against each animal’s own baseline. 
+
+Longitudinal welfare assessment : departures of an animal’s current embedding trajectory from its own historical distribution as an anomaly signal that does not require a labelled training set of welfare violations. Each of these is the subject of a separate study. 
+
+## 4.5 Species-agnostic transfer 
+
+The mechanisms introduced here depend on three properties of the upstream pipeline and the target species: an open-vocabulary detector that localises the species in the target camera view; a promptable video-segmentation tracker that maintains within-session identity under occlusion; and a self-supervised visual backbone whose embeddings discriminate behaviours at the level the downstream application requires. OWLv2 (Minderer et al., 2023), SAM 3 (Carion et al., 2025), and DINOv3-ViT-S (Siméoni et al., 2025) satisfy all three conditions for group-housed pigs on overhead RGB footage, and recent work applying foundation-model and lightweight deep-learning chains to other group-housed species — e.g. MASM-YOLO for grassland beef cattle on Jetson Orin NX (Wei et al., 2025) — suggests the same recipe should transfer to dairy cattle in cubicle and free-stall barns, beef cattle in feedlot pens, and sheep in indoor housing. Because the distillation target (SAM 3’s backbone output) and the embedder (a self-supervised ViT) are themselves species-agnostic, the compressed pipeline transfers to cattle and sheep with retraining only of the behaviour-classification head, in proportion to the labelled-data budget available for the target species. Two caveats attach. Behaviour-class label distributions differ sharply across species — dairy-cattle lying behaviour has different duration statistics than pig sleep, and feedlot-cattle aggression has different visual signatures than pig nose-to-nose behaviour — so the class-weighted cross-entropy training recipe of §2.4.3 must be recalibrated per species. Camera placement also differs (overhead in farrowing barns for pigs; side-on in milking parlours for dairy cattle; aerial drone views for extensive beef cattle), and the geometric assumptions of SAM 3’s native 1024 × 1024 
+
+input resolution may require adjustment for side-on or aerial views. 19 4.6 Three specific follow-up studies 
+
+(i) On-device end-to-end benchmarking on Jetson Orin NX. End-to-end latency, throughput, thermal behaviour, and sustained power draw for the compressed pipeline running natively on a Jetson Orin NX 16 GB under continuous streaming. The principal engineering dependency is TensorRT export of SAM 3’s session-based inference loop, which to our knowledge has not been publicly released. The scientific contribution would be to convert the analytic feasibility claim of §3.3 and Table 7 into a measured one, and to characterise the throughput gap between data-centre and edge hardware. 
+
+(ii) Empirical validation of the embedding-pool re-identification mechanism on labelled multi-day video. Deployment of the mechanism of §2.5 on a purpose-collected multi-day video dataset with per-individual identity annotations that persist across session boundaries. The principal measurements are the identity-switch rate under the re-identification loop versus the baseline SAM 3 tracking, the false re-initialisation rate at the chosen similarity thresholds, and the sensitivity of both metrics to the sampling cadence of the embedding bank. 
+
+(iii) A retrospective longitudinal analytic on an embedding archive paired with outcome labels. Assembly of an embedding archive from several months of on-farm footage, paired with clinical outcome labels (lameness scores, disease episodes, reproductive events, growth curves, or welfare assessments) collected from existing veterinary and management records, with analysis of whether the archive contains signal that precedes the labelled events. Each study depends on the engineering and data infrastructure of its predecessors, so the natural order is (i) → (ii) → (iii). 
+
+# 5 Conclusions 
+
+This paper demonstrates that the foundation-model pipelines that have raised the accuracy ceiling of precision livestock farming can be brought within the memory envelope of a single commodity edge accelerator without sacrificing the operational metrics that determine their downstream utility. SAM 3’s Perception Encoder (PE-ViT-L+) backbone is distilled into a 40.66 M-parameter multi-scale student through a Feature Pyramid Network student encoder, a four-term direction-then-scale loss, and backbone-substitution inference with sliding-window session pruning, achieving a 7.77-fold system-level parameter reduction and a 3.01-fold reduction in peak VRAM while losing only 1.68 percentage points of MOTA and 0.84 percentage points of IDF1 against the teacher. The pre-distilled DINOv3-ViT-S (21M) variant is empirically validated as a sufficient per-individual embedder, reaching 97 .34 % top-1 accuracy and 91 .67 % macro-F1 on nine-class pig behaviour classification. Together, these two reductions place the full pipeline inside the NVIDIA Jetson Orin NX 16 GB envelope with 4.9 GB of headroom — enough margin to operate, on device, an embedding-pool re-identification mechanism whose per-individual storage footprint of approximately 94 MB per animal per year produces a longitudinal visual record amenable to retrospective association with disease, lameness, reproductive, and growth outcome labels. The compression recipe, the embedder choice, and the longitudinal substrate transfer to dairy and beef cattle, sheep, and other commercially important group-housed species with retraining only of the downstream behaviour-classification head. 
+
+# Funding 
+
+This research did not receive any specific grant from funding agencies in the public, commercial, or not-for-profit sectors. 20 CRediT authorship contribution statement 
+
+Haiyu Yang: Conceptualization, Methodology, Software, Formal analysis, Investigation, Data curation, Writing — original draft, Writing — review & editing, Visualization. Miel Hostens: 
+
+Supervision, Conceptualization, Writing — review & editing. 
+
+# Declaration of competing interest 
+
+The authors declare that they have no known competing financial interests or personal relation-ships that could have appeared to influence the work reported in this paper. 
+
+# Data availability 
+
+The Edinburgh Pig Behaviour Video Dataset used in this study is publicly available at https: //homepages.inf.ed.ac.uk/rbf/PIGDATA/ (Bergamini et al., 2021). Trained student-encoder checkpoints, distillation targets, and evaluation scripts will be released upon publication. 
+
+# A Session-pruning routine and VRAM-growth diagnostic 
+
+Algorithm 1 specifies the sliding-window pruning routine prune_inference_session referenced in §2.3.7. The routine retains only the most recent eight non-conditioning frame outputs per object — the number that SAM 3’s internal num_maskmem constant bounds the memory-attention module to consult — and is invoked every 25 frames during streaming inference. 
+
+Algorithm 1 prune_inference_session 
+
+Require: session : SAM 3 inference-session object 
+
+Require: keep_last = 8: number of recent non-conditioning frames to retain per object 
+
+Require: interval = 25: invoke pruning every interval frames  
+
+> 1:
+
+for obj_idx in session.tracked_objects do  
+
+> 2:
+
+non_cond ← session.output_dict_per_obj[obj_idx][’non_cond_frame_outputs’]  
+
+> 3:
+
+if |non_cond | > keep_last then  
+
+> 4:
+
+sort keys of non_cond by frame index ascending  
+
+> 5:
+
+delete oldest |non_cond | − keep_last entries  
+
+> 6:
+
+end if  
+
+> 7:
+
+end for  
+
+> 8:
+
+if (current_frame mod interval ) = 0 then call torch.cuda.empty_cache() 
+
+In a 60-frame pilot sweep on a test clip with eight tracked objects, peak VRAM grew at 5.6 ± 0.2 MB per frame per object after the initial conditioning frame in the unpruned configuration. With pruning enabled at the parameters above, the per-object session footprint stabilises at roughly 8 × 5.6 = 45 MB per object regardless of stream duration, dominated by the non-conditioning frame cache; the conditioning frame and the position-encoding tensor contribute fixed offsets independent of stream length. 
+
+# B Confusion matrix and BiLSTM training curves 
+
+Figure placeholder: full 9 × 9 behaviour confusion matrix on the 4,292 -window test set, and BiLSTM training/validation loss and accuracy curves over the 8-epoch budget. (To be inserted in the final submission.) 21 C Embedding-pool re-identification pseudocode 
+
+Algorithm 2 specifies the embedding-pool re-identification loop referenced in §2.5. 
+
+Algorithm 2 Embedding-pool re-identification loop  
+
+> 1:
+
+State:  
+
+> 2:
+
+bank [i]: embedding bank for identity i — list of EMA-smoothed entries  
+
+> 3:
+
+each entry: ( timestamp , embedding ∈ R384 , behaviour_histogram ) 
+
+> 4:
+
+cadence : time between bank updates (default: 1 hour)  
+
+> 5:
+
+τlow : intra-identity similarity threshold below which we doubt the current track (default: 0.65)  
+
+> 6:
+
+τhigh : inter-identity similarity threshold above which we re-assign (default: 0.78)  
+
+> 7:
+
+α: EMA decay for bank entries (default: 0.7)  
+
+> 8: 9:
+
+for each ( frame t, identity i, crop i) emitted by SAM 3 do  
+
+> 10:
+
+ecur ← DINOv3-ViT-S( crop i) ▷ 384-D float16 embedding  
+
+> 11:
+
+sim self ← max e∈bank [i] cos( ecur , e ) 
+
+> 12:
+
+sim other ← max j̸ =i max e∈bank [j] cos( ecur , e ) 
+
+> 13:
+
+if sim self < τ low and sim other > τ high then  
+
+> 14:
+
+j⋆ ← arg max j max e∈bank [j] cos( ecur , e ) 
+
+> 15:
+
+re_initialise_SAM3_track (identity = j⋆, bbox = crop i.bbox)  
+
+> 16:
+
+log_identity_swap (frame t, claimed = i, corrected = j⋆) 
+
+> 17:
+
+i ← j⋆ 
+
+> 18:
+
+end if  
+
+> 19:
+
+if (now − bank [i]. last_update ) ≥ cadence then  
+
+> 20:
+
+enew ← α · ecur + (1 − α) · bank [i][ −1] .embedding  
+
+> 21:
+
+append ( frame t, enew , behaviour_hist_of_window ) to bank [i] 
+
+> 22:
+
+bank [i]. last_update ← now  
+
+> 23:
+
+end if  
+
+> 24:
+
+end for 
+
+## C.1 Storage derivation 
+
+Each DINOv3-ViT-S embedding has 384 float16 components, occupying 768 B per entry. At a one-entry-per-hour update cadence, one calendar year per individual generates 365 × 24 = 8760 bank entries, totalling 8760 × 768 B ≈ 6.7 MB of raw embedding data. Per-hour metadata (a 9-class behaviour-histogram float32 vector at 36 B , plus tracking-quality and bounding-box statistics totalling roughly 10 kB per hour) brings the per-individual annual footprint to approximately 
+
+6.7 MB + 8760 × 10 kB ≈ 94 MB per animal per year. A 200-animal barn therefore generates approximately 19 GB of longitudinal data per year. At a 5 Hz processing rate over a 24-hour day, the per-frame embedding traffic is 5 × 86400 × 768 B ≈ 332 MB per individual per day before EMA reduction; the EMA aggregation to one entry per hour reduces this by the cadence ratio 
+
+5 × 3600 = 18000 -fold. 
+
+# D Hyperparameter reference 
+
+Table 8 lists every hyperparameter referenced in the main text. Defaults are those reported in the cited subsection. 22 Table 8: Complete hyperparameter reference for the SAM 3 distillation, DINOv3 embedding extraction, and BiLSTM training pipelines. 
+
+Stage / hyperparameter Value Reference 
+
+SAM 3 backbone distillation 
+
+Input resolution 1024 × 1024 §2.3.1 Teacher target shape [1 , 1024 , 72 , 72] §2.3.1 Student backbone TinyViT-21M-512 §2.3.2 Lateral projection channels 256 §2.3.2 Output channels 1024 §2.3.2 GroupNorm groups min(32 , C ) §2.3.2 Loss weights (dir / cos / scale / raw) 1.0/0.5/0.3/0.1 §2.3.4 Optimizer AdamW §2.3.4 Backbone learning rate 1 × 10 −4 §2.3.4 Other-group learning rate 3 × 10 −4 §2.3.4 Weight decay 10 −4 (0 on affine) §2.3.4 LR scheduler CosineAnnealingWarmRestarts §2.3.4 Initial period T0 / multiplier Tmult 15 / 2 §2.3.4 Minimum LR ηmin 10 −6 §2.3.4 Gradient norm clip 1.0 §2.3.4 Mixed precision bfloat16 autocast §2.3.4 EMA decay 0.9995 §2.3.4 Early-stopping patience 15 epochs §2.3.4 Maximum training epochs 100 §2.3.4 Best-checkpoint epoch 75 §2.3.4 Batch size 4 frames §2.3.4 Augmentation H-flip (paired); colour jitter (image only) §2.3.4 Session-pruning interval 25 frames §2.3.7, App. A Session-pruning window 8 non-cond. frames / object §2.3.7, App. A 
+
+DINOv3 embedding extraction 
+
+Backbone DINOv3-ViT-S/16 (21.6 M, 384-D) §2.4 Input resolution 224 × 224 §2.4.2 Inference precision float16 §2.4.2 Extraction batch size 256 §2.4.2 Worker threads 36 §2.4.2 
+
+BiLSTM behaviour classifier 
+
+Sequence length 3 frames (stride 1) §2.4.3 LSTM hidden size 128 (bidirectional) §2.4.3 Classifier head Lin(256,128) →ReLU →Drop(0.3) →Lin(128,9) §2.4.3 Optimizer Adam §2.4.3 Learning rate 10 −3 §2.4.3 Weight decay 10 −5 §2.4.3 Batch size 128 §2.4.3 Loss Class-weighted CE (inv. freq.) §2.4.3 Early-stopping patience 8 epochs §2.4.3 Train / val / test split 70 / 15 / 15 (stratified) §2.4.3 
+
+Re-identification mechanism (proposed) 
+
+Sampling cadence 1 hour (configurable) §2.5, App. C Embedding precision float16 §2.5 Bank EMA decay α 0.7 (default) App. C Intra-similarity threshold τlow 0.65 (default) App. C Inter-similarity threshold τhigh 0.78 (default) App. C 
+
+23 References 
+
+Thomas Bachlechner, Bodhisattwa Prasad Majumder, Henry Hung Mao, Garrison W. Cottrell, and Julian McAuley. ReZero is all you need: fast convergence at large depth. In Proceedings of the 37th Conference on Uncertainty in Artificial Intelligence (UAI) , pages 1352–1361, 2021. Rasheed-Wahab Bello and Damilola Adesoji Olubummo. Computer vision-based precision livestock farming: an overview of the challenges and opportunities. SSRN preprint, 2024. D. Berckmans. Precision livestock farming technologies for welfare management in intensive livestock systems. Revue Scientifique et Technique (International Office of Epizootics) , 33(1): 189–196, 2014. Luca Bergamini, Stefano Pini, Alessandro Simoni, Roberto Vezzani, Simone Calderara, Richard B. D’Eath, and Robert B. Fisher. Extracting accurate long-term behavior changes from a large pig dataset. In Proceedings of the 16th International Joint Conference on Computer Vision, Imaging and Computer Graphics Theory and Applications (VISAPP) , pages 524–533. SciTePress, 2021. Keni Bernardin and Rainer Stiefelhagen. Evaluating multiple object tracking performance: the CLEAR MOT metrics. EURASIP Journal on Image and Video Processing , 2008:246309, 2008. Nicolas Carion, Laura Gustafson, Yuan-Ting Hu, Shoubhik Debnath, Ronghang Hu, Didac Suris, Chaitanya Ryali, Kalyan Vasudev Alwala, Haitham Khedr, Andrew Huang, Jie Lei, Tengyu Ma, Baishan Guo, Arpit Kalla, Markus Marks, Joseph Greer, Meng Wang, Peize Sun, Roman Rädle, Triantafyllos Afouras, Effrosyni Mavroudi, Katherine Xu, Tsung-Han Wu, Yu Zhou, Liliane Momeni, Rishi Hazra, Shuangrui Ding, Sagar Vaze, Francois Porcher, Feng Li, Siyuan Li, Aishwarya Kamath, Ho Kei Cheng, Piotr Dollár, Nikhila Ravi, Kate Saenko, Pengchuan Zhang, and Christoph Feichtenhofer. SAM 3: Segment anything with concepts. arXiv preprint arXiv:2511.16719 , 2025. Priya Goyal, Piotr Dollár, Ross Girshick, Pieter Noordhuis, Lukasz Wesolowski, Aapo Kyrola, Andrew Tulloch, Yangqing Jia, and Kaiming He. Accurate, large minibatch SGD: training ImageNet in 1 hour. arXiv preprint arXiv:1706.02677 , 2017. Sylvain Gugger, Lysandre Debut, Thomas Wolf, Philipp Schmid, Zachary Mueller, Sourab Mangrulkar, Marc Sun, and Benjamin Bossan. Accelerate: training and inference at scale made simple, efficient and adaptable. GitHub repository, https://github.com/huggingface/ accelerate , 2022. Dan Hendrycks and Kevin Gimpel. Gaussian Error Linear Units (GELUs). arXiv preprint arXiv:1606.08415 , 2016. Sepp Hochreiter and Jürgen Schmidhuber. Long short-term memory. Neural Computation , 9(8): 1735–1780, 1997. Sergey Ioffe and Christian Szegedy. Batch normalization: accelerating deep network training by reducing internal covariate shift. In Proceedings of the 32nd International Conference on Machine Learning (ICML) , PMLR 37, pages 448–456, 2015. Joonam Kim, Giryeon Kim, Rena Yoshitoshi, and Kenichi Tokuda. Real-time object detection for edge computing-based agricultural automation: a case study comparing the YOLOX and YOLOv12 architectures and their performance in potato-harvesting systems. Sensors , 25(15): 4586, 2025. doi: 10.3390/s25154586. 24 Diederik P. Kingma and Jimmy Ba. Adam: a method for stochastic optimization. In Proceedings of the 3rd International Conference on Learning Representations (ICLR) , 2015. Alexander Kirillov, Eric Mintun, Nikhila Ravi, Hanzi Mao, Chloe Rolland, Laura Gustafson, Tete Xiao, Spencer Whitehead, Alexander C. Berg, Wan-Yen Lo, Piotr Dollár, and Ross Girshick. Segment anything. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , pages 4015–4026, 2023. Tsung-Yi Lin, Piotr Dollár, Ross Girshick, Kaiming He, Bharath Hariharan, and Serge Belongie. Feature pyramid networks for object detection. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , pages 2117–2125, 2017. Ilya Loshchilov and Frank Hutter. SGDR: stochastic gradient descent with warm restarts. In 
+
+Proceedings of the 5th International Conference on Learning Representations (ICLR) , 2017. Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization. In Proceedings of the 7th International Conference on Learning Representations (ICLR) , 2019. Paulius Micikevicius, Sharan Narang, Jonah Alben, Gregory Diamos, Erich Elsen, David Garcia, Boris Ginsburg, Michael Houston, Oleksii Kuchaiev, Ganesh Venkatesh, and Hao Wu. Mixed precision training. In Proceedings of the 6th International Conference on Learning Representations (ICLR) , 2018. Microsoft. Azure Databricks documentation. Microsoft Corporation, Redmond, WA. https: //learn.microsoft.com/azure/databricks/ , 2024. Anton Milan, Laura Leal-Taixé, Ian Reid, Stefan Roth, and Konrad Schindler. MOT16: a benchmark for multi-object tracking. arXiv preprint arXiv:1603.00831 , 2016. Library: 
+
+py-motmetrics , https://github.com/cheind/py-motmetrics .Matthias Minderer, Alexey Gritsenko, and Neil Houlsby. Scaling open-vocabulary object detection. In Advances in Neural Information Processing Systems (NeurIPS) 36 , pages 72983–73007, 2023. Suresh Neethirajan and Bas Kemp. Digital livestock farming. Sensing and Bio-Sensing Research ,32:100408, 2021. NVIDIA. NVIDIA A10 Tensor Core GPU datasheet. NVIDIA Corporation, Santa Clara, CA. 
+
+https://www.nvidia.com/en-us/data-center/products/a10-gpu/ , 2021. NVIDIA. NVIDIA Jetson Orin NX modules datasheet. NVIDIA Corporation, Santa Clara, CA. https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/ jetson-orin/ , 2023. Maxime Oquab, Timothée Darcet, Théo Moutakanni, Huy Vo, Marc Szafraniec, Vasil Khalidov, Pierre Fernandez, Daniel Haziza, Francisco Massa, Alaaeldin El-Nouby, Mahmoud Assran, Nicolas Ballas, Wojciech Galuba, Russell Howes, Po-Yao Huang, Shang-Wen Li, Ishan Misra, Michael Rabbat, Vasu Sharma, Gabriel Synnaeve, Hu Xu, Hervé Jégou, Julien Mairal, Patrick Labatut, Armand Joulin, and Piotr Bojanowski. DINOv2: learning robust visual features without supervision. Transactions on Machine Learning Research (TMLR) , 2024. arXiv:2304.07193. Georgios I. Papakonstantinou, Nikolaos Voulgarakis, Georgia Terzidou, Lampros Fotos, Elisavet Giamouri, and Vasileios G. Papatsiros. Precision livestock farming technology: applications and challenges of animal welfare and climate change. Agriculture , 14(4):620, 2024. 25 Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, Andreas Köpf, Edward Yang, Zach DeVito, Martin Raison, Alykhan Tejani, Sasank Chilamkurthy, Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chintala. PyTorch: an imperative style, high-performance deep learning library. In Advances in Neural Information Processing Systems (NeurIPS) 32 , pages 8024–8035, 2019. B. T. Polyak and A. B. Juditsky. Acceleration of stochastic approximation by averaging. SIAM Journal on Control and Optimization , 30(4):838–855, 1992. Nikhila Ravi, Valentin Gabeur, Yuan-Ting Hu, Ronghang Hu, Chaitanya Ryali, Tengyu Ma, Haitham Khedr, Roman Rädle, Chloe Rolland, Laura Gustafson, Eric Mintun, Junting Pan, Kalyan Vasudev Alwala, Nicolas Carion, Chao-Yuan Wu, Ross Girshick, Piotr Dollár, and Christoph Feichtenhofer. SAM 2: Segment anything in images and videos. arXiv preprint arXiv:2408.00714 , 2024. Ergys Ristani, Francesco Solera, Roger Zou, Rita Cucchiara, and Carlo Tomasi. Performance measures and a data set for multi-target, multi-camera tracking. In Computer Vision – ECCV 2016 Workshops , volume 9914 of Lecture Notes in Computer Science , pages 17–35. Springer, 2016. Lucia Rocchi, Luisa Paolotti, Fabrizio Mazzetto, and Antonio Boggia. Precision livestock farming: an overview on the application in extensive systems. Italian Journal of Animal Science , 24(1): 859–884, 2025. Mike Schuster and Kuldip K. Paliwal. Bidirectional recurrent neural networks. IEEE Transactions on Signal Processing , 45(11):2673–2681, 1997. Oriane Siméoni, Huy V. Vo, Vasil Khalidov, Maximilian Seitzer, Federico Baldassarre, Maxime Oquab, Cijo Jose, Marc Szafraniec, Seungeun Yi, Michaël Ramamonjisoa, Francisco Massa, Daniel Haziza, Luca Wehrstedt, Jianyuan Wang, Timothée Darcet, Théo Moutakanni, Leonel Sentana, Claire Roberts, Andrea Vedaldi, Jamie Tolan, John Brandt, Camille Couprie, Julien Mairal, Hervé Jégou, Patrick Labatut, and Piotr Bojanowski. DINOv3. arXiv preprint arXiv:2508.10104 , 2025. Nitish Srivastava, Geoffrey Hinton, Alex Krizhevsky, Ilya Sutskever, and Ruslan Salakhutdinov. Dropout: a simple way to prevent neural networks from overfitting. Journal of Machine Learning Research , 15:1929–1958, 2014. Peigang Wei, Wei Sun, Shanshan Cao, and Fantao Kong. Lightweight model for beef cattle behavior recognition from quadruped-robot video in grassland pastures. Computers and Electronics in Agriculture , 236:110559, 2025. doi: 10.1016/j.compag.2025.110559. Ross Wightman. PyTorch Image Models ( timm ). GitHub repository, https://github.com/ huggingface/pytorch-image-models , 2019. Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement Delangue, Anthony Moi, Pierric Cistac, Tim Rault, Rémi Louf, Morgan Funtowicz, Joe Davison, Sam Shleifer, Patrick von Platen, Clara Ma, Yacine Jernite, Julien Plu, Canwen Xu, Teven Le Scao, Sylvain Gugger, Mariama Drame, Quentin Lhoest, and Alexander M. Rush. Transformers: state-of-the-art natural language processing. In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: System Demonstrations , pages 38–45, 2020. Kan Wu, Jinnian Zhang, Houwen Peng, Mengchen Liu, Bin Xiao, Jianlong Fu, and Lu Yuan. TinyViT: fast pretraining distillation for small vision transformers. In Computer Vision – ECCV 2022 , volume 13681 of Lecture Notes in Computer Science , pages 68–85. Springer, 2022. 26 Yuxin Wu and Kaiming He. Group normalization. In Computer Vision – ECCV 2018 , volume 11217 of Lecture Notes in Computer Science , pages 3–19. Springer, 2018. Yunyang Xiong, Bala Varadarajan, Lemeng Wu, Xiaoyu Xiang, Fanyi Xiao, Chenchen Zhu, Xiaoliang Dai, Dilin Wang, Fei Sun, Forrest Iandola, Raghuraman Krishnamoorthi, and Vikas Chandra. EfficientSAM: leveraged masked image pretraining for efficient segment anything. 
+
+arXiv preprint arXiv:2312.00863 , 2023. Haiyu Yang, Enhong Liu, Jennifer Sun, Sumit Sharma, Meike van Leerdam, Sebastien Frances-chini, Puchun Niu, and Miel Hostens. A computer vision pipeline for individual-level behavior analysis: benchmarking on the Edinburgh Pig Dataset. arXiv preprint arXiv:2509.12047 ,2025. Chengxi Zeng, Yuxuan Jiang, and Aaron Zhang. EfficientSAM3: progressive hierarchical distillation for video concept segmentation from SAM1, SAM2, and SAM3. arXiv preprint arXiv:2511.15833 , 2025. Chaoning Zhang, Dongshen Han, Yu Qiao, Jung Uk Kim, Sung-Ho Bae, Seungkyu Lee, and Choong Seon Hong. Faster segment anything: towards lightweight SAM for mobile applications. 
+
+arXiv preprint arXiv:2306.14289 , 2023. Hongyi Zhang, Yann N. Dauphin, and Tengyu Ma. Fixup initialization: residual learning without normalization. In Proceedings of the 7th International Conference on Learning Representations (ICLR) , 2019. Zhuoyang Zhang, Han Cai, and Song Han. EfficientViT-SAM: accelerated segment anything model without performance loss. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops (CVPRW) , pages 7859–7863, 2024. Chong Zhou, Xiangtai Li, Chen Change Loy, and Bo Dai. EdgeSAM: prompt-in-the-loop distillation for on-device deployment of SAM. arXiv preprint arXiv:2312.06660 , 2024. 27
