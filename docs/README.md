@@ -6,79 +6,85 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-07
-- 运行时间：2026-05-07 20:42:28 UTC
+- 最新运行日期：2026-05-08
+- 运行时间：2026-05-08 20:31:47 UTC
 - 运行状态：成功
-- 本次总论文数：19
-- 精读区：7
+- 本次总论文数：21
+- 精读区：9
 - 速读区：12
 
 ### 今日简报（AI）
-今日精选 19 篇前沿论文，深度拆解手术室 AI 视觉问答的真实性与团队协作实时建模。
-重点关注 SurgCheck 对模型“看图说话”能力的质疑，以及利用时空交互图提升手术团队动态分析的突破。
-建议普通读者从 OmniEncoder 入手，探索多模态感知在处理不完美医疗传感器数据中的巨大潜力。
-- 详情：[/202605/07/README](/202605/07/README)
+今日聚焦长视频理解与情感计算，深度解析 21 篇前沿论文，重点攻克模糊指令下的视频分析难题。
+推荐关注 AffectSeek 与 VideoRouter，它们通过智能体架构和自适应路由，显著提升了长视频在情感理解与处理效率上的表现。
+建议关注长视频生成与 3D 医疗影像预训练的跨界融合，探索无需训练的视频重建新技术。
+- 详情：[/202605/08/README](/202605/08/README)
 
 ### 精读区论文标签
-1. [SurgCheck: Do Vision-Language Models Really Look at Images in Surgical VQA?](/202605/07/2605.01911v2-surgcheck-do-vision-language-models-really-look-at-images-in-surgical-vqa)  
+1. [AffectSeek: Agentic Affective Understanding in Long Videos under Vague User Queries](/202605/08/2605.05640v1-affectseek-agentic-affective-understanding-in-long-videos-under-vague-user-queries)  
+   标签：评分：10.0/10、query:lvu
+   evidence：VQAU-Bench集成了长视频和模糊查询，用于情感理解
+2. [VideoRouter: Query-Adaptive Dual Routing for Efficient Long-Video Understanding](/202605/08/2605.05848v1-videorouter-query-adaptive-dual-routing-for-efficient-long-video-understanding)  
+   标签：评分：10.0/10、query:lvu
+   evidence：用于高效长视频理解的查询自适应双路由架构
+3. [Event-Causal RAG: A Retrieval-Augmented Generation Framework for Long Video Reasoning in Complex Scenarios](/202605/08/2605.06185v1-event-causal-rag-a-retrieval-augmented-generation-framework-for-long-video-reasoning-in-complex-scenarios)  
+   标签：评分：10.0/10、query:lvu
+   evidence：用于长视频推理的检索增强生成
+4. [MedHorizon: Towards Long-context Medical Video Understanding in the Wild](/202605/08/2605.06537v1-medhorizon-towards-long-context-medical-video-understanding-in-the-wild)  
    标签：评分：10.0/10、query:medvid
-   evidence：手术视觉问答（VQA）的诊断性基准
-2. [Actionable Real-Time Modeling of Surgical Team Dynamics via Time-Expanded Interaction Graphs](/202605/07/2605.04169v1-actionable-real-time-modeling-of-surgical-team-dynamics-via-time-expanded-interaction-graphs)  
-   标签：评分：10.0/10、query:medvid
-   evidence：通过时空交互图对手术团队动态进行实时建模
-3. [VideoNet: A Large-Scale Dataset for Domain-Specific Action Recognition](/202605/07/2605.02834v2-videonet-a-large-scale-dataset-for-domain-specific-action-recognition)  
-   标签：评分：9.0/10、query:lvu
-   evidence：用于视频中特定领域动作识别的大规模数据集
-4. [Autonomous Laparoscope Control through Unified Mechanics-Based Representation of Multimodal Intraoperative Information](/202605/07/2605.04408v1-autonomous-laparoscope-control-through-unified-mechanics-based-representation-of-multimodal-intraoperative-information)  
+   evidence：临床手术长上下文医学视频理解基准
+5. [M\textsuperscript{4}Fuse: Lightweight State-Space MoE with a Cross-Scale Gating Bridge for Brain Tumor Segmentation](/202605/08/2605.02444v1-mtextsuperscript4fuse-lightweight-state-space-moe-with-a-cross-scale-gating-bridge-for-brain-tumor-segmentation)  
    标签：评分：9.0/10、query:medvid
-   evidence：利用多模态术中信息的自主腹腔镜控制
-5. [VTAgent: Agentic Keyframe Anchoring for Evidence-Aware Video TextVQA](/202605/07/2605.04870v1-vtagent-agentic-keyframe-anchoring-for-evidence-aware-video-textvqa)  
+   evidence：使用状态空间混合器的轻量级3D脑肿瘤分割网络
+6. [EchoXFlow: A Beamspace Echocardiography Dataset for Cardiac Motion, Flow, and Function](/202605/08/2605.05447v1-echoxflow-a-beamspace-echocardiography-dataset-for-cardiac-motion-flow-and-function)  
+   标签：评分：9.0/10、query:medvid
+   evidence：用于心脏运动和血流分析的临床超声心动图数据集
+7. [Prompt-Free and Efficient SAM2 Adaptation for Biomedical Semantic Segmentation via Dual Adapters](/202605/08/2605.05979v1-prompt-free-and-efficient-sam2-adaptation-for-biomedical-semantic-segmentation-via-dual-adapters)  
+   标签：评分：9.0/10、query:medvid
+   evidence：用于生物医学语义分割的高效SAM2适配
+8. [VISD: Enhancing Video Reasoning via Structured Self-Distillation](/202605/08/2605.06094v1-visd-enhancing-video-reasoning-via-structured-self-distillation)  
    标签：评分：9.0/10、query:lvu
-   evidence：证据感知的视频文本视觉问答与推理
-6. [TT4D: A Pipeline and Dataset for Table Tennis 4D Reconstruction From Monocular Videos](/202605/07/2605.01234v1-tt4d-a-pipeline-and-dataset-for-table-tennis-4d-reconstruction-from-monocular-videos)  
-   标签：评分：8.0/10、query:lvu
-   evidence：针对140多小时乒乓球视频分析的大规模数据集和流程
-7. [Beyond Perceptual Shortcuts: Causal-Inspired Debiasing Optimization for Generalizable Video Reasoning in Lightweight MLLMs](/202605/07/2605.01324v1-beyond-perceptual-shortcuts-causal-inspired-debiasing-optimization-for-generalizable-video-reasoning-in-lightweight-mllms)  
-   标签：评分：8.0/10、query:lvu
-   evidence：轻量级多模态语言模型中的泛化视频推理
+   evidence：增强长时域接地轨迹上的视频推理
+9. [Retina-RAG: Retrieval-Augmented Vision-Language Modeling for Joint Retinal Diagnosis and Clinical Report Generation](/202605/08/2605.06173v1-retina-rag-retrieval-augmented-vision-language-modeling-for-joint-retinal-diagnosis-and-clinical-report-generation)  
+   标签：评分：9.0/10、query:medvid
+   evidence：使用视觉语言模型进行联合视网膜诊断和临床报告生成
 
 ### 速读区论文标签
-1. [Leveraging Imperfect Medical Data: A Manifold-Consistent Spatio-Temporal Network for Sensor-based Human Activity Recognition](/202605/07/2605.00913v1-leveraging-imperfect-medical-data-a-manifold-consistent-spatio-temporal-network-for-sensor-based-human-activity-recognition)  
+1. [Jointly Learning Structured Representations and Stabilized Affinity for Human Motion Segmentation](/202605/08/2605.05753v1-jointly-learning-structured-representations-and-stabilized-affinity-for-human-motion-segmentation)  
+   标签：评分：8.5/10、query:lvu
+   evidence：用于运动分割的时间深度自表达子空间聚类
+2. [3D MRI Image Pretraining via Controllable 2D Slice Navigation Task](/202605/08/2605.06487v1-3d-mri-image-pretraining-via-controllable-2d-slice-navigation-task)  
+   标签：评分：8.5/10、query:medvid
+   evidence：将3D MRI作为视频动作序列进行时空分析
+3. [FreeSpec: Training-Free Long Video Generation via Singular-Spectrum Reconstruction](/202605/08/2605.06509v1-freespec-training-free-long-video-generation-via-singular-spectrum-reconstruction)  
+   标签：评分：8.5/10、query:lvu
+   evidence：长视频生成的时序建模与一致性
+4. [CNN-based Multi-In-Multi-Out Model for Efficient Spatiotemporal Prediction](/202605/08/2605.01277v1-cnn-based-multi-in-multi-out-model-for-efficient-spatiotemporal-prediction)  
    标签：评分：8.0/10、query:medvid
-   evidence：用于医疗健康监测的时空网络
-2. [OmniEncoder: See, Hear, and Feel Continuous Motion Like Humans With One Encoder](/202605/07/2605.01506v1-omniencoder-see-hear-and-feel-continuous-motion-like-humans-with-one-encoder)  
-   标签：评分：8.0/10、query:lvu
-   evidence：用于高帧率视觉-音频对称共嵌入的统一Transformer骨干网络
-3. [IMPACT-Scribe: Interactive Temporal Action Segmentation with Boundary Scribbles and Query Planning](/202605/07/2605.01668v1-impact-scribe-interactive-temporal-action-segmentation-with-boundary-scribbles-and-query-planning)  
-   标签：评分：8.0/10、query:lvu
-   evidence：程序化活动视频的时间动作分割
-4. [Linear-Time Global Visual Modeling without Explicit Attention](/202605/07/2605.01711v1-linear-time-global-visual-modeling-without-explicit-attention)  
-   标签：评分：8.0/10、query:lvu
-   evidence：序列的线性时间全局视觉建模
-5. [Multi-Dataset Cross-Domain Knowledge Distillation for Unified Medical Image Segmentation, Classification, and Detection](/202605/07/2605.01563v1-multi-dataset-cross-domain-knowledge-distillation-for-unified-medical-image-segmentation-classification-and-detection)  
+   evidence：使用基于 CNN 的模型进行高效的时空预测
+5. [Sparse Representation Learning for Vessels](/202605/08/2605.01382v1-sparse-representation-learning-for-vessels)  
    标签：评分：7.5/10、query:medvid
-   evidence：用于医学图像分析任务的统一跨域迁移学习框架
-6. [RIHA: Report-Image Hierarchical Alignment for Radiology Report Generation](/202605/07/2604.27559v1-riha-report-image-hierarchical-alignment-for-radiology-report-generation)  
-   标签：评分：7.0/10、query:medvid
-   evidence：深度学习用于从医学图像生成放射报告
-7. [RayFormer: Modeling Inter- and Intra-Ray Similarity for NeRF-Based Video Snapshot Compressive Imaging](/202605/07/2604.27702v1-rayformer-modeling-inter--and-intra-ray-similarity-for-nerf-based-video-snapshot-compressive-imaging)  
-   标签：评分：7.0/10、query:lvu
-   evidence：用于视频SCI中射线间和射线内相似性建模的Transformer
-8. [Deep Kernel Learning for Stratifying Glaucoma Trajectories](/202605/07/2605.00708v1-deep-kernel-learning-for-stratifying-glaucoma-trajectories)  
-   标签：评分：7.0/10、query:medvid
-   evidence：从多模态数据中建模青光眼患者轨迹
-9. [Exploring Prompt Alignment with Clinical Factors in Zero-Shot Segmentation VLMs for NSCLC Tumor Segmentation](/202605/07/2605.01266v1-exploring-prompt-alignment-with-clinical-factors-in-zero-shot-segmentation-vlms-for-nsclc-tumor-segmentation)  
+   evidence：3D血管结构的空时分析
+6. [OphMAE: Bridging Volumetric and Planar Imaging with a Foundation Model for Adaptive Ophthalmological Diagnosis](/202605/08/2605.02714v1-ophmae-bridging-volumetric-and-planar-imaging-with-a-foundation-model-for-adaptive-ophthalmological-diagnosis)  
+   标签：评分：7.5/10、query:medvid
+   evidence：用于自适应眼科诊断和影像合成的多模态基础模型
+7. [DALight-3D: A Lightweight 3D U-Net for Brain Tumor Segmentation from Multi-Modal MRI](/202605/08/2605.04518v1-dalight-3d-a-lightweight-3d-u-net-for-brain-tumor-segmentation-from-multi-modal-mri)  
+   标签：评分：7.5/10、query:medvid
+   evidence：用于多模态MRI脑肿瘤分割的轻量级3D U-Net
+8. [Revisiting Uncertainty: On Evidential Learning for Partially Relevant Video Retrieval](/202605/08/2605.06083v1-revisiting-uncertainty-on-evidential-learning-for-partially-relevant-video-retrieval)  
+   标签：评分：7.5/10、query:lvu
+   evidence：未修剪视频检索中的时序建模与证据聚合
+9. [Before Forgetting, Learn to Remember: Revisiting Foundational Learning Failures in LVLM Unlearning Benchmarks](/202605/08/2605.03759v1-before-forgetting-learn-to-remember-revisiting-foundational-learning-failures-in-lvlm-unlearning-benchmarks)  
+   标签：评分：6.5/10、query:lvu
+   evidence：针对大型视觉语言模型的多图记忆基准测试
+10. [RD-ViT: Recurrent-Depth Vision Transformer for Semantic Segmentation with Reduced Data Dependence Extending the Recurrent-Depth Transformer Architecture to Dense Prediction](/202605/08/2605.03999v1-rd-vit-recurrent-depth-vision-transformer-for-semantic-segmentation-with-reduced-data-dependence-extending-the-recurrent-depth-transformer-architecture-to-dense-prediction)  
    标签：评分：6.5/10、query:medvid
-   evidence：使用视觉语言模型对非小细胞肺癌肿瘤进行零样本分割
-10. [The Perceptual Bandwidth Bottleneck in Vision-Language Models: Active Visual Reasoning via Sequential Experimental Design](/202605/07/2605.01345v2-the-perceptual-bandwidth-bottleneck-in-vision-language-models-active-visual-reasoning-via-sequential-experimental-design)  
+   evidence：用于包括3D医学输入在内的密集预测任务的循环深度视觉Transformer
+11. [Debiased Multimodal Personality Understanding through Dual Causal Intervention](/202605/08/2605.06371v1-debiased-multimodal-personality-understanding-through-dual-causal-intervention)  
    标签：评分：6.5/10、query:lvu
-   evidence：用于高分辨率视觉证据获取的主动视觉推理
-11. [Stream-R1: Reliability-Perplexity Aware Reward Distillation for Streaming Video Generation](/202605/07/2605.03849v1-stream-r1-reliability-perplexity-aware-reward-distillation-for-streaming-video-generation)  
-   标签：评分：6.5/10、query:lvu
-   evidence：通过奖励蒸馏实现流式视频生成的高效算法
-12. [REALM: An RGB and Event Aligned Latent Manifold for Cross-Modal Perception](/202605/07/2605.00271v2-realm-an-rgb-and-event-aligned-latent-manifold-for-cross-modal-perception)  
+   evidence：视频人格理解的多模态表示
+12. [REALM: An RGB and Event Aligned Latent Manifold for Cross-Modal Perception](/202605/08/2605.00271v1-realm-an-rgb-and-event-aligned-latent-manifold-for-cross-modal-perception)  
    标签：评分：6.0/10、query:lvu
-   evidence：将事件流与RGB基础模型对齐的跨模态框架
+   evidence：RGB与事件对齐潜流形的跨模态框架
 
 
 <div class="dpr-home-promo-card">

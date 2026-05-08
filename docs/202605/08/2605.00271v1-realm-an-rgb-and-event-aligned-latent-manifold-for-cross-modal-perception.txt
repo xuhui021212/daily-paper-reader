@@ -1,0 +1,576 @@
+Title: REALM: An RGB and Event Aligned Latent Manifold for Cross-Modal Perception
+
+URL Source: https://arxiv.org/pdf/2605.00271v1
+
+Published Time: Mon, 04 May 2026 00:22:44 GMT
+
+Number of Pages: 31
+
+Markdown Content:
+# REALM: An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 
+
+Vincenzo Polizzi 1, David B. Lindell 2, and Jonathan Kelly 1
+
+{vincenzo.polizzi,jonathan.kelly}@robotics.utias.utoronto.ca lindell@cs.toronto.edu 
+
+> 1
+
+University of Toronto, Robotics Institute 
+
+> 2
+
+University of Toronto, Department of Computer Science 
+
+Abstract. Event cameras provide several unique advantages over stan-dard frame-based sensors, including high temporal resolution, low la-tency, and robustness to extreme lighting. However, existing learning-based approaches for event processing are typically confined to narrow, task-specific silos and lack the ability to generalize across modalities. We address this gap with REALM, a cross-modal framework that learns an 
+
+RGB and Event Aligned Latent Manifold by projecting event repre-sentations into the pretrained latent space of RGB foundation models. Instead of task-specific training, we leverage low-rank adaptation (LoRA) to bridge the modality gap, effectively unlocking the geometric and se-mantic priors of frozen RGB backbones for asynchronous event streams. We demonstrate that REALM effectively maps events into the ViT-based foundation latent space. Our method allows us to perform downstream tasks like depth estimation and semantic segmentation by simply trans-ferring linear heads trained on the RGB teacher. Most significantly, REALM enables the direct, zero-shot application of complex, frozen image-trained decoders, such as MASt3R, to raw event data. We demon-strate state-of-the-art performance in wide-baseline feature matching, significantly outperforming specialized architectures. Code and models are available upon acceptance. 
+
+Multimedia Material: Code and models available at papers.starslab.ca/realm. 
+
+# 1 Introduction 
+
+Visual perception is fundamental to modern computer vision and intelligent sys-tems, driving progress in applications ranging from autonomous navigation and augmented reality to computational photography. The vast majority of these systems rely on conventional RGB cameras, which capture dense frames at fixed intervals. While effective in controlled environments, frame-based sensors suf-fer from fundamental limitations: motion blur, limited dynamic range, and high latency [17]. These constraints severely degrade performance in challenging con-ditions, such as high-speed motion [51] or extreme lighting environments [35].  
+
+> arXiv:2605.00271v1 [cs.CV] 30 Apr 2026 2V. Polizzi et al.
+
+Image-Event Matching and 3D Scene Reconstruction Semantic Segmentation and Depth Estimation RGB Events 
+
+MASt3R Head 
+
+REALM DUNE 
+
+REALM Seg. Head Depth Head  
+
+> Fig. 1: Overview of REALM’s cross-modal versatility. By mapping a sparse event stream into DUNE’s [49] latent space, our model enables diverse downstream applications. This includes feature matching using the frozen MASt3R [36] decoder and dense prediction tasks like semantic segmentation and depth estimation using simple linear heads.
+
+Event cameras are bio-inspired sensors that have found several applications in robotics and computer vision [25,45] and offer a paradigm shift in visual sens-ing. By asynchronously recording per-pixel brightness changes, event cameras produce sparse event streams with microsecond latency and superior dynamic range [21]. This sensing principle reduces motion blur and drastically lowers power consumption, making event data distinctively advantageous for analyzing dynamic scenes [41, 57]. Despite these advantages, learning task-agnostic feature representations from event data remains an open challenge. Event streams are sparse, asynchronous, and structurally distinct from images, preventing the direct application of stan-dard convolutional or transformer architectures. Furthermore, unlike the RGB domain—which benefits from large-scale datasets—labelled event datasets are scarce and small in scale. Consequently, existing event-based models are typi-cally trained from scratch for narrow, specific tasks (e.g., for optical flow com-putation [52] or classification [13] only), failing to generalize across different downstream applications. In the RGB domain, the landscape of computer vision techniques has been transformed by large-scale vision transformers (ViTs). Foundation models such as the DINO family [8,43,53] or DUNE [49] have demonstrated that pretraining on massive image collections yields universal encoders that transfer seamlessly to diverse tasks. However, the event vision community has largely been excluded from this revolution due to the significant modality gap between intensity-based frames and temporally-driven event streams. To bridge this gap, we propose REALM, a cross-modal visual encoder that unifies RGB and event representations within a shared latent space (see Fig. 1). Building upon the DUNE [49] architecture, REALM introduces a lightweight, modality-specific input embedder and leverages Low-Rank Adaptation (LoRA) [31] to align event features with the semantically rich and geometrically consis-tent RGB manifold. Crucially, this approach allows us to align the modalities An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 3
+
+without retraining the massive backbone, preserving the rich semantic and geo-metric knowledge learned from millions of RGB images. This design enables both intra-modal (event–event) and cross-modal (RGB–event) feature matching, fa-cilitating modality-invariant transfer learning where features remain spatially and semantically consistent regardless of the input sensor. We validate REALM across multiple datasets on three distinct downstream tasks: monocular depth estimation, semantic segmentation, and wide-baseline feature matching. For the latter, we specifically evaluate cross-modal (RGB–event) and intra-modal (event–event) correspondences, demonstrating that our aligned manifold allows a frozen, image-trained matching head to function across dis-parate sensors without retraining. Our evaluation focuses on two core hypothe-ses: first, that a shared latent space allows event-based data to leverage knowl-edge from large-scale RGB foundation models. Second, this alignment is suffi-ciently precise to enable the direct, zero-shot application of frozen image-trained decoders to asynchronous event streams. While we demonstrate that the aligned latent space is rich enough to support dense prediction tasks like depth and segmentation using only simple linear heads, our most significant results lie in wide-baseline feature matching. Here, REALM enables the direct use of frozen, RGB-trained geometric heads, such as MASt3R, to perform cross-modal and intra-modal matching. In this challenging domain, our method not only achieves state-of-the-art performance but does so by outperforming specialized event-only baselines. We make the following contributions. 
+
+– We introduce REALM, a unified encoder that aligns event and RGB modal-ities in a shared, semantically rich latent space. 
+
+– We demonstrate that our alignment is sufficiently precise to enable the direct, zero-shot application of frozen, image-trained geometric decoders to event streams, establishing a new state-of-the-art in event-based feature matching and pose estimation. 
+
+– We show that lightweight LoRA [31] fine-tuning bridges the modality gap without catastrophic forgetting. The resulting frozen encoder generalizes to diverse tasks, from dense depth estimation to semantic segmentation, pro-viding a data-efficient solution to the scarcity of annotated event datasets. 
+
+– Code and models will be released upon acceptance. 
+
+# 2 Related Work 
+
+We first review the literature on the core computer vision tasks our method ad-dresses: feature matching, depth estimation, and semantic segmentation, high-lighting how event-based data has traditionally been addressed in each domain. 
+
+2.1 Event Representation 
+
+Event cameras asynchronously record changes in scene brightness, producing a sparse stream of events that depends on relative motion between the camera 4 V. Polizzi et al. 
+
+and the scene [25, 45]. Unlike conventional frames, event data encode temporal contrast rather than absolute intensity, which poses challenges for standard deep networks that assume dense, grid-structured inputs. To bridge this modality gap, several representations have been proposed to convert event streams into tensor formats suitable for deep networks [19]. These include voxel grids, which bin events temporally [67], Tencode [32], which learns hierarchical representations and more recently ERGO [69], which optimizes event ordering for detection tasks. 
+
+2.2 Semantic Segmentation 
+
+Semantic segmentation assigns a class label to each pixel in the camera frame, providing dense scene understanding essential for robotics and autonomous driv-ing. In the RGB domain, while early methods relied on CNN-based encoder-decoders like SegNet [2], the field has largely shifted toward Transformer-based architectures that leverage large-scale pretraining for robust pixel-level classifi-cation [10, 34, 61]. An in-depth review of visual segmentation methods is in [56]. For event cameras, segmentation is complicated by the sparsity and lack of texture in the data. Early works [1] addressed this by adapting CNN architec-tures and releasing the first event-segmentation benchmarks. Similarly, ESS [55] proposed a recurrent encoder-decoder to maintain temporal consistency in pre-dictions. More recently, ESEG [65] tackles the sparsity problem by introducing explicit edge-semantic supervision to locate reliable cues. Alternative approaches leverage RGB data to guide learning: EvDistill [59] uses a teacher–student frame-work to transfer knowledge from frames to events, while HALSIE [6] fuses both modalities to extract rich spatiotemporal features. However, these methods often require training complex decoders or distilla-tion pipelines from scratch. In contrast, REALM demonstrates that by align-ing event representations with the frozen DUNE latent space, we achieve dense semantic maps using only a simple linear head, inheriting strong scene under-standing capabilities without the need for extensive task-specific supervision. 
+
+2.3 Depth Estimation 
+
+Depth estimation predicts per-pixel distances, a critical capability for navigation, mapping, and 3D reconstruction. For RGB images, Eigen et al. [15] originally for-mulated depth estimation as a continuous regression task using CNNs. However, recent state-of-the-art approaches have recast depth estimation as a classifica-tion problem (predicting depth bins), leveraging the global context of Transform-ers [5, 64]. Foundation models like DINOv2 [43], MASt3R [36], VGGT [58] and DepthAnything [62] have further demonstrated that general-purpose features can yield high-quality depth maps without specialized depth architectures. For event data, monocular depth estimation is complicated by sparsity and motion dependence, as static regions generate no events and create "blind spots" that necessitate temporal aggregation. Previous works have addressed these chal-lenges by employing recurrent U-Nets to aggregate temporal information or by An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 5
+
+fusing sparse events with frames to densify the resulting predictions [20,29]. Fur-thermore, self-supervised methods have emerged to bypass the need for ground-truth depth labels by instead leveraging cross-modal consistency between syn-chronized event streams and intensity frames [67, 68]. A more comprehensive review on depth estimation with event cameras is given by [24]. Unlike these approaches, which often rely on complex recurrent architectures to "fill in" missing data, we adopt a classification-based paradigm and demon-strate that aligning an event encoder with the geometrically rich DUNE [49] latent space is sufficient to produce dense depth maps, effectively bypassing the need for specialized event-depth architectures. 
+
+2.4 Feature Matching and Localization 
+
+Feature matching under wide-baseline and cross-modal conditions is a corner-stone for tasks such as visual odometry, SLAM, and 3D reconstruction. The literature on feature extraction and matching for visual cameras is ex-tensive, ranging from classical hand-crafted descriptors [4, 37, 39, 48] to modern learning-based methods [14, 50, 63]. More recent approaches leverage geometric priors to improve feature stability and robustness across viewpoints [36, 58, 60]. In contrast, event-based feature matching remains challenging because the absence of absolute intensity cues makes constructing repeatable descriptors dif-ficult. Existing methods typically rely on spatio-temporal correlations or event accumulation strategies to detect and match features [27,41]. Recent work [32] in-troduced a novel event representation, Tencode, which learns feature correspon-dences by leveraging matches from a pre-trained network such as SuperPoint [14]. Other methods, such as MINIMA [47], develop modality-invariant matching by utilizing a generative data engine to synthesize massive multimodal datasets from RGB pairs, enabling cross-modal generalization through fine-tuning. Our approach differs from these paradigms by leveraging the shared latent space of a foundation model to incorporate 3D geometric priors. REALM enables the zero-shot use of frozen image-trained heads [36] for matching across both modalities and viewpoint changes. This formulation provides a unified geometric embedding space that facilitates seamless cross-modal correspondence. 
+
+2.5 Cross-Modal Knowledge Transfer 
+
+Recent successes in event-to-frame reconstruction, such as E2VID [46], have demonstrated that event streams contain sufficient information to recover high-fidelity photometric representations of a scene. While methods like EvDistill [59] leverage this by mapping events into the image domain before utilizing large-scale visual models, this intermediate reconstruction step often introduces computa-tional overhead and potential artifacts. We therefore posit that it is possible to bypass image reconstruction entirely by directly mapping events into the latent representation space of large, pretrained visual encoders. 6 V. Polizzi et al. 
+
+# 3 Methodology 
+
+In this section, we present our approach for training and refining REALM. We first provide background on the DUNE [49] encoder, followed by a formal prob-lem definition for cross-modal alignment. Finally, we detail our architectural modification strategy, focusing on the adaptation of a frozen foundation model for asynchronous event data. 
+
+3.1 Background: DUNE 
+
+Our work builds upon the DUNE [49] framework, a universal vision transformer (ViT) designed to unify diverse 2D and 3D perception tasks into a single encoder through multi-teacher distillation. DUNE [49] is trained using a set of N heterogeneous teacher models T =
+
+{T 1, . . . , TN }. Each teacher Ti is parameterized by its own encoder ti(x), which maps an input image x into a set of feature vectors Z ∈ R(HW +1) ×d. These features include HW patch tokens and an optional global CLS token. The goal of distillation is to learn a student encoder f (x) such that its representations, after a teacher-specific projection, match those of the teachers. For each teacher 
+
+Ti, DUNE [49] employs a teacher-specific transformer projector hi to map the student’s features into the teacher’s latent space. DUNE [49] distills from three distinct teachers: DINOv2 [43], MASt3R [36], and Multi-HMR [3]. After the student encoder f is trained, the task-specific de-coders (or heads) are fine-tuned independently while keeping the encoder frozen: 
+
+ytask = Decoder task (f (x)) . This decoupled training ensures that the student en-coder retains a "universal" latent manifold suitable for diverse downstream ap-plications without needing to store or compute teacher-specific projectors during inference. In REALM, we leverage the open-source MASt3R [36] head, which was re-fined on DUNE’s universal features. We utilize this head directly in REALM without any event-based refinement, providing a rigorous zero-shot benchmark for our cross-modal alignment strategy. 
+
+3.2 Problem Definition 
+
+Our primary objective is to learn a mapping f : E → Z E that projects an event representation e ∈ E into a latent feature vector ZE ∈ Z E . We optimize 
+
+f to minimize the distance between ZE and ZI , where ZI represents the latent manifold of the DUNE [49] foundation model. As described in Sec. 2, for a given image x, the corresponding reference feature is defined as ZI = fDUNE (x), where 
+
+ZI ∈ R(HW +1) ×d.To select the optimal input format for e, we evaluated various representations (see Sec. 2) and found that the choice of input has a negligible effect on final alignment quality (see Sec. 4). Consequently, we adopt the voxel grid due to its wide adoption in event-based learning, compatibility with established base-lines, and its suitability for the convolutional embedder design we employ, see Appendix Sec. E. An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 7Embedding Encoder 
+
+Ours DUNE 
+
+Encoder 
+
+LoRA 
+
+MAE Mask Space Mask Events Embedding Events Repr. 
+
+Fig. 2: Overview of the cross-modal distillation framework. Event representa-tions undergo masked autoencoders (MAE)-style patch dropout before being processed by a trainable embedding layer and a LoRA-adapted student encoder. The network is trained to match the latent representation of the frozen DUNE teacher. A progressive spatial mask is applied to the distillation loss ( L) to focus the alignment on regions with active event data, preventing background overfitting. Teacher Student (Ours) 
+
+Input Output a) b) Input Output UMAP c) 
+
+Fig. 3: Qualitative comparison of DUNE and REALM (Ours) feature man-ifolds. The spatial feature maps, a) and b) visualized via PCA, show that REALM implicitly learns to segment objects and identify semantic structures similarly to the RGB network. In b), the masking strategy avoids the representation of the static back-ground visible to the camera but invisible to the events. In c), the UMAP plot further confirms this by showing consistent clusters where event features are close to the RGB features, enabling zero-shot transfer of downstream tasks. 
+
+3.3 Training and Architecture 
+
+Standard vision transformer (ViT) architectures, including DUNE, are designed to process RGB images through a patchified embedding stage. Formally, the DUNE [49] encoder can be decomposed as fDUNE = fback ◦ femb , where femb :
+
+RH×W ×C → RM ×d projects raw pixels into M patch tokens, and fback : RM ×d →ZI represents the transformer backbone. 
+
+Event-specific embedding. Because our voxel grid representation contains five temporal bins and distinct structural properties compared to RGB frames, the original femb is incompatible. We substitute the image-based patch module with 
+
+f E
+
+> emb
+
+, a lightweight convolutional stem that maps the voxel grid directly into a set of M × d tokens. Our goal is not to force the intermediate embeddings to 8 V. Polizzi et al. 
+
+match ( femb (x) = f E
+
+> emb
+
+(e)), but rather to ensure that the final latent outputs are aligned within the foundation manifold: fback (femb (x)) ≈ f E
+
+> back
+
+(f E
+
+> emb
+
+(e)) .
+
+Low-Rank Adaptation (LoRA). To adapt the backbone fback for the event modal-ity while preserving its pretrained semantic and geometric knowledge, we em-ploy Low-Rank Adaptation (LoRA) [31]. We keep the original weights W ∈ Rd×k
+
+frozen and model the necessary cross-modal refinement as a low-rank decomposi-tion: W ′ = W + AB , where A ∈ Rd×r and B ∈ Rr×k are trainable matrices with rank r ≪ min( d, k ). This allows REALM to bridge the modality gap without the risk of catastrophic forgetting. To robustly distill knowledge from the DUNE [49] encoder, we propose a dual-masking training strategy described as follows (see Fig. 2): 
+
+Progressive spatial distillation. To prevent the student model from overfitting to static backgrounds (see Fig. 3b), we constrain the distillation loss using a spatially-aware mask M derived from the input event activity. Let Ei ∈ {0, 1}M be a binary occupancy grid for the voxel grid input 
+
+ei, where Ej = 1 if the j-th voxel contains at least one event, and Ej = 0 
+
+otherwise. We define the active distillation mask for ei at training step s as: 
+
+Mi(s) = Dilation (Ei, σ (s)) , where Dilation (·, σ ) denotes a morphological dila-tion operation with a structuring element of radius σ. We introduce a spatial curriculum by defining σ(s) as a monotonically increasing function of the train-ing progress: σ(s) = min ( σmax , ⌊α · s⌋), where α is the expansion rate and σmax 
+
+is the radius required to cover the entire spatial grid. By gradually expanding the penalization region M, we force the model to move beyond trivial edge-matching and learn a holistic scene understanding by leveraging the teacher’s static priors in regions initially devoid of events. 
+
+Input patch masking. To encourage the network to build compressed global repre-sentations and discourage reliance on local interpolation, we employ a stochastic patch dropout strategy inspired by Masked Autoencoders (MAE) [26]. Follow-ing an initial warmup phase, we uniformly mask a fixed percentage ρ of the input event tokens XE = f E
+
+> emb
+
+(e) produced by the embedder. By denying the backbone access to the full spatial grid, we force the LoRA-adapted layers to reconstruct dense, cross-modal features from highly degraded inputs. This pre-vents the model from relying on local interpolation and ensures the learned latent space ZE captures the geometric and semantic priors of the DUNE teacher. 
+
+Loss function. To ensure the feature alignment, we write the total loss Ltotal =PBi=1 Li, where Li is the loss for the voxel grid i in a batch of size B defined as a weighted combination of ℓ1 distance, cosine similarity and MSE losses between the DUNE [49] embeddings of the image and event modalities: 
+
+Li = 1
+
+P MijMX
+
+> j=1
+
+Mij (s) ·
+
+h
+
+λMSE Lj 
+
+> MSE
+
++ λcos Lj 
+
+> cos
+
++ λL1 Lj
+
+> L1
+
+i
+
+(1) An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 9
+
+where λMSE , λcos , and λL1 control the relative contributions of each term. This objective enforces both per-dimension alignment and global directional consis-tency in the shared latent space, promoting robust cross-modal generalization as shown by the uniform manifold approximation and projection (UMAP) [40] in Fig. 3 c). We show the effect of the proposed masking strategy in Appendix Sec. A. 
+
+# 4 Results 
+
+In this section, we present a comprehensive experimental evaluation of REALM across three primary downstream tasks: monocular depth estimation, semantic segmentation, and wide-baseline feature matching. To train the event-specific embedder and the LoRA adapters, we utilize a diverse collection of synchronized event-RGB datasets. We strategically selected DSEC [22,23,35], EventScape [20], EventPointMesh [30], EDS [28], and M3ED [9] to provide a comprehensive overview of diverse geometric and semantic struc-tures, covering a wide range of scenarios. For further details on the datasets and our data preparation, refer to the Appendix Sec. B. To choose the event representation for our model, we conducted a preliminary evaluation on 5% of our training data comparing voxel grids [67], Tencode [32], and ERGO-12 [69]. All three yielded nearly identical alignment losses (0.0687, 0.0698, and 0.0698, respectively), confirming that the choice of input represen-tation has a negligible effect on cross-modal alignment quality. All input data is resized and cropped to a voxel-grid with a resolution of 448 ×448 with five temporal bins. We employ LoRA to the attention, projection, and feed-forward layers with a rank of 32 and a learning rate of 1×10 −4 following a cosine decay schedule. For each task, we compare REALM against state-of-the-art architectures specifically engineered for event data. We also report the performance of DUNE [49] on synchronized RGB frames to provide an empirical upper bound for the shared architecture. A key strength of our framework is the minimal overhead required for down-stream task adaptation: With the segmentation and monocular depth tasks, we demonstrate that REALM’s latent space is semantically and geometrically rich enough to support these tasks using only simple linear heads. Notably, these heads are not trained on the events but with RGB images on the frozen DUNE [49] encoder. See the Appendix Sec. E for further details on the models. In the same way, for feature matching, we directly utilize the frozen MASt3R [36] head that has been trained on a large dataset of 1.7M images. This requires no retraining or fine-tuning on event data, serving as a strong verification of our cross-modal alignment strategy. 
+
+4.1 Depth Estimation 
+
+We evaluate the dense geometric reasoning capabilities of REALM by perform-ing monocular depth estimation. Following recent trends in foundation model 10 V. Polizzi et al. Avg. Absolute Depth Err. [m] 
+
+Dataset Depth DUNE e2depth Zhu et al. EMoDepth REALM Cut-offs [49] [29] [67] [68] (Ours) outdoor day 1 10 m 1.16 1.85 2.72 1.40 1.85 20 m 1.76 2.64 3.84 2.07 2.42 30 m 2.12 3.13 4.40 2.65 2.76 outdoor night 1 10 m 2.13 3.38 3.13 2.18 2.08 
+
+20 m 3.10 3.82 4.02 2.70 2.51 
+
+30 m 3.51 4.46 4.89 3.64 3.18 
+
+outdoor night 2 10 m 2.45 1.67 2.19 2.06 2.00 20 m 3.46 2.63 3.15 2.76 2.31 
+
+30 m 3.86 3.58 3.92 3.42 2.98 
+
+outdoor night 3 10 m 2.33 1.42 2.86 2.09 1.79 20 m 3.37 2.33 4.46 2.82 2.15 
+
+30 m 3.79 3.18 5.05 3.52 2.97 Table 1: Quantitative results on the MVSEC [66] dataset. To train the linear prediction head, data from DENSE [29] and MVSEC [66], following the training pro-tocol of e2depth [29]. We report results for DUNE [49] with frame-based inputs as a reference, and for our event-only method, REALM. Comparisons are provided against supervised approaches [29], as well as unsupervised methods [67, 68]. Ours EMoDepth Event Frame RGB Image GT 
+
+Fig. 4: Qualitative depth estimation results on the MVSEC [66] dataset. 
+
+From left to right: RGB frame (only for visualization purposes), event frame, ground truth depth, and REALM and EMoDepth [68] predictions. Despite the sparsity of the event stream, REALM preserves the scene structure just using a single linear projector. 
+
+evaluation [43], we aim to demonstrate that a frozen REALM encoder, paired with a minimal prediction head, can surpass specialized event-based depth ar-chitectures. 
+
+Experimental Setup. We benchmark our method on the MVSEC [66] dataset us-ing the evaluation protocol established by e2depth [29]. We treat depth estima-tion as a classification task by discretizing depth values into bins and predicting per-pixel probability distributions. To verify the robustness of our latent space, we first train for 100 epochs a linear head on top of the frozen DUNE [49] back-bone using RGB images, using real and synthetic data from MVSEC [66] and DENSE [29], respectively. Then we use the trained head directly on REALM An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 11                           
+
+> Metric DUNE ESS EV-SegNet HALSIE ESEG REALM
+> [49] [55] [1] [12] [65] (Ours)
+> Acc. [%] ↑93.33 89.25 88.61 89.01 91.47 89.23
+> mIoU [%] ↑67.64 51.57 51.76 52.43 57.55 55.37
+> Table 2: Quantitative results on the DSEC dataset. We compare REALM against event-based baselines. We use a linear segmentation head to perform the seg-mentation task. DUNE is included to show the upper-bound performance of the shared architecture on intensity frames.
+
+event features with no finetuning. Further details on the training are in the Appendix Sec. C. To accommodate the 260 × 346 resolution of the MVSEC [66] dataset while maintaining the 448 × 448 input size of the foundation model, we symmetrically pad the original dataset data. We then remove the padding from the original prediction. To ensure temporal stability, we implement a memory hold mecha-nism. That is, in time windows where no event activity is recorded, the model persists the depth estimation from the most recent valid frame, preventing noisy outputs during brief sensor inactivity. 
+
+Quantitative Results. The results are summarized in Tab. 1 and Fig. 4. REALM achieves state-of-the-art performance across nearly all nighttime sequences and various cut-off distances. In the outdoor day 1 sequence, our method remains highly competitive, achieving an Average Absolute Depth Error of 1.85 m at a 10 m cut-off, which matches the supervised e2depth [29] baseline. Notably, our approach demonstrates superior robustness in challenging outdoor night scenar-ios where traditional frame-based sensors degrade. For instance, in the outdoor night 1 sequence at a 20m cut-off, REALM achieves an error of 2.51 m, signif-icantly outperforming both the unsupervised EMoDepth [68] (2.70m) and Zhu et al. [67] (4.02m). Most importantly, in these low-illumination environments, REALM consistently outperforms its own teacher, DUNE [49], which relies on standard RGB frames. This highlights the inherent advantages of event-based sensing in high-dynamic-range conditions and confirms that our aligned manifold successfully preserves these modality-specific strengths. 
+
+4.2 Semantic Segmentation 
+
+To evaluate the semantic qualities of the aligned latent space, we benchmark REALM on the task of semantic segmentation. This experiment serves to demon-strate that the high-level scene understanding present in RGB foundation models can be seamlessly transferred to the event modality. 
+
+Experimental Setup. We utilize the DSEC [22] dataset, which provides semantic labels across eleven distinct classes. Following the evaluation protocol of ESS [55], we compute standard confusion-matrix-based metrics, including Pixel Accuracy 12 V. Polizzi et al. Ours ESS Event Frame RGB Image GT 
+
+Fig. 5: Qualitative semantic segmentation on the DSEC [22] driving dataset. 
+
+REALM effectively identifies key classes such as road, vehicles, and sidewalk. Our model achieves these results using a frozen backbone and a single linear head, demonstrating the semantic richness of the aligned latent space. Ours MINIMA Image-Image Event-Event Image-Event   
+
+> 14.9%
+> 4.8% AUC@5° 88.5%
+> AUC@5° 87.6% 1.5%
+> 0.3%
+
+Fig. 6: Cross-modal and intra-modal feature matching. We report the AUC at 5◦ per scene and visualize the correspondence estimation results for inliers and outliers in green and orange respectively. REALM uses the pre-trained MASt3R [36] decoder in a zero-shot manner without any further fine-tuning on event data. For comparison, we also report the matching performance of MINIMA [47]. 
+
+and Mean Intersection over Union (mIoU). To highlight the off-the-shelf utility of our features, we employ a minimal single-layer linear head. The head is trained using the frozen DUNE [49] encoder on RGB images and subsequently used as is, with no further finetuning, on REALM event embeddings. To accommodate the 480 × 640 resolution of the DSEC [22] dataset while maintaining the 448 × 448 input size of the foundation model, we implement an overlapping tiling strategy. During inference, we extract four 448 × 448 tiles from the corners of the input grid. The final per-pixel prediction is determined by accumulating the raw model outputs across tiles and normalizing the result by a count mask to average overlapping regions. To ensure temporal stability, we implement a memory hold mechanism as described in Sec. 4.1. 
+
+Quantitative Results. The results are summarized in Tab. 2 and Fig. 5. REALM achieves a Pixel Accuracy of 89.23% and an mIoU of 55.37%. These results are highly competitive with specialized architectures such as ESS [55] (51.57% An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 13 
+
+Dataset Metric LLAK RATE EventPoint SuperEvent REALM AUC [11] [33] [32] [7] (Ours) ECD 
+
+@5◦ ↑ 0.7 3.3 1.6 22.7 26.2 
+
+@10 ◦ ↑ 1.4 8.4 3.0 35.8 46.8 
+
+@20 ◦ ↑ 2.1 18.0 5.4 46.7 63.3 
+
+EDS 
+
+@5◦ ↑ 0.5 2.1 1.6 15.2 18.3 
+
+@10 ◦ ↑ 0.7 5.1 2.8 26.4 34.1 
+
+@20 ◦ ↑ 1.0 10.3 5.2 40.1 55.3 Table 3: Quantitative results on the ECD [42] and EDS [28] datasets. We report the Area Under Curve (AUC) in % at different thresholds. 
+
+Modality Metric MINIMA SuperEvent REALM 
+
+[47] [7] (Ours) Event-Event AUC@5 ° ↑ 0.390 0.057 0.477 
+
+AUC@10 ° ↑ 0.539 0.114 0.649 
+
+AUC@20 ° ↑ 0.680 0.196 0.791 
+
+Med. Err ( °) ↓ 3.93 46.33 2.75 
+
+S. Rate (%) ↑ 100.0 99.9 99.7 Image-Event AUC@5 ° ↑ 0.238 - 0.260 
+
+AUC@10 ° ↑ 0.394 - 0.463 
+
+AUC@20 ° ↑ 0.551 - 0.646 
+
+Med. Err ( °) ↓ 6.46 - 5.45 
+
+S. Rate (%) ↑ 100.0 - 99.6 
+
+Table 4: Pose estimation performance grouped by sensing modality. Higher AUC and success rate are better, while a lower median angular error is better. The experiments are conducted on the VECtor [18] dataset. 
+
+mIoU) and Ev-SegNet [1] (51.76% mIoU). While the edge-supervised ESEG [65] maintains a slight lead in mIoU (57.55%), REALM attains comparable perfor-mance without requiring specialized edge-guidance modules or complex recurrent decoders. We report a detailed per-class IoU and the corresponding confusion matrix in the Appendix Sec. D. 
+
+4.3 Feature Matching 
+
+We evaluate the quality of the learned latent space by benchmarking REALM on wide-baseline feature matching and relative pose estimation. Unlike prior works that rely on task-specific descriptors, we equip REALM with the MASt3R [36] head. Crucially, this geometric head remains frozen and was trained exclusively on RGB data. This setup serves as the ultimate test for our cross-modal align-ment: if REALM correctly maps events into the DUNE manifold, the MASt3R [36] head should treat event features as native RGB representations. 
+
+Experimental Setup. We evaluate on the ECD [42], EDS [28], and VECtor [18] datasets. Following the protocol in [32], we report the Area Under Curve (AUC) 14 V. Polizzi et al. 
+
+for relative rotation error at thresholds of 5 °, 10 °, and 20 °, as well as the median angular error. We compare against specialized event-based baselines, including LLAK [11], RATE [33], EventPoint [32], SuperEvent [7], and the recent cross-modal MINIMA [47]. 
+
+Quantitative Results. As summarized in Tab. 3 and Fig. 6, REALM outper-forms all existing methods by a significant margin. On the ECD [42] dataset, our method achieves an AUC@20 ° of 63.32%, representing a substantial improve-ment over the previous state-of-the-art SuperEvent [7] (46.7%). These results demonstrate that leveraging the geometric priors of an RGB foundation model is more effective than training specialized event descriptors from scratch. 
+
+Wide-Baseline Robustness. To further probe the robustness of our alignment, we conduct a wide-viewpoint evaluation following the protocol in [44]. We match a query event stream against targets at increasing angular distances. Tab. 4 shows that while MINIMA [47] degrades as the viewpoint change increases, REALM is capable of providing a more accurate feature matching, leading to lower ori-entation errors. REALM, leveraging the MASt3R [36] decoder, which provides strong geometric cues, outperforms the other methods in both event-event and image-event matching tasks. We refer the reader to Appendix Sec. D for further analysis. Notably, REALM achieves these results in a zero-shot manner, whereas MIN-IMA [47] requires a specialized generative data engine and fine-tuning to reach generalization. This highlights that our joint LoRA-based optimization effec-tively "unlocks" universal geometric reasoning for the event modality. We report in the Appendix a breakdown of per-scene evaluation Sec. D. 
+
+# 5 Conclusion 
+
+We have presented REALM, a cross-modal visual encoder that leverages large-scale RGB pretraining to achieve state-of-the-art performance in event-based vision. By employing a cross-modality alignment strategy, REALM effectively bridges the gap between asynchronous event streams and intensity frames, en-abling the direct use of foundation models originally designed for image data. Our results demonstrate that REALM successfully inherits the deep geometric and semantic priors of the DUNE [49] teacher. Most notably, this alignment en-ables the direct, zero-shot application of complex image-trained decoders, such as MASt3R [36], to raw event data—outperforming specialized architectures. Despite these gains, certain limitations remain. Our current convolutional embedder is designed for fixed-size voxel grids, which may limit flexibility across varying sensor resolutions. A promising future direction involves incorporating recurrent or graph-based modules into the embedder to more explicitly model the long-term temporal dynamics of the asynchronous stream. Finally, REALM, by demonstrating that event data can inhabit the same manifold as RGB foundation models, provides a data-efficient solution to the An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 15 
+
+scarcity of annotated event datasets. This alignment unlocks a vast ecosystem of established RGB-based techniques for the event domain, from calibration-free end-to-end SLAM to advanced cross-modal localization that were previously inaccessible. REALM thus opens new avenues for robust, high-speed intelligent systems that can perceive the world with the semantic richness of images and the temporal precision of events. 
+
+# References 
+
+1. Alonso, I., Murillo, A.C.: Ev-segnet: Semantic segmentation for event-based cam-eras. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pat-tern Recognition Workshops. pp. 0–0 (2019) 4, 11, 13 2. Badrinarayanan, V., Kendall, A., Cipolla, R.: Segnet: A deep convolutional encoder-decoder architecture for image segmentation. IEEE Trans. Pattern Anal. Mach. Intell. 39 (12), 2481–2495 (2017) 4 3. Baradel, F., Armando, M., Galaaoui, S., Brégier, R., Weinzaepfel, P., Rogez, G., Lucas, T.: Multi-hmr: Multi-person whole-body human mesh recovery in a single shot. In: European Conference on Computer Vision. pp. 202–218. Springer (2024) 64. Bay, H., Ess, A., Tuytelaars, T., Van Gool, L.: Speeded-up robust features (surf). Computer vision and image understanding 110 (3), 346–359 (2008) 5 5. Bhat, S.F., Alhashim, I., Wonka, P.: Adabins: Depth estimation using adaptive bins. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 4009–4018 (2021) 4 6. Biswas, S.D., Kosta, A., Liyanagedera, C.M., Apolinario, M.P.E., Roy, K.: Halsie: Hybrid approach to learning segmentation by simultaneously exploiting image and event modalities. In: WACV. pp. 5952–5962 (2024) 4 7. Burkhardt, Y., Schaefer, S., Leutenegger, S.: Superevent: Cross-modal learning of event-based keypoint detection for slam. In: Int. Conf. Comput. Vis. (ICCV). pp. 8918–8928 (October 2025) 13, 14, 11 8. Caron, M., Touvron, H., Misra, I., Jégou, H., Mairal, J., Bojanowski, P., Joulin, A.: Emerging properties in self-supervised vision transformers. In: Int. Conf. Comput. Vis. (ICCV) (2021) 2 9. Chaney, K., Cladera, F., Wang, Z., Bisulco, A., Hsieh, M.A., Korpela, C., Ku-mar, V., Taylor, C.J., Daniilidis, K.: M3ed: Multi-robot, multi-sensor, multi-environment event dataset. In: Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR). pp. 4015–4022 (June 2023) 9, 4 10. Cheng, B., Misra, I., Schwing, A.G., Kirillov, A., Girdhar, R.: Masked-attention mask transformer for universal image segmentation. In: Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR). pp. 1290–1299 (2022) 4 11. Chiberre, P., Perot, E., Sironi, A., Lepetit, V.: Long-lived accurate keypoints in event streams. arXiv e-prints (2022) 13, 14 12. Das Biswas, S., Kosta, A., Liyanagedera, C., Apolinario, M., Roy, K.: Halsie: Hy-brid approach to learning segmentation by simultaneously exploiting image and event modalities. In: IEEE Winter Conf. Appl. Comput. Vis. (WACV). pp. 5964– 5974 (2024) 11 13. Deng, Y., Chen, H., Liu, H., Li, Y.: A voxel graph cnn for object classification with event cameras. In: Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR). pp. 1172–1181 (2022) 2 16 V. Polizzi et al. 14. DeTone, D., Malisiewicz, T., Rabinovich, A.: Superpoint: Self-supervised inter-est point detection and description. In: IEEE Conf. Comput. Vis. Pattern Recog. Workshops (CVPRW). pp. 224–236 (2018) 5 15. Eigen, D., Puhrsch, C., Fergus, R.: Depth map prediction from a single image using a multi-scale deep network. Advances in neural information processing systems 27 
+
+(2014) 4 16. Eigen, D., Puhrsch, C., Fergus, R.: Depth map prediction from a single image using a multi-scale deep network. Adv. Neural Inf. Process. Syst. 27 (2014) 6 17. Gallego, G., Delbrück, T., Orchard, G., Bartolozzi, C., Taba, B., Censi, A., Leutenegger, S., Davison, A.J., Conradt, J., Daniilidis, K., Scaramuzza, D.: Event-based vision: A survey. IEEE Trans. Pattern Anal. Mach. Intell. (2022) 1 18. Gao, L., Liang, Y., Yang, J., Wu, S., Wang, C., Chen, J., Kneip, L.: Vector: A versatile event-centric benchmark for multi-sensor slam. IEEE Robot. Autom. Lett. 
+
+7(3), 8217–8224 (2022) 13, 7, 9 19. Gehrig, D., Loquercio, A., Derpanis, K.G., Scaramuzza, D.: End-to-end learning of representations for asynchronous event-based data. In: Int. Conf. Comput. Vis. (ICCV) (October 2019) 4 20. Gehrig, D., Rüegg, M., Gehrig, M., Hidalgo-Carrió, J., Scaramuzza, D.: Combining events and frames using recurrent asynchronous multimodal networks for monoc-ular depth prediction. IEEE Robot. Autom. Lett. 6(2), 2822–2829 (2021) 5, 9, 421. Gehrig, D., Scaramuzza, D.: Low-latency automotive vision with event cameras. Nature (2024) 2 22. Gehrig, M., Aarents, W., Gehrig, D., Scaramuzza, D.: Dsec: A stereo event camera dataset for driving scenarios. IEEE Robot. Autom. Lett. (2021) 9, 11, 12, 4, 5, 7 23. Gehrig, M., Millhäusler, M., Gehrig, D., Scaramuzza, D.: E-raft: Dense optical flow from event cameras. In: International Conference on 3D Vision (3DV) (2021) 9, 4 24. Ghosh, S., Gallego, G.: Event-based stereo depth estimation: A survey. IEEE Trans. Pattern Anal. Mach. Intell. 47 (10), 9130–9149 (2025). https://doi.org/10.1109/ TPAMI.2025.3586559 525. He, B., Wang, Z., Zhou, Y., Chen, J., Singh, C.D., Li, H., Gao, Y., Shen, S., Wang, K., Cao, Y., Xu, C., Aloimonos, Y., Gao, F., Fermüller, C.: Microsaccade-inspired event camera for robotics. Sci. Robot. (2024) 2, 4 26. He, K., Chen, X., Xie, S., Li, Y., Dollár, P., Girshick, R.: Masked autoencoders are scalable vision learners. In: Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR). pp. 16000–16009 (2022) 8, 1, 3 27. Henri Rebecq, T.H., Scaramuzza, D.: Real-time visual-inertial odometry for event cameras using keyframe-based nonlinear optimization. In: Tae-Kyun Kim, Ste-fanos Zafeiriou, G.B., Mikolajczyk, K. (eds.) Proceedings of the British Ma-chine Vision Conference (BMVC). pp. 16.1–16.12. BMVA Press (September 2017). 
+
+https://doi.org/10.5244/C.31.16 , https://dx.doi.org/10.5244/C.31.16 528. Hidalgo-Carrió, J., Gallego, G., Scaramuzza, D.: Event-aided direct sparse odome-try. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 5781–5790 (2022) 9, 13, 4 29. Hidalgo-Carrió, J., Gehrig, D., Scaramuzza, D.: Learning monocular dense depth from events. In: 2020 International Conference on 3D Vision (3DV). pp. 534–542. IEEE (2020) 5, 10, 11, 6, 7 30. Hori, R., Isogawa, M., Mikami, D., Saito, H.: EventPointMesh: Human Mesh Re-covery Solely From Event Point Clouds. IEEE Trans. Vis. Comput. Graph. 31 (09), 5593–5610 (Sep 2025) 9, 2, 4 An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 17 31. Hu, E.J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., Chen, W.: LoRA: Low-rank adaptation of large language models. In: International Conference on Learning Representations (2022) 2, 3, 8 32. Huang, Z., Sun, L., Zhao, C., Li, S., Su, S.: Eventpoint: Self-supervised interest point detection and description for event-based camera. In: IEEE Winter Conf. Appl. Comput. Vis. (WACV). pp. 5396–5405 (2023) 4, 5, 9, 13, 14, 6, 7 33. Ikura, M., Le Gentil, C., Müller, M.G., Schuler, F., Yamashita, A., Stürzl, W.: Rate: Real-time asynchronous feature tracking with event cameras. In: IEEE/RSJ Int. Conf. Intell. Robot. Syst. (IROS). pp. 11662–11669 (2024) 13, 14 34. Kirillov, A., Mintun, E., Ravi, N., Mao, H., Rolland, C., Gustafson, L., Xiao, T., Whitehead, S., Berg, A.C., Lo, W.Y., et al.: Segment anything. In: Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR). pp. 4015–4026 (2023) 4 35. Kong, L., Liu, Y., Ng, L.X., Cottereau, B.R., Ooi, W.T.: Openess: Event-based se-mantic scene understanding with open vocabularies. In: Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR) (2024) 1, 9, 4 36. Leroy, V., Cabon, Y., Revaud, J.: Grounding image matching in 3d with mast3r. In: Leonardis, A., Ricci, E., Roth, S., Russakovsky, O., Sattler, T., Varol, G. (eds.) Computer Vision – ECCV 2024. pp. 71–91. Springer Nature Switzerland, Cham (2025) 2, 4, 5, 6, 9, 12, 13, 14 37. Leutenegger, S., Chli, M., Siegwart, R.Y.: Brisk: Binary robust invariant scalable keypoints. In: 2011 International conference on computer vision. pp. 2548–2555. Ieee (2011) 5 38. Lin, T.Y., Goyal, P., Girshick, R., He, K., Dollár, P.: Focal loss for dense object detection. In: Int. Conf. Comput. Vis. (ICCV). pp. 2980–2988 (2017) 5 39. Lowe, D.G.: Distinctive image features from scale-invariant keypoints. Int. J. Com-put. Vis. 60 (2), 91–110 (2004) 5 40. McInnes, L., Healy, J., Saul, N., Großberger, L.: Umap: Uniform manifold approx-imation and projection. J. Open Source Softw. 3(29), 861 (2018) 9 41. Messikommer, N., Fang, C., Gehrig, M., Scaramuzza, D.: Data-driven feature tracking for event cameras. In: Proc. IEEE Conf. Comput. Vis. Pattern Recog-nit. (CVPR) (2023) 2, 5 42. Mueggler, E., Rebecq, H., Gallego, G., Delbruck, T., Scaramuzza, D.: The event-camera dataset and simulator: Event-based data for pose estimation, visual odom-etry, and slam. Int. J. Rob. Res. (2017) 13, 14 43. Oquab, M., Darcet, T., Moutakanni, T., Vo, H.V., Szafraniec, M., Khalidov, V., Fernandez, P., Haziza, D., Massa, F., El-Nouby, A., Howes, R., Huang, P.Y., Xu, H., Sharma, V., Li, S.W., Galuba, W., Rabbat, M., Assran, M., Ballas, N., Syn-naeve, G., Misra, I., Jegou, H., Mairal, J., Labatut, P., Joulin, A., Bojanowski, P.: DINOv2: Learning robust visual features without supervision. Trans. Mach. Learn. Res. (2024) 2, 4, 6, 10 44. Polizzi, V., Cannici, M., Scaramuzza, D., Kelly, J.: Favor: Features via voxel render-ing for camera relocalization. In: IEEE Winter Conf. Appl. Comput. Vis. (WACV). pp. 44–53 (February 2025) 14 45. Polizzi, V., Yang, S., Clark, Q., Kelly, J., Gilitschenski, I., Lindell, D.B.: Vibes: Induced vibration for persistent event-based sensing (2025), https://arxiv.org/ abs/2508.19094 2, 4 46. Rebecq, H., Ranftl, R., Koltun, V., Scaramuzza, D.: High speed and high dynamic range video with an event camera. IEEE Trans. Pattern Anal. Mach. Intell. (2019) 518 V. Polizzi et al. 47. Ren, J., Jiang, X., Li, Z., Liang, D., Zhou, X., Bai, X.: Minima: Modality invariant image matching. In: Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR) (2025) 5, 12, 13, 14, 7, 8, 9, 11 48. Rublee, E., Rabaud, V., Konolige, K., Bradski, G.: Orb: An efficient alternative to sift or surf. In: 2011 International conference on computer vision. pp. 2564–2571. Ieee (2011) 5 49. Sarıyıldız, M.B., Weinzaepfel, P., Lucas, T., de Jorge, P., Larlus, D., Kalantidis, Y.: Dune: Distilling a universal encoder from heterogeneous 2d and 3d teachers. In: Proceedings of the Computer Vision and Pattern Recognition Conference (CVPR). pp. 30084–30094 (June 2025) 2, 5, 6, 7, 8, 9, 10, 11, 12, 14, 1, 3, 4 50. Sarlin, P.E., DeTone, D., Malisiewicz, T., Rabinovich, A.: SuperGlue: Learning feature matching with graph neural networks. Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR) (2020) 5 51. Shariff, W., Dilmaghani, M.S., Kielty, P., Moustafa, M., Lemley, J., Corcoran, P.: Event cameras in automotive sensing: A review. IEEE Access (2024) 1 52. Shiba, S., Aoki, Y., Gallego, G.: Secrets of event-based optical flow. In: Eur. Conf. Comput. Vis. (ECCV). pp. 628–645 (2022) 2 53. Siméoni, O., Vo, H.V., Seitzer, M., Baldassarre, F., Oquab, M., Jose, C., Khalidov, V., Szafraniec, M., Yi, S., Ramamonjisoa, M., Massa, F., Haziza, D., Wehrstedt, L., Wang, J., Darcet, T., Moutakanni, T., Sentana, L., Roberts, C., Vedaldi, A., Tolan, J., Brandt, J., Couprie, C., Mairal, J., Jégou, H., Labatut, P., Bojanowski, P.: DINOv3 (2025) 2 54. Sudre, C.H., Li, W., Vercauteren, T., Ourselin, S., Jorge Cardoso, M.: Generalised dice overlap as a deep learning loss function for highly unbalanced segmentations. In: Proc. Int. Workshop Deep Learn. Med. Image Anal. pp. 240–248. Springer (2017) 5 55. Sun, Z., Messikommer, N., Gehrig, D., Scaramuzza, D.: Ess: Learning event-based semantic segmentation from still images. In: Eur. Conf. Comput. Vis. (ECCV). pp. 341–357. Springer (2022) 4, 11, 12, 5, 6 56. Thisanke, H., Deshan, C., Chamith, K., Seneviratne, S., Vidanaarachchi, R., Herath, D.: Semantic segmentation using vision transformers: A survey. Eng. Appl. Artif. Intell. 126 , 106669 (2023) 4 57. Vidal, A.R., Rebecq, H., Horstschaefer, T., Scaramuzza, D.: Ultimate slam? com-bining events, images, and imu for robust visual slam in hdr and high speed sce-narios. In: IEEE Robot. Autom. Lett. (2018) 2 58. Wang, J., Chen, M., Karaev, N., Vedaldi, A., Rupprecht, C., Novotny, D.: Vggt: Visual geometry grounded transformer. In: Proceedings of the IEEE/CVF Confer-ence on Computer Vision and Pattern Recognition (2025) 4, 5 59. Wang, L., Chae, Y., Yoon, S.H., Kim, T.K., Yoon, K.J.: Evdistill: Asynchronous events to end-task learning via bidirectional reconstruction-guided cross-modal knowledge distillation. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR). pp. 608–619 (June 2021) 4, 5 60. Wang, S., Leroy, V., Cabon, Y., Chidlovskii, B., Revaud, J.: Dust3r: Geometric 3d vision made easy. In: CVPR (2024) 5 61. Xie, E., Wang, W., Yu, Z., Anandkumar, A., Alvarez, J.M., Luo, P.: Segformer: Simple and efficient design for semantic segmentation with transformers. Advances in neural information processing systems 34 , 12077–12090 (2021) 4 62. Yang, L., Kang, B., Huang, Z., Xu, X., Feng, J., Zhao, H.: Depth anything: Un-leashing the power of large-scale unlabeled data. In: Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR) (2024) 4 An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 19 63. Yi, K.M., Trulls, E., Lepetit, V., Fua, P.: LIFT: Learned invariant feature trans-form. In: Eur. Conf. Comput. Vis. (ECCV). pp. 467–483 (2016) 5 64. Yuan, W., Gu, X., Dai, Z., Zhu, S., Tan, P.: Neural window fully-connected crfs for monocular depth estimation. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 3916–3925 (2022) 4 65. Zhao, Y., Lyu, G., Li, K., Wang, Z., Chen, H., Yang, Z., Deng, Y.: Eseg: Event-based segmentation boosted by explicit edge-semantic guidance. AAAI Proc. AAAI Conf. Artif. Intell. 39 (10), 10510–10518 (Apr 2025) 4, 11, 13 66. Zhu, A.Z., Thakur, D., Ozaslan, T., Pfrommer, B., Kumar, V., Daniilidis, K.: The multi vehicle stereo event camera dataset: An event camera dataset for 3d perception. IEEE Robot. Autom. Lett. 3(3), 2032–2039 (2018) 10, 11, 5, 6 67. Zhu, A.Z., Yuan, L., Chaney, K., Daniilidis, K.: Unsupervised event-based learning of optical flow, depth, and egomotion. In: Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR). pp. 989–997 (2019) 4, 5, 9, 10, 11, 6, 7 68. Zhu, J., Liu, L., Jiang, B., Wen, F., Zhang, H., Li, W., Liu, Y.: Self-supervised event-based monocular depth estimation using cross-modal consistency. In: 2023 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS). pp. 7704–7710. IEEE (2023) 5, 10, 11 69. Zubić, N., Gehrig, D., Gehrig, M., Scaramuzza, D.: From chaos comes order: Or-dering event representations for object recognition and detection. In: Int. Conf. Comput. Vis. (ICCV). pp. 12846–12856 (October 2023) 4, 9, 6, 7 An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 1
+
+# Supplementary Material 
+
+# REALM: An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 
+
+> Anonymous ECCV 2026 Submission Paper ID: #8928
+
+This document provides additional technical details, architectural specifica-tions, and extended experimental results that complement our manuscript. For additional visual results, we refer the reader to the accompanying video. 
+
+# A Training Details 
+
+A.1 Masking Effects 
+
+In Fig. S1, we illustrate the effect of progressive spatial distillation during train-ing. Our objective is to align the output of our event-based encoder with the target features extracted by DUNE [49]. Specifically, while DUNE generates rep-resentations from the RGB image, our model is trained to predict those exact features using the event stream from a time window before the image timestamp. Notably, we aim to prevent REALM from hallucinating or overfitting to static parts of the scene that are unobservable in the event stream. Because event cameras only capture dynamic changes, a static background visible in the RGB image will produce no events. Consequently, our model should not be forced to reconstruct features for these regions, because the model lacks the underlying sensory information to do so. By applying a spatial mask to our distillation objective, we strictly avoid penalizing the model in regions where no events occur. As shown in Fig. S1, this strategy successfully prevents the model from forcing a representation of the static background. In contrast, training without this masking causes the model to completely overfit to the teacher, incorrectly generating features for unobserved areas. While successfully preventing background overfitting, this masking strategy introduces a potential pitfall: if the student model is penalized exclusively on event-active pixels, it tends to learn a trivial, sparse representation. Essentially, the model degrades into an edge detector, failing to infer dense object volumes. To mitigate this, we leverage the inherent contextual reasoning of our Masked Autoencoder (MAE) [26] architecture. While the MAE strategy forces the net-work to infer missing spatial information and "fill in the gaps," its effectiveness is bottlenecked if the distillation loss only evaluates sparse edge pixels. Therefore, we complement the MAE objective with a progressive spatial masking schedule. By gradually dilating the distillation mask to expose the full scene for a limited 2 V. Polizzi et al. Events-Image Overlay Mask Output w Mask Output w/o Mask GT Epoch 9 Epoch 14 
+
+Fig. S1: Qualitative evolution of the masking strategy during distillation. We illustrate the impact of progressive masking on the REALM feature space. The student is fed with events (see Events-Image Overlay), and the resulting features are visualized via PCA against the ground truth (GT) from the RGB-based DUNE [49] teacher. Without the mask (w/o Mask), the student overfits to the teacher in regions lacking event data (e.g., notice the spurious background lines highlighted in blue). Applying the mask (w/ Mask) focuses the learning strictly on regions with active events. This prevents the model from overfitting to unobserved parts of the scene, where predicting teacher features would require unfounded hallucinations merely to minimize the loss. By Epoch 14, the mask radius has dilated from 1 token (Epochs 1-9) to 2 tokens ( 14 ×14 
+
+pixels). Consequently, the student at Epoch 14 successfully learns to extrapolate and "hallucinate" valid context further away from the active event edges, avoiding the severe overfitting seen in the unmasked baseline. All feature maps and masks are rescaled to the 448 × 448 input resolution for visualization. 
+
+number of epochs, we allow REALM to fully utilize its MAE-driven contextual understanding without overfitting to unobserved static regions. For the dilation schedule implementation details see Sec. A.2. To evaluate this progressive masking strategy, we utilize the EventPointMesh [30] (EPM) dataset. EPM [30] features extensive static backgrounds, making it an ideal benchmark to validate our approach to avoid background overfitting. As An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 3
+
+demonstrated in Fig. S1, across various training epochs and dilation radii, REALM successfully suppresses the hallucination of unobserved static regions while pre-serving highly accurate structural representations of moving objects, i.e., the human subjects. 
+
+A.2 REALM Training 
+
+We train the model for 30 epochs with an effective batch size of 512 (128 per GPU across 4 accumulation steps) and a gradient clipping norm of 1.0. Optimization is performed using AdamW with a base learning rate of 1 × 10 −3 and a weight decay of 0.01. The student model is fine-tuned using LoRA with a rank r = 32 
+
+and α = 64 . We apply a 10% dropout to the adapted attention and feed-forward modules ( qkv , proj , f c 1, f c 2). While the base REALM architecture contains 91,096,000 parameters, we only optimize the voxel embedding layer (5,232,832 params) and the injected LoRA adapters (4,803,072 params). This results in a total of 10,035,904 trainable parameters, representing approximately 10.47% of the total model capacity (see Tab. S6). The distillation loss penalizes differences between the teacher and student’s normalized CLS and patch tokens ( x_norm_clstoken , x_norm_patchtokens ) us-ing a composite loss function, training also the normalization layer of DUNE [49]. The loss is weighted with λMSE = 0 .1, λcos = 0 .3, and λL1 = 0 .6.To ensure robust feature learning and force contextual hallucination, we in-troduce input token dropping (MAE [26]) with a 30% probability starting at epoch 8. Independently, for the spatial distillation loss, we employ a progressive cur-riculum. The spatial activity mask is strictly enforced initially to focus entirely on event edges. We then progressively expand the mask’s boundary outward into the background. Specifically, at epochs 10, 15, and 20, we morphologically dilate the initial base mask by a radius of 2, 4, and 6 patches, respectively (where each patch represents a 14 × 14 pixel region). This base spatial mask is generated dynamically within the dataloader. We collapse the input event voxel grid across the temporal and channel dimensions to obtain a 2D spatial activity map. We then apply 14 × 14 max-pooling to downsample this map to match the spatial resolution of the vision transformer’s patch tokens (forming a 32 × 32 grid for the 448 × 448 input). This yields a binary mask where a value of 1 indicates the presence of at least one event within that patch. To dilate this mask during the curriculum phases, we reshape the flattened token mask back into its 2D grid format and apply a morphological dilation operation. Specifically, we utilize a 2D max-pooling operation with a 
+
+3 × 3 kernel, a stride of 1, and a padding of 1. A single iteration of this operation effectively expands the active mask regions outward by exactly one patch in all directions. 4 V. Polizzi et al.                                      
+
+> Dataset Indoor Outdoor Seg. Depth Pose HMR Syn.
+> DSEC [22, 23, 35] ✗✓✓✓✗✗✗
+> EventScape [20] ✗✓✓✓✗✗✓
+> M3ED [9] ✗✓✓✓✓✗✗
+> EDS [28] ✓✗✗✗✓✗✗
+> EventPointMesh [30] ✓✗✗✗✗✓✗
+> Table S1: Multimodal datasets used for distillation. We report the diverse collection of event-RGB datasets utilized to train the REALM embedding and LoRA layers. These datasets are selected to cover a wide array of scenarios, including indoor navigation, outdoor driving, and human-centric motion to provide the network with a comprehensive overview of diverse geometric and semantic structures.
+
+# B Datasets Details 
+
+To make the training resilient to varying event densities (which depend on the motion present in the scene), we employ a fixed time window for certain datasets and a minimum amount of events for others (see below for more details). Given the diversity of the datasets used (see Tab. S1), we expose the model to different dynamics and event throughputs. From the datasets, we manually select training scenes that minimize motion blur and extreme darkness to ensure high-quality distillation from the DUNE [49] teacher. 
+
+Datasets Preparation. Training requires temporally and spatially synchronized event-RGB pairs. We segment the event stream into windows bounded by con-secutive RGB frames, using either fixed time intervals or event-count thresholds to ensure resilience across diverse scene dynamics and throughputs. To achieve spatial alignment, we warp the RGB frames into the event cam-era’s coordinate system using known intrinsic and extrinsic parameters. This avoids artifacts in the event representation and ensures both modalities have the same geometric resolution. Notably, we process raw, distorted event data rather than attempting to undistort them. This preserves the model’s robustness to varying camera intrin-sics, a property consistent with the capabilities of its teacher backbone. This rig-orous preparation is necessitated by the scarcity of complete multimodal event datasets, as many existing benchmarks lack the depth or synchronization re-quired for precise cross-modal alignment. 
+
+Dataset Parameters. To ensure consistent feature extraction, all events are con-verted into a voxel grid representation with 5 temporal bins and normalized before being processed. We adopt a target spatial resolution of 448 × 448 across all modalities, applying center cropping and resizing to maintain geometric con-sistency with the teacher model. To handle diverse scene dynamics, we employ a hybrid windowing strategy: An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 5
+
+– Fixed-Count Windows: For DSEC and EventScape, we use a threshold of 150,000 events to ensure sufficient signal density in high-motion or complex environments. 
+
+– Fixed-Time Windows: For EDS, M3ED, and EPM, we segment the stream into 33 ms intervals, corresponding to standard video frame rates, to main-tain temporal alignment with the teacher’s RGB input. The spatial alignment pipeline utilizes known intrinsic and extrinsic parameters to warp RGB frames for EDS and M3ED. Additionally, we apply a stride to the sequences (a stride of 2 for DSEC, EventScape, and M3ED, and 5 for EPM) to maximize scene diversity during training. 
+
+# C Output Head Training 
+
+C.1 Segmentation Head 
+
+To train the segmentation head, we used the images provided in the DSEC [22] dataset with the corresponding semantic labels. We used 11 class labels, as in the ESS [55] work. We train the head on the frozen DUNE [49] backbone and then use it zero-shot on the REALM backbone. The number of parameters for the segmentation head is reported in Tab. S6. The training lasts for 300 epochs with a batch size of 128 and a gradient clipping maximum norm of 1.0. Optimization is performed using the AdamW optimizer with a learning rate of 1 × 10 −4 and a weight decay of 0.01. To align features for the task, we attach to the backbone the DINOv2 projector as suggested in DUNE [49] when performing semantic segmentation. The training objective is a composite loss function combining the multi-class Focal loss [38] and the Dice loss [54]. Formally, the total loss is defined as: 
+
+Ltotal = λDice LDice + λFocal LFocal (2) To explicitly address the severe class imbalance inherent in driving scenes—where background classes like roads and skies dominate the pixel count while small objects are heavily underrepresented—we apply a static class-weighting vector 
+
+w to both loss formulations. For our 11 semantic classes (sky, building, fence, person, pole, road, sidewalk, vegetation, car, wall, traffic light), the weight vec-tor is empirically defined to heavily penalize errors on minority classes, w =[1 .0, 1.0, 5.0, 5.0, 5.0, 1.0, 3.0, 2.0, 2.5, 10 .0, 15 .0] .
+
+C.2 Depth Head 
+
+Similarly to the segmentation head, we use the images provided by the synthetic dataset DENSE [29] and the real data from MVSEC [66], training on the frozen DUNE [49] backbone. We follow a training procedure similar to e2depth [29], utilizing a two-stage curriculum: an initial pre-training phase of 150 epochs on the synthetic 6 V. Polizzi et al. 
+
+DENSE [29] dataset, followed by 150 epochs of fine-tuning on real data from MVSEC [66]. With the depth head, we do not use any projector from DUNE [49]. Optimization is performed with an effective batch size of 128 and a gradient clipping maximum norm of 1.0. During training, we mask out invalid, infinite, or missing depth values. Ground-truth depth targets are strictly clamped to a valid range of [1 .95 , 82 .0] meters to stabilize early training and prevent supervi-sion from sensor noise at extreme distances. The depth training objective is a composite loss function operating in the logarithmic space, combining a Scale-Invariant (SI) log loss [16] and a Multi-Scale Gradient (MSG) loss [55]. The total depth loss is formulated as: 
+
+Ltotal = λSI LSI + λMSG LMSG (3) where we empirically set the weighting coefficients to λSI = 2 .0 and λMSG =0.01 . To penalize relative depth errors while remaining robust to global scale ambiguities, we apply the Scale-Invariant log loss. Let di = log(ˆ yi) − log( yi)
+
+denote the logarithmic difference between the predicted depth ˆyi and the ground-truth depth yi at valid pixel i.Optimization is performed using the AdamW optimizer with a refined learn-ing rate of 5 × 10 −5 and a weight decay of 0.01. 
+
+C.3 MASt3R Decoder 
+
+We do not perform any training on the MASt3R [36] decoder, and use it di-rectly on REALM output. In particular, we use the refined decoder provided in DUNE [49]. 
+
+# D Results 
+
+D.1 Ablation Study on Events Representation 
+
+We utilize a voxel-grid representation for feeding the event data to our encoder. This choice was informed by an ablation study comparing three prominent event encoders: Tencode [32], ERGO-12 [69], and voxel grids [67]. Each candidate was trained on a representative subset of our data and evaluated across three distinct downstream tasks: semantic segmentation, feature matching, and depth estimation. While the models achieved comparable training losses across all representa-tions, their downstream utility diverged. As shown in Tab. S2, the voxel-grid representation consistently outperformed the alternatives in semantic segmenta-tion and feature matching. Although ERGO [69] showed a slight advantage in depth estimation, the superior performance of voxel grids in high-level percep-tion and matching tasks makes them the most suitable choice for our proposed architecture. An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 7
+
+Task Dataset Metrics Voxel Grid Tencode ERGO 
+
+Sem. Segmentation DSEC [22] IoU ↑ [%] 53.75 50.64 50.62 
+
+Accuracy ↑ [%] 88.95 87.86 87.87 Feat. Matching VECtor [18] Med. Err. ↓ [◦] 10.00 10.63 11.55 
+
+AUC @5◦ ↑ 0.016 0.013 0.016 
+
+(robot-fast) AUC @10 ◦ ↑ 0.156 0.136 0.131 
+
+AUC @20 ◦ ↑ 0.444 0.397 0.374 Depth Estimation DENSE [29] RMSE [m] ↓ 8.654 8.283 8.151 Table S2: Quantitative comparison of event representations across down-stream tasks. We evaluate voxel grids [67], Tencode [32], and ERGO [69] on semantic segmentation, feature matching, and depth estimation. While depth estimation results are comparable across representations, voxel grids demonstrate superior performance in semantic segmentation and wide-baseline matching robustness.                                  
+
+> Classes Method Sky Building Fence Person Pole Road Sidewalk Vegetation Car Wall Traffic Light DUNE 94.95 85.80 36.03 52.99 29.92 95.19 73.20 87.30 86.92 45.37 56.41
+> REALM 91.28 79.25 18.90 32.71 15.45 90.28 50.00 80.39 78.35 38.07 34.35
+
+Table S3: Per-class quantitative results. We report the Intersection over Union (IoU) in % for all individual classes, comparing our proposed method against the DUNE baseline. 
+
+D.2 Semantic Segmentation 
+
+In Tab. S3, we report the per-class Intersection over Union (IoU) and Fig. S2 shows the confusion matrix comparing DUNE [49] to REALM. We observe that compared to the image-based teacher DUNE [49], our model exhibits lower per-formance on thin structures such as poles, fences, and traffic lights. This is likely attributed to the inherent sparsity of the event stream and the 14 × spatial downsampling in our patch embedding layer. However, the successful zero-shot application of the teacher’s segmentation head to our student’s features vali-dates the high degree of alignment between the REALM and DUNE [49] feature spaces. 
+
+D.3 Matching with Wide Viewpoint Changes 
+
+Fig. S3 evaluates Image-Event matching on the fast-robot sequence of the VEC-tor [18] dataset. While MINIMA [47] performance degrades significantly as view-point changes increase, REALM maintains a higher inlier ratio and lower rotation error. The first row of Fig. S3 displays the relative matching density, defined as the ratio of successful REALM inliers in a given pair relative to the maximum keypoints detected across the sequence. Unlike the standard inlier ratio, this metric captures the absolute survival of feature correspondences under extreme viewpoint and modality shifts. Similarly, the second row illustrates event-event 8 V. Polizzi et al. DUNE Ours  
+
+> Fig. S2: Confusion matrices for semantic segmentation. We compare the pre-dictions of the DUNE [49] teacher against our REALM student across 11 classes. As expected, REALM shows slightly more confusion—particularly on thin structures like poles and fences. Despite this, REALM retains a highly pronounced diagonal, confirm-ing that the student effectively captures the high-level semantic representations of the image-based teacher.
+
+matching results, where our method consistently provides the highest inlier ratio and stable rotation estimation across varying baselines. In Tab. S4, we report a breakdown of the per-scene evaluation of the feature matching performance. 
+
+D.4 Benchmark Feature Extraction 
+
+In Tab. S5 we evaluate the runtime performance of REALM and MINIMA [47] for the task of image-event matching. Our method runs with an inference time that is half of MINIMA [47]. Runtime performance is measured by running each model for five warm-up iterations, followed by 50 timed iterations on synthetic random inputs. Latency is broken down into two stages: feature extraction (the dense forward pass) and matching (keypoint sampling and correspondence estimation). We report mean, median, standard deviation, and latency in milliseconds, as well as throughput in FPS and peak GPU memory consumption. All models receive pre-processed ten-sors of identical spatial resolution before the timed block begins, so the prepro-cessing cost is excluded from all measurements equally. By default, MINIMA [47] operates at a coarse resolution of 560 ×560 followed by a high-resolution refine-ment pass at 864 ×864, regardless of input size. To ensure a fair comparison with the other models, we override MINIMA’s internal resolution at construction time, effectively disabling the refinement stage. This aligns the computational budget across all models. An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 90 50 100 
+
+Abs. Rotation ( ◦)
+
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> Density  ↑
+
+Rel. Match. Density   
+
+> 050 100
+
+Abs. Rotation ( ◦)
+
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> Inlier Ratio  ↑
+
+Inlier Ratio   
+
+> 050 100
+
+Abs. Rotation ( ◦)
+
+> 0
+> 50
+> 100
+> 150
+> Error ( ◦) ↓
+
+Rot. Error    
+
+> Ours MINIMA 050 100
+
+Abs. Rotation ( ◦)
+
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> Density  ↑
+
+Rel. Match. Density   
+
+> 050 100
+
+Abs. Rotation ( ◦)
+
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> Inlier Ratio  ↑
+
+Inlier Ratio   
+
+> 050 100
+
+Abs. Rotation ( ◦)
+
+> 0
+> 50
+> 100
+> 150
+> Error ( ◦) ↓
+
+Rot. Error   
+
+> Ours MINIMA SuperEvent
+
+Fig. S3: Robustness to wide-view viewpoint changes on the VECtor [18] dataset. The top row shows the evaluation of cross-modal (image–event) matching performance across increasing angular distances between query and target, and the second row shows the inter-class matching (event-event). (a) Relative Matching Density: The ratio of RANSAC inliers to the maximum number of keypoints detected across the entire sequence. (b) Inlier Ratio: REALM consistently maintains a higher percentage of correct correspondences as the rotation increases. (c) Rotation Error: 
+
+Our method exhibits significantly higher stability and lower angular error compared to the specialized MINIMA [47] baseline. 
+
+# E Models 
+
+We describe the models utilized for the voxel embedding as well as the seg-mentation and depth heads. We report the number of parameters per model in Tab. S6. 
+
+E.1 Voxel Embedding 
+
+The voxel embedding module is a specialized event stream architecture, designed to translate high-dimensional event data into the latent patch format required by the DUNE [49] transformer. It serves as the primary entry point for the REALM 10 V. Polizzi et al. 
+
+model, replacing the lightweight RGB patch embedder with a deep convolutional encoder. The module consists of a 7 × 7 convolutional stem followed by three progres-sive downsampling stages using residual encoder blocks. The resulting features are projected into a 768 -dimensional latent space and adaptively pooled to a 
+
+32 × 32 grid. This architecture allows the model to compress the sparse, tempo-ral information of event voxel grids into dense patch tokens (B, 1024 , 768) that are structurally identical to the teacher’s RGB embeddings. 
+
+E.2 Segmentation Head 
+
+For the semantic segmentation task, we utilize a head that performs a dense classification on the extracted features. The head consists of a 1×1 convolutional layer that maps the 1024 -dimensional patch tokens to the 11 target semantic classes. During the forward pass, the patch sequence is reconstructed into a spatial grid and projected to the class dimension. The resulting logits are then bilinearly upsampled to the original input resolution of 448 × 448 to produce the final segmentation mask. 
+
+E.3 Depth Head 
+
+The depth head implements a discrete binning strategy, also known as soft clas-sification, to perform robust depth estimation. We define 256 depth bins linearly spaced between 1.0 m and 81.0 m. The architecture processes normalized features through two specialized paths: 
+
+– Spatial path: A 1 × 1 convolutional layer projects the patch tokens to capture local spatial information, followed by an initial 4× bilinear interpo-lation. 
+
+– Global path: A linear layer projects the CLS token into the bin space, pro-viding global scene context that is broadcast across the spatial dimensions. The outputs of these paths are fused additively to produce a combined logit volume. A softmax activation is applied across the bin dimension to generate a probability distribution for each pixel. The final depth value is calculated as the expected value, allowing for differentiable training and sub-bin precision. The resulting depth map is then bilinearly upsampled to the target input resolution. An RGB and Event Aligned Latent Manifold for Cross-Modal Perception 11 
+
+Event–Event Matching Scene Model 0–15 ◦ 15–30 ◦ 30–45 ◦ > 45 ◦
+
+(Easy) (Med) (Hard) (Extreme) hdr-fast SuperEvent [7] 0.029 0.004 – –MINIMA [47] 0.527 0.346 0.138 –REALM 0.789 0.687 0.460 0.088 
+
+hdr-normal SuperEvent [7] 0.402 0.041 0.011 –MINIMA [47] 0.910 0.726 0.605 –REALM 0.880 0.656 0.858 –robot-fast SuperEvent [7] 0.091 0.009 – –MINIMA [47] 0.371 0.249 0.079 0.012 REALM 0.635 0.545 0.282 0.139 
+
+robot-normal SuperEvent [7] 0.269 0.231 0.052 –MINIMA [47] 0.677 0.687 0.574 0.310 REALM 0.796 0.741 0.320 0.342 Image–Event Matching 
+
+hdr-fast MINIMA [47] 0.316 0.154 0.128 –REALM 0.476 0.408 0.324 0.018 
+
+hdr-normal MINIMA [47] 0.661 0.404 0.444 –REALM 0.675 0.494 0.400 –robot-fast MINIMA [47] 0.041 0.056 0.034 0.030 REALM 0.288 0.219 0.162 0.115 
+
+robot-normal MINIMA [47] 0.693 0.748 0.673 0.460 REALM 0.618 0.657 0.484 0.463 Table S4: Per-Scene Wide-Baseline Robustness. AUC at 10 ◦ for various matching algorithms across different angular bins. We evaluate performance ranging from easy (0– 15 ◦) to extreme ( > 45 ◦) viewpoint variations. Our method, REALM, consistently outperforms other methods in fast-motion scenarios across both event-event and image-event modalities. Notably, while MINIMA degrades significantly as viewpoint changes increase, REALM maintains strong performance even under large rotations. This ro-bustness to wide-baseline viewpoint changes stems directly from REALM’s use of the MASt3R decoder, which grounds feature matching in 3D geometry: by operating in a geometrically consistent latent space rather than relying on purely appearance-based descriptors, REALM produces correspondences that are inherently more stable un-der large viewpoint changes. In normal-speed conditions, MINIMA [47] achieves a marginally higher AUC at small baselines, though this difference is small and REALM’s advantage becomes clear and consistent as viewpoint changes increase beyond 30 ◦.
+
+Model Extract ↓ Match ↓ Total ↓ FPS ↑ GPU ↓
+
+(ms) (ms) (ms) (MB) 
+
+MINIMA 167.2 ± 3.8 54.0 ± 0.1 221.2 ± 3.8 4.52 7563 REALM (Ours) 50.5 ± 0.1 60.8 ± 0.2 111.3 ± 0.2 8.99 2581 Table S5: Inference Performance Comparison. 12 V. Polizzi et al. 
+
+Component DUNE REALM Depth Head Seg. Head 
+
+[49] (Ours) (Ours) (Ours) Embedder 452,352 5,232,832 — —Encoder 85,863,168 85,863,168* — —
+
+Backbone (Total) 86,315,520 91,096,000 91,096,000 91,096,000 
+
+Projector 0 0 0 7,874,560* Head 0 0 393,728 11,275 LoRA 0 4,803,072 0 0
+
+Total Parameters 86,315,520 95,899,072 91,489,728 98,981,835 
+
+Table S6: Detailed Parameter Breakdown across Architecture Variants. Dur-ing REALM distillation training, only the voxel embedder and LoRA adapters are up-dated, all other parameters (DUNE backbone encoder, marked with *) remain frozen. During head training, the linear head weights are the only parameters updated; the backbone, the DINOv2 projector from DUNE (marked with *), and all other compo-nents remain frozen. This freezing policy is consistent across all training stages and at inference. The LoRA adapters are absorbed into the backbone at inference and are therefore not counted separately in the deployment footprint.
