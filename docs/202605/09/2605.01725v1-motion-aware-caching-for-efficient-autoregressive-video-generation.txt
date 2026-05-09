@@ -1,0 +1,760 @@
+Title: Motion-Aware Caching for Efficient Autoregressive Video Generation
+
+URL Source: https://arxiv.org/pdf/2605.01725v1
+
+Published Time: Tue, 05 May 2026 01:23:16 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# Motion-Aware Caching for Efficient Autoregressive Video Generation 
+
+## Jing Xu 1,2,∗, Yuexiao Ma 2,∗, Songwei Liu 1,∗,†, Xuzhe Zheng 2,∗, Shiwei Liu 3, Chenqian Yan 1, Xiawu Zheng 2, Rongrong Ji 2, Fei Chao 2, Xing Wang 1,§
+
+> 1
+
+ByteDance , 2Key Laboratory of Multimedia Trusted Perception and Efficient Computing, Ministry of Education of China, Xiamen University, 361005, P.R. China , 3ELLIS Institute Tbingen 
+
+> ∗
+
+Equal Contribution , †Project lead , §Corresponding author 
+
+## Abstract 
+
+Autoregressive video generation paradigms offer theoretical promise for long video synthesis, yet their practical deployment is hindered by the computational burden of sequential iterative denoising. While cache reuse strategies can accelerate generation by skipping redundant denoising steps, existing methods rely on coarse-grained chunk-level skipping that fails to capture fine-grained pixel dynamics. This oversight is critical: pixels with high motion require more denoising steps to prevent error accumulation, while static pixels tolerate aggressive skipping. We formalize this insight theoretically by linking cache errors to residual instability, and propose MotionCache , a motion-aware cache framework that exploits inter-frame differences as a lightweight proxy for pixel-level motion characteristics. MotionCache employs a coarse-to-fine strategy: an initial warm-up phase establishes semantic coherence, followed by motion-weighted cache reuse that dynamically adjusts update frequencies per token. Extensive experiments on state-of-the-art models like SkyReels-V2 and MAGI-1 demonstrate that MotionCache achieves significant speedups of 6.28 × and 1.64 × respectively, while effectively preserving generation quality (VBench: 1% ↓ and 
+
+0.01% ↓ respectively). The code is available at https://github.com/ywlq/MotionCache. 
+
+## 1 Introduction 
+
+Video generation models [ 12 , 18 , 24 , 26 , 34 , 41 , 47 ] have achieved remarkable success, facilitating applications ranging from autonomous driving [ 10 , 11 , 37 ] and cinematic creation [ 6, 38 ] to social media [ 3]. While architectures have evolved from U-Nets [ 2, 27 , 29 ] to scalable Diffusion Transformers (DiTs) [ 25 ], practical deployment is hindered by the prohibitive costs of iterative denoising. Moreover, the quadratic complexity of attention mechanisms regarding video resolution and duration imposes strict memory limits, creating severe bottlenecks for real-time adoption. To address these scalability limitations, autoregressive video generation models [ 6, 33 ] leverage the Causal Diffusion-Forcing (CDF) framework [ 5, 32 , 40 , 42 ] to adapt the next-token prediction paradigm to the video domain. Unlike full-sequence methods, these models decouple memory usage from total video duration by partitioning the stream into chunks and utilizing KV cache. This strategy effectively reduces attention complexity from quadratic to linear, keeping memory consumption bounded and theoretically permitting 1                 
+
+> arXiv:2605.01725v1 [cs.CV] 3 May 2026 Prompt ：“ A girl is riding a bike”
+> MAGI -1 720P 168Frames
+> Prompt ：“ The tide is coming in at the beach”
+> SkyReels -V2 540P 177Frames
+> TeaCache
+> Speedup: 2.20x
+> PSNR: 18.39
+> FlowCache
+> Speedup: 6.26x
+> PSNR: 21.83
+> MotionCache
+> Speedup: 6.28x
+> PSNR: 23.46
+> Vanilla
+> TeaCache
+> Speedup: 1.14x
+> PSNR: 14.74
+> FlowCache
+> Speedup: 1.3 9x
+> PSNR: 18.1 6
+> MotionCache
+> Speedup: 1.64x
+> PSNR: 19.71
+> Vanilla Figure 1 MotionCache accelerates video generation while maintaining high visual fidelity. On SkyReels-V2 and MAGI-1, our method achieves 6.28 ×and 1.64 ×speedups with superior PSNR. In contrast, TeaCache fails to maintain texture details and FlowCache suffers from structural inconsistency, while MotionCache preserves both structural integrity and temporal coherence comparable to the Vanilla baseline.
+
+infinite generation. Nevertheless, despite these structural optimizations, the autoregressive generation of high-resolution and long-duration videos remains inherently time-consuming. For example, using an A800 
+
+GPU with batch size 1, generating a 7-second video at 540 × 540 resolution requires approximately 27 minutes of inference time for the SkyReels-V2 model. To mitigate the computational burden of iterative denoising, caching-based strategies have emerged as pivotal solutions. By exploiting the high temporal redundancy inherent in the diffusion process to reuse intermediate features or residuals, these methods are broadly categorized into layer-level and step-level approaches. Layer-level methods [ 8, 30 , 46 , 49 ] cache intermediate feature maps but necessitate storing features for every layer. This results in memory consumption that grows linearly with model depth, an overhead further exacerbated by advanced predictors using Taylor expansions [ 21 , 22 , 48 ]. Conversely, step-level methods [ 4, 16 , 20 , 43 ]store residuals for reuse in skipped steps. While offering negligible memory overhead, their prediction precision often falls short compared to finer-grained layer-level techniques. Crucially, these existing approaches are primarily tailored for standard DiTs and do not generalize to autoregressive video generation models. FlowCache [ 1] represents the first attempt to bridge this gap by exploiting the temporal heterogeneity of autoregressive chunks. However, FlowCache relies on a coarse-grained binary strategy where an entire chunk must simultaneously be computed or skipped. This approach overlooks fine-grained token-level temporal redundancy and fails to account for the significant spatial and content discrepancies between different frames within the same timestep. To address these limitations, we present MotionCache, a motion-aware caching framework grounded in a theoretical analysis linking caching error to residual instability. Leveraging the intra-chunk frame difference as a lightweight, high-fidelity proxy for pixel-level motion characteristics, MotionCache operationalizes a hierarchical coarse-to-fine inference schedule. This mechanism initially secures global structural integrity through a warm-up phase, and subsequently transitions to a token-wise adaptive policy that dynamically allocates computational resources—prioritizing updates for high-motion regions while efficiently retrieving cached residuals for static backgrounds. Through extensive experimentation, we demonstrate that our approach not only achieves superior acceleration ratios but also preserves the quality of generated videos. In summary, our key contributions are as follows: 
+
+• We provide a rigorous theoretical analysis of the approximation error in feature caching, identifying that the error is strictly bounded by residual instability. We further uncover the fundamental Heterogeneous Temporal Redundancy and Intra-Chunk Frame Discrepancy in autoregressive models, demonstrating the 2diverse update requirements across different frames and tokens that traditional coarse-grained strategies overlook. 
+
+• We establish a theoretical link between residual stability and video motion dynamics, proving that the frame difference serves as a mathematically grounded upper bound for caching error. Based on this, we introduce motion-aware token importance, a lightweight and high-fidelity proxy that enables precise identification of dynamic regions. 
+
+• We propose MotionCache, a novel motion-aware acceleration framework that implements a coarse-to-fine inference schedule. By synergizing a structural warm-up phase with a motion-characteristics-weighted token accumulation policy, MotionCache dynamically allocates computational resources, prioritizing high-motion details. 
+
+• Extensive evaluations on state-of-the-art autoregressive video generation models, including SkyReels-V2 and MAGI-1, demonstrate that MotionCache significantly outperforms existing methods. It achieves speedups of 7.26 × and 2.07 × respectively, while delivering superior visual fidelity and temporal coherence. These results establish MotionCache as the new state-of-the-art for efficient autoregressive video generation. 
+
+## 2 Related Work  
+
+> AutoRegressive Video Generation
+
+Our work builds upon recent advances in autoregressive video generation models [ 6, 33 ], which fundamentally integrate the next-token prediction paradigm of Large Language Models (LLMs) into the video synthesis process. In this framework, the continuous video stream is discretized into a sequence of video chunks, which are generated sequentially based on Causal Diffusion-Forcing (CDF) [ 5, 32 , 40 , 42 ] inference paradigms. The underlying generator for each chunk typically employs a diffusion backbone optimized with flow matching objectives [ 19 ]. By leveraging a fixed attention window alongside this chunking technique, these methods effectively circumvent the quadratic computational complexity inherent in full-sequence modeling. This architecture not only ensures scalable efficiency but also achieves remarkable success in synthesizing high-fidelity video content with strong causal consistency and temporal coherence.  
+
+> Feature Caching-based Acceleration.
+
+Feature caching accelerates inference by exploiting temporal redundancy in a training-free manner. Early adaptations like FORA [ 30 ] and ∆-DiT [ 7] employed fixed reuse schedules, while recent advancements focus on dynamic, content-aware policies. Methods such as TeaCache [ 20 ] and AdaCache [ 16 ] estimate caching intervals based on input differences or video complexity, whereas TaylorSeer [ 21 ] predicts feature trajectories via Taylor expansions. In the autoregressive domain, FlowCache [ 1 ] extends these concepts to chunk-level skipping. However, these methods predominantly operate at a coarse granularity—treating entire timesteps or chunks as atomic units—thereby failing to exploit fine-grained token-level redundancy and struggling to adapt to spatially heterogeneous motion dynamics. 
+
+## 3 Preliminaries  
+
+> Diffusion Model.
+
+Diffusion models [ 25 , 28 ] synthesize data by reversing a noise injection process. Under the Flow Matching paradigm [ 19 ], the forward transition from data π0 to Gaussian prior π1 follows a linear interpolation path: 
+
+xt = (1 − σ(t)) · xdata + σ(t) · xnoise , (1) where σ(t) is a monotonic scheduling function. The reverse denoising phase recovers data by approximating a time-dependent velocity field vθ , governed by the ODE dx/dt = vθ (xt, t, c ), where c denotes conditional inputs. Inference is typically performed using numerical solvers like Euler’s method [ 17 ] to iteratively update the sample: 
+
+xti−1 = xti + vθ (xti , t i, c )∆ ti. (2)  
+
+> AutoRegressive Video Generation Model.
+
+To circumvent the quadratic complexity inherent in full-sequence modeling, the framework adopts an autoregressive generation paradigm by decomposing long videos into discrete units. Formally, a video sequence is partitioned into k latent chunks, denoted as {X1, . . . , Xk}. Each 30.2            
+
+> 0123456
+> Density
+> (b) Residual Difference Change Between Frames
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> 1.4
+> 1.6
+> Max: 5.9219
+> 0.0
+> 0.1
+> 246810
+> Density
+> (a) Residual Difference Between Timesteps
+> Min: 1.175
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> Median: 2.078
+> Max: 9.878
+> L2 norm distance
+> 0.0
+> L2 norm distance
+
+Figure 2 (a) Heterogeneous Temporal Redundancy: The distribution of residual differences between adjacent timesteps exhibits a long-tailed pattern. While the majority of tokens cluster around low values, a significant tail extends to high values, indicating highly non-uniform update requirements across tokens. (b) Intra-Chunk Frame Discrepancy: The distribution of residual changes across distinct frames within the same chunk reveals significant variation. This wide dynamic range confirms that frames within a single autoregressive chunk possess distinct motion characteristics, rendering coarse-grained cache suboptimal. 
+
+chunk Xi ∈ RF ×H×W ×C represents a high-dimensional latent representation characterized by a temporal duration of F , a spatial resolution of H × W , and C channels. The generation of the i-th chunk is conditioned on the preceding context, where the denoising update at timestep t is governed by the Euler [ 17 ] discretization step: 
+
+Xit−1 = Xit + vθ (Xit, t, c ) · ∆t. (3) Here, t ∈ [( i − 1) T /l, (i + l − 1) T /l ] represents the timestep, where T denotes the total number of discretization steps and l indicates the maximum window size permitted for the denoising process. 
+
+Feature Caching Strategies. Feature caching accelerates inference by exploiting temporal redundancy. Caching decisions rely on metrics like the relative L1 distance [4, 8, 20] between consecutive inputs Xit:
+
+L1rel (Xi, t ) = ∥Xit − Xit+1 ∥1
+
+∥Xit+1 ∥1
+
+. (4) During full computation, the system caches the residual, defined as the difference between the predicted velocity and input latent: 
+
+Rit = vθ (Xit, t, c ) − Xit. (5) When the accumulated relative L1 distance falls below the threshold, the forward pass is bypassed, and the velocity is approximated by reusing the cached residual: 
+
+˜vit−1 ≈ Xit−1 + Rit. (6) This mechanism effectively reduces computational overhead by leveraging local feature stability. 
+
+## 4 Analysis of Caching Error 
+
+To motivate our transition from coarse-grained chunk skipping to fine-grained token-wise caching, we ana-lytically investigate the source of approximation error in the caching mechanism. We demonstrate that the caching error is theoretically bounded by the inconsistency of feature residuals across timesteps, and this inconsistency is highly correlated with the underlying motion dynamics. 
+
+4.1 Theoretical Error Bound of Feature Caching 
+
+Consider the denoising process for the i-th video chunk at timestep t − 1. We quantify the Local Approximation Error ϵit−1 as the Euclidean distance between the ground-truth output derived from full computation and the 4approximated output derived from residual reuse. Based on the flow-matching update rule, we derive the following relationship regarding the caching error: 
+
+Proposition 4.1 (Residual Inconsistency Principle) . The approximation error at timestep t − 1 for chunk i
+
+is strictly proportional to the magnitude of the vector difference between the true residual Rit−1 and the cached residual Rit:
+
+ϵit−1 = ∆ t · ∥R it−1 − R it∥2. (7) The detailed derivation is provided in Appendix A. This proposition provides a fundamental insight: the reliability of the caching mechanism is governed by the temporal stability of the residual term. A larger deviation between the reused residual and the current true residual leads directly to a larger caching error. Therefore, the optimal caching policy must selectively calculate tokens where ∥R it−1 − R it∥ is significant, while retrieving tokens where this difference is negligible. 
+
+4.2 Empirical Observations 
+
+Guided by Proposition 4.1, we analyze the distribution of residual differences in actual video generation.  
+
+> Heterogeneous Temporal Redundancy.
+
+figure 2 (a) presents the Kernel Density Estimation (KDE) of residual differences between adjacent timesteps. The resulting long-tailed distribution—characterized by a low median (2.078 ) yet a significant tail reaching 9.878 —reveals that feature update requirements are highly non-uniform. This heterogeneity invalidates uniform chunk-wise caching, which inevitably wastes computation on static regions or degrades dynamic ones, thereby motivating the need for an adaptive token-wise strategy.  
+
+> Intra-Chunk Frame Discrepancy.
+
+figure 2 (b) illustrates the residual heterogeneity across distinct frames within a single autoregressive chunk. Since video VAEs compress multiple consecutive raw frames into a single latent frame, distinct latent frames correspond to different temporal segments of the original video. Consequently, the residual distribution extends significantly (max difference 5.9219 ), reflecting the varied content evolution across these segments. This substantial intra-chunk discrepancy confirms that frames are not uniformly redundant; thus, treating the entire chunk as an atomic unit is suboptimal, necessitating a more fine-grained update mechanism. 
+
+4.3 Theoretical Connection: Residual Stability and Motion Dynamics 
+
+Since the ideal residual difference is computationally inaccessible prior to inference, we require a lightweight proxy. We establish a theoretical bound linking the temporal instability of residuals to the spatial-temporal variations of the input latent. 
+
+Lemma 4.2 (Motion-Induced Residual Instability) . Let R(X, t ) be the continuous residual function derived from the velocity field. Assuming the temporal gradient of the residual field ∇tR satisfies the Lipschitz condition with respect to the input latent X, the residual difference across timesteps is bounded by the intra-chunk frame difference: 
+
+∥R t−1(X(i,f ) 
+
+> t−1
+
+) − R t(X(i,f ) 
+
+> t
+
+)∥2 ≲ C · ∥ X(i,f ) 
+
+> t
+
+− X(i,f −1)  
+
+> t
+
+∥2, (8) 
+
+where X(i,f ) 
+
+> t
+
+and X(i,f −1)  
+
+> t
+
+denote the latents of the f -th and (f − 1) -th frames in the i-th chunk at timestep t,and C is a constant. 
+
+The detailed proof is provided in Appendix B. Equation 8 implies that the frame difference is not merely a heuristic, but a mathematically grounded upper bound for residual instability.  
+
+> Validation of the Motion Proxy.
+
+To empirically validate this correlation, we treat the caching decision as a ranking problem. We compare the token importance ranking derived from our proposed frame difference against the ground-truth ranking derived from the actual residual difference. As illustrated in figure 3, the Normalized Discounted Cumulative Gain (NDCG) [ 15 , 35 ] scores consistently exceed 0.94 across denoising timesteps. This demonstrates that the frame difference preserves the relative order of token importance with high fidelity, confirming it as an effective surrogate to precisely identify critical tokens for computation while retrieving stable ones from the cache. 50.90  
+
+> 010
+> NDCG Score
+
+Sampling Step       
+
+> NDCG Score (Avg: 0.9687)
+> 0.92
+> 0.94
+> 0.96
+> 0.98
+> 2030 40 50Figure 3 Validation of Motion Proxy.
+
+NDCG [ 15 , 35 ] scores comparing frame difference-based token importance rankings to rankings derived from adjacent timestep residual differences. The scores remain consistently above 0.94, demonstrating strong similarity in token importance ordering throughout the diffusion process. 
+
+## 5 Methodology 
+
+Based on the theoretical analysis in Sec. 4, we propose a fine-grained, motion-aware caching strategy tailored for autoregressive video generation , as illustrated in figure 4. Our method dynamically allocates computational resources by prioritizing tokens in high-motion regions while efficiently reusing residuals for static backgrounds. 
+
+5.1 Motion-Aware Token Importance 
+
+The core of our strategy lies in accurately identifying tokens that require frequent updates. As derived in Equation 8, the intra-chunk frame difference serves as a robust proxy for residual instability. Let Xit ∈
+
+RF ×H×W ×C denote the latent of the i-th video chunk at denoising timestep t, containing F frames. We define the importance map M ∈ RF ×H×W based on the token-wise difference between adjacent frames. For a specific frame f within chunk i, the importance score M(i,f ) 
+
+> t
+
+is computed using the output latent from the previous timestep t + 1 :
+
+M(i,f ) 
+
+> t
+
+=
+
+
+
+∥X(i,f ) 
+
+> t+1
+
+− X(i,f −1)  
+
+> t+1
+
+∥1 if f > 0,
+
+∥X(i, 0)  
+
+> t+1
+
+− X(i−1,F −1)  
+
+> t+1
+
+∥1 if f = 0 and i > 0,
+
+M(0 ,1)  
+
+> t
+
+if f = 0 and i = 0 .
+
+(9) Here, standard frames ( f > 0) calculate the difference with their preceding frame. The first frame of a chunk ( f = 0 , i > 0) computes the difference with the last frame of the previously generated chunk ( i − 1)to maintain temporal continuity. For the very first frame of the entire video ( f = 0 , i = 0 ), which lacks a temporal reference, we reuse the importance score of the second frame. To convert this raw importance into a modulation weight for caching, we apply a soft-mapping function based on min-max normalization. Crucially, this operation is performed independently for each frame to adapt to the varying dynamic ranges of motion across different temporal moments. We first normalize the importance scores M within the specific frame f to the range [0 , 1] , and then linearly project them to a target interval 6Traditional Reuse MotionCache 
+
+TimeStep 
+
+> Video  Playback  Direction
+
+TeaCache: Speedup: 2.2 x, PSNR: 18.39 FlowCache: Speedup: 6.26 x, PSNR: 21.83 
+
+Higher Speedup and Quality ( Speedup: 6.28 x, PSNR: 23.46 ) Inner Chunk Tokenwise Calculation 
+
+Partial/Full Calculate Waiting for chunk 
+
+entering 
+
+> Input Chunk
+
+Reuse 
+
+> Partial Calculate
+
+Active/Inactive 
+
+tokens  
+
+> Motion Importance Heatmap
+> All Reuse
+> All Calculate
+> Inner Chunk
+> Frames
+
+Figure 4 Comparison of caching strategies in autoregressive video generation. The top panel illustrates traditional reuse strategies (e.g., TeaCache and FlowCache), which apply coarse-grained caching policies by treating an entire timestep or chunk as an atomic unit for skipping. This approach overlooks fine-grained intra-chunk redundancy, forcing a binary decision between full computation or full reuse. In contrast, our MotionCache (bottom panel) employs a fine-grained Motion-Aware caching policy, dynamically deciding for each individual token whether to reuse cached residuals or perform recomputation based on motion dynamics. The bottom right panel details the Inner Chunk Tokenwise Calculation mechanism: it first calculates motion importance based on intra-chunk frame differences, then applies an importance-weighted accumulation policy to generate a binary selection mask, where white regions indicate active tokens selected for computation and black regions denote inactive tokens retrieved from the cache. 
+
+[α, 1] :
+
+W(i,f ) 
+
+> t
+
+= α + (1 − α) · M(i,f ) 
+
+> t
+
+− min( M(i,f ) 
+
+> t
+
+)max( M(i,f ) 
+
+> t
+
+) − min( M(i,f ) 
+
+> t
+
+) + ϵ , (10) where min (M(i,f ) 
+
+> t
+
+) and max (M(i,f ) 
+
+> t
+
+) denote the spatial minimum and maximum importance values strictly within the current frame f , and ϵ is a small constant for numerical stability. The parameter α ∈ [0 , 1] serves as a floor value, ensuring that even static background tokens (where W ≈ α) continue to accumulate update probability at a baseline rate rather than being completely frozen. Qualitatively, as illustrated in figure 5, the computed importance maps demonstrate precise spatial cor-respondence with the ground-truth video frames, effectively distinguishing dynamic regions from static backgrounds. 
+
+5.2 Importance-Weighted Accumulation Policy 
+
+To dynamically determine the update frequency for each token, we introduce a weight-based accumulation mechanism. We track an error metric A for every spatial-temporal token location, which accumulates the estimated residual change over time. At each timestep t, we first calculate the relative L1 distance for the i-th chunk, denoted as ∆chunk , to 7f=0 f=15 f=30 f=45 f=60 f=75 f=90 f=105 f=120    
+
+> Static  Dynamic Figure 5 Visualization of the ground-truth video frames versus the computed importance maps. The label findicates the frame index within the video sequence.
+
+represent the overall magnitude of the latent update: 
+
+∆chunk (t) = ∥Xit − Xit+1 ∥1
+
+∥Xit+1 ∥1
+
+. (11) Then, we distribute this update budget to individual tokens based on their motion-aware weights. The accumulator for a token at position p is updated as: 
+
+At[p] = At+1 [p] + Wt[p] · ∆chunk (t). (12) This strategy effectively couples the temporal denoising progress with spatial motion dynamics. High-motion tokens ( W ≈ 1) absorb the full change and accumulate error rapidly, while static background tokens ( W ≈ α)suppress the accumulation. A token is selected for computation only when its accumulator exceeds a predefined threshold τ :Mask t[p] = I(At[p] > τ ). (13) where I(·) denotes the indicator function that takes the value 1 if the condition holds and 0 otherwise. Upon selection, the token undergoes a forward pass, and its accumulator At[p] is reset to 0. 
+
+5.3 Dual-Stage Coarse-to-Fine Inference Schedule 
+
+Video generation typically exhibits a coarse-to-fine progression, where global structures are established early, and high-frequency details are refined later [ 16 , 23 , 33 ]. To align with this property, we implement a dual-stage coarse-to-fine inference schedule.  
+
+> Phase 1: Coarse-grained Structure Construction.
+
+In the initial phase of generation, maintaining global structural integrity is paramount. As illustrated in figure 3, the NDCG scores exhibit significant volatility during these early timesteps, indicating that the semantic foundation is not yet stabilized. Consequently, selective token forward at this stage could disrupt the formation of consistent semantic layouts. Therefore, we enforce a chunk-wise decision policy. At each step, the decision to compute or cache is synchronized across the entire chunk: the mask is effectively binary for the whole feature map ( Mask ∈ { 0, 1}). The chunk is either fully updated or fully skipped. This phase continues until the model has performed a total of K full computations, where K is a hyperparameter controlling the structural foundation’s solidity.  
+
+> Phase 2: Fine-grained Detail Refinement.
+
+Once global structure stabilizes after K full-chunk updates, we transition to the sparse token-wise adaptive mode described in Sec. 5.2. Leveraging the native KV cache, 8Table 1 Quantitative comparison with state-of-the-art acceleration methods on SkyReels-V2 and MAGI-1. "Slow" and "Fast" denote configurations with lower and higher acceleration ratios, respectively. MotionCache achieves superior speedups while maintaining higher generation quality compared to other baselines. 
+
+Model Method PFLOPs Speedup Latency(s) VBench PSNR SSIM LPIPS 
+
+↓ ↑ ↓ ↑ ↑ ↑ ↓
+
+SkyReels-V2 Vanilla 113 1× 1540 83.84% - - -TeaCache-slow 58 1.89 × 814 82.67% 21.96 0.7501 0.1472 TeaCache-fast 49 2.2 × 686 80.06% 18.39 0.6121 0.3063 FlowCache-slow 31 6.26 × 246 82.70% 21.83 0.8733 0.1417 FlowCache-fast 27 7.19 × 214 82.38% 21.17 0.8697 0.1634 MotionCache-slow 30 6.28 × 245 82.84% 23.46 0.9093 0.0875 
+
+MotionCache-fast 26 7.26 × 212 82.75% 21.78 0.8723 0.1478 MAGI-1 Vanilla 139 1× 1520 77.26% - - -TeaCache-slow 129 1.14 × 1339 76.64% 14.74 0.4132 0.6189 TeaCache-fast 101 1.41 × 1075 68.81% 11.98 0.2632 0.7670 FlowCache-slow 104 1.39 × 1094 77.08% 18.16 0.6486 0.3451 FlowCache-fast 78 1.94 × 782 73.42% 14.92 0.3998 0.6088 MotionCache-slow 100 1.64 × 925 77.25% 19.71 0.7231 0.2510 
+
+MotionCache-fast 64 2.07 × 733 74.59% 17.70 0.5600 0.4861 
+
+we gather only active tokens ( Mask [p] = 1 ) into a compact batch for the forward pass. These computed features are subsequently scattered back to update the residual cache Rcache , while inactive tokens bypass computation by directly retrieving stored residuals for approximation. 
+
+## 6 Experiments 
+
+6.1 Experimental Setup  
+
+> Base Models.
+
+To evaluate the efficacy of our proposed method, we selected two representative diffusion models based on the autoregressive paradigm: MAGI-1-4.5B-distill [ 33 ] and SkyReels-V2-1.3B [ 6]. For MAGI-1, we generate videos at 720p resolution consisting of 7 chunks, where each chunk contains 24 frames at 24 FPS. For SkyReels-V2, the generation targets a resolution of 540p, producing videos composed of 2 chunks with 97 frames each at 24 FPS.  
+
+> Evaluation Metrics.
+
+Following established acceleration protocols such as FlowCache [ 1] and TeaCache [ 20 ], we assess performance based on perceptual quality and computational efficiency. For quality, we employ standard metrics including LPIPS [ 44 ], PSNR [ 13 ], and SSIM [ 36 ]. Furthermore, we utilize the VBench-long benchmark [ 14 ] for comprehensive video generation assessment; for brevity, we refer to this as VBench throughout the paper. Efficiency is quantified by measuring Floating Point Operations (FLOPs) and practical inference latency.  
+
+> Implementation Details.
+
+All experiments are implemented in PyTorch and executed on NVIDIA A800 80GB GPUs. Further details regarding the model implementation, along with a detailed introduction and specific configurations of the evaluation metrics, are provided in Appendix C. 
+
+6.2 Main Result 
+
+As shown in Table 1, MotionCache achieves superior efficiency-quality trade-offs compared to TeaCache and FlowCache. On MAGI-1, while TeaCache-fast and FlowCache-fast suffer significant quality degradation (VBench scores dropping to 68.81% and 73.42% respectively), MotionCache-fast achieves a 2.07 × speedup while maintaining robust visual quality (VBench 74.59%). MotionCache-slow delivers nearly lossless quality with a 1.64 × acceleration, effectively preserving fine-grained semantic details that are otherwise lost in coarse-grained schemes. 9Table 2 Ablation study on the soft-mapping floor parameter α.
+
+α PSNR ↑ SSIM ↑ LPIPS ↓
+
+0.0 20.22 0.7944 0.5853 0.2 21.82 0.8591 0.3663 0.4 22.90 0.8950 0.1744 0.6 23.46 0.9093 0.0875 0.8 23.42 0.9095 0.0862 
+
+1.0 23.44 0.9105 0.0866  
+
+> Table 3 Ablation study on the duration of Phase 1 ( K).
+
+K PSNR ↑ SSIM ↑ LPIPS ↓
+
+0 20.79 0.8636 0.1963 3 22.92 0.8993 0.1027 6 23.46 0.9093 0.0875 9 23.39 0.9090 0.0883 12 23.41 0.9092 0.0859 
+
+15 23.43 0.9103 0.0865 The advantage is even more pronounced on SkyReels-V2. MotionCache-slow achieves a 6.28 × acceleration with a VBench score of 82.84%, significantly outperforming FlowCache-slow (6.26 ×, 82.70%) and TeaCache-slow (1.89 ×, 82.67%) in both speed and structural alignment (PSNR 23.46). MotionCache-fast maintains excellent quality (VBench 82.75%) at a state-of-the-art 7.26 × speedup, whereas existing methods exhibit noticeable texture drifting and structural misalignment at significantly lower acceleration ratios(more visualization resluts in Appendix E). 
+
+6.3 Ablation Study 
+
+To investigate the efficacy of our design choices, we analyze the impact of two pivotal hyperparameters: the soft-mapping floor α and the Phase 1 duration K. The complete ablation tables detailing the numerical results for all experimental settings are provided in Appendix D.   
+
+> Impact of Soft-mapping Parameter α.
+
+As shown in Table 2, α = 0 disables forced updates for static areas, while α = 1 eliminates spatial selectivity, degenerating the method to FlowCache. Increasing α enhances background preservation by raising the update frequency for static tokens, though at the cost of higher latency. Empirically, α = 0 .6 strikes the optimal balance between quality and efficiency.   
+
+> Impact of Phase 1 Duration K.
+
+As shown in Table 3, increasing K extends the chunk-wise policy, eventually degenerating to FlowCache. While larger K benefits global structure, it raises latency. Results indicate K = 6 
+
+is optimal; further increasing K yields marginal quality gains while adding computational overhead. 
+
+## 7 Conclusion 
+
+In this paper, we presented MotionCache, a novel motion-aware caching framework designed to accelerate autoregressive video generation. By establishing a theoretical connection between residual instability and intra-chunk frame discrepancies, we introduced a lightweight, fine-grained proxy for token importance. This formulation allows the model to break free from the rigid "all-or-nothing" constraints of previous coarse-grained methods, enabling dynamic resource allocation that prioritizes high-motion regions while efficiently reusing residuals for static backgrounds. Extensive experiments on state-of-the-art models, SkyReels-V2 and MAGI-1, demonstrate that MotionCache achieves significant speedups, yet delivers superior performance in perceptual quality and temporal coherence. We believe this fine-grained, motion-centric paradigm offers a 10 promising direction for efficient video synthesis, paving the way for real-time deployment for autoregressive video generation models. 11 References 
+
+[1] Anonymous. Flow caching for autoregressive video generation. In Submitted to The Fourteenth International Conference on Learning Representations , 2025. URL https://openreview.net/forum?id=vko4DuhKbh . under review. [2] Andreas Blattmann, Tim Dockhorn, Sumith Kulal, Daniel Mendelevitch, Maciej Kilian, Dominik Lorenz, Yam Levi, Zion English, Vikram Voleti, Adam Letts, et al. Stable video diffusion: Scaling latent video diffusion models to large datasets. arXiv preprint arXiv:2311.15127, 2023. [3] Tim Brooks, Bill Peebles, Connor Holmes, Will DePue, Yufei Guo, Li Jing, David Schnurr, Joe Taylor, Troy Luhman, Eric Luhman, et al. Video generation models as world simulators. OpenAI Blog, 1(8):1, 2024. [4] Jiazi Bu, Pengyang Ling, Yujie Zhou, Yibin Wang, Yuhang Zang, Dahua Lin, and Jiaqi Wang. Dicache: Let diffusion model determine its own cache. arXiv preprint arXiv:2508.17356, 2025. [5] Boyuan Chen, Diego Martí Monsó, Yilun Du, Max Simchowitz, Russ Tedrake, and Vincent Sitzmann. Diffusion forcing: Next-token prediction meets full-sequence diffusion. Advances in Neural Information Processing Systems, 37:24081–24125, 2024. [6] Guibin Chen, Dixuan Lin, Jiangping Yang, Chunze Lin, Junchen Zhu, Mingyuan Fan, Hao Zhang, Sheng Chen, Zheng Chen, Chengcheng Ma, et al. Skyreels-v2: Infinite-length film generative model. arXiv preprint arXiv:2504.13074, 2025. [7] Pengtao Chen, Mingzhu Shen, Peng Ye, Jianjian Cao, Chongjun Tu, Christos-Savvas Bouganis, Yiren Zhao, and Tao Chen. δ-dit: A training-free acceleration method tailored for diffusion transformers. arXiv preprint arXiv:2406.01125, 2024. [8] Hanshuai Cui, Zhiqing Tang, Zhifei Xu, Zhi Yao, Wenyi Zeng, and Weijia Jia. Bwcache: Accelerating video diffusion transformers through block-wise caching. arXiv preprint arXiv:2509.13789, 2025. [9] Weilun Feng, Chuanguang Yang, Haotong Qin, Xiangqi Li, Yu Wang, Zhulin An, Libo Huang, Boyu Diao, Zixiang Zhao, Yongjun Xu, et al. Q-vdit: Towards accurate quantization and distillation of video-generation diffusion transformers. arXiv preprint arXiv:2505.22167, 2025. [10] Ao Fu, Yi Zhou, Tao Zhou, Yi Yang, Bojun Gao, Qun Li, Guobin Wu, and Ling Shao. Exploring the interplay between video generation and world models in autonomous driving: A survey. arXiv preprint arXiv:2411.02914, 2024. [11] Ruiyuan Gao, Kai Chen, Bo Xiao, Lanqing Hong, Zhenguo Li, and Qiang Xu. Magicdrive-v2: High-resolution long video generation for autonomous driving with adaptive control. In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 28135–28144, 2025. [12] Yu Gao, Haoyuan Guo, Tuyen Hoang, Weilin Huang, Lu Jiang, Fangyuan Kong, Huixia Li, Jiashi Li, Liang Li, Xiaojie Li, et al. Seedance 1.0: Exploring the boundaries of video generation models. arXiv preprint arXiv:2506.09113, 2025. [13] Alain Hore and Djemel Ziou. Image quality metrics: Psnr vs. ssim. In 2010 20th international conference on pattern recognition, pages 2366–2369. IEEE, 2010. [14] Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si, Yuming Jiang, Yuanhan Zhang, Tianxing Wu, Qingyang Jin, Nattapol Chanpaisit, et al. Vbench: Comprehensive benchmark suite for video generative models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 21807–21818, 2024. [15] Kalervo Järvelin and Jaana Kekäläinen. Ir evaluation methods for retrieving highly relevant documents. In ACM SIGIR Forum, volume 51, pages 243–250. ACM New York, NY, USA, 2017. [16] Kumara Kahatapitiya, Haozhe Liu, Sen He, Ding Liu, Menglin Jia, Chenyang Zhang, Michael S Ryoo, and Tian Xie. Adaptive caching for faster video generation with diffusion transformers. In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 15240–15252, 2025. [17] Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine. Elucidating the design space of diffusion-based generative models. Advances in neural information processing systems, 35:26565–26577, 2022. 
+
+12 [18] Weijie Kong, Qi Tian, Zijian Zhang, Rox Min, Zuozhuo Dai, Jin Zhou, Jiangfeng Xiong, Xin Li, Bo Wu, Jianwei Zhang, et al. Hunyuanvideo: A systematic framework for large video generative models. arXiv preprint arXiv:2412.03603, 2024. [19] Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. Flow matching for generative modeling. arXiv preprint arXiv:2210.02747, 2022. [20] Feng Liu, Shiwei Zhang, Xiaofeng Wang, Yujie Wei, Haonan Qiu, Yuzhong Zhao, Yingya Zhang, Qixiang Ye, and Fang Wan. Timestep embedding tells: It’s time to cache for video diffusion model. In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 7353–7363, 2025. [21] Jiacheng Liu, Chang Zou, Yuanhuiyi Lyu, Junjie Chen, and Linfeng Zhang. From reusing to forecasting: Accelerating diffusion models with taylorseers. arXiv preprint arXiv:2503.06923, 2025. [22] Jiacheng Liu, Chang Zou, Yuanhuiyi Lyu, Fei Ren, Shaobo Wang, Kaixin Li, and Linfeng Zhang. Speca: Accelerating diffusion transformers with speculative feature caching. In Proceedings of the 33rd ACM International Conference on Multimedia, pages 10024–10033, 2025. [23] Jinming Lou, Wenyang Luo, Yufan Liu, Bing Li, Xinmiao Ding, Weiming Hu, Jiajiong Cao, Yuming Li, and Chenguang Ma. Token caching for diffusion transformer acceleration. arXiv preprint arXiv:2409.18523, 2024. [24] Xin Ma, Yaohui Wang, Xinyuan Chen, Gengyun Jia, Ziwei Liu, Yuan-Fang Li, Cunjian Chen, and Yu Qiao. Latte: Latent diffusion transformer for video generation. arXiv preprint arXiv:2401.03048, 2024. [25] William Peebles and Saining Xie. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF international conference on computer vision, pages 4195–4205, 2023. [26] Xiangyu Peng, Zangwei Zheng, Chenhui Shen, Tom Young, Xinying Guo, Binluo Wang, Hang Xu, Hongxin Liu, Mingyan Jiang, Wenjun Li, et al. Open-sora 2.0: Training a commercial-level video generation model in $200 k. arXiv preprint arXiv:2503.09642, 2025. [27] Aditya Ramesh, Prafulla Dhariwal, Alex Nichol, Casey Chu, and Mark Chen. Hierarchical text-conditional image generation with clip latents. arXiv preprint arXiv:2204.06125, 1(2):3, 2022. [28] Olaf Ronneberger, Philipp Fischer, and Thomas Brox. U-net: Convolutional networks for biomedical image segmentation. In International Conference on Medical image computing and computer-assisted intervention, pages 234–241. Springer, 2015. [29] Chitwan Saharia, William Chan, Saurabh Saxena, Lala Li, Jay Whang, Emily L Denton, Kamyar Ghasemipour, Raphael Gontijo Lopes, Burcu Karagol Ayan, Tim Salimans, et al. Photorealistic text-to-image diffusion models with deep language understanding. Advances in neural information processing systems, 35:36479–36494, 2022. [30] Pratheba Selvaraju, Tianyu Ding, Tianyi Chen, Ilya Zharkov, and Luming Liang. Fora: Fast-forward caching in diffusion transformer acceleration. arXiv preprint arXiv:2407.01425, 2024. [31] Yihua Shao, Deyang Lin, Fanhu Zeng, Minxi Yan, Muyang Zhang, Siyu Chen, Yuxuan Fan, Ziyang Yan, Haozhe Wang, Jingcai Guo, et al. Tr-dq: Time-rotation diffusion quantization. arXiv preprint arXiv:2503.06564, 2025. [32] Kiwhan Song, Boyuan Chen, Max Simchowitz, Yilun Du, Russ Tedrake, and Vincent Sitzmann. History-guided video diffusion. arXiv preprint arXiv:2502.06764, 2025. [33] Hansi Teng, Hongyu Jia, Lei Sun, Lingzhi Li, Maolin Li, Mingqiu Tang, Shuai Han, Tianning Zhang, WQ Zhang, Weifeng Luo, et al. Magi-1: Autoregressive video generation at scale. arXiv preprint arXiv:2505.13211, 2025. [34] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianx-iao Yang, et al. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314, 2025. [35] Yining Wang, Liwei Wang, Yuanzhi Li, Di He, and Tie-Yan Liu. A theoretical analysis of ndcg type ranking measures. In Conference on learning theory, pages 25–54. PMLR, 2013. [36] Zhou Wang, Alan C Bovik, Hamid R Sheikh, and Eero P Simoncelli. Image quality assessment: from error visibility to structural similarity. IEEE transactions on image processing, 13(4):600–612, 2004. [37] Yuqing Wen, Yucheng Zhao, Yingfei Liu, Fan Jia, Yanhui Wang, Chong Luo, Chi Zhang, Tiancai Wang, Xiaoyan Sun, and Xiangyu Zhang. Panacea: Panoramic and controllable video generation for autonomous driving. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 6902–6912, 2024. 
+
+13 [38] Jinbo Xing, Long Mai, Cusuh Ham, Jiahui Huang, Aniruddha Mahapatra, Chi-Wing Fu, Tien-Tsin Wong, and Feng Liu. Motioncanvas: Cinematic shot design with controllable image-to-video generation. In Proceedings of the Special Interest Group on Computer Graphics and Interactive Techniques Conference Conference Papers ,pages 1–11, 2025. [39] Lin Yang, Li Li, Yuxiang Fu, et al. Veta-dit: Variance-equalized and temporally adaptive quantization for efficient 4-bit diffusion transformers. In The Thirty-ninth Annual Conference on Neural Information Processing Systems. [40] Shuai Yang, Wei Huang, Ruihang Chu, Yicheng Xiao, Yuyang Zhao, Xianbang Wang, Muyang Li, Enze Xie, Ying-cong Chen, Yao Lu, et al. Longlive: Real-time interactive long video generation. arXiv preprint arXiv:2509.22622, 2025. [41] Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng Xu, Yuanming Yang, Wenyi Hong, Xiaohan Zhang, Guanyu Feng, et al. Cogvideox: Text-to-video diffusion models with an expert transformer. arXiv preprint arXiv:2408.06072, 2024. [42] Tianwei Yin, Qiang Zhang, Richard Zhang, William T Freeman, Fredo Durand, Eli Shechtman, and Xun Huang. From slow bidirectional to fast autoregressive video diffusion models. In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 22963–22974, 2025. [43] Zichao Yu, Zhen Zou, Guojiang Shao, Chenwei Zhang, Shengze Xu, Jie Huang, Feng Zhao, Xiaodong Cun, and Wenyi Zhang. Ab-cache: Training-free acceleration of diffusion models via adams-bashforth cached feature reuse. In Proceedings of the 33rd ACM International Conference on Multimedia, pages 10408–10417, 2025. [44] Richard Zhang, Phillip Isola, Alexei A Efros, Eli Shechtman, and Oliver Wang. The unreasonable effectiveness of deep features as a perceptual metric. In Proceedings of the IEEE conference on computer vision and pattern recognition, pages 586–595, 2018. [45] Tianchen Zhao, Tongcheng Fang, Haofeng Huang, Enshu Liu, Rui Wan, Widyadewi Soedarmadji, Shiyao Li, Zinan Lin, Guohao Dai, Shengen Yan, et al. Vidit-q: Efficient and accurate quantization of diffusion transformers for image and video generation. arXiv preprint arXiv:2406.02540, 2024. [46] Xuanlei Zhao, Xiaolong Jin, Kai Wang, and Yang You. Real-time video generation with pyramid attention broadcast. arXiv preprint arXiv:2408.12588, 2024. [47] Zangwei Zheng, Xiangyu Peng, Tianji Yang, Chenhui Shen, Shenggui Li, Hongxin Liu, Yukun Zhou, Tianyi Li, and Yang You. Open-sora: Democratizing efficient video production for all. arXiv preprint arXiv:2412.20404, 2024. [48] Zhixin Zheng, Xinyu Wang, Chang Zou, Shaobo Wang, and Linfeng Zhang. Compute only 16 tokens in one timestep: Accelerating diffusion transformers with cluster-driven feature caching. In Proceedings of the 33rd ACM International Conference on Multimedia, pages 10181–10189, 2025. [49] Chang Zou, Xuyang Liu, Ting Liu, Siteng Huang, and Linfeng Zhang. Accelerating diffusion transformers with token-wise feature caching. arXiv preprint arXiv:2410.05317, 2024. 
+
+14 Appendix 
+
+## A Detailed Proof of Proposition 4.1 
+
+Restatement of Proposition 4.1. The approximation error at timestep t − 1 for chunk i is strictly proportional to the magnitude of the vector difference between the true residual Rit−1 and the cached residual Rit:
+
+ϵit−1 = ∆ t · ∥R it−1 − R it∥2. (14) 
+
+Proof. Consider the standard Euler discretization step in the flow-matching framework. For the i-th video chunk at timestep t − 1, the ground-truth update using the true velocity vθ (Xit−1, t − 1, c ) is given by: 
+
+Xit−2 = Xit−1 + vθ (Xit−1, t − 1, c )∆ t
+
+= Xit−1 + ( Xit−1 + Rit−1)∆ t, (15) where Rit−1 is the true residual derived from the model’s full computation. When the feature caching mechanism is activated, the system bypasses the computation at t − 1 and instead reuses the residual Rit stored from the preceding timestep t. Consequently, the approximated update is formulated as: ˜Xit−2 = Xit−1 + ( Xit−1 + Rit)∆ t. (16) The local approximation error ϵit−1 is defined as the Euclidean distance between the ground-truth output latent Xit−2 and the approximated latent ˜Xit−2. Substituting Eq. 15 and Eq. 16 into the error definition, we perform the subtraction: 
+
+ϵit−1 = ∥Xit−2 − ˜Xit−2∥2
+
+=
+
+h
+
+Xit−1 + ( Xit−1 + Rit−1)∆ t
+
+i
+
+−
+
+h
+
+Xit−1 + ( Xit−1 + Rit)∆ t
+
+i
+
+> 2
+
+= (Xit−1 − Xit−1) + ( Xit−1∆t − Xit−1∆t) + ( Rit−1∆t − R it∆t)
+
+> 2
+
+= ∥∆t · (Rit−1 − R it)∥2
+
+= ∆ t · ∥R it−1 − R it∥2.
+
+(17) This derivation confirms that the error introduced by caching is linearly dependent on the step size ∆t and strictly determined by the instability of the residual vector R between adjacent timesteps. 
+
+## B Detailed Proof of Lemma 4.2 
+
+Restatement of Lemma 4.2. Let R(X, t ) be the continuous residual function derived from the velocity field. Assuming the temporal gradient of the residual field ∇tR satisfies the Lipschitz condition with respect to to the input latent X, the residual difference across timesteps is bounded by the intra-chunk frame difference: 
+
+∥R t−1(X(i,f ) 
+
+> t−1
+
+) − R t(X(i,f ) 
+
+> t
+
+)∥2 ≲ C · ∥ X(i,f ) 
+
+> t
+
+− X(i,f −1)  
+
+> t
+
+∥2, (18) 
+
+where X(i,f ) 
+
+> t
+
+and X(i,f −1)  
+
+> t
+
+denote the latents of the f -th and (f − 1) -th frames in the i-th chunk at timestep t,and C is a constant. Proof. First, we analyze the term on the left-hand side, which represents the variation of the residual across discrete timesteps. By applying the first-order Taylor expansion with respect to t, the residual at timestep 
+
+t − 1 can be approximated as: 
+
+Rt−1(X(i,f ) 
+
+> t−1
+
+) = Rt(X(i,f ) 
+
+> t
+
+) + ∂R(X(i,f ) 
+
+> t
+
+, t )
+
+∂t ∆t + O(∆ t2). (19) 15 Ignoring higher-order terms, the magnitude of the residual difference is dominated by the partial derivative of the residual with respect to time: 
+
+∥R t−1(X(i,f ) 
+
+> t−1
+
+) − R t(X(i,f ) 
+
+> t
+
+)∥2 ≈ ∆t · ∂R(X(i,f ) 
+
+> t
+
+, t )
+
+∂t 2
+
+. (20) Physically, the term ∂R 
+
+> ∂t
+
+corresponds to the curvature of the generative ODE trajectory. In Flow Matching models, optimal transport trajectories for static data (i.e., X(i,f ) 
+
+> data
+
+= X(i,f −1)  
+
+> data
+
+) are theoretically straight lines, implying zero curvature ( ∂R 
+
+> ∂t
+
+→ 0). Conversely, complex dynamics induce curved trajectories. We formalize this observation by assuming that the curvature function g(X) = ∂R 
+
+> ∂t
+
+is Lipschitz continuous with respect to the underlying signal motion. Specifically, comparing the current frame f with its adjacent frame f − 1 (serving as a reference for local staticity): 
+
+g(X(i,f ) 
+
+> t
+
+) − g(X(i,f −1)  
+
+> t
+
+) 2
+
+≤ L · ∥ X(i,f ) 
+
+> t
+
+− X(i,f −1)  
+
+> t
+
+∥2, (21) where L is the Lipschitz constant. Since the (f − 1) -th frame serves as the immediate temporal context, for static regions where X(i,f ) 
+
+> t
+
+≈ X(i,f −1)  
+
+> t
+
+, the trajectory linearity implies g(X(i,f −1)  
+
+> t
+
+) ≈ 0. Substituting this into Eq. 21: 
+
+∂R(X(i,f ) 
+
+> t
+
+, t )
+
+∂t 2
+
+≤ L · ∥ X(i,f ) 
+
+> t
+
+− X(i,f −1)  
+
+> t
+
+∥2. (22) Finally, combining Eq. 20 and Eq. 22, we obtain the bound: 
+
+∥R t−1(X(i,f ) 
+
+> t−1
+
+) − R t(X(i,f ) 
+
+> t
+
+)∥2 ≤ (∆ t · L) · ∥ X(i,f ) 
+
+> t
+
+− X(i,f −1)  
+
+> t
+
+∥2. (23) This concludes the proof. The caching error (residual instability) is strictly upper-bounded by the intra-chunk frame difference. 
+
+## C Experimental Details 
+
+C.1 Video Configuration and Model Implementation  
+
+> Video Configuration.
+
+Regarding the specific hyperparameter settings for MotionCache, for SkyReels-V2, we set α = 0 .5 and K = 6 . For MAGI-1, we utilize α = 0 .5 and K = 9 . Additionally, following FlowCache [ 1], we designate the first m timesteps as a global warm-up phase where cache reuse is disabled to ensure trajectory stability. We set m = 5 for MAGI-1 and m = 4 for SkyReels-V2.  
+
+> Architectural Differences.
+
+While sharing an autoregressive foundation, the two models diverge fundamentally in their execution granularity. MAGI-1 operates at the inter-chunk level, utilizing a sliding window to manage the concurrent denoising of sequentially dependent chunks. Conversely, SkyReels-V2 employs a hierarchical intra-chunk strategy, subdividing chunks into granular blocks. It enforces a staggered inference schedule where earlier blocks precede subsequent ones in the denoising chain, resulting in asynchronous noise levels across the sequence at any given timestep. 
+
+C.2 Evaluation Metrics Selection 
+
+We evaluated performance using representative VBench metrics selected based on established practices in video generation compression research [ 9 , 31 , 39 , 45 ]. To facilitate an intuitive comparison, we compute the average scores of the selected VBench metrics using the official normalization and weighting methodology provided by the VBench benchmark. 
+
+## D Detailed Ablation Study Results 
+
+In this section, we present the comprehensive quantitative results for the hyperparameter ablation studies discussed in the main text. Specifically, we detail the performance variations across the full sweep range of the soft-mapping floor parameter α and the Phase 1 duration parameter K.16 Table 4 Detailed ablation study on the soft-mapping floor parameter α. The sweep ranges from 0.0 to 1.0 with a step of 0.1. 
+
+α PSNR ↑ SSIM ↑ LPIPS ↓
+
+0.0 20.22 0.7944 0.5853 0.1 20.98 0.8254 0.5040 0.2 21.82 0.8591 0.3663 0.3 22.59 0.8880 0.2189 0.4 22.90 0.8950 0.1744 0.5 23.21 0.9037 0.1165 0.6 23.46 0.9093 0.0875 0.7 23.41 0.9072 0.0872 0.8 23.42 0.9095 0.0862 
+
+0.9 23.43 0.9082 0.0877 1.0 23.44 0.9105 0.0866 
+
+D.1 Full Evaluation of Soft-mapping Floor α
+
+Table 4 lists the complete metrics for α ranging from 0.0 to 1.0 with an interval of 0.1. As observed in the table, the performance metrics stabilize significantly when α exceeds 0.5, showing minimal variance in quality beyond this point. Conversely, lower α values assign insufficient importance weights to static background tokens, preventing them from reaching the update threshold. This lack of necessary updates leads to the degradation of fine-grained background details. 
+
+D.2 Full Evaluation of Phase 1 Duration K
+
+Table 5 presents the performance metrics for the Phase 1 duration K ranging from 0 to 17 . Notably, the setting of K = 17 corresponds to the FlowCache baseline, where the coarse-grained full update is applied throughout the entire generation process. As indicated by the data, the evaluation scores exhibit significant stability once K exceeds 5. This trend suggests that the global semantic structure is sufficiently established by this stage, ensuring that the spatial masks can accurately align with and capture the dynamic tokens within the video. 
+
+## E More Qualitative Results 
+
+In this section, we provide extensive qualitative visualizations to further validate the effectiveness of Mo-tionCache. We first visualize the temporal evolution of the motion-aware importance maps to justify our coarse-to-fine schedule. Subsequently, we present visual comparisons of the actual generated videos across different methods on SkyReels-V2 and MAGI-1. 
+
+E.1 Evolution of Motion Importance Maps 
+
+To justify the necessity of the proposed Dual-Stage Coarse-to-Fine Inference Schedule (Sec. 5.3), we visualize the importance weight maps W throughout the denoising process in Figure 6. As observed in the early timesteps, the importance weights exhibit a diffuse and unstructured distribution. At this stage, the global semantic layout is not yet stabilized, and the model cannot effectively distinguish between foreground motion and static background. Consequently, a rigid chunk-wise update (Phase 1) is crucial here to ensure structural integrity. As the denoising progresses, the importance maps become increasingly sparse and structured, precisely highlighting the dynamic contours of the moving subject. This clear separation validates the transition to Phase 2, where our token-wise caching strategy efficiently allocates computation to these high-motion regions. 17 Table 5 Detailed ablation study on the duration of Phase 1 ( K). The sweep ranges from 0 to 17 with an interval of 1. 
+
+K PSNR ↑ SSIM ↑ LPIPS ↓
+
+0 20.79 0.8636 0.1963 1 21.74 0.8902 0.1452 2 22.92 0.8960 0.1214 3 22.92 0.8993 0.1027 4 22.82 0.8970 0.1061 5 23.28 0.9054 0.0918 6 23.46 0.9093 0.0875 7 23.37 0.9096 0.0870 8 23.33 0.9086 0.0863 9 23.39 0.9090 0.0883 10 23.41 0.9089 0.0888 11 23.41 0.9094 0.0866 12 23.41 0.9092 0.0859 
+
+13 23.43 0.9106 0.0872 14 23.43 0.9102 0.0864 15 23.43 0.9103 0.0865 16 23.42 0.9096 0.0868 17 23.43 0.9103 0.0867 
+
+E.2 Qualitative Comparison on SkyReels-V2 
+
+Figure 7 presents a visual comparison on SkyReels-V2. While TeaCache provides a 2.2× speedup, it suffers from noticeable high-frequency noise, particularly evident in the astronaut and beer scenarios. FlowCache achieves a significant speedup of 6.26 × but is prone to semantic misalignment and content drift; for instance, the cyclist’s sleeve texture is missing, and the person tasting beer exhibits anatomical hallucinations (e.g., six fingers). In contrast, our MotionCache achieves a comparable high speedup of 6.28 × while preserving superior visual fidelity. It effectively maintains structural consistency with the Vanilla baseline and achieves the highest PSNR. 
+
+E.3 Qualitative Comparison on MAGI-1 
+
+Figure 8 illustrates the visual results on MAGI-1. Similar to SkyReels-V2, MotionCache demonstrates a superior ability to maintain high fidelity to fine-grained semantic details that are often lost during acceleration. A striking example is seen in the "elephant" sequence: while other methods result in the complete disappearance of the elephant’s tusks, MotionCache successfully preserves them by accurately identifying and updating these critical regions. Furthermore, our method maintains a consistent and natural horse color throughout the video, avoiding the color bleeding and flickering artifacts prevalent in TeaCache and FlowCache. These qualitative improvements underscore that MotionCache’s token-wise precision is essential for preserving the structural and aesthetic integrity of complex subjects. 18 t=49 t=48 t=47 t=2 6 t=25 t= 24 t=2 t=1 t=0 Figure 6 Visualization of the importance weight maps W throughout the denoising process. The label t indicates the denoising timestep. The leftmost column displays the final ground-truth video frames. In the early inference stages, the weight distribution remains diffuse and unstructured with ambiguous contours, indicating that the global semantic structure is not yet clearly established. As generation proceeds, the maps sharpen to accurately capture motion dynamics. Vanilla         
+
+> Speedup: 1x
+> TeaCache
+> Speedup: 2.2x
+> PSNR: 18.39
+> FlowCache
+> Speedup: 6.26x
+> PSNR: 21.8 3
+> MotionCache
+> Speedup: 6.28x
+> PSNR: 23.46
+> Vanilla
+> Speedup: 1x
+> TeaCache
+> Speedup: 2.2x
+> PSNR: 18.39
+> FlowCache
+> Speedup: 6.26x
+> PSNR: 21.8 3
+> MotionCache
+> Speedup: 6.28x
+> PSNR: 23.46
+> Prompt: A person is tasting beer Prompt: A shark is swimming in the ocean
+> Prompt: An astronaut flying in space Prompt: A bicycle accelerating to gain speed
+
+Figure 7 Qualitative results of text-to-video generation on SkyReels-V2. We present TeaCache, FlowCache, Motion-Cache, and the Vanilla model. The frames are randomly sampled from the generated video. 
+
+19 Vanilla 
+
+Speedup: 1x 
+
+TeaCache 
+
+Speedup: 1.1 4x
+
+PSNR: 14.74 
+
+FlowCache 
+
+Speedup: 1.3 9x
+
+PSNR: 18.1 6
+
+MotionCache 
+
+Speedup: 2.0 7x
+
+PSNR : 19.7 1
+
+Prompt: A Mars rover moving on Mars Prompt: A horse bending down to drink water 
+
+Vanilla 
+
+Speedup: 1x 
+
+TeaCache 
+
+Speedup: 1.1 4x
+
+PSNR: 14.74 
+
+FlowCache 
+
+Speedup: 1.3 9x
+
+PSNR: 18.1 6
+
+MotionCache 
+
+Speedup: 2.0 7x
+
+PSNR : 19.7 1
+
+Prompt: an elephant taking a peaceful walk Prompt: A cat wearing sunglasses as a lifeguard at a pool Figure 8 Qualitative results of text-to-video generation on MAGI-1. We present TeaCache, FlowCache, MotionCache, and the Vanilla model. The frames are randomly sampled from the generated video. 
+
+20
