@@ -1,0 +1,1018 @@
+Title: SARA: Semantically Adaptive Relational Alignment for Video Diffusion Models
+
+URL Source: https://arxiv.org/pdf/2605.07800v1
+
+Published Time: Mon, 11 May 2026 01:20:13 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# SARA: Semantically Adaptive Relational Alignment for Video Diffusion Models 
+
+Jiesong Lian 1,2†, Zixiang Zhou 2, Ruizhe Zhong 3, Yuan Zhou 2‡,Qinglin Lu 2, Rui Wang 1§, Long Hu 1, Yixue Hao 1, Baoru Huang 41Huazhong University of Science and Technology, 2Tencent Hunyuan, 
+
+> 3
+
+Shanghai Jiao Tong University, 4University of Liverpool 
+
+Abstract 
+
+Recent video diffusion models (VDMs) synthesize visually convincing clips, yet still drop entities, mis-bind attributes, and weaken the interactions specified in the prompt. Representation-alignment objectives such as VideoREPA and MoAlign improve fine-grained text following by distilling spatio-temporal token relations from a frozen visual foundation model, but their pairwise supervision budget is allocated by visual or motion cues rather than by how relevant each pair is to the prompt. We present SARA , Semantically Adaptive Relational Alignment ,which keeps token-relation distillation (TRD) on a frozen VFM target and adds a text-conditioned saliency that decides which token pairs carry supervision. A lightweight Stage 1 aligner is trained with per-entity SAM 3.1 mask supervision and an InfoNCE regulariser, and its continuous saliency is fused into TRD through a pair-routing operator that assigns each token pair a weight whenever either of its two endpoints is salient, thereby routing supervision toward subject-subject and subject-background pairs and away from background-background ones. In the Wan2.2 continual-training setting, SARA improves both text alignment and motion quality over SFT, VideoREPA, and MoAlign on a 13 -dimension VLM rubric, on the public VBench benchmarks, and in a blind user study. 
+
+1 Introduction 
+
+Video generation has advanced rapidly in both visual fidelity and temporal coherence. Closed-source systems such as Seedance2 [ 1], Veo3.1 [ 2], and Wan2.7 [ 3], together with open-source models such as LTX2.3 [ 4], Wan2.2 [ 5], and HunyuanVideo1.5 [ 6 ], can now synthesize videos with realistic appearance and smooth motion. Once visual and motion quality are in place, what users mostly want is faithful prompt following: a generated video is only useful to a downstream creator if it preserves the entities, attributes, interactions, and motion that the prompt asks for. Open-source models still fall short on this axis. They miss fine-grained semantic details, bind attributes to the wrong subject, or weaken the interactions specified in the prompt. Fine-grained semantic controllability is therefore a practical requirement when adapting open-source video diffusion models (VDMs). A natural way to close this gap is continual training on curated video-text data, but the diffusion loss alone is an indirect signal for semantics: it matches pixel-level noise and leaves the DiT to figure out, on its own, which patches correspond to which word in the caption. Representation alignment offers a more direct handle: a frozen visual or video foundation model (VFM) is used as an external reference, and the DiT’s hidden states are pulled toward that reference space during training. REPA [ 7] introduced this for image DiTs, and VideoREPA [ 8] adapted it to pretrained VDMs by replacing hard per-token alignment with token-relation distillation (TRD), a softer objective that matches pairwise spatial and cross-frame token similarities. TRD is the form SARA builds on. Its    
+
+> †Work done during internship at Tencent Hunyuan. ‡Project leader. §CA. ruiwang2020@hust.edu.cn
+> Preprint.
+> arXiv:2605.07800v1 [cs.CV] 8 May 2026
+
+weakness is one of allocation: VideoREPA weights every token pair equally, so its O(N 2) budget is set by the geometry of the V-JEPA token grid rather than by the caption. On our multi-entity training corpus the SAM-derived foreground covers on average only a fraction pfg ≈ 0.48 of that grid, so under uniform weighting the budget splits as (1 − pfg )2 ≈ 27% on background-background pairs that no entity in the caption references, 2pfg (1 − pfg ) ≈ 50% on subject-background pairs that ground each entity in its scene, and only p2 
+
+> fg
+
+≈ 23% on the subject-subject pairs that carry inter-entity relations (App. A.2). Roughly a quarter of the TRD signal is therefore burnt on pairs the caption never mentions, while the subject-subject relations most directly tied to the prompt receive the smallest share. MoAlign [ 9] addresses this dilution by compressing the VFM target into a flow-supervised motion subspace, which collapses non-moving patches in the target and in effect concentrates supervision on moving-subject ↔ moving-subject pairs. Optical flow is an imperfect saliency proxy, however: it is noisy under occlusion, fast motion, and low-texture regions, it cannot disentangle object motion from camera-induced apparent motion, and it is silent on the static subjects a caption may centrally describe (a person sitting, a cup on a table). The same motion-only restriction also drops every subject-background pair, even though such pairs ground each entity in its scene and carry an independent share of the prompt’s semantic content. The question that motivates SARA is therefore a routing one: given a fixed O(N 2) pair budget, how should it be allocated so that supervision concentrates on the prompt-relevant relations rather than on background filler? A caption typically refers to a small subset of the visual content, and the useful semantic signal lives in both subject-subject and subject-background relations [ 10 ], so the answer should route by the prompt rather than by raw pixels or motion. We propose SARA , Semantically Adaptive Relational Alignment , a two-stage framework that keeps VideoREPA’s VFM target and TRD form unchanged and adds a text-conditioned saliency that tells TRD where to apply its pairwise supervision. Stage 1 trains a lightweight text-conditioned saliency aligner offline from per-entity SAM 3.1 mask supervision [ 11 ], per-entity captions, and an InfoNCE regulariser. Together, the per-entity supervision and InfoNCE prevent the saliency from collapsing onto a fixed foreground prior. Stage 2 freezes the aligner, queries it with the full video caption, and fuses its continuous saliency into token-pair weights through a pair-routing operator (OR by default, so that a pair carries weight whenever either endpoint is salient). TRD is thereby routed away from background-background pairs and toward subject-subject and subject-background relations during continual training of the VDM. Our contributions are as follows. (i) Conceptually , we recast semantic adaptation for VDMs as a pair-routing problem on top of TRD, formalised through a family of pair-routing operators that decide which token pairs carry supervision (Sec. 3.4). This view interprets MoAlign as inducing an AND router (a pair is supervised only when both endpoints are salient) through motion presence as an unsupervised saliency proxy, and motivates a text-supervised OR router ( either endpoint salient suffices) that also routes supervision to subject-background pairs. (ii) Methodologically , we train a lightweight text-conditioned saliency aligner from per-entity SAM 3.1 masks, per-entity captions, and an InfoNCE regulariser, and fuse its continuous output into TRD. (iii) Empirically , under matched Wan2.2 high-noise continual training, SARA consistently improves over supervised fine-tuning (SFT), VideoREPA, and a MoAlign reproduction on a 13 -dimension vision-language-model (VLM) rubric, on VBench-1.0 and VBench-2.0, and in a blind user study. 
+
+2 Related Work 
+
+Video diffusion models. Text-to-video (T2V) generation has progressed from frame-wise extensions of image diffusion U-Nets [ 12 ] to large latent diffusion / flow-matching transformers trained on web-scale video-text corpora. Closed-source systems such as Sora [ 13 ], Seedance2 [ 1 ], Veo3.1 [ 2 ], Kling3 [ 14 ], and Wan2.7 [ 3 ] now produce minutes-long, high-fidelity videos with smooth motion, while open-source counterparts including CogVideoX [ 15 ], LTX2.3 [ 4], Wan2.2 [ 5], and Hunyuan-Video1.5 [ 6 ] have closed much of the appearance-quality gap. These open-source models are the dominant base models for downstream continual training. Once architectures and training data scale up, the dominant failure mode shifts from visual fidelity to fine-grained text following . Standard benchmarks such as VBench [ 16 ] and the VideoPhy series [ 17 ] confirm that even SOTA open-source VDMs still drop entities, mis-bind attributes, weaken prompt-specified interactions on multi-subject scenes, and produce physically implausible motion. SARA targets exactly this regime and uses the publicly released Wan2.2 high-noise transformer as the backbone for continual training. 2Improving fine-grained semantic alignment in VDMs. Methods that push a pretrained VDM’s prompt fidelity beyond what the base diffusion loss provides split along the standard training stages, and SARA belongs to stage (ii) below. (i) Pre-training / data side. The pre-training corpus is re-curated and relabelled with VLM rewriters and structured caption formats, so the same diffusion loss carries more semantic signal per gradient step. The open-source VDMs above [ 4 –6] document such data pipelines in their tech reports. (ii) SFT with auxiliary objectives. The diffusion loss is kept intact and a representation-alignment term is added that pulls DiT hidden states toward a frozen visual or video foundation encoder (REPA [ 7], VideoREPA [ 8 ], MoAlign [ 9 ], RefAlign [ 18 ], expanded in the next paragraph). A parallel line instead injects auxiliary modalities such as optical flow, pose, or trajectories during continual training, at the cost of requiring those conditions at inference (e.g. Tora [ 19 ]). (iii) Post-training preference optimization. Following the RLHF recipe [ 20 ], the VDM is fine-tuned against a reward model via GRPO-style on-policy exploration that turns the flow-matching ODE [ 21 ] into an SDE [ 22 ], DPO-style paired classification over preferred / rejected samples [ 23 , 24 ], or ReFL-style differentiable-reward back-propagation [ 25 ]. Post-training is largely orthogonal to SARA’s SFT-stage gains, and we leave such combinations to future work. 
+
+Representation alignment for diffusion models. The REPA family is the closest prior art to SARA and shares a single template: regularise a generative DiT by matching a chosen statistic of its hidden states to a frozen visual or video foundation encoder. REPA [ 7] matches each denoiser token to a DINOv2 patch via per-token cosine (refined by REPA-E [ 26 ], which jointly tunes the VAE). VideoREPA [ 8] replaces per-token cosine with token-relation distillation (TRD) on a frozen VideoMAEv2 target (Eqs. (1) – (2) ). MoAlign [9] keeps TRD but compresses Vy into a flow-supervised motion subspace Φmot and decays the cross-frame term by exp( −| t − u|/τ ), biasing supervision toward moving patches. RefAlign [ 18 ] adapts the template to the reference-to-video setting with a contrastive DINOv3 loss between reference-branch tokens and the target. These methods vary how 
+
+the alignment is shaped (per-token vs. relational, appearance vs. motion, image- vs. text-conditioned), but none lets the text prompt decide which pairs carry supervision. SARA adds an orthogonal axis: the routing of the alignment loss itself. It reuses VideoREPA’s TRD form on a frozen VFM target and shifts the shaping axis to a text-supervised saliency trained with per-entity SAM 3.1 masks and an InfoNCE regulariser (Sec. 3.3). Within this view, VideoREPA is the constant-saliency limit, while MoAlign can be interpreted as an AND pair-routing operator that biases supervision toward moving subject-subject pairs. SARA’s default OR pair-routing operator additionally keeps subject-background pairs and consistently improves over both alternatives (Sec. 4). 
+
+3 Method 
+
+SARA decouples where relational alignment should be applied from how it is computed. We first recall the TRD formulation underlying SARA and define the entity vocabulary used throughout the paper (Sec. 3.1). We then identify the routing gap in vanilla TRD and introduce two design choices to address it (Sec. 3.2). Finally, we train a lightweight text-conditioned saliency aligner to realise these choices (Sec. 3.3) and freeze it to route TRD on the Wan2.2 high-noise VDM (Sec. 3.4). An overview of our pipeline is shown in Fig. 1. 
+
+3.1 Preliminaries Latent video diffusion. A latent VDM [ 5 , 15 ] generates videos in the latent space of a frozen 3D VAE. Given a clean video x0 ∈ RF ×H×W ×C and a text condition c, the VAE produces a latent 
+
+z0, and a denoising transformer ϵθ is trained under the standard flow-matching / diffusion objective 
+
+Ldiff (θ) = Et,z 0,ϵ 
+
+∥ϵ − ϵθ (zt, t, c )∥22
+
+, with zt a noisy version of z0 at timestep t.
+
+Token-relation distillation (TRD). REPA [ 7] aligns each denoiser token with a frozen visual encoder feature via per-token cosine similarity. As argued by VideoREPA [ 8], this hard alignment is unsuitable for fine-tuning pretrained VDMs and ignores temporal dynamics. VideoREPA instead matches pairwise token similarities between a projected DiT hidden state Vp ∈ RB×T ×N ×D and the VFM features Vy ∈ RB×T ×N ×D (interpolated to a common T, N = hw grid, with t, u ∈ [T ]
+
+indexing frames and i, j ∈ [N ] indexing spatial token positions). With ˆVp, ˆVy denoting L2-normalized features, the within-frame (spatial) and cross-frame (temporal) cosine similarities are 
+
+SXt,i,j = ˆVX,t,i ˆV ⊤ 
+
+> X,t,j
+
+, CXt,i,u,j = ˆVX,t,i ˆV ⊤ 
+
+> X,u,j
+
+, X ∈ { p, y }, (1) 3Vision Foundation 
+
+> Models
+
+Entity 
+
+Caption     
+
+> Visual
+> Embeddings
+> 𝑉 !
+> Tokenization &
+> Embeddings
+> Text
+> Embeddings
+> Saliency Head
+> Sam3.1
+> Qwen3VL -Embedding
+> Qwen3VL -Embedding
+> Text Hidden
+> States 𝐻 !
+> Visual Hidden
+> States 𝐻 "
+
+Video 
+
+Stage I: Train A Semantic Aligner Sam Mask  
+
+> 𝑀 𝑦
+> Predict Mask
+> 𝑀 $
+
+Stage II: Train Diffusion with the Semantic Aligner  
+
+> Attention
+> Module s
+> Semantic Aligner
+
+Full 
+
+Caption 
+
+Video 
+
+Video 
+
+T5 
+
+VAE   
+
+> MM -Dit Block
+> MM -Dit Block
+> MM -Dit Block
+> ---
+> ---
+> Masked
+> TRD Loss
+> Predict Mask
+> 𝑀 $
+> Visual
+> Embeddings
+> 𝑉 !
+> Dit Embeddings
+> 𝑉 "
+> Diffusion
+> Los s
+> MLP
+> TRD Loss
+> Alignment
+> BCE Loss
+> Alignment
+> InfoNCE Loss
+
+Figure 1: Overview of SARA. Stage I (top): a lightweight aligner on top of frozen V-JEPA, SAM 3.1, and Qwen3-VL-Embedding backbones learns, for any (video, caption) pair, a text-conditioned per-patch saliency Mp, supervised jointly by per-entity, combined-entity, and background SAM masks (LBCE ) and calibrated by a caption-level InfoNCE. Stage II (bottom): the frozen aligner is queried with the full caption, and its saliency is turned into pair weights that route a masked token-relation distillation loss, added to the diffusion loss of a trainable DiT. giving stacked spatial Gram matrices SX ∈ RT ×N ×N and a cross-frame Gram tensor CX ∈
+
+RT ×N ×T ×N . The TRD loss sums the within-frame and cross-frame L1 differences [8]: 
+
+LTRD = 1 
+
+> T N 2
+
+X
+
+> t,i,j
+
+Syt,i,j − Spt,i,j 
+
+| {z }
+
+> Spatial component
+
++ 1   
+
+> T(T−1) N2
+
+X
+
+> t̸=ui,j
+
+Cyt,i,u,j − Cpt,i,u,j 
+
+| {z }
+
+> Temporal component
+
+. (2) MoAlign [ 9] extends TRD by attaching an exponential temporal-distance decay ωt,u = exp( −| t −
+
+u|/τ ) to the cross-frame term and swapping Vy for a flow-supervised motion subspace. 
+
+MTSS entities. We caption every video in the Multi-Stream Scene Script (MTSS) format of Tencent Hunyuan Team [27] , which factorises a clip into per-entity descriptions linked by stable identifiers and is therefore a natural source of per-entity supervision (App. B gives the construction). From each MTSS caption SARA extracts (i) K entity captions ck, each paired with a binary entity mask 
+
+Mk obtained offline from a frozen segmentation backbone Es (instantiated in Sec. 3.3, pipeline in App. B.2), (ii) the foreground concatenation cfg = [ c1; . . . ; cK ] with union mask Mfg = S 
+
+> k
+
+Mk,(iii) a background caption cbg with complement mask Mbg = 1 − Mfg , and (iv) the full caption c that serialises all streams. Stage 1 trains the aligner on (i)–(iii) only. The full caption c is used solely at Stage 2 inference, where both the VDM and the frozen aligner are conditioned on it. 
+
+3.2 Motivation and design 
+
+VideoREPA’s TRD in Eq. (2) weights every token pair equally, so its O(N 2) budget is dominated by background-background pairs and the supervision on the few prompt-relevant pairs is diluted (Fig. 6). MoAlign re-allocates by projecting the VFM target into a flow-supervised motion subspace, which suppresses non-moving patches and biases supervision toward moving-subject pairs, an AND routing effect under a motion-presence proxy. Optical flow is itself a noisy estimator that mis-handles occlusion, fast motion, low-texture regions, and camera-induced apparent motion. Even when accurate, it is silent on the static subjects a caption may centrally describe, and the same restriction under-emphasises subject-background pairs, a major source of fine-grained semantic 4grounding. SARA replaces this implicit, motion-only bias with an explicit, text-supervised saliency, while keeping V-JEPA as the TRD target. The mechanism is a text-conditioned saliency, predicted from V-JEPA tokens fused with the caption through cross-attention and shaped by two complementary auxiliary losses. A local, mask-anchored 
+
+BCE focuses the head on caption-mentioned patches by grounding the fused features in the per-patch entity masks Mk from Es, following LaST-ViT [ 10 ] in placing the useful semantic signal in foreground-background relations. A global, embedding-space InfoNCE prevents collapse onto a dominant subject and preserves cross-entity contrast by aligning the fused features back to the caption hidden state, following VL-JEPA [ 28 ]. Without either ingredient, the predicted saliency degenerates: ablating the InfoNCE regulariser concentrates Mp on the dominant subject, and replacing the entity-separated K +2 supervision by a single union-mask forward saturates Mp across the entire foreground (Fig. 7, App. A.3). Tab. 4 quantifies both collapses. 
+
+3.3 Stage 1: Text-conditioned saliency aligner Frozen backbones. Stage 1 uses three frozen backbones: a video encoder Ev (V-JEPA 2.1 [ 29 ]) producing visual embeddings Vy = Ev (x0) ∈ RB×Nv ×Dv , a segmentation agent Es (SAM 3.1 Multiplex [ 11 ]) that returns one binary mask Mk per detected entity from a noun prompt, and a text model Et (Qwen3-VL-Embedding [ 30 ]), used in two disjoint modes. Its input-embedding lookup Eemb produces per-token embeddings ˜E = Eemb (c) consumed by cross-attention, and its full transformer stack Elm produces contextualised hidden states consumed by InfoNCE. All three remain frozen throughout Stage 1 and Stage 2. Model variants and shapes are in App. F. 
+
+Aligner architecture. Three trainable modules sit on top of the frozen backbones. A stack ΦCA of cross- and self-attention blocks fuses Vy with the caption. Cross-attention takes visual queries and text keys/values ˜E, and outputs text-enhanced features 
+
+V ′ 
+
+> y
+
+= Φ CA (Vy , ˜E) ∈ RB×Nv ×Dv . (3) A saliency head Φsal (MLP + sigmoid) produces a per-patch saliency mask 
+
+Mp = σ Φsal (V ′ 
+
+> y
+
+) ∈ [0 , 1] B×Nv , (4) and a visual projector Φproj maps V ′ 
+
+> y
+
+into the input-embedding space of Elm so that Elm can consume it in inputs-embeds mode for the InfoNCE objective below. Block counts, MLP hidden sizes, and normalisation choices are in App. F. 
+
+Mask-anchored BCE with entity-separated supervision. We bilinearly downsample any target binary mask M to the V-JEPA spatial grid Hs × Ws and broadcast across the Ts temporal positions to obtain a per-patch target My ∈ { 0, 1}Nv aligned with Vy . The mask loss is per-patch binary cross-entropy (BCE) between the saliency prediction and this target, 
+
+LBCE = BCE  Mp, M y
+
+. (5) The choice of M matters: conditioning the aligner on a single global caption with the union mask collapses Φsal onto a fixed foreground prior, since both query and target then stay constant across all Reference items of a video. SARA instead instantiates M and the conditioning caption at three granularities, sharing parameters across K + 2 forwards per video: (i) K per-entity forwards using 
+
+(ck, M k); (ii) one combined-entity forward using (cfg , M fg ) with cfg = [ c1; . . . ; cK ] and Mfg =S 
+
+> k
+
+Mk; and (iii) one background forward using the SCENE-stream caption cbg and complement mask Mbg = 1 − Mfg . The per-entity forwards prevent the foreground-prior collapse, while the combined-entity and background forwards anchor the saliency at the foreground-background level (Fig. 5, App. A.1). At inference the resulting aligner places Mp on different V-JEPA tokens for the two persons of the same scene when queried with c1 vs. c2, and cleanly inverts under the background query cbg (Fig. 8, App. A.4). The full MTSS caption that also aggregates Shot, Event, and Global streams is never seen at this stage. Fig. 9 (App. A.5) shows the aligner generalises compositionally to it at Stage 2 inference. 
+
+Embedding-space InfoNCE loss. Unlike the cross-attention side, which only consumes ˜E, this InfoNCE loss operates on the hidden states of the full language model Elm . The projected features 
+
+Φproj (V ′ 
+
+> y
+
+) live in Elm ’s input-embedding space, so we push them through Elm in inputs-embeds mode and last-token-pool its output to give an L2-normalised visual hidden state Hp. The caption used in 5this forward (per-entity ck, combined cfg , or background cbg ) is tokenized and runs through the same frozen Elm , and last-token-pooled to give the text hidden state Hy . With temperature τnce and batch size B,
+
+LInfoNCE = − 1
+
+B
+
+> B
+
+X
+
+> i=1
+
+log exp( H⊤
+
+> p,i
+
+Hy,i /τ nce )
+
+PBj=1 exp( H⊤
+
+> p,i
+
+Hy,j /τ nce ) . (6) 
+
+Stage 1 objective. The aligner is trained with 
+
+Lstage1 = λBCE LBCE + λInfoNCE LInfoNCE , λBCE = λInfoNCE = 1 . (7) Only ΦCA , Φsal , and Φproj receive gradients, while Ev , Es, Eemb , and Elm remain frozen. Fig. 7 (App. A.3) and the matched quantitative metrics in Tab. 4 show that each ingredient of Eq. (7) is necessary at the Stage 1 level, and Sec. 4.5 confirms this on the downstream VLM rubric. 
+
+3.4 Stage 2: Saliency-routed TRD Inference-time saliency. The frozen aligner in Stage 1 is fed the same full video caption c as the VDM and emits a continuous saliency Mp(x0, c ) ∈ [0 , 1] B×Ts×HsWs on the V-JEPA grid. Although trained only on Reference-stream captions, the aligner generalises compositionally to the full MTSS string and attends to all named entities jointly: the response under c is super-additive over the per-entity responses of Fig. 8, closely tracks the SAM-derived foreground union, and adaptively 
+
+grades the background, with intermediate values on tokens spatially or semantically close to a named subject (Fig. 9, App. A.5). Since the TRD target reuses the same Ev , Mp indexes exactly the patches TRD aligns, and the pair-routing operator below turns this continuous grading into per-pair routing strength. 
+
+Pair-weight construction. We define a pair-routing operator as any function that maps the per-token saliency w = Mp ∈ [0 , 1] B×Ts×N to a per-pair weight Wij ∈ [0 , 1] that decides how much TRD supervision the pair (i, j ) receives. We instantiate three pair-routing operators as fuzzy-logic relaxations of the corresponding Boolean operations on the binary saliency: 
+
+W ∧ 
+
+> ij
+
+= wi wj
+
+| {z }
+
+> AND
+
+, W ∨ 
+
+> ij
+
+= wi + wj − wi wj
+
+| {z }
+
+> OR
+
+, W ⊕ 
+
+> ij
+
+= |wi − wj |
+
+| {z }
+
+> XOR
+
+. (8) Let FG and BG denote foreground and background tokens, respectively. In the discrete limit where w ∈ { 0, 1}, the relation space is cleanly separated: W ∧ only retains FG-FG pairs, W ∨
+
+additionally includes FG-FG and FG-BG pairs, and W ⊕ only keeps FG-BG boundary pairs. Keeping 
+
+w continuous preserves the InfoNCE calibration of Eq. (6) and yields differentiable gradients via the saliency-weighted denominators in Eqs. (9) – (10) . The constant-saliency limit w ≡ 1 gives vanilla VideoREPA, while MoAlign’s flow-supervised motion subspace can be viewed as a separate mechanism that induces an AND bias toward moving FG-FG relations. SARA’s default W ∨ instead uses text-supervised saliency to cover the FG-BG pairs that AND drops. 
+
+Masked TRD loss. Let SX , C X be the similarities of Eq. (1) with Vp the projected DiT embeddings and Vy = Ev (x0) the Stage 1 VFM embeddings. With temporal decay ωt,u = exp( −| t − u|/τ ), the masked TRD loss replaces the uniform averages of Eq. (2) by saliency-weighted ones: 
+
+Lspa m-TRD =
+
+P 
+
+> t,i,j
+
+W ∨ 
+
+> t,i,j
+
+Syt,i,j − Spt,i,j 
+
+P 
+
+> t,i,j
+
+W ∨ 
+
+> t,i,j
+
++ ε , (9) 
+
+Ltmp m-TRD =
+
+P 
+
+> t̸=u,i,j
+
+ωt,u W ∨ 
+
+> t,i,u,j
+
+Cyt,i,u,j − Cpt,i,u,j 
+
+P 
+
+> t̸=u,i,j
+
+ωt,u W ∨ 
+
+> t,i,u,j
+
++ ε , (10) 
+
+Lm-TRD = Lspa m-TRD + λtmp Ltmp m-TRD , (11) where the OR pair weight is the fuzzy-OR of the two endpoint saliencies of each token pair, 
+
+W ∨ 
+
+> t,i,u,j
+
+= wt,i + wu,j − wt,i wu,j , W ∨ 
+
+> t,i,j
+
+≡ W ∨ 
+
+> t,i,t,j
+
+= wt,i + wt,j − wt,i wt,j , (12) the second form is the within-frame special case u = t used in Eq. (9) . Setting w ≡ 1 recovers VideoREPA’s TRD up to normalisation, and adding a finite τ isolates the temporal-decay component used by MoAlign without matching its motion-subspace target. We default to τ = ∞, and confirm in Sec. 4.5 that finite τ is not the source of SARA’s gains. 6Stage 2 objective. Wan2.2 is continually trained with 
+
+Lstage2 = Ldiff + λTRD Lm-TRD . (13) Only the VDM and the small TRD projector receive gradients, while Ev , Es, Eemb , Elm , and the entire Stage 1 aligner ( ΦCA , Φsal , Φproj ) remain frozen, so SARA adds no trainable parameters to the diffusion path beyond the standard REPA projector. 
+
+4 Experiments 
+
+4.1 Setup Dataset. We start from an internal pool of ∼ 4M multi-subject video clips. Every clip is first recaptioned into MTSS form by the pipeline of App. B and then ranked by its entity count , defined as the number of Reference items whose type is PERSON_* or OBJECT_* (SCENE_* items are excluded from the count). The 500 K clips with the highest entity count form the training corpus used throughout the paper, and a fixed 800 -clip test set is held out from the top of the same ranking (mean entity count ∼ 5.2 PERSON /OBJECT per clip, versus ∼ 1.8 on a uniformly sampled subset). Training and evaluation are therefore concentrated in the multi-entity regime that SARA’s saliency routing targets. The same corpus supplies both Stage 1 saliency-aligner training and Stage 2 VDM continual training, so all methods see identical data. Ground-truth entity masks for Stage 1 are produced offline by the frozen SAM 3.1 Multiplex using the per-Reference semantic_description s simplified as in App. B.2. 
+
+Backbone and training. All baselines and SARA are continually trained on the same Wan2.2 high-noise VDM under an identical schedule, including the optimiser, batch size, GPU count, and number of steps. Only the auxiliary objective changes. Detailed hyperparameters are demonstrated in Tables 10 and 11 (App. F). 
+
+Baselines. We compare four approaches: (i) the pretrained Wan2.2 high-noise model without continual training; (ii) SFT with only the diffusion loss; (iii) VideoREPA [ 8 ], TRD on V-JEPA 2.1 features without saliency routing; and (iv) a MoAlign [ 9] reproduction with motion subspace 
+
+Dm = 64 and temporal decay τ = 10 . To isolate the routing mechanism from the VFM target, in our reproduced VideoREPA we replace the original VideoMAEv2 backbone with V-JEPA 2.1. As a result, all three REPA-family variants (VideoREPA, MoAlign, SARA) share a frozen V-JEPA 2.1 target (MoAlign additionally projects Vy through its motion subspace). The original source videos are reported as an oracle upper bound. All methods use fixed-resolution training. 
+
+VLM-rubric protocol. The 800 -clip test set is scored by three independent VLM judges (Qwen3.5-27B [ 31 ], Qwen3.6-35B-A3B [ 32 ], Gemma-4-31B-it [ 33 ]) on 13 rubric dimensions (six text-alignment TA, seven motion-quality MQ, 1–5 each). Using three judges rather than one reduces per-grader bias. We aggregate across judges in two ways: the per-dimension average ( mean ) and the per-dimension majority vote ( vote , ties broken upward), and the TA / MQ columns average the respective sub-dimensions. We cross-check the rubric against two independent protocols, public VBench-1.0 / 2.0 (Sec. 4.3) and a blind pairwise user study (Sec. 4.4), and the rankings agree across all three. Full rubric text, judge configuration, and per-sub-dimension scores are in App. C. 
+
+4.2 Main comparison 
+
+Table 1 reports the VLM-rubric scores. SFT improves text alignment but slightly degrades motion, while VideoREPA and MoAlign recover part of the motion gap but still trail SARA on both dimensions. Among the four continually-trained methods, SARA is the only one that improves both dimensions at once under mean and vote , and it beats the strongest matched-setting baseline (MoAlign) on every column. The real video row is a protocol-level ceiling, not a 5.0 saturation point, and caption-rewriter and judge-VLM noise affect every row equally (App. C). Relative to that ceiling, SARA closes more of the gap to the strongest baseline than any other row. 
+
+4.3 VBench Results 
+
+We further evaluate these approaches on VBench-1.0 [ 16 ] and VBench-2.0 [ 34 ] suites with their standard prompts and official scorers. Table 2 reports the VBench-1.0 Semantic aggregate, the 7Table 1: VLM-rubric main comparison on Wan2.2 high-noise. TA / MQ are averages over six text-alignment / seven motion-quality sub-dimensions ( 1–5 each). mean averages the three judges, 
+
+vote is the per-dimension majority (ties broken upward). Real video is an oracle upper bound. Best non-oracle results are shown in bold , and the sub-dimension breakdown is provided in App. C.                             
+
+> Method TA mean TA vote MQ mean MQ vote Real video (oracle) 4.5857 4.6477 4.4314 4.5805 Pretrained Wan2.2 3.9189 3.9263 3.8181 3.8772 SFT 4.1209 4.1393 3.7840 3.8509 VideoREPA [8] 4.1252 4.1540 3.8024 3.8650 MoAlign [9] 4.1272 4.1537 3.8015 3.8711
+> SARA (ours) 4.1543 4.1668 3.8516 3.9191
+
+VBench-2.0 dimension scores, and the VBench-2.0 Final score, with per-task breakdowns in App. D.1 and App. D.2. Both VBench protocols agree with the VLM rubric: SARA has the best aggregate score on each, leading VBench-1.0 Semantic by +0 .90 over VideoREPA and VBench-2.0 Final by +0 .38 over MoAlign. Per-dimension scores are more diffuse, as expected for sub-tasks that span very different aspects of generation. The small Human Fidelity drop shared by all continually-trained methods is structural to the matched protocol: each approach updates only the Wan2.2 high-noise expert while leaving the low-noise expert frozen. Since, anatomical detail is rendered at the low-noise stage of Wan2.2’s two-expert mixture-of-experts (MoE), any high-noise update shifts the intermediate-latent distribution the un-updated low-noise expert was trained against (App. G). SARA still posts the smallest such drop, consistent with the hypothesis that its text-conditioned routing delivers a more targeted high-noise update. Across all three protocols, SARA is the only method that wins every aggregate score. Table 2: Public VBench-1.0 / 2.0 results (%, higher is better). Best per column in bold .                                           
+
+> VBench-1.0 VBench-2.0
+> Method Semantic Creativity Commonsense Controllability Human Fidelity Physics Final Pretrained Wan2.2 72.74 52.56 58.50 30.98 86.04 46.89 55.00 SFT 72.17 54.60 59.68 29.59 80.41 51.09 55.08 VideoREPA [8] 72.99 54.08 61.11 31.54 82.78 46.67 55.24 MoAlign [9] 72.95 56.75 59.67 30.08 84.75 47.82 55.81
+> SARA (ours) 73.89 55.38 61.11 30.91 85.07 48.50 56.19
+
+4.4 User study 
+
+We also run a blind pairwise user study on a 200 -clip subset of the multi-entity test set, comparing SARA against the four baselines. For each pairing, annotators view side-by-side renderings of the same caption and pick a winner (or declare a tie). Fig. 2 shows SARA is preferred over all baselines, with the largest margin against the pretrained model and consistent gains over VideoREPA and MoAlign. The ordering aligns with the rubric-based and VBench results, suggesting that the three protocols provide consistent evidence rather than conflicting conclusions. 
+
+4.5 Ablations 
+
+Table 3 ablates two components: the pair-routing operator of Eq. (8) (AND, OR, XOR) and the Stage 1 recipe (InfoNCE, entity-separated supervision, saliency head, temporal mask), plus MoAlign-style cross-frame decay ( τ = 10 ) on top of SARA. Every variant keeps the main-run Stage 2 schedule and V-JEPA target, and only the indicated component is toggled. The pair-routing block reuses the SARA saliency aligner for all three operators. 
+
+Saliency construction. The saliency head is the largest single contributor: removing it and falling back to an NCE-only variant produces the largest drop on both axes. Ablating InfoNCE hurts both axes, with a larger drop on motion, consistent with the Stage 1 ablation (Fig. 7, Tab. 4) where w/o NCE 
+
+80 20 40 60 80 100           
+
+> Percentage (%)
+> MoAlign
+> VideoREPA
+> SFT
+> Pretrained Wan2.2
+> 38.81% 17.15% 44.04%
+> 39.15% 17.71% 43.15%
+> 38.65% 16.31% 45.04%
+> 34.25% 12.73% 53.02%
+> Competitor Wins Ties SARA Wins
+
+Figure 2: Blind pairwise user study . Each row reports the percentage of comparisons where annotators prefer SARA, tie, or prefer the baseline. SARA is preferred over every baseline. Table 3: SARA ablations on the same Wan2.2 high-noise setup as Tab. 1, with each row toggling one design choice while the rest of SARA is fixed. Best in bold .
+
+Variant TA mean TA vote MQ mean MQ vote 
+
+SARA (full, OR) 4.1543 4.1668 3.8516 3.9191 
+
+Pair-routing operator (Eq. (8) )
+
+XOR 4.1107 4.1287 3.8043 3.8702 AND 4.1227 4.1532 3.8300 3.8995 MoAlign (Tab. 1) 4.1272 4.1537 3.8015 3.8711 
+
+Saliency construction & schedule 
+
+w/o InfoNCE 4.1364 4.1575 3.8039 3.8721 w/o entity-separated 4.1294 4.1587 3.8100 3.8693 w/o saliency head 4.0775 4.0979 3.7851 3.8491 w/o temporal mask 4.1405 4.1658 3.8153 3.8860 w/ temporal decay τ = 10 4.1385 4.1572 3.8315 3.8981 
+
+pushes mass onto the dominant subject, suppressing subject-background relations. Replacing the 
+
+K + 2 entity-separated forwards with a single union-mask forward collapses Mp into one foreground blob and also hurts both axes. 
+
+Pair-routing operator and temporal weighting. Among the three operators in Eq. (8) , OR dom-inates: XOR keeps only FG-BG boundary pairs and drops the FG-FG structural relations, while AND trails OR because it discards FG-BG grounding. MoAlign induces an AND-like bias via its motion subspace and lands close to (saliency, AND) but below (saliency, OR). Removing the saliency mask from the cross-frame term ( w/o temporal mask ) also trails full SARA, so the cross-frame term benefits from saliency-weighted pair selection. Adding MoAlign-style decay ( τ =10 ) on top of SARA does not help, confirming that gains come from saliency routing rather than temporal weighting. These ablations pin SARA’s gain to two components: a calibrated text-conditioned saliency in Stage 1, and an OR pair-routing operator in Stage 2 that keeps both subject-subject structure and subject-background grounding. Remove either one, or replace OR with AND/XOR, and SARA falls back towards the existing TRD baselines. 
+
+5 Conclusion 
+
+SARA reframes semantic guidance for VDM representation alignment as a pair-routing problem on top of token-relation distillation. A lightweight Stage 1 aligner trained with per-entity SAM 3.1 masks and an InfoNCE regulariser predicts a continuous text-conditioned saliency, which is fused into TRD at Stage 2 through an OR pair-routing operator. This reallocates supervision from background-background pairs toward subject-subject and subject-background relations, while leaving the TRD form, V-JEPA target, and trainable diffusion-path parameter count unchanged. Under a matched experimental setup, SARA consistently outperforms diverse baseline methods across all evaluations. 9A Visualisations Key Points: The colors of the liquids in the two kettles and the cups.       
+
+> Pretrained Ours  SFT VideoREA PMoAlign
+> ★OBJECT_1 (Large pitchers containing a brown, traditionally fermented rice
+> drink .):Large , translucent plastic pitchers filled with a cloudy, brownish -yellow liquid .
+> Each pitcher is sealed with a blue plastic screw -on lid .
+> ★OBJECT_2 (The individual glasses used for serving the drink .): Transparent ,
+> cylindrical plastic glasses used to hold the beverage .
+> ★Two OBJECT_ 1
+
+Figure 3: Qualitative comparison on a representative caption. The key point highlighted is the colors of the liquids in the two kettles and the cups. SARA produces videos that correctly render the specified visual attributes, whereas baselines exhibit attribute mis-binding or omission. This section collects qualitative evidence for SARA’s Stage 1 design and Stage 2 generalisation. App. A.1 shows the per-entity SAM 3.1 supervision target My . App. A.3 ablates the Stage 1 recipe on two held-out clips, with matching quantitative metrics in Tab. 4. App. A.4 traces the inference-time saliency through the four supervision-time queries on a held-out two-person clip, and App. A.5 queries the same aligner with the full MTSS caption used at Stage 2. App. A.6 reserves side-by-side video comparisons against baselines for the project page. 
+
+A.1 SAM 3.1 entity decomposition (Stage 1 supervision target) 
+
+Fig. 5 unpacks one training clip into the five binary masks that Stage 1 supervises against (Sec. 3.3): one per-entity mask Mk per Reference item, the foreground union Mfg = S 
+
+> k
+
+Mk, and the comple-10 Key Points: Two Pairs of Shoes and Six People         
+
+> Pretrained Ours  SFT VideoREAP MoAlign
+> ★6PERSION
+> ★OBJECT_1 Apair of bright red Nike sneakers placed on a table in front of the
+> main speaker .
+> ★OBJECT_2 Apair of blue and red sneakers placed next to the red ones .
+
+Figure 4: Qualitative comparison on a multi-entity scene with six people and two pairs of shoes. The key points are correctly rendering two distinct pairs of sneakers (red Nike and blue-red) and all six people. SARA faithfully generates both objects and all persons, while baselines miss entities or confuse object attributes. 11 ment Mbg = 1 − Mfg , all produced offline by the simplifier-driven SAM 3.1 pipeline of App. B.2. The clip illustrates two properties that carry over to the saliency design: (i) the three foreground entities span very different scales (a small held card vs. a partially off-frame second person), so a single union-mask forward would let the dominant entity erase the small ones, which motivates the 
+
+K + 2 entity-separated forwards, and (ii) PERSON_2 ’s mask still tracks the partially off-frame body, so SAM 3.1’s open-vocabulary text prompting recovers entities even under partial framing. Object_1  
+
+> Person_1
+> Person_2
+> Background
+> ALL Entities
+
+Figure 5: SAM 3.1 entity decomposition used as Stage 1 supervision. Top row: input frames. Next three rows: per-entity masks for OBJECT_1 (red), PERSON_1 (green), PERSON_2 (blue). Last two rows: complement BACKGROUND (Mbg = 1 − Mfg , yellow) and foreground union ALL Entities 
+
+(Mfg , magenta). All five masks supervise the saliency head jointly via K + 2 forwards (Sec. 3.3). 
+
+A.2 Pair-budget analysis 
+
+Fig. 6 reports the empirical pair-budget breakdown on 2,400 training clips ( 76 ,800 frames). The foreground fraction pfg is derived from per-entity SAM 3.1 masks (the same masks that supervise Stage 1). As Fig. 6(a) shows, pfg centres around 0.48 with moderate variance across clips. Under uniform pair weighting (i.e. VideoREPA), the expected share of each pair category in the O(N 2)
+
+TRD budget is determined by pfg : subject–subject pairs receive p2
+
+> fg
+
+, subject–background pairs 
+
+2 pfg (1 − pfg ), and background–background pairs (1 − pfg )2. Fig. 6(b) visualises the resulting budget split under each routing operator. The empirical numbers confirm that background–background pairs consume roughly 30% of the budget while subject–subject pairs receive only ∼ 26% , motivating the pair-routing operators of Sec. 3.4. 
+
+A.3 Stage 1 saliency aligner: ablation grid and quantitative analysis 
+
+Fig. 7 ablates the predicted saliency Mp along the two Stage 1 design choices that matter for routing (Sec. 3.3, quantitative results in Sec. 4.5): the entity-separated K + 2 supervision and the InfoNCE regulariser. Two held-out clips with distinct visual layouts confirm that the ranking is structural rather than scene-specific. Both w/o entity rows saturate across nearly every patch and merge multiple subjects into a single foreground blob, the foreground-prior collapse that motivates entity-separated supervision. w/o NCE is sharper but globally biased toward the dominant subject (the central musician in panel (a) and the front-row women in panel (b)) at the expense of smaller or more lateral entities. Only Full produces a calibrated, per-entity response on every frame. Tab. 4 quantifies these trends along four axes: saliency calibration (mean, max, coverage, entropy), cross-attention focus on text tokens, post-CA self-attention entropy gain, and PCA variance ratio. 
+
+Quantitative metrics: definitions and rationale. Each row of Tab. 4 is a scalar averaged over a held-out analysis set of N = 128 clips ( 8 frames per clip, disjoint from training). The seven 12 0.0 0.2 0.4 0.6 0.8 1.0       
+
+> Foreground fraction pfg on V-JEPA grid
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> 0.10
+> 0.12
+> Clips (fraction)
+> (a) Foreground fraction across 2400 clips
+> mean = 0.48
+> median = 0.47
+> Vanilla
+> TRD
+> AND OR (ours) XOR
+> 0
+> 25
+> 50
+> 75
+> 100
+> Share of  O(N2) TRD budget (\%)
+> 100%
+> 26%
+> 70%
+> 43%
+> (b) Pair budget by routing operator
+> FG-FG FG-BG BG-BG
+
+Figure 6: Pair-budget breakdown on the training corpus (2,400 clips, 76 ,800 frames). (a) 
+
+Distribution of per-clip foreground fraction pfg . (b) Share of the O(N 2) TRD budget consumed by each pair category (FG–FG, FG–BG, BG–BG) under vanilla TRD (uniform weighting) and the three routing operators (AND, OR, XOR). OR (ours) retains ∼ 70% of pairs by keeping all FG–FG and FG–BG pairs and discarding only BG–BG. metrics are computed from the predicted saliency Mp ∈ [0 , 1] Nv ; the head-averaged cross-attention 
+
+¯ΦCA ∈ RNv ×L over L text tokens; the post-CA visual self-attention Apost and the raw V-JEPA self-attention Avj , both in RNh×Nv ×Nv for Nh attention heads; and the visual features Vy (raw V-JEPA) vs. the post-CA, text-enhanced features V ′ 
+
+> y
+
+= Φ CA (Vy , ˜E) of Sec. 3.3. Throughout, 
+
+H(p) = − P 
+
+> j
+
+pj log pj denotes the Shannon entropy of a probability vector p, distinct from the Bernoulli entropy H2(·) defined below. Each metric is chosen to expose a specific failure mode visible in Fig. 7. 
+
+Saliency calibration (probes foreground-prior collapse and mask binarisation): • saliency mean = 1
+
+> Nv
+
+P 
+
+> n
+
+Mp(n). Values close to the dataset’s foreground prior ( ≈ 0.6 for our K = 2 entities) indicate that the head fires on every patch. • saliency max = max n Mp(n). Peaks → 1.0 mean the sigmoid has saturated and the head no longer outputs a graded signal. • saliency coverage = 1
+
+> Nv
+
+P 
+
+> n
+
+1[Mp(n) > 0.5] , where 1[·] is the {0, 1}-valued indicator. Fraction of patches above the decision threshold, where smaller values indicate selectivity. • saliency entropy = 1
+
+> Nv
+
+P 
+
+> n
+
+H2(Mp(n)) with H2(p) = −p log p − (1 − p) log(1 − p). High 
+
+entropy means each patch sits in a graded region near 0.5, which is the regime the OR pair weight W ∨ of Eq. (8) actually consumes. Low entropy means Mp has been pushed to a hard {0, 1} mask and W ∨ collapses to an indicator. This row operationalises the “ Mp is not a hard binary mask” claim of Sec. 3.4. 
+
+Cross-attention focus (probes whether CA actually consumes the caption): • ca-focus mean = 1
+
+> Nv
+
+P
+
+> n
+
+ 1 − H( ¯ΦCA (n, ·)) / log( L + 1) , where ¯ΦCA (n, ·) ∈ RL is the cross-attention distribution of visual token n over the L text tokens. Higher values mean each visual query lands on a few specific text tokens rather than spreading uniformly, i.e. the saliency head is able to route by word identity. 
+
+Self-attention entropy gain (probes whether CA enriches V-JEPA’s self-attention pattern or collapses it): • ∆ self-attn entropy = ¯H(Apost ) − ¯H(Avj ), where ¯H(A) = 1
+
+> NhNv
+
+P 
+
+> h,n
+
+H(A(h) 
+
+> n, ·
+
+)/ log Nv
+
+averages the length-normalised Shannon entropy over the Nh heads and the Nv rows of each head’s attention matrix. ¯H(Avj ) = 0 .783 on our analysis set. A clearly positive ∆ means CA adds new spread on top of V-JEPA’s native attention, whereas a negative ∆ (w/o NCE w/o entity : −0.085 ) means CA narrows the visual self-attention onto a single foreground blob, the spectral mirror of the foreground-prior collapse seen in Mp.13 Representation-rank preservation (probes whether CA preserves V-JEPA’s high-rank structure): • PCA ∆ var. ratio = r3(V ′ 
+
+> y
+
+) − r3(Vy ), with r3(V ) = P 
+
+> i≤3
+
+σ2 
+
+> i
+
+/ P 
+
+> i
+
+σ2 
+
+> i
+
+the top-3 explained-variance ratio of the centred token matrix and σi its i-th singular value (PCA via SVD). A small positive value means V ′ 
+
+> y
+
+stays within V-JEPA’s rank profile, whereas a large positive value means CA has compressed the token cloud into a low-rank, foreground-only subspace, the spectral signature of the same collapse. Read together, the seven rows are a conjunction: only Full simultaneously avoids saturation (rows 1–3), keeps Mp graded (row 4), focuses CA on entity-specific text tokens (row 5), widens rather than narrows V-JEPA self-attention (row 6), and preserves the rank profile of Vy (row 7). Each ablation breaks at least one of these. 
+
+A.4 Stage 1 saliency on per-entity queries 
+
+Fig. 8 fixes the trained Stage 1 aligner and sweeps the conditioning caption through the four supervision-time query types (two per-entity, one combined-entity, one background) on a held-out two-person clip. Three properties read off the figure: (i) panels (a)–(b) place Mp on different 
+
+V-JEPA tokens for the two persons even though the subjects sit close together in the frame, so text-conditioned routing actually routes the saliency; (ii) the combined-entity panel (c) covers both subjects in a single response, behaving like a soft union of the per-entity panels; (iii) the background panel (d) cleanly inverts the foreground response, validating the complement supervision Mbg = 1 − Mfg and showing the head can suppress, not only highlight, named regions on demand. The PCA row further indicates that the cross-attention ΦCA already organises features into entity-specific subspaces before 
+
+the saliency head, so the head reads off, rather than re-discovers, this structure. 
+
+A.5 Stage 2 saliency on the full MTSS caption 
+
+Fig. 9 switches the conditioning caption to the full MTSS string c (the same string the VDM is conditioned on at Stage 2 TRD time). Three facts about this figure carry SARA’s Stage 2 claim. (i) The aligner was never trained on the concatenated MTSS string, yet at inference it covers both subjects in a single coherent response that closely tracks the SAM-derived union mask. (ii) The response is clearly super-additive over the panels (a)–(b) of Fig. 8, so passing Mp through the OR pair weight W ∨ of Eq. (8) amplifies subject-subject and subject-background pair supervision instead of attenuating it, the routing behaviour Sec. 3.4 promises. (iii) Critically, Mp is not a hard binary foreground mask: the saliency head adaptively allocates weight between foreground and background, with the highest values concentrated on the two named subjects, intermediate values on background tokens that are spatially or semantically close to them (the part of the table the subjects sit at, the wall directly behind), and the smallest values on far-field background tokens (the periphery and the out-of-focus diners). This continuous allocation is exactly what the OR pair weight W ∨ 
+
+> ij
+
+= wi + wj − wiwj
+
+needs in order to keep all subject-background pairs while still ranking them by how prompt-relevant the background endpoint is, instead of treating background as a single uniform region. A binary mask would collapse this gradient and reduce W ∨ to an indicator, which is exactly the regime SARA’s continuous-saliency design is meant to avoid (no thresholding, no floor, as in Sec. 3.4). Table 4: Stage 1 ablation: quantitative metrics (mean over N = 128 held-out clips, columns match the rows of Fig. 7, metric definitions in App. A.3, p. 12). Full is the only configuration that jointly avoids saliency saturation (rows 1–3), keeps Mp graded (row 4), focuses cross-attention on entity tokens (row 5), and enriches V-JEPA self-attention without collapsing it (rows 6–7), and each ablation fails on at least one axis.                                    
+
+> Metric Full w/o NCE w/o NCE w/o entity w/o entity
+> saliency mean 0.407 0.567 0.653 0.648 saliency max 0.865 0.925 0.996 0.998 saliency coverage 0.383 0.606 0.657 0.658 saliency entropy 0.463 0.461 0.109 0.207 ca-focus mean 0.221 0.159 0.068 0.118
+> ∆self-attn entropy +0 .065 +0 .096 −0.085 +0 .013
+> PCA ∆var. ratio +0 .083 +0 .164 +0 .260 +0 .183
+
+14 Frames 
+
+> Full
+> w/o NCE
+> w/o NCE
+> w/o entity
+> w/o entity
+
+(a) Clip A: South Asian musicians playing instruments. Frames 
+
+> Full
+> w/o NCE
+> w/o NCE
+> w/o entity
+> w/o entity
+
+(b) Clip B: women in red ceremonial attire posing as a tightly grouped multi-subject foreground. 
+
+Figure 7: Stage 1 ablation on the predicted saliency map on two held-out clips, eight frames each. Rows: input frames; Full (default SARA, K + 2 forwards + InfoNCE); w/o NCE ; w/o NCE w/o entity 
+
+(single forward on full caption with union mask, no InfoNCE); w/o entity (single forward, InfoNCE retained). Saliency rows use a jet colormap: redder = higher saliency, bluer = lower. Discussion in App. A.3, quantitative metrics in Tab. 4. 15 Person_ 1:An East Asian man in his mid -20s with a fair complexion. He has short, neat black hair. His facial features 
+
+include defined eyebrows, single -lidded eyes, a straight nose, and lips that were parted in surprise for most of the 
+
+clip. He is wearing a black blazer over a grey crewneck sweater. A black watch is visible on his left wrist. 
+
+PC A
+
+Saliency Head 
+
+MASK 
+
+SAM3.1 MASK (a) Query c1: PERSON_1 .Person _2:A person whose identity is obscured, viewed from the back. They have short black hair and are wearing a 
+
+dark blue or black sweater. A white lanyard or collar detail is visible around the neck. 
+
+PC A
+
+Saliency Head 
+
+MASK 
+
+SAM3.1 MASK (b) Query c2: PERSON_2 .All entities involved in the MTSS prompt. 
+
+PC A
+
+Saliency Head 
+
+MASK 
+
+SAM3.1 MASK 
+
+(c) Query cfg = [ c1; c2; . . . ]: combined-entity. BACKGROUND: The setting is a clean, contemporary indoor space that resembles a corporate cafeteria or a casual 
+
+restaurant. The environment features long tables made of light -colored wood. The lighting comes primarily from 
+
+overhead sources, creating soft illumination throughout the room. Other diners can be faintly observed eating in the 
+
+blurred background, contributing to the sense of being part of a larger establishment rather than a private home .
+
+PCA 
+
+Saliency Head 
+
+MASK 
+
+SAM3.1 MASK (d) Query cbg : background (cafeteria setting). 
+
+Figure 8: Stage 1 saliency on the four supervision-time query types , eight frames of one held-out clip. Rows in each panel: input frames, SAM 3.1 reference mask My , PCA of V ′
+
+y , predicted saliency 
+
+Mp (Eq. (4) ). The Mp row uses a jet colormap: redder = higher saliency, bluer = lower. Discussion in App. A.4. Stage 2: MTSS FULL CAPTION, including [Global Setup ], [ Cast & Setting Introduction ], [ Person ], 
+
+[Object], [SCENE/BACKGROUND ], and [ Shot ]. 
+
+PCA 
+
+Saliency Head 
+
+MASK 
+
+SAM3.1 MASK 
+
+Figure 9: Stage 2 saliency on the full MTSS caption. Same aligner and clip as Fig. 8, queried with the full MTSS string c that the VDM also consumes at TRD time. Rows: input frames, SAM 3.1 union mask Mfg (reference only, not used at Stage 2), PCA of V ′
+
+y , predicted saliency Mp. The Mp
+
+row uses a jet colormap: redder = higher saliency, bluer = lower. Note that Mp is not a hard binary mask: it places the highest values on the named subjects and adaptively fades through intermediate values on nearby background to low values on far-field background, which is what the OR pair weight 
+
+W ∨ of Eq. (8) needs to grade, rather than just gate, each subject-background pair. Discussion in App. A.5. 16 A.6 Qualitative video samples 
+
+Figures 3 and 4 present side-by-side qualitative comparisons of SARA against the matched-setting baselines (pretrained Wan2.2, SFT, VideoREPA, MoAlign) on representative captions. SARA generates videos that more faithfully follow the key visual attributes specified in the prompt (e.g., liquid colors in kettles and cups, correct entity counts), while baselines either hallucinate incorrect attributes or ignore fine-grained details. 
+
+B MTSS captioning and entity-mask preparation 
+
+B.1 MTSS caption format and pipeline Format. Stage 2 inference needs a global, video-level caption for both the VDM and the frozen aligner. We adopt the Multi-Stream Scene Script (MTSS) format [ 27 ], which factorises a video into four streams ( Reference for persistent entities and scenes, Shot for visual segments, Event 
+
+for localised audio/interaction events, and Global for ambient context) linked by stable ref_id s(e.g. PERSON_1 , OBJECT_1 , SCENE_1 ) and per-shot time_range s. The Reference stream gives ready-made per-entity captions ck for Stage 1 supervision, ref_id dereferencing keeps the full caption under Qwen3-VL-Embedding’s 2048 -token cap, and the stream-level separation reduces the foreground/background entanglement that entity-separated Stage 1 training exploits. Listing 1 shows a compact, abbreviated example of the resulting JSON, and the full schema follows MTSS [27]. Listing 1: Compact MTSS JSON example (truncated for clarity). Persistent entities live under 
+
+references with stable ref_id s and are referenced from each shots[i].visual_description 
+
+and references_in_shot , so per-entity captions ck and per-shot timing are read off the same structure.     
+
+> {"structured_caption": { "english": { "scene_description": "In an office, a woman in a red dress argues on the phone.", "global_style": "Realistic HD; bright office lighting; tense pace.", "references": [ { "ref_id": "PERSON_1", "type": "person", "semantic_description": "A young woman intensely arguing on the phone.", "appearance_anchor": { "id_features": { "detail_description": "East Asian, late 20s; long wavy dark-brown hair; red lipstick." }, "attributes": { "clothing": "Fitted V-neck mini dress in vibrant red.", "hairstyle": "Long, wavy dark-brown hair worn down.", "accessories": "Light jade bracelet on the left wrist." } } }, { "ref_id": "OBJECT_1", "type": "object", "semantic_description": "The smartphone the woman is using.", "appearance_anchor": { "id_features": { "detail_description": "Black smartphone in a black case, held to her right ear." } } }, { "ref_id": "SCENE_1", "type": "scene", "semantic_description": "A modern office interior.", "appearance_anchor": { "id_features": { "detail_description": "Large dark-grey desk with hardcover books; bookshelf and beige chair behind." } } } ], "shots": [ { "shot_id": "shot_1", "time_range": [0.0, 3.4], "references_in_shot": ["PERSON_1", "OBJECT_1", "SCENE_1"], "camera": { "movement": "static", "angle": "eye-level", "shot_type": "medium" }, "visual_description": "In SCENE_1, PERSON_1 leans over her desk holding OBJECT_1 to her right ear. Her expression
+> ,→shifts from tense concentration to deep anger; she bares her teeth in a snarl while glaring
+> ,→off-camera." } ]} } }
+
+Pipeline. For each training video x0 we obtain MTSS captions in three offline steps, without human annotation. (i) The dense narrative caption shipped with the training corpus (HunyuanVideo-1.5 captions, plus the original prompt when available) and 32 uniformly sampled frames are fed to Qwen3-VL-72B in vision-language mode. The system prompt asks the model to enumerate Reference items 17 with ref_id s and short semantic_description s, segment the video into Shots, extract Events with 
+
+time_range s, and write a single Global summary. The JSON output is serialised following Fig. 1 of Script-a-Video [ 27 ]. (ii) Each foreground Reference item ( PERSON_* /OBJECT_* ) yields an entity caption ck (its semantic_description , optionally concatenated with detail_description ) and a SAM 3.1 mask Mk obtained by feeding a Qwen3.5-2B-simplified noun phrase as SAM 3.1’s text prompt (App. B.2). The background caption cbg is the SCENE_* /BACKGROUND -typed item’s 
+
+semantic_description and its mask is Mbg = 1 − Mfg by construction. (iii) For Stage 2 inference and evaluation only, captions exceeding 2K tokens are passed through Qwen3.5 to com-press redundant attribute text while preserving all ref_id s and time_range s, while Stage 1 reads 
+
+semantic_description s directly from the JSON and is unaffected. When the user supplies a flat prompt at inference time, the same Qwen3-VL pipeline produces the MTSS rewrite offline. Rewriter limitations are discussed in App. G. 
+
+B.2 Linking MTSS entities to SAM 3.1 masks 
+
+Stage 1 mask supervision relies on per-entity binary masks from SAM 3.1 Multiplex, and two practical issues make the raw MTSS-to-SAM pipeline unreliable. First, SAM 3.1 expects short noun-phrase prompts, whereas MTSS Reference items carry rich free-form descriptions. Second, when several same-type entities co-occur (e.g. two PERSON_* ), SAM 3.1 returns multiple instances without telling us which instance matches which Reference id. We address both with a small frozen Qwen3.5-2B model used in two complementary modes. 
+
+Text simplification. Each MTSS entity description is rewritten by Qwen3.5-2B into a 2–5-word noun phrase that keeps the most visually distinctive adjective(s). Examples taken from training logs: • “A young Caucasian male with fair skin, short curly light brown hair, wearing a navy hoodie” 
+
+→ “young curly-haired man”. • “A folded greeting card being held by the barista” → “folded card”. • “A dark wooden bar counter with several espresso cups arranged on top” → “wooden bar counter”. The simplified phrase is passed to SAM 3.1 as the text prompt for that entity, which substantially raises the rate of non-empty, well-covering instance returns relative to passing the raw description. 
+
+Bounding-box detection for instance disambiguation. For multi-instance types we additionally query Qwen3.5-2B in vision-language mode on the first video frame: given the original entity description and the frame, the model emits a bounding box. SAM 3.1 instance boxes are then matched to entity boxes by IoU, which assigns each Reference id to a single SAM 3.1 instance and hence to a per-entity mask. When no valid Qwen box is available we fall back to area-ranked assignment, which never drops below the SAM-only baseline. 
+
+Scope. The simplifier is part of Stage 1 mask preparation only. Stage 2 does not invoke it, and inference is unchanged. Fig. 5 (App. A.1) visualises the resulting per-entity mask decomposition on a representative training clip and motivates the entity-separated supervision adopted in Sec. 3.3. 
+
+C VLM-rubric evaluation protocol 
+
+Judging setup. For every generated video we issue one chat completion per (judge, TA/MQ-axis) pair to each of the three VLM judges. The video and the MTSS caption (App. B) are sent in a single multimodal turn with thinking mode enabled under an 8K-token budget, so the judge reasons over the rubric and then emits a strict JSON object (Box C / Box E). Sampling follows each family’s official thinking-mode recipe: Qwen3.x uses T = 1 .0, top-p = 0 .95 , top-k = 20 , min -p = 0 , presence penalty 1.5, while Gemma-4 uses T = 1 .0, top-p = 0 .95 , top-k = 64 . The vote aggregation resolves ties toward the higher score. 
+
+Protocol noise floor and the real-video oracle. The Real video row of Table 1 sits clearly above every continually-trained method but below the rubric’s 5.0 ceiling. The sub-5 gap has two protocol-level sources independent of the generation pipeline. First, the MTSS caption is produced by an external VLM (App. B) and occasionally hallucinates entities, mis-binds attributes, or over-specifies fine actions, against which even the source video cannot satisfy the strict rubric. Second, the judge 18 VLMs are noisy graders that over-penalise small attribute mismatches, mis-count entities under occlusion, or down-score brief actions on action_completion . Both effects apply to every row of Table 1 and form a constant noise floor. The oracle row should therefore be read as the achievable 
+
+protocol score, and the relevant quantity is the gap each method closes toward it under matched data, schedule, judges, and captions. SARA closes the largest fraction of the oracle-to-strongest-baseline gap on both axes. 
+
+Prompt template. The prompt fed to each judge concatenates (i) the system prompt of Box A, (ii) a TEXT DESCRIPTION block populated from the MTSS [Scene & Style] , [Characters & Objects] (with expected entity counts) and [Shot Narrative] sections, and (iii) one of the two rubric blocks (Box B for alignment, Box D for motion). The judge replies with a JSON object keyed by the rubric dimensions and valued by {score , reason } pairs (Box C / Box E). 
+
+Box A: System prompt (shared by both rubrics) 
+
+You are an expert video evaluation assistant. You compare generated videos against their text descriptions and score alignment across multiple dimensions. Be strict and precise – only give high scores when the video truly matches the description. 
+
+Box B: Alignment rubric (TA, six dimensions, 1–5 each) 
+
+=== EVALUATION DIMENSIONS === Score each ALIGNMENT dimension from 1 to 5 on a shared Likert scale: 5=fully matches the description; 4=mostly matches with minor differences; 3=partially matches or some items clearly wrong; 2=mostly wrong; 1=does not match / unrecognizable. The only exception is entity_count, which uses an exact-count scale: 5=exact match, 4=off by 1 total, 3=off by 2, 2=off by 3–4, 1=off by 5+. 1. entity_count: Does the video contain the correct number of people ({num_persons}) and objects ({num_objects})? 2. person_appearance: Do the people’s clothing, hairstyle, age/gender, and accessories match the [Characters & Objects] description? 3. object_appearance: Do the objects’ shape, color, material, and type match the [Characters & Objects] description? 4. spatial_arrangement: Are people and objects positioned as described in the [Shot Narrative] (left/right/center/between/behind, etc.)? 5. action_completion: Are the actions and movements described in the [Shot Narrative] actually performed in the video? 6. scene_style: Does the video’s setting, lighting, color palette, and mood match the [Scene & Style] description? 
+
+Box C: Required JSON output (alignment) 
+
+=== OUTPUT FORMAT === Respond in JSON format ONLY (no extra text): {"entity_count": {"score": <1-5>, "reason": "<brief reason>"}, "person_appearance": {"score": <1-5>, "reason": "<brief reason>"}, "object_appearance": {"score": <1-5>, "reason": "<brief reason>"}, "spatial_arrangement": {"score": <1-5>, "reason": "<brief reason>"}, "action_completion": {"score": <1-5>, "reason": "<brief reason>"}, "scene_style": {"score": <1-5>, "reason": "<brief reason>"} }
+
+Box D: Motion-quality rubric (MQ, seven dimensions, 1–5 each) 
+
+=== EVALUATION DIMENSIONS === Score each MOTION dimension from 1 to 5 on a shared Likert scale: 5=requirement fully met (or, where applicable, the described motion happens with correct subject/object/direction/timing); 4=mostly met with minor attribute or magnitude 
+
+19 issues; 3=partially met with clear localized failures or mismatches; 2=multiple or large-scale failures, only a vague hint of the requirement; 1=requirement fails entirely, or behaves opposite to the description. 1. motion_prompt_alignment: Do the actions described in the [Shot Narrative] (subject + verb + object + direction) actually happen in the video? 2. motion_completeness: Does each motion have a coherent start → middle → end trajectory (clear onset, full execution, clean closure)? Penalize twitching, frozen frames, and on-the-spot looping. 3. motion_amplitude: Is the amount/frequency of motion reasonable for the described scene? Penalize pseudo-static clips (only micro-jitter pretending to be motion) and over-exaggerated shaking, seizure-like flicker, or cartoon distortion. 4. temporal_consistency: Do subjects keep their identity across frames? Treat as defects: flicker, ghosting, teleportation, identity swap, extra/missing fingers/limbs, limb displacement or duplication, facial scrambling, edge melting/tearing, color bleeding. 5. physical_plausibility: Does the motion respect physics (gravity, inertia, collision, rigid-vs-soft body, contact)? Treat as defects: joints twisted past anatomical limits, rigid objects wobbling like cloth, limbs/objects clipping through solid surfaces, feet floating or sinking, fluid/smoke moving against gravity. 6. camera_motion: Does the camera behave as described? If the [Shot Narrative] specifies a move (push-in / pull-out / pan / tilt / tracking / orbit / handheld), check type, direction, and pace, otherwise expect a stable camera. 7. interaction_correctness: Do multi-subject interactions in the [Shot Narrative] (physical contact, coordination, mutual effect) actually happen with correct contact point and approach →contact →completion timing on both sides? NOTE: if the caption involves only a single subject, return 5 with reason “caption has no multi-subject interaction”. 
+
+Box E: Required JSON output (motion) 
+
+Respond in JSON format ONLY (no extra text): {"motion_prompt_alignment": {"score": <1-5>, "reason": "<brief reason>"}, "motion_completeness": {"score": <1-5>, "reason": "<brief reason>"}, "motion_amplitude": {"score": <1-5>, "reason": "<brief reason>"}, "temporal_consistency": {"score": <1-5>, "reason": "<brief reason>"}, "physical_plausibility": {"score": <1-5>, "reason": "<brief reason>"}, "camera_motion": {"score": <1-5>, "reason": "<brief reason>"}, "interaction_correctness": {"score": <1-5>, "reason": "<brief reason>"} }
+
+Per-sub-dimension scores. Tabs. 5 and 6 report the mean-aggregated per-sub-dimension scores for the methods of Tab. 1 and the ablations of Tab. 3. On the alignment axis the bottleneck is action_completion : every continually-trained method sits well below the real-video ora-cle there, identifying fine-grained action coverage as the hardest TA dimension at the current scale, with SARA still posting the largest gain among non-oracles. On the motion axis the gains concentrate on motion_prompt_alignment , motion_completeness , motion_amplitude , and 
+
+interaction_correctness , while the conservative pretrained baseline keeps a small lead on 
+
+temporal_consistency and physical_plausibility . These two dimensions share the same mechanistic origin as the VBench-2.0 Human Fidelity drop discussed in Sec. 4.3: temporal con-sistency, physical plausibility, and anatomical fidelity are all rendered at the low-noise stage of Wan2.2’s two-expert MoE, but our matched protocol updates only the high-noise expert, so high-noise updates that improve coarse-structure prompt following propagate as a small distribution shift on the un-updated low-noise expert (App. G). SARA shows the smallest such drop among the three continually-trained methods. 20 Table 5: Per-sub-dimension alignment scores (mean across three VLM judges). Best non-oracle in bold . EntCnt =entity_count, PrsApp =person_appearance, ObjApp =object_appearance, 
+
+Spatial =spatial_arrangement, ActCmp =action_completion, Scene =scene_style. 
+
+Method EntCnt PrsApp ObjApp Spatial ActCmp Scene Avg 
+
+Main comparison 
+
+Real video (oracle) 4.299 4.579 4.605 4.708 4.340 4.983 4.586 Pretrained Wan2.2 3.930 3.654 4.461 3.700 2.863 4.905 3.919 SFT 4.276 4.021 4.515 3.951 3.048 4.913 4.121 VideoREPA 4.298 4.030 4.489 3.974 3.050 4.909 4.125 MoAlign 4.282 4.048 4.504 3.955 3.053 4.921 4.127 
+
+SARA (ours) 4.301 4.085 4.502 4.002 3.114 4.923 4.154 
+
+Ablations 
+
+SARA (full) 4.301 4.085 4.502 4.002 3.114 4.923 4.154 
+
+w/o InfoNCE 4.302 4.072 4.481 3.964 3.078 4.921 4.136 w/o entity-separated 4.284 4.053 4.508 3.963 3.052 4.916 4.129 w/o saliency head 4.222 3.976 4.436 3.917 2.998 4.916 4.078 w/o temporal mask 4.312 4.073 4.500 3.952 3.091 4.915 4.140 XOR router 4.292 4.016 4.470 3.931 3.035 4.921 4.111 w/ temporal decay τ = 10 4.310 4.066 4.496 3.982 3.062 4.915 4.139 
+
+Table 6: Per-sub-dimension motion-quality scores (mean across three VLM judges). 
+
+Best non-oracle in bold . MtPrm =motion_prompt_alignment, MtCmp =motion_completeness, 
+
+MtAmp =motion_amplitude, TmpCns =temporal_consistency, PhyPlu =physical_plausibility, 
+
+Cam =camera_motion, Inter =interaction_correctness. 
+
+Method MtPrm MtCmp MtAmp TmpCns PhyPlu Cam Inter Avg 
+
+Main comparison 
+
+Real video (oracle) 3.950 4.289 4.485 4.561 4.636 4.828 4.272 4.431 Pretrained Wan2.2 2.502 3.338 3.765 4.610 4.654 4.608 3.250 3.818 SFT 2.651 3.292 3.700 4.405 4.509 4.577 3.355 3.784 VideoREPA 2.676 3.306 3.713 4.420 4.522 4.608 3.372 3.802 MoAlign 2.689 3.332 3.742 4.379 4.493 4.594 3.381 3.802 
+
+SARA (ours) 2.744 3.396 3.807 4.431 4.537 4.623 3.423 3.852 
+
+Ablations 
+
+SARA (full) 2.744 3.396 3.807 4.431 4.537 4.623 3.423 3.852 
+
+w/o InfoNCE 2.676 3.336 3.762 4.378 4.477 4.617 3.380 3.804 w/o entity-separated 2.673 3.328 3.722 4.420 4.519 4.618 3.390 3.810 w/o saliency head 2.621 3.265 3.681 4.439 4.554 4.610 3.326 3.785 w/o temporal mask 2.698 3.369 3.802 4.389 4.485 4.585 3.379 3.815 XOR router 2.663 3.327 3.746 4.414 4.512 4.593 3.375 3.804 w/ temporal decay τ = 10 2.698 3.373 3.802 4.432 4.528 4.611 3.377 3.832 
+
+21 D More results 
+
+This section reports the per-task scores underlying the dimension-level VBench-1.0 [ 16 ] and VBench-2.0 [34] entries of Tab. 2 (Sec. 4.3). 
+
+D.1 VBench-1.0 per-task semantic scores 
+
+VBench-1.0 splits its 16 atomic tasks into a Quality dimension and a Semantic dimension. We evaluate the five continually-trained Wan2.2 high-noise checkpoints on the nine atomic tasks that compose the Semantic dimension: Scene , Overall Consistency , Appearance Style , Object Class ,
+
+Spatial Relationship , Human Action , Temporal Style , Color , and Multiple Objects . The aggregate 
+
+Semantic column is the official mean over these nine tasks, after the per-task normalisation defined in the VBench-1.0 release. Tab. 7 reports the raw per-task scores, and for readability we keep the official 0–1 range rather than rescaling to %.Table 7: VBench-1.0 per-task semantic scores (raw, 0–1 range as returned by the official scorers, higher is better; aggregated over the official 946 -prompt suite). The nine columns are the official VBench-1.0 Semantic sub-tasks, and the rightmost Semantic (Avg.) column is the official semantic-dimension aggregate (the percentage version of this column is repeated under VBench-1.0 / Semantic 
+
+in Tab. 2). Best per column in bold .                                                            
+
+> Method Scene Consistency Appearance Object Spatial Action Temporal Color Multiple Semantic (Avg.) Pretrained Wan2.2 0.3401 0.2524 0.2101 0.8560 0.7631 0.8800 0.2315 0.9012 0.6677 0.7274 SFT 0.3481 0.2436 0.2048 0.8449 0.8074 0.8100 0.2187 0.9100 0.7134 0.7217 VideoREPA [8] 0.2943 0.2511 0.2125 0.8829 0.7699 0.8900 0.2319 0.8957 0.7027 0.7299 MoAlign [9] 0.3583 0.2476 0.2105 0.8275 0.8108 0.8500 0.2232 0.8870 0.7248 0.7295
+> SARA (ours) 0.3583 0.2487 0.2071 0.8758 0.7710 0.8400 0.2298 0.9313 0.7576 0.7389
+
+Per-task semantic scores. Tab. 7 matches the aggregate Semantic column of Tab. 2. SARA leads on the two most multi-entity-heavy sub-tasks, Multiple Objects and Color (where attribute binding is tested across several entities), and ties MoAlign for best on Scene . VideoREPA leads on four other sub-tasks ( Appearance , Object Class , Human Action , Temporal Style ), and MoAlign leads on Spatial Relationship , consistent with its motion-supervised subject-only pairs. The pretrained baseline keeps a small lead on Overall Consistency , the VBench-1.0 instance of the high-noise-only-training trade-off discussed for VBench-2.0 Human Fidelity in Sec. 4.3 and App. G: high-frequency consistency is rendered at the un-updated low-noise expert of Wan2.2’s two-expert MoE and is therefore mildly disturbed by every continual-training row that updates the high-noise expert. The per-task picture is more diffuse than the aggregate, as expected for a benchmark whose nine sub-tasks cover very different aspects of text-following, but SARA cleanly leads the aggregate Semantic score reported in Tab. 2. 
+
+D.2 VBench-2.0 per-task scores 
+
+VBench-2.0 [ 34 ] groups its 18 atomic tasks into five dimensions: creativity (Composition, Diversity), 
+
+commonsense (Instance Preservation, Motion Rationality), controllability (Camera Motion, Complex Landscape, Complex Plot, Dynamic Attribute, Dynamic Spatial Relationship, Human Interaction, Motion Order Understanding), human fidelity (Human Anatomy, Human Clothes, Human Identity), and physics (Material, Mechanics, Multi-View Consistency, Thermotics). Each dimension score is the mean of its tasks, and the final score is the mean of the five dimensions. Tab. 8 reports all 18 
+
+per-task scores plus the VBench-2.0 final score. 
+
+Per-task scores. Tab. 8 matches the dimension-level summary of Tab. 2. SARA leads outright on 
+
+Composition , Dynamic Attribute , and Camera Motion , and ties for best on Motion Rationality (with VideoREPA). These wins concentrate on the multi-entity-composition and dynamic-attribute axes that text-conditioned saliency routing directly targets. SFT posts the best score on five tasks— Instance Preservation , Complex Plot , Material , Multi-View Consistency , and Thermotics —driving its leading 
+
+Physics dimension score, though these per-task gains do not carry over to the Final score where SARA still leads. The pretrained Wan2.2 keeps a small lead on the three Human Fidelity tasks and on 
+
+Mechanics , Dynamic Spatial Relationship , and Motion Order Understanding , the same high-noise-only-training trade-off observed on temporal_consistency / physical_plausibility (App. C, 22 Table 8: VBench-2.0 per-task scores under all five dimensions (%, higher is better; aggregated over the official 1,013 -prompt suite, 3 generations per prompt and 20 for the special Diversity task). The 19 columns are wrapped into three horizontal stripes that share a single Method header column: stripe 1 covers Creativity + Commonsense + Human Fidelity , stripe 2 covers Controllability , and stripe 3 covers Physics together with the overall VBench-2.0 Final score (mean of the five dimensions, repeated from Tab. 2). Best per column in bold .                                                                                                                  
+
+> Method Composition Diversity Instance Preservation Motion Rationality Human Anatomy Human Clothes Human Identity
+> Pretrained Wan2.2 45.69 59.43 86.55 30.46 90.56 86.67 80.88
+> SFT 45.79 63.42 90.06 29.31 88.06 77.90 75.27 VideoREPA 48.09 60.06 88.89 33.33 87.86 84.23 76.26 MoAlign 49.48 64.01 88.89 30.46 89.26 84.97 80.02
+> SARA (ours) 50.81 59.95 88.89 33.33 89.05 85.78 80.38
+> Method Camera Motion Complex Landscape Complex Plot Dynamic Attribute Dynamic Spatial Relationship Human Interaction Motion Order Understanding
+> Pretrained Wan2.2 15.79 18.44 11.56 38.46 41.55 63.67 27.36
+> SFT 16.36 16.89 12.76 41.39 40.10 58.00 21.62 VideoREPA 17.90 20.00 10.67 44.69 36.23 65.00 26.26 MoAlign 17.90 20.44 12.67 41.39 34.30 62.33 21.55
+> SARA (ours) 19.14 15.78 11.07 46.89 37.20 59.67 26.60
+> Method Material Mechanics Multi-View Consistency Thermotics Final
+> Pretrained Wan2.2 43.24 53.54 38.99 51.80 55.00 SFT 54.17 47.62 45.65 56.92 55.08 VideoREPA 44.59 47.45 40.57 54.07 55.24 MoAlign 49.30 46.88 42.11 52.99 55.81
+> SARA (ours) 47.89 48.51 44.17 53.44 56.19
+
+App. G): all continually-trained rows update only the high-noise expert of Wan2.2’s two-expert MoE while the low-noise expert (which renders anatomy and fine textures) stays frozen, so any high-noise update propagates as a small distribution shift on the un-updated low-noise expert. SARA shows the smallest such drop among the continually-trained methods. MoAlign wins on Diversity and Complex Landscape , while VideoREPA leads on Human Interaction .
+
+E Additional ablations 
+
+E.1 DiT alignment hookup layer 
+
+The Stage 2 masked TRD loss of Eq. (11) is computed on the projected hidden state Vp of a single Wan2.2 DiT layer. The Wan2.2 high-noise DiT has 40 layers, and throughout the main paper we hook the alignment loss into layer 18 (mid-depth, see Tab. 11). Tab. 9 ablates this choice by moving the hookup to deeper layers ( 30 , 36 , 39 ), holding every other component fixed at the default SARA configuration (saliency aligner, OR pair fusion, entity-separated supervision, InfoNCE, τ = ∞,optimisation schedule, 500 K-clip training corpus, 3,000 steps), so that only the hookup layer changes. Layer 18 as the default is well-supported by prior REPA-family work on shallower DiTs: VideoREPA on CogVideoX [ 8] and MoAlign on Wan2.1 [ 9] both find layer 18 the empirical optimum in their published layer sweeps. Wan2.2 widens this depth budget to 40 layers, so the open question for our setting is whether the optimum shifts deeper to track the larger DiT (e.g. to a comparable fractional depth around layer 24 –30 ). Tab. 9 verifies it does not, with layer 18 still dominating over 30 , 36 , and 39 . We do not re-test shallower hookups because REPA’s original layer sweep on DiT-XL/2 [ 7] established that pre-mid-depth blocks carry predominantly low-level and positional signal and underperform mid-depth alignment. The mid-depth hookup at layer 18 dominates on all four VLM-rubric metrics, and every deeper hookup ( 30 , 36 , 39 ) underperforms it on every column, with the gap up to 0.055 on TA mean and 
+
+0.039 on MQ mean. Among the deeper hookups themselves the differences are small ( ≤ 0.04 on TA mean and ≤ 0.03 on MQ mean) and non-monotonic in the layer index (TA mean and TA vote in fact rise from layer 30 to 39 while MQ shows a U-shape that dips at layer 36 and recovers at 39 ), so the operative axis is mid-depth vs late-depth rather than the precise late-layer position. One plausible reason: mid-depth blocks in large DiTs still carry spatially localised but semantically structured tokens, whereas the latest layers have specialised toward noise prediction and are less compatible with pair-relational alignment against the V-JEPA target. We therefore use layer 18 for Wan2.2 throughout the main-paper experiments. 23 Table 9: Effect of the DiT alignment hookup layer on Wan2.2 high-noise (40 DiT layers total). Each row retrains SARA with the masked TRD loss of Eq. (11) attached to a different layer, with all other settings matching the default SARA configuration. Metrics follow the VLM rubric of Tab. 1. Best in bold .
+
+Hookup layer TA mean TA vote MQ mean MQ vote 
+
+layer 18 (default, mid-depth) 4.1543 4.1668 3.8516 3.9191 
+
+layer 30 4.0990 4.1221 3.8266 3.8972 layer 36 4.1214 4.1404 3.8129 3.8797 layer 39 4.1368 4.1569 3.8354 3.8946 
+
+F Training details 
+
+Tables 10 and 11 list all training-side hyperparameters for SARA’s two stages. The Stage 2 configu-ration applies verbatim to SFT (auxiliary loss disabled), VideoREPA (no saliency routing), and the MoAlign reproduction (motion subspace Dm = 64 , projector Pζ , exponential temporal decay τ =10 ,matching Bhowmik et al. [9] ), and only the auxiliary objective changes. Stage 2 follows Wan2.2’s two-stage timestep partition (boundary ratio 0.875 , visible in Tab. 11) and trains only the high-noise transformer. Table 10: Stage 1 training hyperparameters: saliency aligner. 
+
+Setting Value 
+
+Data 
+
+Training corpus 500 K MTSS-recaptioned clips Frames per clip T 32 
+
+Input resolution dynamic, max edge 480 
+
+V-JEPA encoder input 384 (ViT-G/16, patch 16 , tubelet 2)Entity caption length cap 2048 tokens 
+
+Model 
+
+Trainable modules ΦCA + Φ sal + Φ proj 
+
+Frozen modules V-JEPA 2.1 ViT-G/16, SAM 3.1 Multiplex, Qwen3-VL-Emb-2B V-JEPA input / patch / tubelet 384 / 16 / 2
+
+Visual dim Dv 1664 
+
+LM input-embed dim Dt Qwen3-VL-Emb-2B native 
+
+ΦCA architecture 6 blocks ( 2 CA, 4 SA), 8 heads, no pos. emb. 
+
+Φsal architecture 2-layer MLP RDv →R512 →R, sigmoid 
+
+Φproj architecture RMSNorm + linear RDv →RDt
+
+InfoNCE temperature τnce 0.07 
+
+Loss 
+
+Objective λBCE LBCE + λInfoNCE LInfoNCE 
+
+Loss weights λBCE = λInfoNCE = 1 
+
+Supervision units K per-entity (ck , M k ) + (cfg , M fg ) + (cbg , M bg )
+
+Optimization 
+
+Optimizer AdamW Peak / min learning rate 5 × 10 −5 / 1 × 10 −6 (cosine schedule) LR warmup steps 500 (linear) Weight decay 0.01 
+
+Gradient clipping 1.0
+
+Per-GPU batch size 2
+
+Gradient accumulation 1
+
+Mixed precision bf16 
+
+Distributed setup 
+
+Number of GPUs 32 
+
+Effective batch (Reference-stream forwards) 64 
+
+Total training steps 3,000 
+
+Gradient checkpointing enabled 
+
+24 Table 11: Stage 2 training hyperparameters: diffusion continual training.                                                              
+
+> Setting Value
+> Data
+> Training corpus 500 K MTSS-recaptioned clips Frames per clip T81
+> Input resolution 480 ×848
+> V-JEPA encoder input 384 (ViT-G/16, patch 16 , tubelet 2)
+> Model
+> Trainable modules Wan2.2 high-noise DiT ( ∼14 B) Frozen modules V-JEPA 2.1, Stage 1 aligner, Wan2.2 VAE, low-noise DiT REPA target dim 1664
+> DiT alignment hookup layer 18
+> Loss
+> Objective Ldiff +λTRD Lm-TRD
+> Loss weight λTRD 0.5
+> Spatial / temporal balance λtmp 1.0
+> Numerical floor ε10 −6
+> Pair-routing operator OR ( wi+wj−wiwj)Saliency mask scope spatial +temporal Temporal decay τ∞(uniform cross-frame)
+> Optimization
+> Optimizer AdamW Learning rate 5×10 −6(constant after warmup) LR warmup steps 500 (linear) Weight decay 0.01
+> Gradient clipping 1.0
+> Per-GPU batch size 1
+> Gradient accumulation 1
+> Mixed precision bf16 Timestep weighting logit-normal, sample shift 12 .0
+> Timestep range t∈[0 .875 ,1.0] ·1000 (high-noise) Random seed 1024
+> Distributed setup
+> Sequence-parallel size 1
+> Effective batch (videos) 40
+> Total training steps 3,000
+
+G Limitations and broader impact 
+
+Caption-pipeline noise. Stage 1 SAM masks and Stage 2 conditioning both consume MTSS captions produced by a frozen Qwen3-VL-72B rewriter (App. B), which can occasionally hallucinate entities or mis-bind attributes. Because the same captions are used by every row of Table 1 (pretrained, SFT, VideoREPA, MoAlign, SARA), this noise enters as a constant offset that does not affect the SARA-vs-baseline ranking. It shows up only as a sub-5 ceiling on the Real video oracle row (App. C), and the strict-intersection judge filter and the rubric-independent user study (Sec. 4.4) and VBench protocols (Sec. 4.3) all reproduce the same ranking, indicating that the SARA gains are not an artefact of caption-rewriter noise. 
+
+High-noise-only continual training induces a small low-noise distribution shift. Wan2.2 ships as a two-expert MoE: a high-noise expert that handles the early, coarse-structure stages of denoising and a low-noise expert that renders fine details (human anatomy and identity, fine textures, and high-frequency temporal structure) at late, low-noise timesteps. Our matched protocol, shared by every continually-trained row in Tab. 1 (SFT, VideoREPA, MoAlign, SARA), continually trains 
+
+only the high-noise expert and leaves the low-noise expert frozen. Any continual-training method that improves coarse-structure prompt following therefore shifts the intermediate-latent distribution that the un-updated low-noise expert was trained against, producing a small but consistent drop on the low-noise-rendered axes: VBench-2.0 Human Fidelity (Human Anatomy, Human Clothes, 25 Human Identity; Sec. 4.3, App. D.2), VBench-1.0 Overall Consistency (App. D.1), and the VLM-rubric temporal_consistency / physical_plausibility sub-dimensions (App. C). The drop appears on all continually-trained methods, and SARA shows the smallest one, consistent with text-conditioned saliency producing the most targeted high-noise update and therefore the smallest distribution shift on the low-noise expert. The clean fix, jointly continually training both experts under the same SARA objective, is left to future work, and the matched-setting comparison is unaffected because the same single-expert constraint applies to every row. 
+
+Broader impact. SARA does not introduce new generative capability, and instead reallocates an existing alignment loss on top of an already-released VDM. It therefore inherits, rather than amplifies, the standard text-to-video dual-use risks (deepfakes, biased depictions, copyrighted-style imitation), and any deployment is expected to keep the safety-tuning, watermarking, and content-filtering layers that ship with the base-model release. 26 References 
+
+[1] Team Seedance, De Chen, Liyang Chen, Xin Chen, Ying Chen, Zhuo Chen, Zhuowei Chen, Feng Cheng, Tianheng Cheng, Yufeng Cheng, et al. Seedance 2.0: Advancing video generation for world complexity. arXiv preprint arXiv:2604.14148 , 2026. [2] Google. Veo 3.1 announcement. https://blog.google/innovation-and-ai/ technology/developers-tools/veo-3-1-gemini-api/ , 2026. Accessed: April 29, 2026. [3] Wan Team. wan 2.7. https://wan.video/ , 2026. Accessed: April 29, 2026. [4] Yoav HaCohen, Benny Brazowski, Nisan Chiprut, Yaki Bitterman, Andrew Kvochko, Avishai Berkowitz, Daniel Shalem, Daphna Lifschitz, Dudu Moshe, Eitan Porat, et al. Ltx-2: Efficient joint audio-visual foundation model. arXiv preprint arXiv:2601.03233 , 2026. [5] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianxiao Yang, et al. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 , 2025. [6] Bing Wu, Chang Zou, Changlin Li, Duojun Huang, Fang Yang, Hao Tan, Jack Peng, Jianbing Wu, Jiangfeng Xiong, Jie Jiang, et al. Hunyuanvideo 1.5 technical report. arXiv preprint arXiv:2511.18870 , 2025. [7] Sihyun Yu, Sangkyung Kwak, Huiwon Jang, Jongheon Jeong, Jonathan Huang, Jinwoo Shin, and Saining Xie. Representation alignment for generation: Training diffusion transformers is easier than you think. arXiv preprint arXiv:2410.06940 , 2024. [8] Xiangdong Zhang, Jiaqi Liao, Shaofeng Zhang, Fanqing Meng, Xiangpeng Wan, Junchi Yan, and Yu Cheng. Videorepa: Learning physics for video generation through relational alignment with foundation models. arXiv preprint arXiv:2505.23656 , 2025. [9] Aritra Bhowmik, Denis Korzhenkov, Cees GM Snoek, Amirhossein Habibian, and Mohsen Ghafoorian. Moalign: Motion-centric representation alignment for video diffusion models. 
+
+arXiv preprint arXiv:2510.19022 , 2025. [10] Cheng Shi, Yizhou Yu, and Sibei Yang. Vision transformers need more than registers. arXiv preprint arXiv:2602.22394 , 2026. [11] Nicolas Carion, Laura Gustafson, Yuan-Ting Hu, Shoubhik Debnath, Ronghang Hu, Didac Suris, Chaitanya Ryali, Kalyan Vasudev Alwala, Haitham Khedr, Andrew Huang, et al. Sam 3: Segment anything with concepts. arXiv preprint arXiv:2511.16719 , 2025. [12] Andreas Blattmann, Tim Dockhorn, Sumith Kulal, Daniel Mendelevitch, Maciej Kilian, Do-minik Lorenz, Yam Levi, Zion English, Vikram Voleti, Adam Letts, et al. Stable video diffusion: Scaling latent video diffusion models to large datasets. arXiv preprint arXiv:2311.15127 , 2023. [13] OpenAI. Video generation models as world simulators. https://openai.com/research/ video-generation-models-as-world-simulators , 2024. Accessed: April 29, 2026. [14] Kling Team. kling 3. https://kling.ai/ , 2026. Accessed: April 29, 2026. [15] Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng Xu, Yuanming Yang, Wenyi Hong, Xiaohan Zhang, Guanyu Feng, et al. Cogvideox: Text-to-video diffusion models with an expert transformer. arXiv preprint arXiv:2408.06072 , 2024. [16] Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si, Yuming Jiang, Yuanhan Zhang, Tianxing Wu, Qingyang Jin, Nattapol Chanpaisit, et al. Vbench: Comprehensive benchmark suite for video generative models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 21807–21818, 2024. [17] Hritik Bansal, Clark Peng, Yonatan Bitton, Roman Goldenberg, Aditya Grover, and Kai-Wei Chang. Videophy-2: A challenging action-centric physical commonsense evaluation in video generation. arXiv preprint arXiv:2503.06800 , 2025. 27 [18] Lei Wang, Yuxin Song, Ge Wu, Haocheng Feng, Hang Zhou, Jingdong Wang, Yaxing Wang, and Jian Yang. Refalign: Representation alignment for reference-to-video generation. arXiv preprint arXiv:2603.25743 , 2026. [19] Zhenghao Zhang, Junchao Liao, Menghao Li, Zuozhuo Dai, Bingxue Qiu, Siyu Zhu, Long Qin, and Weizhi Wang. Tora: Trajectory-oriented diffusion transformer for video generation. In 
+
+Proceedings of the Computer Vision and Pattern Recognition Conference , pages 2063–2073, 2025. [20] Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al. Training language models to follow instructions with human feedback. Advances in Neural Information Processing Systems ,35:27730–27744, 2022. [21] Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. Flow matching for generative modeling. arXiv preprint arXiv:2210.02747 , 2022. [22] Zeyue Xue, Jie Wu, Yu Gao, Fangyuan Kong, Lingting Zhu, Mengzhao Chen, Zhiheng Liu, Wei Liu, Qiushan Guo, Weilin Huang, et al. Dancegrpo: Unleashing grpo on visual generation. 
+
+arXiv preprint arXiv:2505.07818 , 2025. [23] Bram Wallace, Meihua Dang, Rafael Rafailov, Linqi Zhou, Aaron Lou, Senthil Purushwalkam, Stefano Ermon, Caiming Xiong, Shafiq Joty, and Nikhil Naik. Diffusion model alignment using direct preference optimization. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 8228–8238, 2024. [24] Runtao Liu, Haoyu Wu, Ziqiang Zheng, Chen Wei, Yingqing He, Renjie Pi, and Qifeng Chen. Videodpo: Omni-preference alignment for video diffusion generation. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 8009–8019, 2025. [25] Jiazheng Xu, Xiao Liu, Yuchen Wu, Yuxuan Tong, Qinkai Li, Ming Ding, Jie Tang, and Yuxiao Dong. Imagereward: Learning and evaluating human preferences for text-to-image generation. 
+
+Advances in Neural Information Processing Systems , 36:15903–15935, 2023. [26] Xingjian Leng, Jaskirat Singh, Yunzhong Hou, Zhenchang Xing, Saining Xie, and Liang Zheng. Repa-e: Unlocking vae for end-to-end tuning with latent diffusion transformers. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , 2025. [27] Tencent Hunyuan Team. Script-a-video: Deep structured audio-visual captions via factorized streams and relational grounding. arXiv preprint arXiv:2604.11244 , 2026. [28] Delong Chen, Mustafa Shukor, Theo Moutakanni, Willy Chung, Jade Yu, Tejaswi Kasarla, Yejin Bang, Allen Bolourchi, Yann LeCun, and Pascale Fung. Vl-jepa: Joint embedding predictive architecture for vision-language. arXiv preprint arXiv:2512.10942 , 2025. [29] Lorenzo Mur-Labadia, Matthew Muckley, Amir Bar, Mido Assran, Koustuv Sinha, Mike Rabbat, Yann LeCun, Nicolas Ballas, and Adrien Bardes. V-jepa 2.1: Unlocking dense features in video self-supervised learning. arXiv preprint arXiv:2603.14482 , 2026. [30] Mingxin Li, Yanzhao Zhang, Dingkun Long, Keqin Chen, Sibo Song, Shuai Bai, Zhibo Yang, Pengjun Xie, An Yang, Dayiheng Liu, Jingren Zhou, and Junyang Lin. Qwen3-vl-embedding and qwen3-vl-reranker: A unified framework for state-of-the-art multimodal retrieval and ranking. arXiv , 2026. [31] Qwen Team. Qwen3.5. https://qwen.ai/blog?id=qwen3.5 , 2026. Accessed: May 6, 2026. [32] Qwen Team. Qwen3.6. https://qwen.ai/blog?id=qwen3.6 , 2026. Accessed: May 6, 2026. [33] Hugging Face and Google DeepMind. Welcome gemma 4: Frontier multimodal intelligence on device. https://huggingface.co/blog/gemma4 , 2026. Accessed: May 6, 2026. [34] Dian Zheng, Ziqi Huang, Hongbo Liu, Kai Zou, Yinan He, Fan Zhang, Lulu Gu, Yuanhan Zhang, Jingwen He, Wei-Shi Zheng, et al. Vbench-2.0: Advancing video generation benchmark suite for intrinsic faithfulness. arXiv preprint arXiv:2503.21755 , 2025. 28

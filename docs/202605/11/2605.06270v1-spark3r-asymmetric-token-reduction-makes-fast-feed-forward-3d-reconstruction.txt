@@ -1,0 +1,533 @@
+Title: Spark3R: Asymmetric Token Reduction Makes Fast Feed-Forward 3D Reconstruction
+
+URL Source: https://arxiv.org/pdf/2605.06270v1
+
+Published Time: Fri, 08 May 2026 01:16:26 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+> 1
+
+# Spark3R: Asymmetric Token Reduction Makes Fast Feed-Forward 3D Reconstruction 
+
+Zecheng Tang *, Jiaye Fu *, Qiankun Gao, Haijie Li, Yanmin Wu, Jiaqi Zhang, Siwei Ma, Fellow, IEEE , and Jian Zhang † , Member, IEEE 
+
+Abstract —Feed-forward 3D reconstruction models based on Vision Transformers can directly estimate scene geometry and camera poses from a small set of input images, but scaling them to video inputs with hundreds or thousands of frames remains challenging due to the quadratic cost of global attention layers. Recent token-merging methods accelerate these models by compressing the token sequence within the global attention layers, but they apply a uniform reduction to query tokens and key-value tokens, ignoring their functionally distinct roles in 3D reconstruction. In this work, we identify a key property of feed-forward 3D reconstruction models: query tokens encode view-specific geometric requests and are sensitive to compres-sion, while key-value tokens represent shared scene context and tolerate aggressive compression. Guided by this insight, we propose Spark3R, a training-free acceleration framework that decouples the compression of query tokens and key-value tokens by assigning distinct reduction factors, with intra-group token merging applied to query tokens and lightweight token pruning to key-value tokens. Additionally, Spark3R adaptively adjusts the key-value reduction factor across layers, further improving the quality–efficiency trade-off. As a plug-and-play framework requiring no retraining, Spark3R integrates directly into multiple pretrained feed-forward 3D reconstruction models, including VGGT, π3, and Depth-Anything-3, and achieves up to 28 ×
+
+speedup on 1,000-frame inputs while maintaining competitive reconstruction quality. 
+
+Index Terms —Feed-forward 3D reconstruction, vision trans-formers, token compression, pose estimation, depth measurement. 
+
+I. I NTRODUCTION 
+
+Recovering 3D geometry from multi-view images has tra-ditionally relied on per-scene optimization pipelines such as Structure-from-Motion (SfM) [1], [2] and Multi-View Stereo (MVS) [3], [4]. More recent neural scene representations, including NeRF [5] and 3D Gaussian Splatting [6], retain this per-scene paradigm and still demand substantial computational overhead. Unlike per-scene optimization approaches [7]–[9], feed-forward 3D reconstruction recovers dense scene geometry and camera poses directly from a set of unposed images in a single forward pass, with broad applications in au-tonomous driving [10], robotics [11], and multimodal 3D scene understanding [12], [13]. State-of-the-art models such as VGGT [14], π3 [15], and Depth-Anything-3 [16] achieve this by processing all input frames jointly through global 
+
+> *Zecheng Tang and Jiaye Fu contributed equally to this work.
+> †Corresponding author: Jian Zhang (e-mail: zhangjian.sz@pku.edu.cn). Zecheng Tang, Jiaye Fu, Qiankun Gao, Haijie Li, Yanmin Wu, and Jian Zhang are with the School of Electronic and Computer Engineering, Peking University, Shenzhen 518055, China. Jiaqi Zhang and Siwei Ma are with the School of Computer Science, Peking University, Beijing 100871, China.
+
+attention layers. While this joint processing yields accurate geometric consistency across an arbitrary number of frames, the global attention layers impose costs quadratic in the frame count, making it prohibitively expensive to scale to video-length inputs of hundreds or thousands of frames. Streaming methods [17]–[19] sidestep this cost through sequential processing but forgo joint cross-frame reasoning, often degrading reconstruction quality. Chunk-and-align strate-gies [20], [21] partition the input into fixed-size chunks, confining the model’s own cross-frame reasoning to within each chunk and relying on post-hoc alignment of overlapping frames to recover global consistency. Both lines of work gain efficiency by restricting which frames can interact, rather than accelerating the global attention layers themselves. Rather than restricting which frames can interact, token-merging methods [22], [23] offer a more direct strategy: compressing the sequence length within global attention layers so that all frames remain visible to one another at reduced cost. However, these methods apply a single, uniform reduction factor to all token roles, limiting speedups to roughly 10 ×
+
+at best before reconstruction quality degrades noticeably. We hypothesize that this ceiling stems from ignoring the func-tionally distinct roles of query tokens and key-value tokens in global attention layers. To test this hypothesis, we separately compress query to-kens, key-value tokens, and both jointly at increasing reduction factors (the ratio of the original sequence length to the reduced sequence length) and measure the resulting pose error on VGGT. As shown in Figure 1, compressing key-value tokens alone keeps the error relatively flat, whereas compressing query tokens alone causes a sharp rise. Joint uniform compres-sion, the strategy adopted by existing token-merging methods, yields the steepest curve of all: it inherits the full sensitivity of query tokens while failing to exploit the high compressibility of the key-value tokens. This pronounced asymmetry reveals substantial untapped headroom that uniform methods leave on the table. We provide complementary analytical explanations for this gap in Sec. IV-A. Guided by this insight, we present Spark3R , a training-free, plug-and-play acceleration framework that decouples the compression of query tokens and key-value tokens. Our main contributions are:  
+
+> •
+
+We propose asymmetric token reduction for feed-forward 3D reconstruction models, which assigns sepa-rate reduction factors and distinct compression operators to query tokens and key-value tokens: intra-group token merging for query tokens and lightweight token pruning for key-value tokens.      
+
+> arXiv:2605.06270v1 [cs.CV] 7 May 2026 2key -value query query + key -value
+> Fig. 1. Compression sensitivity of different token roles in VGGT. We separately compress query tokens (orange), key-value tokens (blue), and both jointly (red) at increasing reduction factors and report pose error (ATE ↓). Key-value tokens tolerate aggressive compression with negligible quality loss, while query tokens degrade sharply beyond a reduction factor of 12. Joint uniform compression yields the steepest curve. Bottom : point-cloud reconstructions at reduction factor 16.
+> •
+
+We introduce a layer-adaptive key-value reduction schedule that assigns heavier compression to empiri-cally insensitive layers, further improving the quality– efficiency trade-off.  
+
+> •
+
+We demonstrate that the resulting framework, Spark3R ,integrates directly into VGGT, π3, and Depth-Anything-3 without retraining , achieving up to 28 × speedup on 1,000-frame inputs while maintaining competitive reconstruction quality. II. R ELATED WORK 
+
+A. Feed-Forward 3D Reconstruction 
+
+Feed-forward 3D reconstruction has emerged as a scal-able alternative to per-scene optimization methods such as NeRF [5] and 3D Gaussian Splatting [6]. Early approaches such as DUSt3R [24] and MASt3R [25] predicted pairwise 3D point maps and fused them through post-hoc global alignment. VGGT [14] introduced an Alternating Attention backbone that interleaves global cross-view self-attention with frame-wise self-attention, enabling joint prediction of depth, poses, and point clouds in a single forward pass. π3 [15] proposed a fully permutation-equivariant architecture that eliminates dependence on a fixed reference view, and Depth-Anything-3 [16] showed that a plain Vision Transformer backbone paired with a unified depth-ray prediction target suffices for state-of-the-art geometry reconstruction. Despite architectural differences, all these models rely on global attention layers whose cost is quadratic in the total token count, creating a fundamental scalability bottleneck as the number of input frames grows. 
+
+B. Streaming 3D Reconstruction 
+
+Streaming methods address the quadratic scaling cost of global attention layers by processing frames incremen-tally. Recurrent-state approaches such as CUT3R [17] and TTT3R [18] maintain a compact state updated via cross-attention with each incoming frame, yielding constant per-step cost but progressively losing early context. Explicit-memory methods such as Point3R [26] and StreamVGGT [27] anchor memory at reconstructed 3D positions or cache historical keys and values, trading linear memory growth for richer context retention. Chunk-and-align methods [20], [21] partition the input into fixed-size windows, run inference on each chunk separately, and stitch the resulting submaps via post-hoc 
+
+Sim(3) registration. All these approaches sacrifice cross-frame reasoning scope for speed. 
+
+C. Efficient Feed-Forward 3D Reconstruction 
+
+A complementary line of work preserves the global-context paradigm but reduces per-forward-pass cost. Two principal strategies have been explored. Token-merging methods exploit the observation that global attention maps exhibit substantial redundancy, with many tokens attending to nearly identical patterns, and merge similar tokens before the attention computation. FastVGGT [22] is the first to apply token merging to VGGT, achieving roughly 
+
+4× speedup with no retraining by merging similar tokens via cosine similarity. LiteVGGT [23] introduces geometry-aware partitioning and further accelerates VGGT by reusing merge indices across adjacent layers and incorporating fp8 fine-tuning, reaching approximately 10 × speedup. Both meth-ods apply a single, uniform reduction factor to all tokens, overlooking the distinct roles of query tokens versus key-value tokens. TTT-based methods take a different approach by replacing quadratic softmax attention with linear-time operations. VGG-T3 [28] substitutes each global attention layer with a test-time training (TTT) module, scaling linearly with the num-ber of frames. ZipMap [29] extends this with large-chunk TTT layers [30] interleaved, achieving over 20 × speedup on 750-frame inputs. Both methods substantially outperform streaming approaches in reconstruction quality but still trail 
+
+π3 [15] on most benchmarks, and incur considerable training overhead: VGG-T 3 requires 100k steps on 8 A100s and ZipMap requires 180k steps on 64 H100s. Spark3R shares the token-compression philosophy of token-merging methods but introduces asymmetric token reduction and a layer-adaptive key-value reduction schedule, achiev-ing speedups comparable to ZipMap’s while requiring no retraining—unlike TTT-based methods that incur substantial training cost to replace the attention mechanism entirely. III. P RELIMINARIES 
+
+A. Scaled Dot-Product Attention 
+
+Scaled dot-product attention (SDPA) [31] is the core build-ing block of Transformer architectures. Given an input token sequence X ∈ RN ×D , three linear projections produce the query, key, and value matrices Q, K, V ∈ RN ×d. The attention output is: 
+
+Attention( Q, K, V) = softmax 
+
+ QK ⊤
+
+√d
+
+
+
+V. (1) The time and memory complexity of SDPA are both O(N 2);although FlashAttention [32] reduces the memory complexity to linear in N , the quadratic time complexity remains. 3
+
+B. Feed-Forward 3D Reconstruction Models 
+
+Feed-forward 3D reconstruction models predict dense 3D scene properties—depth maps, camera poses, and point clouds—from unposed images in a single forward pass. Rep-resentative works include VGGT [14], π3 [15], and Depth-Anything-3 [16]. Despite differences in architecture and train-ing, all three follow a common three-stage pipeline, described below using VGGT as the representative example. 
+
+Image Encoder. A pretrained vision foundation model ( e.g. ,DINOv2 [33]) independently extracts L patch tokens per frame. With a learnable camera token and four register tokens appended, each frame has P = L + 5 tokens. Stacking all S
+
+frames produces F ∈ RB×S×P ×D .
+
+Alternating Attention Backbone. The backbone alternates two forms of self-attention. Frame attention layers operate within each frame’s P tokens at a cost of O(S·P 2), linear in S.Global attention layers concatenate all tokens into a single sequence of length N = S × P and perform full pairwise interaction at a cost of O(N 2) = O(S2 · P 2), quadratic in both frame count and per-frame token count. As the input grows, this quadratic scaling dominates inference cost. 
+
+Task-Specific Prediction Heads. Lightweight heads decode the backbone outputs into 3D predictions: a camera head re-gresses per-frame intrinsics and extrinsics from special tokens, and DPT-based heads [34] decode patch tokens into depth maps and point clouds. 
+
+C. Token Merging 
+
+Token Merging (ToMe [35]) is a training-free technique that reduces the effective sequence length in Vision Transformers by merging redundant tokens. Given an input sequence X =
+
+{x1, . . . , x N }, the tokens are partitioned into a destination set 
+
+D and a source set S using strategies such as fixed-stride sampling in ToMe [35] or region-based random sampling in ToMeSD [36]. Each source token xs ∈ S is then matched to its most similar destination token xd ∈ D via cosine similarity: 
+
+sim( xs, x d) = xs · xd
+
+∥xs∥ ∥ xd∥ . (2) A destination token xd matched by n source tokens is updated as their average: 
+
+x′
+
+d = xd + Pni=1 xsi
+
+n + 1 . (3) Source tokens are discarded, reducing the sequence length for the subsequent attention layers. For dense prediction tasks, an unmerging step restores the original length by copying each destination’s updated representation back to its matched sources. IV. M ETHOD 
+
+We propose Spark3R, a token-compression framework with three complementary designs, as illustrated in Figure 2. First, 
+
+asymmetric token reduction assigns separate reduction factors to query tokens and key-value tokens, reflecting their dis-tinct sensitivities to compression (Sec. IV-A). Second, dedi-cated compression operators are tailored to each token type: Camera                                             
+
+> Head
+> Input Frame
+> Image
+> Encoder
+> Frame
+> Attention
+> Query
+> Project Key -Value
+> Project
+> SDPA
+> Unmerge
+> Out
+> Project
+> Global
+> Attention
+> Depth
+> Head
+> ...
+> ×L layers
+> Query
+> Merge Key -Value
+> Merge
+> ×Sframes
+> Step 1: Input 𝑆 ×𝑃 tokens
+> (𝑃 tokens per frame) and
+> perform QKV projection.
+> Q-Path
+> KV -Path
+> Step 2a: Apply
+> region -based temporal
+> cyclic shift sampling
+> for Dst tokens.
+> Step 3a: Perform
+> Src -Dst merging within
+> each group. No merging
+> occurs across groups.
+> ...
+> Step 2b: Apply temporal
+> stride -based sampling for
+> Dst tokens.
+> Step 3b: Prune Src tokens.
+> ... ...
+> SDPA
+> ...
+> ...
+> ...
+> ...
+> Step 4: Perform SDPA. Step 5: Unmerge Src
+> tokens from Dst tokens.
+> Src
+> Token
+> Input
+> Token
+> Dst
+> Token
+> Query Input
+> to SDPA
+> Key -Value Input
+> to SDPA
+> 𝑆 ×𝑃
+> 𝑟 𝑄
+> 𝑆 ×𝑃
+> 𝑟 𝐾𝑉
+> 𝑟 𝑄 𝑟 𝐾𝑉
+> L0 L1 L12 L13 L22 L23
+> Layer -Adaptive KV Reduction schedule
+> …L11 …Large 𝑟 𝐾𝑉
+> Small 𝑟 𝐾𝑉
+> Camera Pose
+> …
+> ×Sframes
+> Depth Map
+> ...
+
+Fig. 2. Overview of Spark3R. (Top ) Spark3R applies asymmetric token reduction to the global attention layers of a feed-forward 3D reconstruction model, with separate reduction factors rQ and rKV (rKV > r Q in general). (Middle ) A layer-adaptive key-value reduction schedule assigns each layer a large or small rKV based on its measured sensitivity to compression. (Bottom ) Detailed illustration of the asymmetric reduction. Tokens from different frames are distinguished by color. The Q-Path performs intra-group token merging; the KV-Path applies lightweight token pruning. Source tokens are restored via unmerging after SDPA. 
+
+intra-group token merging for query tokens (Sec. IV-B) and 
+
+lightweight token pruning for key-value tokens (Sec. IV-C). Third, a layer-adaptive key-value reduction schedule adjusts the key-value reduction factor of each global attention layer ac-cording to its measured sensitivity to compression (Sec. IV-D). 
+
+A. Asymmetric Token Reduction 
+
+The central insight of Spark3R is that query tokens and key-value tokens in global attention layers exhibit fundamentally different sensitivities to compression. Sec. I and Figure 1 have already demonstrated this asymmetry empirically; here we provide two complementary analytical explanations that clarify why the gap exists and inform our design choices: one grounded in the semantics of 3D reconstruction, the other in the structure of the attention computation. 
+
+Reconstruction Semantics. As discussed in Sec. III-B, each output of a global attention layer must carry sufficient information for the downstream prediction heads to produce view-specific estimates (e.g. , depth and camera pose) for every input frame. Because query tokens dictate which outputs are produced, each query token encodes a viewpoint-specific geometric request: two query tokens that observe the same 3D surface point from different cameras must ultimately yield distinct depth values and camera parameters. Compressing such tokens conflates requests that are spatially proximate yet semantically distinct, directly degrading per-view predictions. Key-value tokens, by contrast, collectively form a shared representation of the underlying 3D scene. When multiple frames observe the same region, their key-value tokens encode largely overlapping geometric information and are therefore naturally amenable to aggressive compression. 
+
+Attention Structure. The algebraic structure of SDPA (Eq. (1)) reinforces this asymmetry. Because the attention out-40 2 5 10 15 20 25 30         
+
+> Matching Distance (frames)
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> Proportion
+> =4.9
+> Fig. 3. Distribution of inter-frame distances between merged source– destination token pairs produced by standard token merging on query tokens.
+
+put has one row per query token, reducing the query sequence directly shrinks the output and requires an unmerging step to restore the original length, introducing approximation error at every restored position. Reducing the key-value sequence, by contrast, only coarsens the context each query attends over, and can therefore be applied at considerably higher reduction factors. Together with the empirical evidence in Figure 1, these ob-servations motivate our decoupled design: rather than applying a single uniform reduction factor, we assign separate factors rQ
+
+and rKV (rKV > r Q in general) to query tokens and key-value tokens, respectively. 
+
+B. Intra-Group Query Merging 
+
+Having established that query tokens are considerably more sensitive to compression than key-value tokens, we now de-scribe the query compression operator, which must preserve reconstruction accuracy under a limited reduction budget. We adopt the token merging framework (Sec. III-C) as our starting point and introduce intra-group matching to reduce its computational overhead while maintaining merge quality. 
+
+Locality of Merge Pairs. Standard token merging partitions the full concatenated sequence of N = S × P tokens into source and destination sets and computes similarities between them, where S denotes the number of frames and P the number of tokens per frame. We observe, however, that the resulting merges are overwhelmingly local . To quantify this, we measure the inter-frame distance of every merged pair produced by applying standard token merging to query tokens. As shown in Figure 3, merges within the same frame are rare, the distribution peaks sharply at distance 1, and virtually no merges occur beyond 20 frames. This strong locality indicates that the full O(S2) global matching is unnecessary: nearly all beneficial matches can be discovered within a small temporal neighborhood. 
+
+Intra-Group Matching. Motivated by this observation, we partition the S input frames into ⌈S/G ⌉ non-overlapping groups of G consecutive frames and perform token merging independently within each group of G×P tokens. This reduces the matching cost from O(S2) to O(S · G), which scales linearly in S for a fixed group size G. By exploiting the locality identified above, intra-group matching achieves com-parable merge quality to the global strategy while reducing the matching complexity from quadratic to linear in the sequence length. 
+
+Configuration. Within each group, destination tokens are selected by cycling through a fixed set of spatial offsets across consecutive frames, so that each frame contributes a different, deterministic subset of its tokens as destinations. This is a deterministic cyclic variant of the region-based random sampling used in ToMeSD [36] and FastVGGT [22], yielding comparable merge quality while being slightly more efficient to compute. We set the group size to G = 20 as a practical trade-off between matching quality and computational cost. The query reduction factor is scaled with the input length: 
+
+rQ =
+
+
+
+1 if S ≤ 100 ,
+
+2 if 100 < S ≤ 300 ,
+
+3 if 300 < S ≤ 500 ,
+
+4 if S > 500 .
+
+(4) We ablate the group size choice in Sec. V-E. 
+
+C. Lightweight Key-Value Pruning 
+
+We now turn to the compression of key-value tokens. Since key-value tokens tolerate substantially higher reduction factors than query tokens, we can simplify not only the reduction factor but also the compression operator itself. 
+
+From merging to pruning. Recall that in standard token merging, each destination token xd is updated as the average of itself and its n matched source tokens. Because each source token is matched to its most similar destination token, the cosine similarity within matched pairs is extremely high in practice. Figure 4 confirms this empirically: for both key tokens and value tokens, the vast majority of matched source– destination pairs exceed a cosine similarity of 0.9, so the averaging only marginally affects destination representations. The destination update can therefore be dropped: destination tokens retain their original values while source tokens are simply discarded. Without the averaging update, which destination each source token was matched to is never used, so the similarity com-putation, which is the dominant cost of the matching step, can be skipped entirely, reducing the compression operator to lightweight token pruning with negligible overhead. 
+
+Configuration. Because the compression reduces to pure pruning without averaging or unmerging, the only remaining design choice is which tokens to retain. In practice, this choice 1.00 0.96 0.92 0.88 0.84 0.80    
+
+> Cosine Similarity
+> 0.00
+> 0.04
+> 0.08
+> 0.12
+> 0.16
+> 0.20
+> Proportion  =0.959
+> =0.964
+> Key Tokens
+> Value Tokens
+> Fig. 4. Distribution of cosine similarities between matched source–destination token pairs produced by standard token merging, measured separately for key tokens and value tokens. 5L0
+> L1
+> L2
+> L3
+> L4
+> L5
+> L6
+> L7
+> L8
+> L9
+> L10
+> L11
+> L12
+> L13
+> L14
+> L15
+> L16
+> L17
+> L18
+> L19
+> L20
+> L21
+> L22
+> L23
+> Layer Index
+> 1×
+> 2×
+> 4×
+> Degradation Ratio
+> ATE RPE trans RPE rot Threshold
+
+Fig. 5. Per-layer sensitivity to key-value pruning in VGGT (24 layers). Each group of bars reports the degradation ratio when a single layer’s reduction factor is raised from 32 to 256 , with all other layers held at 32 . The red dashed line marks the 1.05 × threshold used to separate high- and low-sensitivity layers. 
+
+is fairly forgiving: even random token-level sampling yields competitive results. We find that temporal stride sampling, which retains all tokens from every rKV -th frame and discards the rest, performs slightly better while being deterministic and trivial to implement. We further scale rKV with the input length to maintain a roughly linear computation budget: 
+
+rKV =
+
+(
+
+1 if S ≤ 100 ,
+
+⌈S/ 40 ⌉ otherwise , (5) where S denotes the number of input frames. Together, Eqs. (4) and (5) form a length-adaptive reduction schedule that scales compression with the number of input frames, applying minimal or no reduction on short sequences while enabling aggressive compression on long ones. 
+
+D. Layer-Adaptive Key-Value Reduction Schedule 
+
+As noted in prior work on KV-cache compression [37], different layers can exhibit vastly different sensitivities to key-value compression. We observe the same phenomenon in feed-forward 3D reconstruction models: most layers tolerate aggressive key-value pruning with negligible impact on ac-curacy, while a subset suffers substantial degradation under the same reduction factor. This motivates an adaptive strategy that assigns different key-value reduction factors to different layers. To identify which layers are sensitive, we conduct a layer-wise probing experiment. Starting from a uniform reduction factor of rKV =32 applied to all layers, we raise the reduction factor of a single target layer to 256 while keeping all other layers at 32 , and measure the resulting degradation in prediction accuracy. This procedure is repeated independently for every layer; the per-layer degradation ratios for VGGT are shown in Figure 5. Results for π3 and Depth-Anything-3 (Figure 6) exhibit similar patterns. The results reveal highly non-uniform sensitivity across all three models. Sensitive layers tend to concentrate in the middle-to-late portion of the models: layers 11–16 in both L0       
+
+> L1
+> L2
+> L3
+> L4
+> L5
+> L6
+> L7
+> L8
+> L9
+> L10
+> L11
+> L12
+> L13
+> L14
+> L15
+> L16
+> L17
+> Layer Index
+> 1×
+> 2×
+> 4×
+> Degradation Ratio
+> ATE RPE trans RPE rot Threshold L0
+> L1
+> L2
+> L3
+> L4
+> L5
+> L6
+> L7
+> L8
+> L9
+> L10
+> L11
+> L12
+> L13
+> Layer Index
+> 1×
+> 2×
+> 4×
+> Degradation Ratio
+> ATE RPE trans RPE rot Threshold
+
+Fig. 6. Per-layer sensitivity to key-value pruning in π3 (left , 18 layers) and Depth-Anything-3 ( right , 14 layers). Each group of bars is obtained with the same protocol as Figure 5. 
+
+VGGT and π3, and layers 3–12 in Depth-Anything-3. The remaining layers stay below a degradation ratio of 1.05 ×,indicating that they can absorb substantially more aggressive pruning without meaningful accuracy loss. We therefore partition all layers into two tiers based on whether their degradation ratio exceeds 1.05 ×: 
+
+> •
+
+High-sensitivity layers retain the base key-value reduc-tion factor rKV to preserve prediction quality.  
+
+> •
+
+Low-sensitivity layers are assigned an elevated reduction factor of l · rKV , where the multiplier l controls how aggressively these layers are pruned. We set l=3 by default; ablations on this choice are provided in Sec. V-E. This simple two-tier, layer-granularity scheme requires only a single offline probing pass per base model and adds no runtime overhead. As shown in the experiments (Sec. V) and ablations (Sec. V-E), the resulting schedule consistently improves the quality–efficiency trade-off across all three base models and all evaluated tasks. V. E XPERIMENTS 
+
+We integrate Spark3R into three representative feed-forward 3D reconstruction models, namely VGGT [14], π3 [15], and Depth-Anything-3 (DA3) [16], and evaluate the resulting quality–efficiency trade-offs across architectures. Qualitative comparisons are provided in Sec. V-D, and ablation studies are presented in Sec. V-E. 
+
+Evaluation Protocol. Extending the protocol of TTT3R [18], we retain all available frames up to amaximum of 1,000, so that the benchmark directly evaluates each method’s ability to reconstruct long sequences at scale. For the point map benchmarks (7-Scenes, NRGBD) and camera pose benchmarks (TUM-dynamics, ScanNet), this protocol yields sequences of approximately 1,000 frames, considerably longer than those used in prior evaluations and creating a demanding testbed that stresses the scalability of each method. The video depth benchmarks span a wider range of sequence lengths: Bonn averages approximately 623 frames, KITTI approximately 264, and Sintel only approximately 46. This diversity also serves to verify that Spark3R’s length-adaptive reduction schedule in Eqs. (4)–(5) introduces minimal quality degradation on shorter inputs. 
+
+Baselines and Implementation Details. We compare against three categories of methods: (i) the unaccelerated feed-forward models themselves (VGGT, π3, DA3), which serve as quality upper bounds; (ii) existing acceleration methods for feed-forward models, including FastVGGT [22] 6                                                                                                                                                                            
+
+> TABLE I EVALUATION OF POINT MAP ESTIMATION ON 7-S CENES [38] AND NRGBD [39]. RED AND ORANGE BACKGROUNDS INDICATE THE BEST AND THE SECOND BEST RESULTS ,RESPECTIVELY .Method 7-Scenes NRGBD Time (s) ↓Acc ↓Comp ↓NC ↑Time (s) ↓Acc ↓Comp ↓NC ↑
+> Mean Med. Mean Med. Mean Med. Mean Med. Mean Med. Mean Med. CUT3R [17] 69.5 0.197 0.126 0.074 0.021 0.536 0.552 70.1 0.415 0.310 0.197 0.080 0.551 0.576 TTT3R [18] 69.2 0.103 0.061 0.056 0.024 0.566 0.599 70.3 0.262 0.181 0.117 0.040 0.571 0.604 VGGT [14] 1102.7 0.047 0.018 0.035 0.013 0.601 0.656 1110.4 0.042 0.030 0.025 0.008 0.798 0.907 DA3 [16] 976.4 0.015 0.006 0.018 0.009 0.620 0.687 983.3 0.012 0.006 0.015 0.004 0.898 0.979
+> π3[15] 830.2 0.012 0.006 0.016 0.010 0.646 0.729 835.7 0.014 0.007 0.016 0.005 0.884 0.974 FastVGGT [22] 247.2 0.043 0.010 0.025 0.009 0.595 0.646 245.7 0.024 0.017 0.018 0.007 0.768 0.891 ZipMap [29] 46.2 0.019 0.007 0.025 0.009 0.605 0.661 46.6 0.022 0.012 0.016 0.006 0.766 0.891 Ours+VGGT 40.7 0.017 0.007 0.020 0.010 0.617 0.681 40.9 0.014 0.009 0.016 0.005 0.863 0.964 Ours+DA3 58.0 0.015 0.006 0.018 0.009 0.620 0.687 56.9 0.012 0.006 0.015 0.004 0.899 0.979 Ours+ π334.1 0.012 0.006 0.016 0.010 0.644 0.726 34.3 0.014 0.008 0.016 0.005 0.880 0.971
+
+and ZipMap [29], the latter being the current state-of-the-art approach that reports over 20 × speedup over VGGT at 750 frames with linear scaling, albeit at the cost of extensive retraining on 64 H100 GPUs; and (iii) streaming 3D recon-struction models that process frames sequentially, including CUT3R [17] and TTT3R [18]. All experiments run on a single NVIDIA H20 GPU in bfloat16, except for prediction heads that involve SVD, which use float32 for numerical stability. 
+
+A. Point Map Estimation 
+
+We evaluate scene-level point map estimation on 7-Scenes [38] and NRGBD [39] using three standard metrics: Accuracy (Acc), Completeness (Comp), and Normal Consis-tency (NC). Results are reported in Tab. I. Across all three base models, Spark3R reduces inference time by 17 ×–28 × on 7-Scenes and NRGBD while closely matching the reconstruction quality of the unaccelerated base-lines on both datasets. Spark3R applied to DA3 and π3 pre-serves all three metrics to within negligible margins of their re-spective baselines, confirming that asymmetric token reduction introduces minimal degradation. Notably, Spark3R+VGGT substantially improves over unaccelerated VGGT: on 7-Scenes, mean Accuracy improves from 0.047 to 0.017 and mean Completeness from 0.035 to 0.020. We attribute this to the context reduction introduced by lightweight key-value prun-ing: as the input sequence grows, VGGT’s global attention must distribute a fixed attention budget across all tokens, inevitably diluting per-token attention mass. By compressing the key-value tokens, Spark3R keeps the effective context in a regime where attention operates more robustly, yielding sharper geometry. Compared with previous acceleration methods, Spark3R achieves a more favorable quality–speed trade-off. FastVGGT remains roughly 6× slower than Spark3R+VGGT while pro-ducing comparable or lower reconstruction quality. ZipMap reaches a similar inference time on 7-Scenes but falls notice-ably behind on NRGBD and requires extensive retraining and a larger model. The streaming methods CUT3R and TTT3R are nearly 2× slower than Spark3R+VGGT with substantially lower reconstruction quality owing to the absence of global cross-frame reasoning. 
+
+B. Camera Pose Estimation 
+
+We evaluate camera pose estimation on TUM-dynamics [40], ScanNet [41], and Sintel [42], reporting the Absolute Trajectory Error (ATE) and the Relative Pose Error for translation (RPE t) and rotation (RPE r ), all computed after Sim(3) alignment. Results are presented in Tab. II. On the two long-sequence datasets, Spark3R delivers up to 28 × speedup while preserving or improving pose accu-racy across all three base models. Spark3R applied to DA3 and π3 matches their respective baselines closely on all metrics. Spark3R+VGGT again substantially improves over unaccelerated VGGT on ScanNet (ATE dropping from 0.156 to 0.065), consistent with the attention dilution effect discussed in Sec. V-A. On Sintel, sequences contain at most 50 frames, well below the regime where global attention becomes a bottleneck. Spark3R’s length-adaptive schedule accordingly sets both base reduction factors to rQ=1 and rKV =1 , yet the method is not a no-op: low-sensitivity layers still receive an elevated factor of 3 rKV = 3 through the layer-adaptive schedule. The matched quality on these short sequences confirms the standalone effectiveness of the layer-adaptive mechanism. Spark3R+ π3 and Spark3R+DA3 achieve pose accuracy competitive with or superior to ZipMap on both long-sequence datasets, while FastVGGT remains over 6× slower than Spark3R+VGGT with comparable or lower pose accuracy. Streaming methods CUT3R and TTT3R trail all approaches by a substantial margin. 
+
+C. Video Depth Estimation 
+
+We evaluate video depth estimation on Bonn [43], KITTI [44], and Sintel [42], covering indoor, outdoor, and synthetic scenes respectively. We adopt Absolute Relative Error (Abs Rel) and the threshold accuracy δ < 1.25 as evaluation metrics. Predicted depth maps are aligned to the ground truth using a per-sequence scale and shift. Results are reported in Tab. III. Spark3R consistently preserves depth accuracy across all three base models, with speedups scaling with sequence length: 13 ×–18 × on Bonn (avg. 623 frames) with Abs Rel 7              
+
+> TABLE II EVALUATION OF CAMERA POSE ESTIMATION ON TUM-DYNAMICS [40], S CAN NET [41], AND SINTEL [42]. RED AND ORANGE BACKGROUNDS INDICATE THE BEST AND THE SECOND BEST RESULTS ,RESPECTIVELY .
+
+Method TUM-dynamics ScanNet Sintel Time (s) ↓ ATE ↓ RPE t↓ RPE r ↓ Time (s) ↓ ATE ↓ RPE t↓ RPE r ↓ Time (s) ↓ ATE ↓ RPE t↓ RPE r ↓
+
+CUT3R [17] 81.6 0.165 0.007 0.534 86.5 0.783 0.021 0.841 4.1 0.209 0.074 0.638 TTT3R [18] 81.4 0.110 0.009 0.451 87.1 0.424 0.021 0.595 4.1 0.208 0.093 0.734 VGGT [14] 993.7 0.018 0.009 0.294 1162.7 0.156 0.055 1.532 2.0 0.172 0.062 0.469 DA3 [16] 870.8 0.018 0.009 0.295 1018.1 0.057 0.013 0.350 2.6 0.102 0.053 0.441 
+
+π3 [15] 739.4 0.022 0.008 0.295 865.1 0.056 0.011 0.264 1.6 0.074 0.038 0.294 FastVGGT [22] 253.8 0.020 0.010 0.297 256.8 0.078 0.025 0.565 2.4 0.167 0.070 0.522 ZipMap [29] 44.6 0.021 0.010 0.314 43.6 0.066 0.017 0.361 3.9 0.134 0.067 0.429 Ours+VGGT 38.4 0.016 0.010 0.297 41.3 0.065 0.019 0.403 1.6 0.172 0.058 0.478 Ours+DA3 54.0 0.016 0.008 0.291 57.8 0.057 0.012 0.320 2.6 0.100 0.050 0.431 Ours+ π3 32.2 0.022 0.008 0.298 34.6 0.058 0.012 0.280 1.4 0.073 0.038 0.295 TABLE III EVALUATION OF VIDEO DEPTH ESTIMATION ON BONN [43], KITTI [44], AND SINTEL [42]. RED AND ORANGE BACKGROUNDS INDICATE THE BEST AND THE SECOND BEST RESULTS , RESPECTIVELY .Method Bonn KITTI Sintel Time (s) ↓ Abs Rel ↓ δ < 1.25 ↑ Time (s) ↓ Abs Rel ↓ δ < 1.25 ↑ Time (s) ↓ Abs Rel ↓ δ < 1.25 ↑
+
+CUT3R [17] 58.3 0.072 95.4 21.6 0.117 87.8 4.2 0.680 52.7 TTT3R [18] 58.5 0.060 97.4 21.5 0.108 89.3 4.1 0.635 55.1 VGGT [14] 552.4 0.046 98.2 31.5 0.078 94.2 2.1 0.263 64.6 DA3 [16] 493.4 0.040 98.2 28.8 0.063 96.6 2.6 0.238 65.6 
+
+π3 [15] 413.1 0.033 98.9 22.6 0.046 97.9 1.6 0.217 71.8 FastVGGT [22] 182.8 0.043 98.4 11.2 0.078 94.2 2.3 0.287 64.2 ZipMap [29] 32.8 0.040 98.5 7.5 0.065 95.2 3.8 0.222 68.9 Ours+VGGT 31.1 0.044 98.1 5.3 0.078 94.0 1.8 0.270 64.6 Ours+DA3 38.3 0.039 98.3 7.2 0.064 96.4 2.5 0.240 65.5 Ours+ π3 23.3 0.035 98.9 3.9 0.047 97.8 1.4 0.216 71.9 
+
+changes of at most 0.002, and 4×–6× on KITTI (avg. 264 frames) with Abs Rel differences within 0.001. On Sintel (avg. 46 frames), both base reduction factors default to 1; the matched depth accuracy further corroborates the standalone benefit of the layer-adaptive mechanism noted in Sec. V-B. 
+
+π3 remains the strongest base model in depth accuracy, and Spark3R+ π3 preserves this advantage while being the fastest variant overall. FastVGGT is roughly 5×–8× slower than Spark3R+VGGT across Bonn and KITTI with no significant quality gain, and streaming methods CUT3R and TTT3R lag behind all feed-forward approaches in depth accuracy. ZipMap achieves throughput similar to Spark3R+VGGT on Bonn but trails Spark3R+ π3 in both speed and accuracy. 
+
+D. Qualitative Results 
+
+Figures 7 and 8 present qualitative point-cloud comparisons. In Figure 7, Spark3R applied to π3 produces point clouds virtually identical to the unaccelerated baseline. For DA3, the original reconstruction exhibits a visible structural shift in the bottom-right region due to accumulated pose drift, whereas Spark3R+DA3 corrects this misalignment, consistent with the improved rotational pose accuracy reported in Tab. II. The effect is most pronounced for VGGT: the baseline suffers from severe pose drift and large-scale geometric distortions. By mitigating the attention-dilution effect discussed in Sec. V-A, Spark3R restores coherent pose estimates and substantially improves the reconstruction. In Figure 8, FastVGGT produces noticeably blurred geom-etry in the blue dashed box; Spark3R+VGGT alleviates this blurriness, recovering sharper textures and cleaner structural details. TTT3R suffers from prominent artifacts and noise, particularly visible in the blue dashed box. ZipMap delivers a more complete reconstruction overall, yet still exhibits subtle geometric distortions— e.g. , the upper and lower portions of the door in the red dashed box are visibly misaligned. Spark3R applied to π3 and DA3 eliminates these distortions, producing sharp and structurally faithful reconstructions in both high-lighted regions. 
+
+E. Ablation Studies 
+
+We conduct ablation studies on VGGT to validate each design choice in Spark3R. Unless otherwise noted, all ex-periments use 256-frame sequences from the 7-Scenes [38] dataset, except for the group size ablation, which uses 512-frame sequences to more clearly expose the quadratic cost of global matching on longer inputs. 
+
+Group Size for Intra-Group Query Merging. Figure 9 plots ATE and wall-clock merging time as a function of the group size G. ATE drops sharply from G=1 to G=8 
+
+and plateaus for G ≥ 8, confirming that beneficial merging 8VGGT Ours+VGGT 𝜋 ! Ours+ 𝜋 ! DA3 Ours+DA3 
+
+Fig. 7. Qualitative comparison with unaccelerated base models. Each pair shows the original model and its Spark3R-accelerated counterpart. Spark3R preserves fine-grained geometric details and produces point clouds visually comparable to the unaccelerated baselines. Notably, for VGGT, Spark3R even improves the reconstruction quality by alleviating attention dilution on long sequences. TTT3R FastVGGT ZipMap 
+
+Ours+ 𝜋 ! Ours+DA3 Ours+VGGT 
+
+Fig. 8. Qualitative comparison with other acceleration methods. FastVGGT produces blurred geometry, while TTT3R exhibits noticeable artifacts. ZipMap yields more complete results but still suffers from subtle structural distortions ( e.g. , misaligned door parts in the red dashed box). Spark3R+VGGT substantially sharpens the reconstruction over FastVGGT, and Spark3R applied to π3 and DA3 further surpasses ZipMap with distortion-free, geometrically faithful outputs. 5               
+
+> 10
+> 15
+> 20
+> Merging Time (s)
+> 1234812 16 20 24 28 32 40 48 56 64 global
+> Group Size
+> 0.06
+> 0.08
+> 0.10
+> 0.12
+> 0.14
+> 0.16
+> ATE
+
+Fig. 9. ATE and wall-clock merging time as a function of the group size G
+
+on 512-frame sequences from 7-Scenes [38]. 
+
+pairs are concentrated within a small temporal neighborhood, consistent with the locality analysis in Figure 3. Merging time remains low and roughly constant for moderate group sizes, as the intra-group matching cost scales as O(S · G), linear in the sequence length S for fixed G. At the global setting where G=S, however, the cost reverts to O(S2): merging time exceeds 20 s on 512-frame inputs, becoming a significant fraction of total inference time. Any group size in the range of roughly 8 to 64 achieves near-optimal ATE with low matching overhead; we adopt G=20 as our default throughout all other experiments. 
+
+Query Reduction Factor. Tab. IV provides a detailed numerical breakdown of the query-token sensitivity introduced in Figure 1, sweeping rQ with rKV fixed at 1 to isolate the effect of query compression. ATE remains nearly constant from rQ=1 through rQ=4 , varying only between 0.0291 and 0.0293, while RPE metrics exhibit a mild but steady increase, with RPE r rising from 0.2656 to 0.2811. Meanwhile, inference time drops from 89.9 s to 30.5 s. Beyond rQ=4 , degradation becomes more apparent: ATE rises to 0.0298 at rQ=8 and 
+
+TABLE IV ABLATION ON THE QUERY REDUCTION FACTOR rQ . BOLD INDICATES THE BEST RESULT .
+
+rQ Time (s) ↓ ATE ↓ RPE t↓ RPE r ↓
+
+1 89.9 0.0291 0.0081 0.2656 
+
+2 50.4 0.0291 0.0085 0.2713 3 37.0 0.0292 0.0087 0.2765 4 30.5 0.0293 0.0091 0.2811 8 20.8 0.0298 0.0097 0.2977 12 17.1 0.0305 0.0105 0.3190 16 15.4 0.0310 0.0111 0.3397 
+
+to 0.0310 at rQ=16 , with RPE metrics following the same trend. These results delineate a clear safe operating range for query compression, and the length-adaptive schedule in Eq. (4), which caps rQ at 4, is designed to stay well within this regime. 
+
+Merging vs. Pruning for Key-Value Tokens. Figure 10 compares two key-value compression strategies that share the same source/destination partitioning via temporal stride sampling but differ in how source tokens are handled. Token merging computes bipartite cosine similarities between all source tokens and destination tokens to assign each source token to its most similar destination, then averages the matched pairs to update the destination representation. Token pruning simply discards all source tokens and retains the destination tokens unchanged. The top panel shows that both strategies yield nearly identical ATE across all tested input lengths from 100 to 1,000 frames, confirming that the averaging step pro-vides minimal benefit for key-value tokens, as expected from the high source-to-destination similarity observed in Figure 4. The bottom panel reveals the critical practical difference: the 9100 200 300 400 500 750 1000       
+
+> Number of Input Frames
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> ATE
+> Merging
+> Pruning
+> 100 200 300 400 500 750 1000
+> Number of Input Frames
+> 0
+> 20
+> 40
+> 60
+> Time (s)
+> Merging
+> Pruning
+
+Fig. 10. Merging vs. pruning for key-value tokens. Both strategies use the same temporal stride partitioning into source and destination tokens. Top : ATE as a function of the number of input frames; both achieve nearly identical pose error. Bottom : wall-clock token reduction time. Token merging grows superlinearly due to the bipartite similarity computation, while token pruning remains near zero throughout. 
+
+wall-clock time for token merging grows superlinearly with the number of input frames due to the bipartite similarity computation between source and destination tokens, exceeding 70 s at 1,000 frames, whereas token pruning incurs effectively zero overhead regardless of sequence length. Since the identity closely approximates the averaging update, replacing merging with pruning eliminates the dominant matching cost without sacrificing reconstruction quality. 
+
+TABLE V ABLATION ON THE KEY -VALUE REDUCTION FACTOR rKV . BOLD 
+
+> INDICATES THE BEST RESULT
+
+.
+
+rKV Time (s) ↓ ATE ↓ RPE t↓ RPE r ↓
+
+1 89.9 0.0291 0.0081 0.2656 2 49.8 0.0289 0.0081 0.2652 3 36.3 0.0290 0.0081 0.2635 
+
+4 29.6 0.0290 0.0082 0.2651 8 19.4 0.0289 0.0085 0.2661 16 14.5 0.0293 0.0088 0.2696 32 12.0 0.0302 0.0097 0.2810 
+
+Key-Value Reduction Factor. Tab. V provides a detailed numerical breakdown of the key-value token sensitivity intro-duced in Figure 1, sweeping rKV with rQ fixed at 1. Pose error remains virtually flat from rKV =1 through rKV =8 , with ATE fluctuating between 0.0289 and 0.0290, while inference time drops from 89.9 s to 19.4 s. Even at rKV =16 , ATE rises only marginally to 0.0293. Noticeable degradation appears only at 
+
+rKV =32 , where ATE reaches 0.0302. This high tolerance to key-value compression confirms the wide safe operating range for key-value tokens and supports the length-adaptive schedule in Eq. (5), which yields rKV =7 for 256-frame inputs, well within the quality-preserving regime. 
+
+Layer-Adaptive Key-Value Reduction Schedule. Tab. VI fixes rQ=1 and rKV =8 and evaluates the layer-adaptive sched-ule by varying the multiplier l applied to the base key-value reduction factor rKV for low-sensitivity layers, while high-sensitivity layers retain the base reduction factor. At 
+
+TABLE VI ABLATION ON THE LAYER -ADAPTIVE MULTIPLIER l. BOLD INDICATES THE BEST RESULT .
+
+l Time (s) ↓ ATE ↓ RPE t ↓ RPE r ↓
+
+1 19.6 0.0289 0.0085 0.2661 2 15.8 0.0289 0.0084 0.2660 
+
+3 14.4 0.0292 0.0084 0.2668 4 13.7 0.0293 0.0084 0.2671 6 13.3 0.0294 0.0085 0.2693 8 12.8 0.0302 0.0085 0.2679 
+
+l=1 , all layers use the same reduction factor and inference takes 19.6 s. Increasing l to 2 reduces time to 15.8 s with no performance degradation, suggesting that low-sensitivity layers tolerate more aggressive pruning without losing useful information. Further increases continue to reduce inference time, reaching 12.8 s at l=8 , but ATE begins to rise beyond 
+
+l=3 . We adopt l=3 as the default setting of Spark3R, as it provides a favorable quality–efficiency trade-off. VI. C ONCLUSION 
+
+We introduced Spark3R, a training-free, plug-and-play ac-celeration framework for feed-forward 3D reconstruction mod-els. Spark3R applies conservative intra-group token merging for query tokens and aggressive lightweight token pruning for key-value tokens, and further integrates a layer-adaptive key-value reduction schedule. Spark3R integrates directly into VGGT, π3, and Depth-Anything-3, achieving up to 28 ×
+
+speedup on 1,000-frame inputs while maintaining competitive reconstruction quality across diverse benchmarks. 
+
+Limitations and Future Work. As a training-free frame-work, Spark3R inherits the quality ceiling of its base model: it can preserve or improve predictions by alleviating attention dilution, but cannot compensate for intrinsic failure modes. Jointly fine-tuning the base model with Spark3R so that it adapts to the compressed token sequences is a promising direction for future work. REFERENCES [1] J. L. Schonberger and J.-M. Frahm, “Structure-from-motion revisited,” in Proc. of CVPR , 2016, pp. 4104–4113. [2] N. Snavely, S. M. Seitz, and R. Szeliski, “Photo tourism: exploring photo collections in 3d,” ACM Trans. Graph. , vol. 25, no. 3, p. 835–846, Jul. 2006. [Online]. Available: https://doi.org/10.1145/1141911.1141964 [3] J. L. Sch¨ onberger, E. Zheng, J.-M. Frahm, and M. Pollefeys, “Pixelwise view selection for unstructured multi-view stereo,” in Proc. of ECCV .Springer, 2016, pp. 501–518. [4] Y. Yao, Z. Luo, S. Li, T. Fang, and L. Quan, “Mvsnet: Depth inference for unstructured multi-view stereo,” in Proc. of ECCV , 2018, pp. 767– 783. [5] B. Mildenhall, P. P. Srinivasan, M. Tancik, J. T. Barron, R. Ramamoorthi, and R. Ng, “Nerf: Representing scenes as neural radiance fields for view synthesis,” Communications of the ACM , vol. 65, no. 1, pp. 99–106, 2021. [6] B. Kerbl, G. Kopanas, T. Leimk¨ uhler, and G. Drettakis, “3d gaussian splatting for real-time radiance field rendering.” ACM Transactions on Graphics , vol. 42, no. 4, pp. 139–1, 2023. [7] T. Lu, M. Yu, L. Xu, Y. Xiangli, L. Wang, D. Lin, and B. Dai, “Scaffold-gs: Structured 3d gaussians for view-adaptive rendering,” in Proc. of CVPR , 2024, pp. 20 654–20 664. [8] Q. Gao, J. Meng, C. Wen, J. Chen, and J. Zhang, “HiCoM: Hierarchical coherent motion for dynamic streamable scenes with 3D gaussian splatting,” in Proc. of NeurIPS , 2024. 10 
+
+[9] J. Fu, Q. Gao, C. Wen, Y. Wu, S. Ma, J. Zhang, and J. Zhang, “Recon-gs: Continuum-preserved gaussian streaming for fast and compact re-construction of dynamic scenes,” in Proc. of NeurIPS , 2025. [10] L. Wang, S. Sun, and J. Zhao, “Virpnet: A multimodal virtual point generation network for 3d object detection,” IEEE Transactions on Multimedia , vol. 26, pp. 10 597–10 609, 2024. [11] S. Yang, L. Xu, H. Li, J. Mu, J. Zeng, D. Lin, and J. Pang, “Robo3r: Enhancing robotic manipulation with accurate feed-forward 3d recon-struction,” arXiv preprint arXiv:2602.10101 , 2026. [12] Y. Wu, Q. Gao, R. Zhang, H. Li, and J. Zhang, “Language-assisted 3d scene understanding,” IEEE Transactions on Multimedia , vol. 27, pp. 3869–3879, 2025. [13] H. Xiong, Y. Zhuge, J. Zhu, L. Zhang, and H. Lu, “3ur-llm: An end-to-end multimodal large language model for 3d scene understanding,” 
+
+IEEE Transactions on Multimedia , vol. 27, pp. 2899–2911, 2025. [14] J. Wang, M. Chen, N. Karaev, A. Vedaldi, C. Rupprecht, and D. Novotny, “Vggt: Visual geometry grounded transformer,” in Proc. of CVPR , 2025. [15] Y. Wang, J. Zhou, H. Zhu, W. Chang, Y. Zhou, Z. Li, J. Chen, J. Pang, C. Shen, and T. He, “ π3: Scalable permutation-equivariant visual geometry learning,” arXiv preprint arXiv:2507.13347 , 2025. [16] H. Lin, S. Chen, J. H. Liew, D. Y. Chen, Z. Li, G. Shi, J. Feng, and B. Kang, “Depth anything 3: Recovering the visual space from any views,” arXiv preprint arXiv:2511.10647 , 2025. [17] Q. Wang, Y. Zhang, A. Holynski, A. A. Efros, and A. Kanazawa, “Continuous 3d perception model with persistent state,” in Proc. of CVPR , 2025, pp. 10 510–10 522. [18] X. Chen, Y. Chen, Y. Xiu, A. Geiger, and A. Chen, “Ttt3r: 3d reconstruction as test-time training,” arXiv preprint arXiv:2509.26645 ,2025. [19] S. Yuan, Y. Yang, X. Yang, X. Zhang, Z. Zhao, L. Zhang, and Z. Zhang, “Infinitevggt: Visual geometry grounded transformer for endless streams,” arXiv preprint arXiv:2601.02281 , 2026. [20] K. Deng, Z. Ti, J. Xu, J. Yang, and J. Xie, “Vggt-long: Chunk it, loop it, align it–pushing vggt’s limits on kilometer-scale long rgb sequences,” 
+
+arXiv preprint arXiv:2507.16443 , 2025. [21] T. Ding, Y. Xie, Y. Liang, M. Chatterjee, P. Miraldo, and H. Jiang, “Laser: Layer-wise scale alignment for training-free streaming 4d reconstruction,” 2026. [Online]. Available: https://arxiv.org/abs/2512. 13680 [22] Y. Shen, Z. Zhang, Y. Qu, X. Zheng, J. Ji, S. Zhang, and L. Cao, “Fastvggt: Training-free acceleration of visual geometry transformer,” 
+
+arXiv preprint arXiv:2509.02560 , 2025. [23] Z. Shu, C. Lin, T. Xie, W. Yin, B. Li, Z. Pu, W. Li, Y. Yao, X. Cao, X. Guo, and X.-X. Long, “Litevggt: Boosting vanilla vggt via geometry-aware cached token merging,” 2025. [Online]. Available: https://arxiv.org/abs/2512.04939 [24] S. Wang, V. Leroy, Y. Cabon, B. Chidlovskii, and J. Revaud, “Dust3r: Geometric 3d vision made easy,” in Proc. of CVPR , 2024, pp. 20 697– 20 709. [25] V. Leroy, Y. Cabon, and J. Revaud, “Grounding image matching in 3d with mast3r,” in Proc. of ECCV . Springer, 2024, pp. 71–91. [26] Y. Wu, W. Zheng, J. Zhou, and J. Lu, “Point3r: Streaming 3d reconstruction with explicit spatial pointer memory,” 2025. [Online]. Available: https://arxiv.org/abs/2507.02863 [27] D. Zhuo, W. Zheng, J. Guo, Y. Wu, J. Zhou, and J. Lu, “Streaming 4d visual geometry transformer,” 2026. [Online]. Available: https://arxiv.org/abs/2507.11539 [28] S. Elflein, R. Li, S. Agostinho, Z. Gojcic, L. Leal-Taix´ e, Q. Zhou, and A. Osep, “Vgg-t 3: Offline feed-forward 3d reconstruction at scale,” 2026. [Online]. Available: https://arxiv.org/abs/2602.23361 [29] H. Jin, R. Wu, T. Zhang, R. Gao, J. T. Barron, N. Snavely, and A. Holynski, “Zipmap: Linear-time stateful 3d reconstruction via test-time training,” 2026. [Online]. Available: https://arxiv.org/abs/2603. 04385 [30] T. Zhang, S. Bi, Y. Hong, K. Zhang, F. Luan, S. Yang, K. Sunkavalli, W. T. Freeman, and H. Tan, “Test-time training done right,” 2025. [Online]. Available: https://arxiv.org/abs/2505.23884 [31] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin, “Attention is all you need,” 2023. [Online]. Available: https://arxiv.org/abs/1706.03762 [32] T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. R´ e, “FlashAttention: Fast and memory-efficient exact attention with IO-awareness,” 2022. [33] M. Oquab, T. Darcet, T. Moutakanni, H. Vo, M. Szafraniec, V. Khalidov, P. Fernandez, D. Haziza, F. Massa, A. El-Nouby et al. , “Dinov2: Learning robust visual features without supervision,” Transactions on Machine Learning Research Journal , pp. 1–31, 2024. [34] R. Ranftl, A. Bochkovskiy, and V. Koltun, “Vision transformers for dense prediction,” in Proc. of CVPR , 2021, pp. 12 179–12 188. [35] D. Bolya, C.-Y. Fu, X. Dai, P. Zhang, C. Feichtenhofer, and J. Hoffman, “Token merging: Your ViT but faster,” in ICLR , 2023. [36] D. Bolya and J. Hoffman, “Token merging for fast stable diffusion,” 2023. [Online]. Available: https://arxiv.org/abs/2303.17604 [37] A. Zweiger, X. Fu, H. Guo, and Y. Kim, “Fast kv compaction via attention matching,” 2026. [Online]. Available: https://arxiv.org/abs/ 2602.16284 [38] J. Shotton, B. Glocker, C. Zach, S. Izadi, A. Criminisi, and A. Fitzgib-bon, “Scene coordinate regression forests for camera relocalization in rgb-d images,” in Proc. of CVPR , 2013, pp. 2930–2937. [39] D. Azinovi´ c, R. Martin-Brualla, D. B. Goldman, M. Nießner, and J. Thies, “Neural rgb-d surface reconstruction,” in Proc. of CVPR , 2022, pp. 6290–6301. [40] J. Sturm, N. Engelhard, F. Endres, W. Burgard, and D. Cremers, “A benchmark for the evaluation of rgb-d slam systems,” in Proc. of IROS .IEEE, 2012, pp. 573–580. [41] A. Dai, A. X. Chang, M. Savva, M. Halber, T. Funkhouser, and M. Nießner, “Scannet: Richly-annotated 3d reconstructions of indoor scenes,” in Proc. of CVPR , 2017, pp. 5828–5839. [42] D. J. Butler, J. Wulff, G. B. Stanley, and M. J. Black, “A naturalistic open source movie for optical flow evaluation,” in Proc. of ECCV . Springer, 2012, pp. 611–625. [43] E. Palazzolo, J. Behley, P. Lottes, P. Giguere, and C. Stachniss, “Re-fusion: 3d reconstruction in dynamic environments for rgb-d cameras exploiting residuals,” in Proc. of IROS . IEEE, 2019, pp. 7855–7862. [44] A. Geiger, P. Lenz, C. Stiller, and R. Urtasun, “Vision meets robotics: The kitti dataset,” The International Journal of Robotics Research ,vol. 32, no. 11, pp. 1231–1237, 2013. 
+
+Zecheng Tang is currently pursuing the M.S. degree in computer science and technology with Peking University Shenzhen Graduate School, Shen-zhen, China. His research interests include: 1) 3D reconstruction and neural rendering; 2) 3D vision-language multimodal learning. 
+
+Jiaye Fu is currently pursuing the M.S. degree in computer science and technology with Peking University Shenzhen Graduate School, Shenzhen, China. His research interests include image/video coding, 3D reconstruction, and AIGC. 
+
+Qiankun Gao is currently a Postdoctoral Researcher with the School of Electronic and Computer Engineering, Peking University, Shenzhen, China. His research interests include 3D vision, AI-generated content (AIGC), and continual learning. 
+
+Haijie Li is currently a Master’s student at Peking University, advised by Prof. Jian Zhang, and he will start his Ph.D. program in September 2026. His research interests include: 1) 3D reconstruction and neural rendering; 2) 3D vision-language multimodal learning. 
+
+Yanmin Wu received the Ph.D. degree in computer applied technology from the School of Electronic and Computer Engineering, Peking University, Shenzhen, China, in 2025. His research interests include 3D vision and vision-language multimodal learning, autonomous driving, and robotics. 
+
+Jiaqi Zhang is now a Associate Researcher in the School of Computer Science, Peking University. His research interests include data compression and image/video coding. 
+
+Siwei Ma (Fellow, IEEE) joined the School of Computer Science, Peking University, where he is currently a Professor. He has authored more than 300 technical articles in refereed journals and proceedings in image and video coding, video processing, video streaming, and transmission. He served/serves as an Associate Editor for the IEEE Transactions on Circuits and Systems for Video Technology and Journal of Visual Communication and Image Representation. 
+
+Jian Zhang (Member, IEEE) is an Associate Professor and leads the Visual-Information Intelligent Learning LAB (VILLA) at the School of Electronic and Computer Engineering, Peking University, Shenzhen, China. He has published over 120 technical articles in refereed international journals and proceedings and has received over 16000 citations. He serves as an Associate Editor for the Journal of Visual Communication and Image Representation.

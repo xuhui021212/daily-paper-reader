@@ -1,0 +1,1216 @@
+Title: RCoT-Seg: Reinforced Chain-of-Thought for Video Reasoning and Segmentation
+
+URL Source: https://arxiv.org/pdf/2605.07334v1
+
+Published Time: Mon, 11 May 2026 00:46:42 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# RCoT-Seg: Reinforced Chain-of-Thought for Video Reasoning and Segmentation 
+
+Junwei Wen 1∗ Deshui Miao 1∗ Guangming Lu 1 Xin Li 1,2,3† Wenjie Pei 1,2†
+
+> 1
+
+Harbin Institute of Technology, Shenzhen 2Pengcheng Laboratory 
+
+> 3
+
+Pazhou Lab (Huangpu) 
+
+Abstract 
+
+Video Reasoning Segmentation (VRS) aims to segment target objects in videos based on implicit instructions that convey human intent and temporal logic. Ex-isting MLLM-based methods predict masks with a [SEG] token after selecting frames via simple sampling or an auxiliary MLLM, where limited supervision and frame-language similarity rules often yield narrow-scope keyframe choices that weaken holistic temporal understanding and lead to brittle localization in complex multi-object scenes. To address these issues, we introduce RCoT-Seg, a video-of-thought framework that factorizes VRS into temporal video reason-ing (TVR) and keyframe target perception (KTP), explicitly separating temporal reasoning from spatial perception. Specifically, in the TVR stage, an agentic keyframe selection module, initialized with a curated CoT-start corpus and refined by GRPO under task-aligned rewards, is proposed to generate and reselect the keyframe through self-evaluation, strengthening moment localization and temporal reasoning. In the KTP stage, RCoT-Seg performs high-resolution segmentation on the selected frame and propagates masks with SAM2-based methods across the sequence, replacing heuristic sampling and external selectors while improv-ing spatial precision and inter-frame consistency. Extensive experimental results demonstrate that the proposed RCoT-Seg achieves favorable performance against the state-of-the-art methods. The code and models will be publicly released at 
+
+https://github.com/Victor-wjw/RCoT-Seg .
+
+1 Introduction 
+
+Video reasoning segmentation (VRS) [ 30 , 32 ] aims to generate pixel-level mask sequences from natural-language queries that involve commonsense grounding and implicit temporal logic, typically with multimodal large language models (MLLMs) [ 30 , 3]. Despite recent progress, VRS remains challenging because the model must identify the temporally valid evidence implied by the query and further ground the target object with fine-grained spatial precision across diverse video scenarios. Most existing methods [ 30 , 8, 13 ] follow a “sample-then-segment” paradigm, where sparse frames are first obtained by uniform sampling, auxiliary MLLM filtering, or vision-language similarity-based screening, and then used for target localization and mask generation. However, such frame selection is usually treated as a one-shot pre-processing step rather than a verifiable decision. Once the selected frame fails to satisfy the language-conditioned temporal requirement, the downstream segmentation stage has limited ability to recover the missing evidence. Recently, a concurrent work Veason-R1 [ 7] shows that CoT initialization and GRPO can improve VRS by encouraging reasoning before segmentation. Nevertheless, it still operates on a sparse sampled 
+
+> ∗Equal contribution.
+> †Corresponding authors. Preprint.
+> arXiv:2605.07334v1 [cs.CV] 8 May 2026
+
+Question: 
+
+Which person(s) is/are bending down ?  
+
+> ………
+
+(a) Previous method 
+
+> Stage1: Sample
+
+(b) Our method            
+
+> Stage2: Segment
+> External MLLM
+> …
+> …
+> Sparse set of frames
+> Keyframe with context
+> Video
+> Method1: simple sampling
+> Method2
+> MLLM
+> Sure, <seg> .SAM2
+> Mask
+> Decoder
+> Propagation
+> RCoT-Seg
+> Stage1: Temporal video reasoning Stage2: Keyframe target perception
+> …
+> …
+> Video
+> Thinking:
+> 1. In this frame, we see two individuals …
+> 2. The target object(s)… are clearly visible …
+> 3. Based on the analysis, the best option is: A.
+> High-quality
+> Keyframe
+> 1. In this frame, we see a close-up of …
+> 2. … target object(s) (people bending down)
+> are not visible …
+> 3. Based on the analysis, the best option is: B.
+> Thinking: Low-quality
+> Keyframe
+> Reselect
+> Select keyframe
+> Video description:
+> In this video, we observe a scene set in
+> a lush, verdant outdoor environment…
+> RCoT-Seg
+> SAM2
+> Boxes & Points
+> 1. In this frame, we see a scene set...
+> 2. The target person, which is the child …
+> 3. The child is located on the left side of
+> the frame, leaning forward …
+> Thinking:
+> Keyframe
+> Generate
+> Sampled frames
+> Frozen
+> SFT
+> GRPO
+
+Figure 1: Comparison between RCoT-Seg and previous methods. RCoT-Seg segments the correct target through explicit CoT reasoning and concise keyframe selection. view and commits to keyframe localization and spatial grounding within a single reasoning trajectory. As a result, keyframe reliability is not explicitly modeled as a controllable intermediate state, making it difficult to diagnose an unreliable keyframe or request an alternative temporal observation. To address these limitations, we propose RCoT-Seg , a reinforcement learning framework that treats VRS as an explicit chain-of-thought (CoT) process and decomposes it into two coupled sub-processes: 
+
+temporal video reasoning (TVR) and keyframe target perception (KTP). RCoT-Seg resolves this tension by making CoT an actionable intermediate state —a semantic scaffold that is produced by TVR and consumed by KTP. Instead of relying on pre-sampling, the TVR stage scans the video to infer event structure and temporal conditions implied by the query, and selects a keyframe that best satisfies these conditions. The KTP stage then operates exclusively on this keyframe with high-resolution perception to produce accurate masks. A central component of RCoT-Seg is an agentic keyframe selection mechanism with a lightweight self-critical loop. Beyond outputting a keyframe index, the selector learns to assess whether the current selection is satisfied or unsatisfied with respect to the query, and triggers re-selection when the evidence is insufficient. This self-evaluation capability turns keyframe selection from a one-shot heuristic into a verifiable decision process, substantially improving reliability under ambiguous temporal language, occlusion, and multi-object distractions. For segmentation, KTP conditions on both the selected keyframe and a compact video description generated in TVR, using this CoT-derived semantic scaffold to disambiguate targets and guide mask generation while retaining global context. To enable structured multi-task reasoning, we curate a 28K-sample CoT dataset to cold-start a base Qwen2.5-VL-3B model with supervised fine-tuning. Using customized prompt templates, Qwen2.5-VL-7B generates CoT reasoning traces for both agentic keyframe selection and keyframe target grounding. We then boost the model with GRPO-based reinforcement learning using task-specific datasets and rewards. In particular, for keyframe target grounding, we design a Hungarian algorithm-based reward to robustly handle multi-object scenarios and complex visual settings, providing stable credit assignment for accurate matching between predicted masks and target references. Extensive experiments demonstrate that RCoT-Seg achieves state-of-the-art performance across video reasoning segmentation and referring segmentation benchmarks. 2Our contributions are summarized as follows: • We propose RCoT-Seg , a reasoning-enhanced VRS framework that goes beyond single-pass reasoning by factorizing segmentation into temporal video reasoning and keyframe target perception .This design turns CoT from a passive explanation into an actionable intermediate state that bridges video-level temporal understanding and high-resolution mask generation. • We develop Agentic Keyframe Selection , a self-checkable keyframe decision mechanism that explicitly judges whether the selected frame provides sufficient evidence for the query and triggers re-selection when necessary. This improves robustness over one-pass keyframe localization under implicit temporal instructions, occlusion, and multi-object distractions. • We introduce a matching-aware reward (Hungarian-based) for RL refinement in keyframe grounding, and show strong empirical gains, achieving state-of-the-art results on multiple VRS and referring segmentation benchmarks. 
+
+2 Related work 
+
+2.1 Video reasoning segmentation 
+
+Video Reasoning Segmentation (VRS) is an emerging task that requires multimodal reasoning to segment target objects in videos based on natural language queries [ 3, 30 , 32 ]. Pioneering works like VISA [ 30 ] combine an additional MLLM for keyframe sampling, followed by another MLLM for temporal reasoning and segmentation, and employ an object tracker for mask propagation. VideoLISA [ 3 ] introduces a sparse-to-dense sampling strategy and a One-Token-Seg-All paradigm, achieving video-level segmentation through a unified token representation. HyperSeg [ 25 ] generalizes the unified reasoning framework via a hybrid entity recognition mechanism, supporting cross-domain segmentation and enabling universal segmentation for both image and video inputs. Further advancements include GLUS [ 13 ], which provides MLLM with both global and local contexts that are further enhanced with end-to-end optimized VOS memory modules to improve the consistency, and VRS-HQ [ 8 ], which enhances temporal consistency through token fusion and utilizes SAM2 for occlusion-aware keyframe selection. Token-based designs compress object information into a single token, which weakens alignment to the true referent with no explicit chain of thought. In addition, these methods either sample frames in ways that break temporal coherence or offload keyframe selection to auxiliary MLLMs, undermining end-to-end learning. Veason-R1 [ 7 ] still treats keyframe localization as a single-pass committed prediction. Once the selected keyframe is unreliable, the subsequent grounding stage has no explicit mechanism to detect the failure or request another temporal observation.Therefore, we design a comprehensive chain-of-thought reasoning pipeline and apply GRPO to improve its robustness, enabling explicit reasoning within a single model. 
+
+2.2 Visual fine-tuning via RL 
+
+Reinforcement learning [ 22 ] has become a significant paradigm for optimizing large language models, particularly demonstrating remarkable effectiveness in enhancing reasoning capabilities, as evidenced by ChatGPT-o1 [ 11 ]. Deepseek-R1 [ 9] introduces group relative policy optimization (GRPO), which leverages verifiable reward signals to estimate relative advantages among responses, thereby sub-stantially improving reasoning. Building on this, GRPO fine-tuning techniques have been extended to multimodal tasks, covering areas such as image spatial reasoning [ 16 , 23 ], video understand-ing [ 6, 12 , 24 ], multi-image localization [ 2, 31 ], and visual generation [ 5, 28 , 29 ], demonstrating its strong adaptability in complex multimodal scenarios. Early work, such as Seg-Zero [ 14 ] and VisionReasoner [ 15 ], designed task-specific rewards for segmentation, improving image-level reason-ing and mask quality. Building on this idea, Omni-R1 [ 34 ] and Veason-R1 [ 7] adopted GRPO for Ref-AVS and VRS. Omni-R1 follows a cascaded dual-system design that depends on large training corpora and a strong pre-trained VRS backbone. Veason-R1 [ 7 ] further introduces CoT initialization and GRPO into VRS, demonstrating that reinforcement learning can improve keyframe localization and spatial grounding. Nevertheless, its inference process still produces keyframe localization and object grounding as a single committed reasoning trajectory, without explicitly modeling whether the selected keyframe is reliable enough for downstream segmentation. RCoT-Seg differs by making keyframe reliability an explicit decision state and introducing an agentic re-selection loop, thereby enabling the model to verify and revise temporal evidence before high-resolution target perception. 3The cat that doesn't want to               
+
+> share the doll(s) with the
+> black cat.
+> …
+> User
+> Video First, I need to give a global
+> description of this video
+> RCoT -Seg
+> Then, based on the description and
+> the user query, I need to find the
+> most related keyframe
+> RCoT -Seg
+> Ans: Incorrect . I
+> need to resample .Ans:
+> Correct !
+> Next, based on the description and
+> the user query, I need to find the
+> target in the keyframe
+> RCoT -Seg
+> Answer:
+> [{bbox_2d: [194, 212, 400, 330] ,
+> point_2d: [283, 259] }]
+> RCoT -Seg
+> SAM2
+> The video captures a heartwarming
+> scene of three cats interacting in a
+> cozy indoor environment…The
+> consistent background elements
+> provide…
+> Agentic keyframe selection Video description User question
+> Keyframe target grounding Segmentation and propagation
+> I get the target mask
+> …
+> User
+> Masks
+> Prediction output
+> Temporal Video Reasoning Keyframe Target Perception
+> [{bbox_2d: [194, 212, 400, 330] ,
+> point_2d: [283, 259] }]
+> Thinking: 1…2…3… Thinking: …
+> Thinking: 1…2…3…
+
+Figure 2: Overview of RCoT-Seg unified multi-task pipeline for VRS task. 
+
+In contrast, RCoT-Seg unifies temporal reasoning and segmentation in a single multi-task model, achieving stronger results in complex video scenarios with only modest training data. 
+
+3 Method 
+
+Given a video sequence and the query text of the target object(s), the goal of the proposed RCoT-Seg is to precisely localize the target object(s) with masks in each frame. To this end, the proposed RCoT-Seg first generates a video description as a compressed representation of the video content and selects a keyframe via agentic keyframe selection mechanism, then the object information of the target object(s) in the keyframe is obtained, which subsequently serves as prompts for the SAM2 [ 18 ]to perform mask generation and propagation, thereby achieving accurate segmentation of the target object(s). 
+
+3.1 Overview 
+
+Figure 2 illustrates the unified multi-task pipeline of our RCoT-Seg, consisting of two core stages: Tem-poral Video Reasoning and Keyframe Target Perception . Given a video sequence V ∈ RT ×3×H×W
+
+and an instruction text xins , RCoT-Seg first generates the video description xvid , and the candidate keyframe zsel which is evaluated and refined as final keyframe zkey via agentic keyframe selection mechanism. Then, RCoT-Seg predicts bounding boxes and points {(box i, point i)}Nobj  
+
+> i=1
+
+of the target object(s) based on zkey and xvid , which finally serves as prompts for the SAM2 to predict the segmentation masks M ∈ RT ×H×W .As illustrated in Figure 3, we adopt a two-stage training paradigm. We initialize our framework with Qwen2.5-VL-3B [ 1 ] as the MLLM. In the first stage, we construct a hybrid chain-of-thought dataset and perform supervised fine-tuning. In the second stage, we apply GRPO [ 20 , 9] to further enhance the capability in judging keyframe selection states and spatiotemporal localization of target objects. 
+
+3.2 Temporal video reasoning Initial video reasoning. RCoT-Seg first exploits the inherent video reasoning capability of the foundation model via carefully designed prompts. Given a low-resolution, unsampled video sequence 
+
+V, our RCoT-Seg model φθ performs video description generation and keyframe generation: 
+
+xvid = φθ (V, p vdg ), zsel = φθ (V, x ins , p kf g ), (1) where pvdg and pkf g denote the prompts for video description and keyframe generation, respectively. The description xvid acts as a compact representation of global semantics and the zsel acts as the candidate keyframe. 4Agentic keyframe selection (AKS). Although zsel is obtained through the above reasoning, we empirically observe that the chosen keyframe can sometimes be suboptimal, and the one-step selection paradigm suffers from a lack of error tolerance. Therefore, an agentic mechanism is developed, which enables the model to autonomously evaluate and refine the chosen keyframe. After the candidate keyframe is selected, RCoT-Seg decides whether the frame belongs to the valid keyframe set or its complement: 
+
+xA
+
+> think
+
+, ans = φθ (zsel , x vid , x ins , p aks ), ans ∈ { A, B }, (2) If ans = A, the frame is retained for segmentation (see Equation (5)); if ans = B, the model reselects a new keyframe by updating the prompt and invoking 
+
+z′ 
+
+> sel
+
+= φθ (V, x txt , p ′
+
+> kf s
+
+), (3) and the evaluation in Equation (2) is repeated until a satisfactory frame is obtained or a maximum iteration count λ is reached. 
+
+AKS GRPO reward. We use a two-component reward for AKS under GRPO, a format reward Rf
+
+and an answer-accuracy reward Ra. Rf enforces structured outputs, which means the reasoning must appear inside <think> ... </think> and the final decision inside <answer> ... </answer> , and the decision must exactly match one of the prompt options. Ra enforces answer correctness as: 
+
+Ra =
+
+1.0, ans = ans GT ,
+
+0.0, otherwise.  (4) where ans denotes the predicted option and ans GT denotes the ground truth. 
+
+3.3 Keyframe target perception Keyframe target grounding (KTG). RCoT-Seg receives a high-resolution keyframe zkey , the instruction xins , and the video description xvid as context. Given a grounding prompt pktg , it outputs a thinking process and a list of cues: 
+
+xG
+
+> think
+
+, {(box i, point i)}Nobj  
+
+> i=1
+
+= φθ (zkey , x vid , x ins , p ktg ) , (5) where {(box i, point i)}Nobj  
+
+> i=1
+
+denotes the predicted bounding boxes and points for Nobj target objects in the keyframe, and xG 
+
+> think
+
+is the generated reasoning trace. 
+
+Keyframe segmentation and propagation. We then apply a frozen SAM2 model to segment each target and propagate masks across the video, using (box i, point i) as prompts: 
+
+Mi = φSAM2 (zkey , (box i, point i), V) , (6) where φSAM2 denotes SAM2 and V is the video. The final prediction is obtained by aggregating per-object masks: 
+
+M =
+
+> Nobj
+
+[
+
+> i=1
+
+Mi. (7) 
+
+KTG GRPO reward. To achieve KTG, the reward consists of a format reward Rf and an answer accuracy reward Ra. Rf requires the same <think> / <answer> structure. The final answer must be a list of dictionaries with 2D boxes and points, such as [ {“bbox_2d”:[x1,y1,x2,y2], “point_2d”:[x,y]}, ...] . Ra is designed to accommodate multi-object scenarios. Let the prediction be PBP = {(box i, point i)}Nobj  
+
+> i=1
+
+and the ground truth PGT BP = {(box GT j , point GT j )}N GT 
+
+> obj
+> j=1
+
+on the resized 840 ×840 scale. Define binary score matrices (1=correct, 0=incorrect): 
+
+SIoU  
+
+> i,j
+
+= IIoU >η (box i, box GT j ), (8) 
+
+SboxL1  
+
+> i,j
+
+= IL1 <γ box (box i, box GT j ), (9) 
+
+SptL1  
+
+> i,j
+
+= IL1 <γ pt ∧ in -box (point i, point GT j ). (10) Aggregate them with weights αIoU , α boxL1 , α ptL1 :
+
+Si,j = αIoU SIoU  
+
+> i,j
+
++ αboxL1 SboxL1  
+
+> i,j
+
++ αptL1 SptL1  
+
+> i,j
+
+. (11) 5Qwen2.5-VL-3B Hybrid CoT-SFT RL for AKS RL for KTG                    
+
+> Stage1: CoT-SFT cold-start Stage2: Reinforcement Learning
+> RCoT-Seg-3B
+> Policy Model
+> Reference Model
+> KL Penalty
+> 𝑂 ଵ
+> 𝑂 ଶ
+> 𝑂 ே
+> …
+> <think>
+> …
+> </think>
+> <answer>
+> …
+> </answer>
+> …
+> <answer>
+> A. {option txt}
+> or
+> B. {option txt}
+> </answer>
+> Think
+> Format
+> Answer
+> Format
+> Case 1 correct keyframe
+> Case 2 incorrect keyframe
+> ℛ୤ℛୟ
+> 𝑂 ଷ
+> Group
+> Computation
+> 𝑅 ଵ
+> 𝑅 ଶ
+> 𝑅 ே
+> …
+> 𝑅 ଷ
+> 𝐴 ଵ
+> 𝐴 ଶ
+> 𝐴 ே
+> …
+> 𝐴 ଷ
+> Question:
+> the animal(s) of Canis familiaris.
+> Video Description:
+> The video opens with a serene
+> view of a small garden area …
+> Agentic Keyframe Selection
+> <124s> <95s> Case 1 Case 2
+> Input
+> Output Reward Function Reward Advantage
+> Policy Model
+> Reference Model
+> KL Penalty
+> 𝑂 ଵ
+> 𝑂 ଶ
+> 𝑂 ே
+> …
+> ℛ୤ℛୟ
+> 𝑂 ଷ
+> Group
+> Computation
+> 𝑅 ଵ
+> 𝑅 ଶ
+> 𝑅 ே
+> …
+> 𝑅 ଷ
+> 𝐴 ଵ
+> 𝐴 ଶ
+> 𝐴 ே
+> …
+> 𝐴 ଷ
+> Question:
+> Which animal(s) can carry
+> heavy loads and be used as a
+> transport vehicle?
+> Video Description:
+> The video opens with a tranquil
+> scene set in …
+> Keyframe Target Grounding
+> Input
+> Output Reward Function Reward Advantage
+> <think>
+> …
+> </think>
+> <answer>
+> …
+> </answer>
+> …bbox_2d…
+> [*,*,*,*]
+> …
+> …point_2d…
+> [*,*]
+> …
+> Think
+> Format
+> Segmentation
+> Format
+> Pre GT
+> Ground Truth: A
+> Answer: A
+> Answer: B
+> Ground Truth: B
+> Answer: A
+> Answer: B
+
+Figure 3: Overall training strategy of RCoT-Seg. Following a CoT-SFT cold-start, we employ GRPO reinforcement learning on the model using reward functions tailored to different tasks. We obtain a one-to-one assignment by maximizing S with the Hungarian algorithm, yielding matched pairs C′. The answer accuracy reward averages the matched scores: 
+
+Ra = 1max {Nobj , N GT 
+
+obj }
+
+X
+
+(i,j )∈C′
+
+Si,j . (12) 
+
+3.4 Training strategy Stage 1: CoT-SFT cold-start training. To stabilize reinforcement learning and avoid cold-start instability, we first construct a compact Chain-of-Thought dataset and perform cold-start supervised fine-tuning (CoT-SFT) on Qwen2.5-VL-3B, which serves as the initial RL actor. We use Qwen2.5-VL-7B in a controlled data-generation pipeline to obtain step-wise reasoning traces. First, we define the keyframe as the frame whose annotated mask has the largest area. A structured CoT prompt guides the model to first analyze the scene, then describe the referred object(s), and finally localize them. Each instance is annotated with a bounding box and the center of its maximum inscribed circle. The prompt–annotation pair is then fed to Qwen2.5-VL-7B to produce the reasoning chain. For keyframe selection, we cast selection as a two-option decision: Option A is a valid keyframe instantiated as above, and Option B is sampled from frames with zero mask area. A fixed CoT prompt elicits reasoning chains, and we retain only those whose final option matches the ground truth. Reasoning traces are wrapped in <think> . . . </think> and final answers in <answer> 
+
+. . . </answer> . We sample from Ref-YouTube-VOS, MeViS, and ReVOS with a single–multi target ratio of 3:1 and an A–B ratio of 1:1 , yielding RCoT-Seg-SFT-28k : 20 k samples for KTG and 
+
+8k for AKS. To provide a stable initialization for subsequent GRPO training, we then jointly fine-tune Qwen2.5-VL-3B on RCoT-Seg-SFT-28k across both tasks using an autoregressive next-token objective with cross-entropy loss. 
+
+Stage 2: GRPO training. As illustrated in Figure 3, for each query q, the policy samples N
+
+responses {o1, . . . , o N }. Each response receives a verifiable, task-aligned reward R, and we apply group-wise normalization to compute advantages (Eq. 14). Then, a KL penalty to a reference policy (the CoT-SFT model) stabilizes updates (Eq. 15). We proportionally sample 4,000 and 6,000 instances different from those in SFT to construct the 
+
+RCoT-Seg-GRPO-AKS-4k and RCoT-Seg-GRPO-KTG-6k datasets for AKS and KTG, respec-tively. For either task, the total reward is 
+
+R = λf Rf + λa Ra, (13) 6Table 1: Performance comparison on VRS datasets. The best and second-best results are shown in 
+
+red and blue color.                                                                                                                                                                    
+
+> Method Venue ReVOS / referring ReVOS / reasoning ReVOS / overall ReasonVOS
+> J&FJFJ&FJFJ&FJFJ&FJF
+> Previous models using <seg> tokens for mask prediction via SFT training
+> VISA-7B [30] ECCV2024 50.9 49.2 52.6 43.0 40.6 45.4 46.9 44.9 49.0 ---VISA-13B [30] ECCV2024 57.4 55.6 59.1 44.3 42.0 46.7 50.9 48.8 52.9 ---VideoLISA-3.8B [3] NeurIPS2024 ---------47.5 45.1 49.9 InstructSeg-3B [26] ICCV2025 57.0 54.8 59.2 51.9 49.2 54.7 54.5 52.0 56.9 ---HyperSeg-3B [25] CVPR2025 58.5 56.0 60.9 53.0 50.2 55.8 55.7 53.1 58.4 ---GLUS-7B [13] CVPR2025 58.3 56.0 60.7 51.4 48.8 53.9 54.8 52.4 57.3 49.9 47.5 52.4 VRS-HQ-7B [8] CVPR2025 62.1 59.8 64.5 56.1 53.5 58.7 59.1 56.6 61.6 ---VRS-HQ-13B [8] CVPR2025 63.3 61.1 65.5 56.8 54.1 59.4 60.0 57.6 62.5 ---
+> Latest models via GRPO training
+> Omni-R1-8B [34] NeurIPS2025 61.6 --50.7 --56.2 -----Veason-R1-3B [7] CVPR2026 63.0 60.3 65.6 56.8 53.6 60.0 59.9 56.9 62.8 55.2 51.8 58.5 RCoT-Seg-3B -64.3 (+1.0) 61.6 66.9 58.2 (+1.4) 54.9 61.6 61.2 (+1.2) 58.2 64.3 58.2 (+3.0) 54.6 61.8
+
+and group-relative advantages are computed as 
+
+Ai = Ri − mean ( {R 1, . . . , RN })std ( {R 1, . . . , RN }) . (14) The GRPO objective [20] is 
+
+JGRPO (θ) = Eq, {oi}∼ πθold 
+
+"
+
+1
+
+N
+
+> N
+
+X
+
+> i=1
+
+min πθ (oi | q)
+
+πθold (oi | q) Ai,
+
+clip 
+
+ πθ (oi | q)
+
+πθold (oi | q) , 1 − ϵ, 1 + ϵ
+
+
+
+Ai
+
+!! 
+
+− βDKL (πθ ∥πref )
+
+# (15) where πref is the CoT-SFT model and β controls the KL strength. 
+
+4 Experiments 
+
+4.1 Datasets and metrics Training datasets. We select training samples from the Ref-YouTube-VOS [ 19 ], MeViS [ 4], and ReVOS [ 30 ] training datasets according to a predefined ratio of single-multi and A-B. During the SFT stage, we adapt the Qwen2.5-VL-3B [ 1 ] model using the hybrid chain-of-thought dataset RCoT-Seg-SFT-28k, which is specifically designed for AKS and KTG tasks. In the GRPO training phase, we construct the RCoT-Seg-GRPO-AKS-4k and RCoT-Seg-GRPO-KTG-6k datasets for AKS and KTG, respectively. 
+
+Evaluation datasets. To comprehensively evaluate the performance of RCoT-Seg, we perform testing of RCoT-Seg across several benchmarks. These include two VRS datasets: ReVOS and ReasonVOS [ 3], as well as three RVOS datasets: DAVIS17 [ 17 ], Ref-YouTube-VOS, and MeViS [ 4 ]. 
+
+Evaluation metrics. Following the evaluation in prior work [ 30 ], we employ three metrics: region similarity ( J ), contour accuracy ( F), and their composite measure ( J &F). The J metric computes the intersection-over-union (IoU) between the predicted mask sequence and the ground truth, while the F metric assesses boundary alignment precision based on contour matching. 
+
+4.2 Implementation details 
+
+During the supervised fine-tuning (SFT) stage, we utilize the LLaMA-Factory framework [ 33 ] to fine-tune the Qwen2.5-VL-3B model with LoRA [ 10 ](rank=8) while freezing all other parameters. The training configuration employs a learning rate of 1 × 10 −4, cosine annealing scheduling, and 8-step gradient accumulation, conducting one training epoch on our chain-of-thought dataset RCoT-Seg-SFT-28k. In the reinforcement learning training phase, we implement the VERL framework [ 21 ] with a global batch size of 16, sampling 8 responses per input prompt to facilitate preference optimization. The model is trained for 500 and 1000 steps for AKS and KTG, respectively, using a learning rate of 
+
+1 × 10 −6. All experiments are conducted on 4 NVIDIA L20 GPUs. 7Table 2: Performance comparison on RVOS datasets. The best and second-best results are shown in red and blue color.                                                                                                          
+
+> Method MLLM DAVIS17 Ref-YouTube-VOS MeViS
+> J&FJFJ&FJFJ&FJF
+> Track-GPT-7B [35] LLaVA-7B 63.2 59.4 67.0 56.4 55.3 57.4 40.1 37.6 42.6 Track-GPT-13B [35] LLaVA-13B 66.5 62.7 70.4 59.5 58.1 60.8 41.2 39.2 43.1 VISA-7B [30] Chat-UniVi-7B 69.4 66.3 72.5 61.5 59.8 63.2 43.5 40.7 46.3 VISA-13B [30] Chat-UniVi-13B 70.4 67.0 73.8 63.0 61.4 64.7 44.5 41.8 47.1 VideoLISA-3.8B [3] LLaVA-Phi-3-V 68.8 59.4 64.9 63.7 61.7 65.7 44.4 41.3 47.6 GLUS-7B [13] LLaVA-7B ---67.3 65.5 69.0 51.3 48.5 54.2
+> VRS-HQ-13B [8] Chat-UniVi-13B 74.4 71.0 77.9 71.0 69.0 73.1 50.9 48.0 53.7 Veason-R1-3B [7] Qwen2.5-VL-3B ------51.2 48.2 54.2 RCoT-Seg(ours) Qwen2.5-VL-3B 76.1 (+1.7) 72.2 80.0 72.5 (+1.5) 70.5 74.6 53.7 (+2.4) 50.7 56.7
+
+4.3 Comparison results Video reasoning segmentation. Table 1 presents a detailed performance comparison between RCoT-Seg and previous models [ 3 , 30 , 13 , 8 ] trained via SFT using <seg> tokens for mask prediction, as well as the latest GRPO-trained model [ 34 , 7 ]. Our method exhibits competitive performance compared to the leading state-of-the-art methods. Specifically, despite being fine-tuned on a limited number of samples, RCoT-Seg surpasses the previous SOTA model VRS-HQ-13B [ 8] by 1.2 % in 
+
+J &F on ReVOS, and outperforms GLUS-7B [ 13 ] by 8.3 % in J &F on ReasonVOS, which stems primarily from the improved reasoning ability of our method. Furthermore, RCoT-Seg exceeds Omni-R1 [ 34 ] by approximately 5.0 % on ReVOS, demonstrating the incorporation of multi-task reasoning to guide precise segmentation. Moreover, RCoT-Seg achieves higher performance than the GRPO-based method, Veason-R1 [ 7], on both ReVOS ( +1.3 %) and ReasonVOS datasets ( +3.0 %), which underscores the efficacy of the agentic keyframe selection mechanism. Table 3: Ablation on the proposed components. VDG, KFG and AKS denote Video Description Generation, Keyframe Generation, and Agentic Keyframe Selection, respectively. When KFG is not used, we select the first frame as the keyframe. VDG KFG AKS Ref-YT-VOS MeViS ReVOS ReasonVOS 68.9 48.9 57.1 53.9                    
+
+> ✓69.1 49.8 57.7 54.9
+> ✓70.5 51.7 59.5 54.4
+> ✓✓70.8 52.2 60.3 55.7
+> ✓✓✓72.5 53.7 61.2 58.2
+
+Table 4: Ablation on the maximum iteration count λ for agentic keyframe selection. λ = 0 
+
+indicates that AKS is not used. λ = 5 achieves the best performance, we select λ = 5 in default.                                    
+
+> λDAVIS17 Ref-YT-VOS MeViS ReVOS ReasonVOS 074.1 70.8 52.2 60.3 55.7 274.6 71.6 53.2 60.8 57.2 375.3 72.2 53.6 60.9 57.8
+> 576.1 72.5 53.7 61.2 58.2
+> 776.0 72.5 53.8 61.2 58.1 10 76.1 72.4 53.7 61.2 58.2
+
+Table 5: Ablation on different training strate-gies. SF T A denotes performing SFT on the agentic keyframe selection task, SF T G denotes performing SFT on the keyframe target ground-ing task, and SF T A,G denotes performing SFT on both tasks. Training Strategy Referring Reasoning                                                      
+
+> J&FJFJ&FJF
+> Qwen2.5-VL-3B 14.7 11.3 18.2 13.7 10.5 17.0
+> SF T A,G 59.1 56.4 61.8 51.1 48.0 54.1
+> GRP O A,G 62.8 60.1 65.5 55.5 52.3 58.8
+> SF T A,G +GRP O G63.8 60.8 66.8 56.3 53.1 59.5
+> SF T G+GRP O A,G 63.0 60.3 65.6 57.0 54.0 60.0
+> SF T A,G +GRP O A,G 64.3 61.6 66.9 58.2 54.9 61.6
+
+Table 6: Ablation on architecture. The separated architecture means we adopt CoT-SFT cold-start GRPO to train two separated models for com-pleting the AKS and VTG tasks, while utilizing Qwen2.5-VL-3B to handle the VDG and KFG tasks. The unified architecture refers to the pro-posed RCoT-Seg. Architecture Referring Reasoning 
+
+J &F J F J &F J F
+
+Separated 62.5 59.6 65.4 55.6 52.1 59.1 Unified 64.3 61.6 66.9 58.2 54.9 61.6 
+
+Referring VOS. Table 2 presents a performance comparison between RCoT-Seg and state-of-the-art RVOS methods across three benchmark datasets. The proposed RCoT-Seg surpasses VRS-HQ-13B [ 8] by 1.7 % in J &F on DAVIS17 and by 1.5 % in J &F on Ref-YouTube-VOS, while utilizing fewer parameters. On the more complex MeViS dataset, RCoT-Seg outperforms GLUS-7B [ 13 ] by 
+
+2.4 % in J &F, highlighting the effectiveness in handling complex scenarios. Furthermore, RCoT-Seg 8<think>1. In this frame, we see a great blue heron standing in shallow water. The heron is holding a silver-white object in 
+
+> its beak, which appears to be a fish. The heron's wings are partially open, and… 2. The target object, which is the silver-
+> white fish, is being held in the heron's beak. It is swaying slightly… 3. The silver-white fish is located in the heron's beak,
+> which is positioned… </think>
+> <answer> [{"bbox_2d": [109, 288, 143, 460], "point_2d": [126, 410]}] </answer>
+
+Which silver-white object(s) are constantly moving on the beak of the great blue heron? 
+
+…
+
+…
+
+… 
+
+> <think>1. In this frame, we see a great blue heron standing in
+> shallow water… 2. The target object(s) described … However,
+> upon examining the image, there are no silver-white objects
+> visible on the heron's beak . The beak itself is orange-red… 3.
+> Given that … the correct option is: B…</think>
+> <answer> B. The target object(s) is/are not visible in the selected
+> target frame. The target frame selection is not correct. </answer>
+
+Agentic Keyframe Selection 
+
+B A
+
+Keyframe Target Grounding 
+
+GLUS-7B Prediction 
+
+RCoT-Seg-3B Prediction 
+
+VRS-HQ-7B Prediction 
+
+the person(s) shaking hands. 
+
+…
+
+…
+
+VRS-HQ-7B Prediction 
+
+GLUS-7B Prediction            
+
+> <think>1. In this frame, we see two men in an office
+> environment … 2. The target object(s), which are the two men
+> shaking hands, are clearly visible in the selected target frame.
+> The seated man is … 3. Based on the analysis, the best option is:
+> A…</think>
+> <answer> A. The target object(s) is/are all visible in the selected
+> target frame. The target frame selection is correct. </answer>
+
+Agentic Keyframe Selection 
+
+A. Correct 
+
+Keyframe 
+
+> <think>1. In this frame, we see two men engaged in a friendly interaction… 2. The target individuals are shaking hands.
+> This is evident from the close-up view of their hands, which are … 3. The seated man is located in the foreground of the
+> image, while the standing man is positioned behind him, slightly to the right. Both are …</think>
+> <answer> [{"bbox_2d": [69, 101, 713, 839], "point_2d": [473, 602]}, {"bbox_2d": [549, 0, 839, 839], "point_2d": [800,
+> 312]}] </answer>
+
+Keyframe Target Grounding 
+
+…
+
+RCoT-Seg-3B Prediction 
+
+no mask no mask 
+
+wrong mask 
+
+wrong mask 
+
+wrong mask 
+
+wrong mask Figure 4: Qualitative comparison between RCoT-Seg and current SOTA methods. Our method successfully identify and accurately segment targets in complex scenarios involving small-scale objects and multi-object interactions. exceeds Veason-R1 [ 7 ] by 2.5 % on the MeViS dataset, indicating the efficacy of the agentic keyframe selection mechanism. 
+
+4.4 Ablation Studies Effect of the proposed components. As shown in Table 3, the adoption of our Video Description Generation, Keyframe Generation, and Agentic Keyframe Selection modules leads to substantial improvements ( +3.6 on Ref-YouTube-VOS, +4.8 on MeViS, +4.1 on ReVOS, +4.3 on ReasonVOS). 
+
+Ablation on the maximum iteration count for AKS. Table 4 shows the impact of the maximum iteration count λ for AKS on the performance. The results indicate that a count of 5 achieves a favorable balance, yielding strong performance while reducing redundancy. Consequently, a threshold of 5 is adopted for our model during inference. We also analyze the inference time of this component. Please see Appendix C for details. 
+
+Effect of our training strategy. The results in Table 5 validates the efficacy of our training strategy. When SFT and GRPO are applied individually to the two tasks, the performance on ReVOS decreases by 5.2 % and 1.5 % in J &F on the referring subset, and by 7.1 % and 2.7 % in J &F on the reasoning subset, respectively. Furthermore, when GRPO and SFT are omitted individually for the AKS task, the performance on ReVOS decreases by 0.5 % and 1.3 % in J &F on the referring subset, and by 
+
+1.9 % and 1.2 % in J &F on the reasoning subset, respectively. This demonstrates the effectiveness of our multi-task, multi-stage training strategy. 
+
+Effect of our unified model. We attempt to address VRS under the separated architecture, which allocates different tasks to separated models. The results in Table 6 indicate that this separated architecture underperforms the proposed unified RCoT-Seg model by 1.8 % in J &F on the referring subset and by 2.6 % in J &F on the reasoning subset, demonstrating the efficacy of our unified architecture. 
+
+4.5 Qualitative comparison 
+
+Figure 4 qualitatively compares RCoT-Seg with VRS-HQ-7B [ 8 ] and GLUS-7B [ 13 ] in complex scenarios. For the left example, where the target object is small and appears only in a subset of frames, RCoT-Seg employs AKS to reselect the correct keyframe, thereby achieving a better segmentation result. In the right case, it is a multi-object scenario (two people shaking hands). Both VRS-HQ-7B [ 8 ] and GLUS-7B [ 13 ] segment only one of them, whereas our RCoT-Seg successfully segments all target objects. 95 Conclusion 
+
+In this work, we present RCoT-Seg, a unified model that accomplishes VRS through a sequential pipeline of temporal video reasoning and keyframe target perception trained with reinforcement learning. Unlike sampling-based paradigms, we propose an agentic keyframe selection to improve keyframe quality with a simple self-evolution mechanism. The KTP stage operates on the selected keyframe guided by a compact video description, which transfers long-horizon context to pixel-level decoding. To handle multi-object scenarios, we design a Hungarian-based matching reward that stabilizes training and strengthens object-wise consistency. The model is cold-started with the proposed hybrid CoT supervision and then optimized across tasks using GRPO, aligning reasoning traces with downstream segmentation behavior. Extensive experiments on standard benchmarks show that RCoT-Seg achieves state-of-the-art performance in video reasoning segmentation and video referring segmentation, validating the effectiveness of the global-to-local design, the agentic selection mechanism, and the explicit Chain-of-Thought guidance in VRS. 
+
+References 
+
+[1] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, et al. Qwen2. 5-vl technical report. arXiv preprint arXiv:2502.13923 ,2025. [2] Sule Bai, Mingxing Li, Yong Liu, Jing Tang, Haoji Zhang, Lei Sun, Xiangxiang Chu, and Yansong Tang. Univg-r1: Reasoning guided universal visual grounding with reinforcement learning. arXiv preprint arXiv:2505.14231 , 2025. [3] Zechen Bai, Tong He, Haiyang Mei, Pichao Wang, Ziteng Gao, Joya Chen, Lei Liu, Zheng Zhang, and Mike Z Shou. One token to seg them all: Language instructed reasoning seg-mentation in videos. Advances in Neural Information Processing Systems , 37:6833–6859, 2024. [4] Henghui Ding, Chang Liu, Shuting He, Xudong Jiang, and Chen Change Loy. Mevis: A large-scale benchmark for video segmentation with motion expressions. In Proceedings of the IEEE/CVF international conference on computer vision , pages 2694–2703, 2023. [5] Rongyao Fang, Chengqi Duan, Kun Wang, Linjiang Huang, Hao Li, Shilin Yan, Hao Tian, Xingyu Zeng, Rui Zhao, Jifeng Dai, et al. Got: Unleashing reasoning capability of multimodal large language model for visual generation and editing. arXiv preprint arXiv:2503.10639 , 2025. [6] Kaituo Feng, Kaixiong Gong, Bohao Li, Zonghao Guo, Yibing Wang, Tianshuo Peng, Junfei Wu, Xiaoying Zhang, Benyou Wang, and Xiangyu Yue. Video-r1: Reinforcing video reasoning in mllms. arXiv preprint arXiv:2503.21776 , 2025. [7] Sitong Gong, Lu Zhang, Yunzhi Zhuge, Xu Jia, Pingping Zhang, and Huchuan Lu. Reinforcing video reasoning segmentation to think before it segments. arXiv preprint arXiv:2508.11538 ,2025. [8] Sitong Gong, Yunzhi Zhuge, Lu Zhang, Zongxin Yang, Pingping Zhang, and Huchuan Lu. The devil is in temporal token: High quality video reasoning segmentation. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 29183–29192, 2025. [9] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 , 2025. [10] Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen, et al. Lora: Low-rank adaptation of large language models. ICLR , 1 (2):3, 2022. [11] Aaron Jaech, Adam Kalai, Adam Lerer, Adam Richardson, Ahmed El-Kishky, Aiden Low, Alec Helyar, Aleksander Madry, Alex Beutel, Alex Carney, et al. Openai o1 system card. arXiv preprint arXiv:2412.16720 , 2024. 10 [12] Xinhao Li, Ziang Yan, Desen Meng, Lu Dong, Xiangyu Zeng, Yinan He, Yali Wang, Yu Qiao, Yi Wang, and Limin Wang. Videochat-r1: Enhancing spatio-temporal perception via reinforce-ment fine-tuning. arXiv preprint arXiv:2504.06958 , 2025. [13] Lang Lin, Xueyang Yu, Ziqi Pang, and Yu-Xiong Wang. Glus: Global-local reasoning unified into a single large language model for video segmentation. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 8658–8667, 2025. [14] Yuqi Liu, Bohao Peng, Zhisheng Zhong, Zihao Yue, Fanbin Lu, Bei Yu, and Jiaya Jia. Seg-zero: Reasoning-chain guided segmentation via cognitive reinforcement. arXiv preprint arXiv:2503.06520 , 2025. [15] Yuqi Liu, Tianyuan Qu, Zhisheng Zhong, Bohao Peng, Shu Liu, Bei Yu, and Jiaya Jia. Vision-reasoner: Unified visual perception and reasoning via reinforcement learning. arXiv preprint arXiv:2505.12081 , 2025. [16] Ziyu Liu, Zeyi Sun, Yuhang Zang, Xiaoyi Dong, Yuhang Cao, Haodong Duan, Dahua Lin, and Jiaqi Wang. Visual-rft: Visual reinforcement fine-tuning. arXiv preprint arXiv:2503.01785 ,2025. [17] Jordi Pont-Tuset, Federico Perazzi, Sergi Caelles, Pablo Arbeláez, Alex Sorkine-Hornung, and Luc Van Gool. The 2017 davis challenge on video object segmentation. arXiv preprint arXiv:1704.00675 , 2017. [18] Nikhila Ravi, Valentin Gabeur, Yuan-Ting Hu, Ronghang Hu, Chaitanya Ryali, Tengyu Ma, Haitham Khedr, Roman Rädle, Chloe Rolland, Laura Gustafson, et al. Sam 2: Segment anything in images and videos. arXiv preprint arXiv:2408.00714 , 2024. [19] Seonguk Seo, Joon-Young Lee, and Bohyung Han. Urvos: Unified referring video object segmentation network with a large-scale benchmark. In Computer Vision–ECCV 2020: 16th European Conference, Glasgow, UK, August 23–28, 2020, Proceedings, Part XV 16 , pages 208–223. Springer, 2020. [20] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. [21] Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. Hybridflow: A flexible and efficient rlhf framework. In 
+
+Proceedings of the Twentieth European Conference on Computer Systems , pages 1279–1297, 2025. [22] Richard S Sutton, Andrew G Barto, et al. Reinforcement learning: An introduction , volume 1. MIT press Cambridge, 1998. [23] Song Wang, Gongfan Fang, Lingdong Kong, Xiangtai Li, Jianyun Xu, Sheng Yang, Qiang Li, Jianke Zhu, and Xinchao Wang. Pixelthink: Towards efficient chain-of-pixel reasoning. arXiv preprint arXiv:2505.23727 , 2025. [24] Ye Wang, Ziheng Wang, Boshen Xu, Yang Du, Kejun Lin, Zihan Xiao, Zihao Yue, Jianzhong Ju, Liang Zhang, Dingyi Yang, et al. Time-r1: Post-training large vision language model for temporal video grounding. arXiv preprint arXiv:2503.13377 , 2025. [25] Cong Wei, Yujie Zhong, Haoxian Tan, Yong Liu, Zheng Zhao, Jie Hu, and Yujiu Yang. Hy-perseg: Towards universal visual segmentation with large language model. arXiv preprint arXiv:2411.17606 , 2024. [26] Cong Wei, Yujie Zhong, Haoxian Tan, Yingsen Zeng, Yong Liu, Hongfa Wang, and Yujiu Yang. Instructseg: Unifying instructed visual segmentation with multi-modal large language models. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 20193–20203, 2025. 11 [27] Zhuofan Xia, Dongchen Han, Yizeng Han, Xuran Pan, Shiji Song, and Gao Huang. Gsva: Generalized segmentation via multimodal large language models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 3858–3869, 2024. [28] Yicheng Xiao, Lin Song, Yukang Chen, Yingmin Luo, Yuxin Chen, Yukang Gan, Wei Huang, Xiu Li, Xiaojuan Qi, and Ying Shan. Mindomni: Unleashing reasoning generation in vision language models with rgpo. arXiv preprint arXiv:2505.13031 , 2025. [29] Zeyue Xue, Jie Wu, Yu Gao, Fangyuan Kong, Lingting Zhu, Mengzhao Chen, Zhiheng Liu, Wei Liu, Qiushan Guo, Weilin Huang, et al. Dancegrpo: Unleashing grpo on visual generation. 
+
+arXiv preprint arXiv:2505.07818 , 2025. [30] Cilin Yan, Haochen Wang, Shilin Yan, Xiaolong Jiang, Yao Hu, Guoliang Kang, Weidi Xie, and Efstratios Gavves. Visa: Reasoning video object segmentation via large language models. In 
+
+European Conference on Computer Vision , pages 98–115. Springer, 2024. [31] Bob Zhang, Haoran Li, Tao Zhang, Cilin Yan, Jiayin Cai, and Yanbin Hao. Improving the reasoning of multi-image grounding in mllms via reinforcement learning. arXiv preprint arXiv:2507.00748 , 2025. [32] Rongkun Zheng, Lu Qi, Xi Chen, Yi Wang, Kun Wang, Yu Qiao, and Hengshuang Zhao. Villa: Video reasoning segmentation with large language model. arXiv preprint arXiv:2407.14500 ,2024. [33] Yaowei Zheng, Richong Zhang, Junhao Zhang, Yanhan Ye, Zheyan Luo, Zhangchi Feng, and Yongqiang Ma. Llamafactory: Unified efficient fine-tuning of 100+ language models. arXiv preprint arXiv:2403.13372 , 2024. [34] Hao Zhong, Muzhi Zhu, Zongze Du, Zheng Huang, Canyu Zhao, Mingyu Liu, Wen Wang, Hao Chen, and Chunhua Shen. Omni-r1: Reinforcement learning for omnimodal reasoning via two-system collaboration. arXiv preprint arXiv:2505.20256 , 2025. [35] Jiawen Zhu, Zhi-Qi Cheng, Jun-Yan He, Chenyang Li, Bin Luo, Huchuan Lu, Yifeng Geng, and Xuansong Xie. Tracking with human-intent reasoning. arXiv preprint arXiv:2312.17448 , 2023. 12 <image> The above is a frame from a video, and the text description of the video is: "{ Video_Description }". One or more 
+
+objects are marked with red rectangles in each frame. 
+
+The text description of the target object(s) is: "{ Question }" 
+
+You must base your reasoning on this frame. Please follow this reasoning process step-by-step: 
+
+1.Briefly describe what is happening in this frame. 
+
+2.Describe what the target(s) is/are doing. 
+
+3.Detect Precisely where it/they is/are located in this frame. 
+
+Important: - Do not refer to or describe the red rectangles. 
+
+- Write naturally, but follow the reasoning steps clearly. 
+
+Prompt for Qwen2.5-VL-7B to generate CoT for KTG task 
+
+<image> The above is a target frame selected from a video, and the text description of the video is: "{ Video_Description }" 
+
+The text description of the target object(s) is: "{ Question }" 
+
+Please determine which of the following two options best describes the state of the target object(s) in the selected target frame: 
+
+A. The target object(s) is/are all visible in the selected target frame. The target frame selection is correct. 
+
+B. The target object(s) is/are not visible in the selected target frame. The target frame selection is not correct. 
+
+You need to follow the steps below to reason step-by-step naturally: 
+
+1. Briefly describe what is happening in this frame. 
+
+2. Determine whether the target object(s) is/are visible in the selected target frame. 
+
+3. Select the best option. 
+
+Prompt for Qwen2.5-VL-7B to generate CoT for AKS task Figure 5: Prompt templates for CoT datasets generation. <video> Please provide a descriptive text based on the input video. The description should cover all objects in the video, as well 
+
+as the state changes of different elements if they exist. Additionally, it should include the relationships between different objects 
+
+and their behavioral logic if applicable. The description should be as detailed as possible within 1000 words. 
+
+Prompt for Video Description Generation 
+
+<0s><image>, <1s><image> …… <191s><image>, <192s><image> 
+
+You are given a 1FPS video which has { Num } frames. Each image is preceded by its timestamp. Given the object(s) description: 
+
+"{ Question }", please select a key frame from the video that reasonably matches the description. Output the timestamp of the 
+
+key frame. i.e., keyframe-timestamp: <your answer> (e.g., keyframe-timestamp: <0s>). 
+
+Important: - We already know that frame(s) at { Timestamp_List } is/are incorrect, and your answer timestamp should be 
+
+different. Only for keyframe reselection 
+
+Prompt for Keyframe Generation 
+
+Figure 6: Prompt templates for VDG task. 
+
+A More implement details 
+
+A.1 Datasets construction 
+
+Figure 5 illustrates the prompt templates for Qwen2.5-VL-7B [ 1] to generate Chain-of-Thought data. Each prompt is presented to the model along with a selected keyframe (resized to 840 × 840 ) and its corresponding video description, as well as the predefined description of the target object(s). The methods for selecting keyframes for both tasks have been discussed in the main document. The corresponding video descriptions are generated by our base model Qwen2.5-VL-3B [ 1] prompted by Figure 6 and incorporated into our RCoT-Seg-SFT-28k, RCoT-Seg-GRPO-AKS-4k and RCoT-Seg-GRPO-KTG-6k datasets. The prompts guide the model to (i) briefly describe the scene, (ii) analyze the target object(s), and (iii) complete the task. For each piece of generated CoT data, we select those that meet our task requirements and discard the lower-quality ones. The composition of the training datasets and several sample examples are shown in Figure 7. 
+
+A.2 Training settings 
+
+The training process of our model is divided into two main stages: CoT-SFT and GRPO, and the details of our training approach are shown in Table 7. In the first stage, we construct a compact Chain-of-Thought dataset RCoT-Seg-SFT-28k, and perform cold-start supervised fine-tuning (CoT-SFT) on Qwen2.5-VL-3B [ 1] with LoRA [ 10 ] to mitigate overfitting. In the second stage, we use GRPO [ 20 , 9] for reinforcement learning refinement with 4K and 6K task-specific datasets, respectively. The training is conducted on 4 NVIDIA L20 GPUs, which takes about 3 days to finish the whole multi-stage training. During GRPO training, we design a task-aligned verifiable reward R to optimize model behavior, which is obtained by adding the format reward Rf and the answer accuracy reward Ra with corre-sponding weights λf and λa. For the AKS task, λf and λa are set to 1.0 and 2.0, respectively. The format reward checks the overall format of the output, with a full score of 1.0. The accuracy reward checks the correctness of the predicted answer, with a full score of 1.0. Therefore, the maximum total reward for the AKS task is 3.0. For the KTG task, λf and λa are set to 1.0 and 1.0, respectively. 13 Table 7: Training parameters. 
+
+Config CoT-SFT AKS-GRPO KTG-GRPO finetuning type LoRA GRPO GRPO optimizer AdamW AdamW AdamW learning rate 1e-4 1e-6 1e-6 weight decay 0.0 0.01 0.01 batch size 8 16 16 lora rank 8 - -gradient-accumulation-steps 8 - -lr scheduler cosine constant constant warmup ratio 0.1 0.0 0.0 kl loss coef - 0.01 0.01 kl loss type - low-var-kl low-var-kl rollout-n 1 8 8temperature 0.95 1.0 1.0 top-k 50 -1 -1 top-p 0.7 1.0 1.0 max prompt length 3000 3000 3000 max response length 1024 2000 2000 training epochs 1 - -training steps - 500 1000 training set RCoT-Seg-SFT-28k RCoT-Seg-GRPO-AKS-4k RCoT-Seg-GRPO-KTG-6k a man in a black, white, and blue sport shirt bicycling down the road 
+
+Question: 
+
+Video description: 
+
+The video begins with a scene of a bicycle race, showcasing a group of 
+
+cyclists riding in a line down a street. The cyclists are dressed in various 
+
+colorful jerseys, helmets, and protective gear, indicating that… 
+
+<think> 1. In this frame, we see a group of 
+
+cyclists … 2. The target cyclist, dressed in… 
+
+He is positioned towards the left side of the 
+
+frame… 3. The target cyclist is located on the 
+
+left side of the frame, with his… </think> 
+
+<answer> [{"bbox_2d": [0, 218, 352, 839] ,
+
+"point_2d": [270, 530] }] </answer> 
+
+Expected output: 
+
+man in white clothes walking to the right with a stick in hand 
+
+Question: 
+
+Video description: 
+
+Expected output: 
+
+In a sunlit field, two large brown bulls with prominent white markings 
+
+on their bellies engage in an intense confrontation…A man, dressed in 
+
+casual attire, walks behind the bulls, holding a stick or staff… 
+
+<think> 1. In this frame, two large brown 
+
+bulls are engaged in… 2. The human figure 
+
+mentioned in the description is not directly 
+
+visible in this… 3. Based on the analysis… 
+
+Therefore…The best option is: B…</think> 
+
+<answer> B. The target object(s) is/are not 
+
+visible in …</answer> 
+
+20k samples for KTG task (a sample below): 8k samples for AKS task (a sample below): 
+
+RCoT-Seg-SFT-28k 
+
+B
+
+RCoT-Seg-GRPO-AKS-4k RCoT-Seg-GRPO-KTG-6k 
+
+Question: 
+
+Video description: 
+
+> Which tool(s) are used to charge a mobile phone?
+> The video showcases a detailed demonstration…
+
+Ground-truth answer:      
+
+> [{"bbox_2d": [672, 13, 784, 175] , "point_2d":
+> [739, 83] }, {"bbox_2d": [732, 121, 839, 298] ,
+> "point_2d": [772, 184] }, {"bbox_2d": [253, 14,
+> 501, 554] , "point_2d": [425, 421] }]
+
+Question: 
+
+Video description: 
+
+> Person staying still
+> The video opens with an exciting scene at an off-
+> road racing event, set in an urban environment. A
+> black truck is… In the background, several
+> buildings and a clear sky…In the foreground, a
+> person dressed in a yellow and orange reflective
+> jacket stands on a yellow tow truck…
+
+Ground-truth answer: A
+
+Figure 7: Composition of the training datasets and sample examples. The format reward further examines the format of the predicted bounding boxes and points, with a maximum score of 3.0. The accuracy reward evaluates the IoU metric and L1 distance between predicted bounding boxes and the ground truth, as well as the L1 distance between predicted points and the ground truth, with a maximum score of 3.0. The threshold hyperparameters η, γbox , and γpt 
+
+are set to 0.5, 10, and 30, respectively. The maximum total reward for the KTG task is 6.0. 
+
+A.3 Inference details 
+
+The prompt templates used for Video Description Generation and Keyframe Generation are shown in Figure 6 and Figure 9, respectively. Additionally, the prompt templates used for AKS and KTG tasks are shown in Figure 8. During Video Description Generation and Keyframe Generation, the proposed RCoT-Seg receives the full video sequence, where each frame is resized to 448 × 448 . In contrast, when performing AKS and KTG tasks, the input keyframe is resized to 840 × 840 to enhance detail perception. 14 <image> The above is a frame from a video, and the text description of the video is: "{ Video_Description }" 
+
+Please find "{ Question }" with bboxs and points. 
+
+You should first output your thinking process, then provide the final answer. You must base your reasoning on this frame. 
+
+Your thinking process should follow this reasoning process step-by-step: 
+
+1.Briefly describe what is happening in this frame. 
+
+2.Describe what the target(s) is/are doing. 
+
+3.Detect Precisely where it/they is/are located in this frame. 
+
+Output the thinking process in <think> </think> and final answer in <answer> </answer> tags. 
+
+Output the bbox(es) and point(s) inside the interested object(s) in JSON format. 
+
+i.e., <think> thinking process here </think>\n<answer>[{"bbox_2d": [378,494,546,796], "point_2d": [518,551]}, {"bbox_2d": 
+
+[507,272,840,647], "point_2d": [643,388]}]</answer> 
+
+Prompt for KTG task 
+
+<image> The above is a target frame selected from a video, and the text description of the video is: "{ Video_Description }" 
+
+The text description of the target object(s) is: "{ Question }" 
+
+Please determine which of the following two options best describes the state of the target object(s) in the selected target frame: 
+
+A. The target object(s) is/are all visible in the selected target frame. The target frame selection is correct. 
+
+B. The target object(s) is/are not visible in the selected target frame. The target frame selection is not correct. 
+
+You need to follow the steps below to output your thinking process step-by-step naturally: 
+
+1. Briefly describe what is happening in this frame. 
+
+2. Determine whether the target object(s) is/are visible in the selected target frame. 
+
+3. Select the best option. 
+
+Output the thinking process in <think> </think> and final answer in <answer> </answer> tags. 
+
+i.e., <think> thinking process here </think> 
+
+<answer>A. The target object(s) is/are all visible in the selected target frame. The target frame selection is correct.</answer> 
+
+Prompt for AKS task Figure 8: Prompt templates for AKS and KTG tasks. <video> Please provide a descriptive text based on the input video. The description should cover all objects in the video, as well 
+
+as the state changes of different elements if they exist. Additionally, it should include the relationships between different objects 
+
+and their behavioral logic if applicable. The description should be as detailed as possible within 1000 words. 
+
+Prompt for Video Description Generation 
+
+<0s><image>, <1s><image> …… <191s><image>, <192s><image> 
+
+You are given a 1FPS video which has { Num } frames. Each image is preceded by its timestamp. Given the object(s) description: 
+
+"{ Question }", please select a key frame from the video that reasonably matches the description. Output the timestamp of the 
+
+key frame. i.e., keyframe-timestamp: <your answer> (e.g., keyframe-timestamp: <0s>). 
+
+Important: - We already know that frame(s) at { Timestamp_List } is/are incorrect, and your answer timestamp should be 
+
+different. Only for keyframe reselection 
+
+Prompt for Keyframe Generation 
+
+Figure 9: Prompt templates for KFG task. 
+
+B Effect of scaling model size 
+
+To investigate the impact of foundation model capacity on our framework, we train a larger variant initialized from Qwen2.5-VL-7B. This model follows the exact same multi-stage training pipeline (CoT-SFT and GRPO) and hyperparameters as the 3B variant. Notably, the training datasets remain identical to those used for RCoT-Seg-3B. The video descriptions are still generated by the 3B model, and the CoT reasoning traces continue to be constructed using the 7B model. As detailed in Table 8 and Table 9, scaling the model size yields consistent improvements across VRS and RVOS benchmarks. 
+
+C Timing analysis 
+
+We analyze the additional time consumption required to complete VDG, KFG, and AKS tasks compared to performing only the KTG task. We set the time consumption for the KTG task as 1.0, which includes the time taken by SAM2 [ 18 ] for keyframe segmentation and propagation. As shown in Figure 10, completing the VDG, KFG, and AKS tasks requires additional time consumption of 0.21, 0.60, and 1.47 respectively. Without using AKS, the inference time consumption is 1.81. The additional time consumption incurred by adopting AKS is 1.47. Therefore, implementing the AKS mechanism results in an 81% increase in additional time consumption. Our evaluation reveals that the latency overhead primarily stems from repeated full-video encoding during the AKS re-evaluation phase, rather than from the AKS mechanism itself. To verify this and optimize efficiency, we introduce a light re-evaluation strategy: while maintaining the initial encoding pass on the full video, we replace subsequent re-evaluations with 16 uniformly sampled frames. As 15 Table 8: Performance comparison on VRS datasets. The best and second-best results are shown in 
+
+red and blue color.                                                                                                                                                                    
+
+> Method ReVOS / referring ReVOS / reasoning ReVOS / overall ReasonVOS
+> J&FJFJ&FJFJ&FJFJ&FJF
+> Previous models using <seg> tokens for mask prediction via SFT training
+> VISA-7B [30] 50.9 49.2 52.6 43.0 40.6 45.4 46.9 44.9 49.0 ---VISA-13B [30] 57.4 55.6 59.1 44.3 42.0 46.7 50.9 48.8 52.9 ---VideoLISA-3.8B [3] ---------47.5 45.1 49.9 InstructSeg-3B [26] 57.0 54.8 59.2 51.9 49.2 54.7 54.5 52.0 56.9 ---HyperSeg-3B [25] 58.5 56.0 60.9 53.0 50.2 55.8 55.7 53.1 58.4 ---GLUS-7B [13] 58.3 56.0 60.7 51.4 48.8 53.9 54.8 52.4 57.3 49.9 47.5 52.4 VRS-HQ-7B [8] 62.1 59.8 64.5 56.1 53.5 58.7 59.1 56.6 61.6 ---VRS-HQ-13B [8] 63.3 61.1 65.5 56.8 54.1 59.4 60.0 57.6 62.5 ---
+> Latest models via GRPO training
+> Omni-R1-8B [34] 61.6 --50.7 --56.2 -----Veason-R1-3B [7] 63.0 60.3 65.6 56.8 53.6 60.0 59.9 56.9 62.8 55.2 51.8 58.5
+> Ours-3B 64.3 (+1.0) 61.6 66.9 58.2 (+1.4) 54.9 61.6 61.2 (+1.2) 58.2 64.3 58.2 (+3.0) 54.6 61.8 Ours-7B 65.9 (+2.6) 63.2 68.7 59.7 (+2.9) 56.6 62.8 62.8 (+2.8) 59.9 65.7 59.4 (+4.2) 56.0 62.8
+
+Table 9: Performance comparison on RVOS datasets. The best and second-best results are shown in red and blue color.                                                                                                                    
+
+> Method MLLM DAVIS17 Ref-YouTube-VOS MeViS
+> J&FJFJ&FJFJ&FJF
+> Track-GPT-7B [35] LLaVA-7B 63.2 59.4 67.0 56.4 55.3 57.4 40.1 37.6 42.6 Track-GPT-13B [35] LLaVA-13B 66.5 62.7 70.4 59.5 58.1 60.8 41.2 39.2 43.1 VISA-7B [30] Chat-UniVi-7B 69.4 66.3 72.5 61.5 59.8 63.2 43.5 40.7 46.3 VISA-13B [30] Chat-UniVi-13B 70.4 67.0 73.8 63.0 61.4 64.7 44.5 41.8 47.1 VideoLISA-3.8B [3] LLaVA-Phi-3-V 68.8 59.4 64.9 63.7 61.7 65.7 44.4 41.3 47.6 GLUS-7B [13] LLaVA-7B ---67.3 65.5 69.0 51.3 48.5 54.2 VRS-HQ-13B [8] Chat-UniVi-13B 74.4 71.0 77.9 71.0 69.0 73.1 50.9 48.0 53.7 Veason-R1-3B [7] Qwen2.5-VL-3B ------51.2 48.2 54.2
+> Ours-3B Qwen2.5-VL-3B 76.1 (+1.7) 72.2 80.0 72.5 (+1.5) 70.5 74.6 53.7 (+2.4) 50.7 56.7 Ours-7B Qwen2.5-VL-7B 78.6 (+4.2) 75.0 82.2 73.3 (+2.3) 71.5 75.1 54.8 (+3.5) 51.9 57.7
+
+shown in Table 10, this sampling strategy substantially reduces the extra computational overhead from 81% to 40% while maintaining highly competitive performance. Table 10: Performance and computational overhead comparison of different AKS strategies. 
+
+Method Extra Time Ref-YT-VOS ReasonVOS ReVOS MeViS 
+
+Ours (Full Video) 81% 72.5 58.2 61.2 53.7 Ours (Sample 16 after Full Video) 40% 72.4 57.8 60.9 54.2 Furthermore, we report the average inference time per video in Table 11, split into keyframe selection and segmentation. This breakdown shows that the main runtime bottleneck in VRS remains the segmentation stage (MLLM + SAM2), not keyframe selection. In particular, AKS adds only a small overhead relative to VRS-HQ (12s vs. 11s), while our downstream segmentation stage is actually faster than both prior methods. Thus, the agentic design does not make the overall pipeline disproportionately heavy. We also conduct a direct efficiency comparison with our concurrent work Veason-R1 in Table 12. Our evaluation reveals that Veason-R1-3B takes a total of 36 seconds per video. This latency occurs because its architecture requires feeding multiple high-resolution frames simultaneously into the MLLM. Due to severe memory constraints, it can only support a maximum of 8 sampled frames as input on a 48GB L20 GPU. 
+
+D Intermediate-level evaluations 
+
+Keyframe quality and re-selection efficiency. To measure keyframe quality, we compute the ratio between the target object’s pixel area in the selected frame and its maximum area over the full video. As shown in Table 13, AKS consistently replaces suboptimal initial frames with more informative ones, substantially increasing target visibility, while requiring only 1.3–2.4 rounds on average. 16 Table 11: Inference time analysis. 
+
+Method Keyframe Selection Time Segmentation Time 
+
+VISA 21s 24s VRS-HQ 11s 28s 
+
+Ours 12s (AKS) 19s 
+
+Table 12: Inference time comparison with Veason-R1. 
+
+Method Keyframe Selection and Segmentation Time 
+
+Veason-R1-3B (Sample 8 frames) 36s 
+
+Ours 31s Intermediate grounding accuracy. To evaluate spatial precision before SAM2 propagation, we compute the Avg IoU between predicted intermediate boxes and ground-truth boxes (converted from masks). The IoU values in Table 14 show that the KTG stage already provides accurate localization before mask propagation. 
+
+Necessity of Explicit CoT. To directly evaluate the role of explicit CoT traces, we train an Answer-Only baseline by removing the <think> ... </think> content from the training targets and asking the model to predict only the final answer. The SAM2 interface, output format, and all other training settings are kept unchanged, so the comparison isolates the effect of explicit reasoning supervision. As shown in Table 15,the gains are consistent across all benchmarks, showing that explicit CoT supervision provides a clear benefit beyond predicting the final answer alone. The improvements are especially larger on ReasonVOS (+3.1) and ReVOS (+2.9), suggesting that explicit reasoning helps build a stronger intermediate representation for keyframe verification and target grounding, rather than serving as a simple formatting choice. 
+
+E Training curves analysis 
+
+We visualize the GRPO training dynamics of the proposed RCoT-Seg in Figures 11 and 12, as well as the CoT-SFT training loss in Figure 13. We monitor three key metrics during GRPO training: task-aligned reward R, response length, and the value of KL loss. As shown in Figures 11a and 12a, the model initialized via CoT-based supervision starts with a reward score around 2.1 in AKS task and 4.3 in KTG task, indicating a reasonable ability to generate structured outputs for both tasks. The consistent upward trend in reward reflects effective policy refinement and better alignment with the designed reward function. As can be 1     
+
+> 1.21
+> 1.81
+> 3.28
+> 0
+> 0.5
+> 1
+> 1.5
+> 2
+> 2.5
+> 3
+> 3.5
+> 4
+> KTG +VDG +VDG & KFG +VDG & KFG & AKS
+> Time consumption
+> Tasks
+> Timing analysis
+> VRS datasets RVOS datasets Average
+
+Figure 10: Curves of timing analysis on VRS and RVOS datasets. 17 Table 13: Keyframe quality and re-selection efficiency. 
+
+Metric Setting Davis Ref-Youtube-VOS ReasonVOS ReVOS Area Ratio (%) Initial 43.0 51.6 37.3 61.0 Reselected 65.9 (+22.9) 64.1 (+12.5) 58.0 (+20.7) 67.9 (+6.9) Average Rounds - 1.4 1.3 2.3 2.4 Table 14: Intermediate grounding accuracy. 
+
+Metric Davis Ref-Youtube-VOS ReasonVOS ReVOS Avg IoU (%) 75.0 70.4 57.7 60.2 Table 15: Necessity of Explicit CoT. 
+
+Method Davis Ref-Youtube-VOS ReasonVOS ReVOS 
+
+Answer-Only 73.9 69.8 55.1 58.3 
+
+Explicit-CoT (Ours) 76.1(+2.2) 72.5(+2.7) 58.2(+3.1) 61.2(+2.9) Average reward  
+
+> 2.8 2.6 2.4 2
+> 。
+
+#  100 200 300 400 Ste p
+
+> 500
+
+(a) Average reward (b) Average response length (c) KL Loss 
+
+Figure 11: Curves of GRPO training for AKS task. 
+
+(a) Average reward (b) Average response length (c) KL Loss 
+
+Figure 12: Curves of GRPO training for KTG task. 
+
+Figure 13: Curve of CoT-SFT training loss. 18 <think>1. In this frame, we see two brown cows grazing on a rocky terrain. The       
+
+> background includes a mix of greenery and scattered rocks, indicating a natural, rugged
+> landscape. The sky is overcast, providing a soft, diffused light that enhances... The
+> cows are positioned centrally in the frame, with one slightly ahead of the other. Both
+> animals have a rich brown coat and are focused on feeding, with their heads lowered to
+> the ground. 2. The target object, which is the cow with a deeper color, is grazing on the
+> rocky terrain. It is positioned slightly behind the other cow and is actively engaged in
+> feeding, with its head lowered to the ground. 3. The cow with a deeper color is located
+> in the center-right portion of the frame, slightly behind the other cow. It is grazing on
+> the rocky terrain, with its head lowered to the ground as it feeds.</think>
+> <answer>[{"bbox_2d": [297, 138, 599, 564] , "point_2d": [392, 308] }]</answer>
+
+the cow with a deeper color. 
+
+…
+
+Keyframe Target Grounding 
+
+the lion 
+
+…
+
+…
+
+RCoT-Seg Prediction 
+
+Ground Truth     
+
+> <think>1. In this frame, we see two badgers engaged in a playful interaction on a dirt
+> ground. One badger is on its back, displaying its underbelly and a mix of black and
+> white fur, while the other badger is standing upright and using its front paws to interact
+> with the first badger. The standing badger appears to be gently nuzzling or wrestling
+> with the other badger, showcasing a display of social behavior typical of badgers. 2.
+> The target object, which is a lion, is not present in this frame. The image only shows
+> two badgers interacting on the ground. 3. Since there is no lion in this frame, there is no
+> need to specify its location. </think>
+> <answer>[{"bbox_2d": [177, 206, 532, 729] , "point_2d": [328, 499] }]</answer>
+
+Keyframe Target Grounding 
+
+…
+
+…
+
+…
+
+RCoT-Seg Prediction 
+
+Ground Truth (no mask) Figure 14: Visualization of failure cases on the ReVOS dataset. RCoT-Seg reveals inconsistencies between its reasoning traces and final segmentation outputs, and demonstrates limited adaptability in the zero-target task. seen from Figures 11b and 12b, the average response length of our model for both tasks remains stable at around 300 tokens. As depicted in Figures 11c and 12c, the KL divergence progressively increases as the model shifts away from the initial policy to explore more reward-driven behaviors. It eventually plateaus, signifying convergence toward a consistent and reward-aligned policy under the regularization constraint. The CoT-SFT training loss of the model shown in Figure 13 demonstrates a consistent and significant decrease from approximately 0.75 to around 0.48 over 400 steps, indicating effective learning convergence. 
+
+F Limitations 
+
+In this study, the construction of the segmentation dataset does not incorporate samples for zero-target segmentation [ 27 ], which limits the model from to handle zero-target segmentation tasks. When the instruction refers to an object absent from the video, the model consequently produces incorrect segmentation results, which could be mitigated by developing a more comprehensive dataset and modifying the corresponding evaluation strategy. Furthermore, regarding dataset construction, unlike some existing methods that rely on massive frontier models for data synthesis, our approach utilizes the relatively smaller open-weight Qwen2.5-VL series. Specifically, we employ Qwen2.5-VL-7B to construct the Chain-of-Thought reasoning traces and Qwen2.5-VL-3B to generate the video descriptions. 
+
+G Failure case analysis 
+
+Figure 14 presents some failure cases of RCoT-Seg on the ReVOS [ 30 ] dataset. In the left example, the model generates a correct reasoning trace, accurately identifying the cow with a deeper color and describing its relation to another cow. However, the predicted masks fail to align with the described target, revealing an inconsistency between the reasoning trace and the final segmentation outputs. In the right case, it is a zero-target scenario where the lion is not present in the video sequence. The model correctly identifies this situation in its reasoning trace, and yet it still outputs incorrect localization information, demonstrating its limited adaptability in the zero-target task. Figure 15 further reveals the misjudgment of RCoT-Seg when performing the AKS task. In this case, the target object has not yet appeared in the keyframe deemed correct by the model, resulting in an incorrect segmentation. 19 Which could soon become a puffer fish's dinner ?    
+
+> <think>1. In this frame, we see a close-up view of an aquarium containing a pufferfish. The pufferfish is swimming near the
+> bottom of the tank, and there is another fish partially visible in the background. The metallic mesh of the aquarium's cover is
+> also visible in the upper part of the frame. 2. The target object(s), which are likely the pufferfish itself and possibly other fish
+> that could be its prey, are clearly visible in the selected target frame. The pufferfish is prominently displayed in the center of
+> the frame, and the other fish is partially visible in the background. 3. Given that the target object(s) are visible in the selected
+> target frame, the best option is: A. The target object(s) is/are all visible in the selected target frame. The target frame selection
+> is correct.</think>
+> <answer> A. The target object(s) is/are all visible in the selected target frame. The target frame selection is correct. </answer>
+
+Agentic Keyframe Selection 
+
+… …
+
+Target emerging 
+
+… …
+
+… …
+
+RCoT-Seg Prediction 
+
+Ground Truth Figure 15: Visualization of failure cases on the ReVOS dataset. In this case, RCoT-Seg erroneously classifies an invalid keyframe as valid in the AKS task. 
+
+H More qualitative comparison 
+
+We present additional visual comparisons of RCoT-Seg-3B with GLUS-7B [ 13 ] on the ReasonVOS [ 3]dataset and VRS-HQ-7B on the ReVOS [ 30 ] dataset, to underscore its robust reasoning capabilities and enhanced fine-grained grounding performance. The qualitative comparison of RCoT-Seg-3B with GLUS-7B is shown in Figure 16. In the left example, various pedestrians, vehicles, and traffic facilities at the intersection constitute a complex video scene. GLUS-7B produces an incorrect segmentation result. In contrast, the proposed RCoT-Seg-3B first accurately identifies the incorrectly selected keyframe through the AKS task and reselects the correct keyframe. Then, in the KTG task, the model correctly identifies the target object (who is not wearing a bright yellow jacket) based on the provided video description and accurately predicts the segmentation masks. In the right case, the query involves action logic (unmoving, with its head swinging back and forth), which requires the model to perform reasoning. RCoT-Seg-3B accurately identifies the correct target object (the larger cow in the foreground) in the reasoning trace and provides an accurate masks prediction, whereas GLUS-7B produces an incorrect answer. Figure 17 visualizes the segmentation maps of RCoT-Seg-3B, GLUS-7B [ 13 ] and VRS-HQ-7B [ 8]on the ReVOS dataset. In the left example, RCoT-Seg-3B correctly segments the bird in the upper right corner of the scene, whereas both VRS-HQ-7B and GLUS-7B confuse this bird with another incorrect target object due to their overlap. In the right case, RCoT-Seg-3B accurately segments the target object (transparent, made of plastic), whereas both GLUS-7B and VRS-HQ-7B confuse it with other objects, demonstrating our model’s superior ability to comprehend object materials and colors. 20 <think> 1. In this frame, we see two cows in an enclosed area. The larger cow, which is the focus of the description, is 
+
+positioned in the foreground and is wearing a halter. It has a light brown coat and is looking towards the camera with its 
+
+head slightly tilted. The smaller calf is in the background, walking away from the larger cow. The setting includes a dirt 
+
+floor with some hay, a metal fence, and distant structures, indicating a farm environment. 2. The target object, described 
+
+as "The unmoving cow with its head swinging back and forth," is the larger cow in the foreground. This cow is not 
+
+moving; instead, its head is swinging back and forth, likely due to its natural behavior or response to something in its 
+
+environment. 3. The larger cow with its head swinging back and forth is located in the foreground of the image, occupying 
+
+the right side of the frame . Its head is turned slightly towards the camera, and it appears to be observing its surroundings 
+
+or reacting to something off-camera. </think> 
+
+<answer> [{"bbox_2d": [350, 25, 839, 785] , "point_2d": [671, 401] }] </answer> 
+
+The unmoving cow with its head swinging back and forth. 
+
+<think> 1. In the selected target frame, we see two cows in an outdoor pen. One cow is a 
+
+dark brown calf, and the other … 2. The target object(s), which are described as "The 
+
+unmoving cow with its head swinging back and forth," are indeed visible in the selected 
+
+target frame. The larger brown cow matches the description of being unmoving and having 
+
+its head swinging back and forth. 3. Based on the analysis, the best option is: A… </think> 
+
+<answer> A. The target object(s) is/are all visible in the selected target frame. The target 
+
+frame selection is correct. </answer> 
+
+Agentic Keyframe Selection 
+
+Keyframe Target Grounding 
+
+GLUS-7B Prediction 
+
+RCoT-Seg-3B Prediction 
+
+Between the two brothers on bicycles, who is wearing less eye-catching attire? 
+
+A
+
+GLUS-7B Prediction 
+
+Agentic Keyframe Selection 
+
+<think> 1. In this frame, we see an urban street scene with various vehicles and buildings. 
+
+There are traffic lights… 2. … there are no bicycles or individuals wearing less eye-catching 
+
+attire present. The target objects (…) are not visible in this frame . 3. Given that the target 
+
+objects (…) are not visible in the selected target frame, the correct option is: B… </think> 
+
+<answer> B. The target object(s) is/are not visible in the selected target frame. The target 
+
+frame selection is not correct .</answer> 
+
+<think> 1. In this frame, we see a street scene with two individuals on bicycles… 2. The target 
+
+objects mentioned in the question are the two individuals on bicycles. Both are clearly visible 
+
+in the frame , as they are the focal point of the image. 3. Since the target objects are visible in 
+
+the selected target frame, the correct option is: A… </think> 
+
+<answer> A. The target object(s) is/are all visible in the selected target frame. The target 
+
+frame selection is correct .</answer> A
+
+B
+
+Keyframe Target Grounding 
+
+<think> 1. In this frame, we see an urban intersection during the early morning hours. The scene includes … 2. The target 
+
+object in question is the cyclist who is wearing less eye-catching attire. Based on the description provided, this individual 
+
+is likely the one who is not wearing a bright yellow jacket , which is the most noticeable clothing item among the two 
+
+cyclists. 3. The cyclist wearing less eye-catching attire is located in the foreground of the image, positioned between the 
+
+two cyclists. This cyclist is wearing a dark-colored jacket and dark pants, which are… </think> 
+
+<answer> [{"bbox_2d": [454, 361, 531, 630] , "point_2d": [491, 440] }] </answer> 
+
+RCoT-Seg-3B Prediction Figure 16: More qualitative comparison on the ReasonVOS dataset. <think>1. In this frame, we see a group of small birds gathered on a metal grate. The grate is made up… 2. The target bird, 
+
+which is the white bird in the upper right corner, is standing still and appears to be observing its surroundings… 3. The 
+
+white bird is located in the upper right corner of the frame, standing on the metal grate. Its position is distinct from the 
+
+other birds, which are more dispersed across the grate and are engaged in various activities.</think> 
+
+<answer>[{"bbox_2d": [454, 200, 533, 328] , "point_2d": [506, 258] }]</answer> 
+
+Which bird(s) are in the upper right corner of the scene? 
+
+<think>1. In this frame, we see several small birds gathered on a 
+
+metal grate… 2. The target object(s), which are the birds in the 
+
+upper right corner of the scene, are indeed visible in the selected 
+
+target frame. The white bird … 3. Based on the analysis, the best 
+
+option is: A…</think> 
+
+<answer> A. The target object(s) is/are all visible in the selected 
+
+target frame. The target frame selection is correct. </answer> 
+
+Agentic Keyframe Selection 
+
+Keyframe Target Grounding 
+
+GLUS-7B Prediction 
+
+RCoT-Seg-3B Prediction 
+
+VRS-HQ-7B Prediction 
+
+Which object is made of plastic and transparent? 
+
+VRS-HQ-7B Prediction 
+
+GLUS-7B Prediction 
+
+<think>1. In this frame, we see a person cleaning a pair of 
+
+yellow running… 2. The target object(s), which is described as 
+
+"a small plastic container," is visible in the selected target frame. 
+
+It is located to the right of the shoes and… 3. … the best option 
+
+is: A…</think> 
+
+<answer> A. The target object(s) is/are all visible in the selected 
+
+target frame. The target frame selection is correct. </answer> 
+
+Agentic Keyframe Selection 
+
+A. Correct 
+
+Keyframe 
+
+<think>1. In this frame, a person is cleaning a pair of running shoes. The shoes are… 2. The target object, which is made 
+
+of plastic and transparent, is the small plastic container. It is likely used to hold cleaning solutions or water, as part of the 
+
+cleaning process. 3. The small plastic container is located to the right of the shoes, on the dark brown towel. It is 
+
+transparent and appears to be filled with a liquid, which is being used in the cleaning process.</think> 
+
+<answer>[{"bbox_2d": [479, 295, 628, 478] , "point_2d": [551, 378] }]</answer> 
+
+Keyframe Target Grounding 
+
+RCoT-Seg-3B Prediction 
+
+A. Correct 
+
+Keyframe 
+
+Figure 17: More qualitative comparison on the ReVOS dataset. 21
