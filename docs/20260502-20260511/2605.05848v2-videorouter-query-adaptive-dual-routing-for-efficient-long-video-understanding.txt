@@ -1,0 +1,516 @@
+Title: VideoRouter: Query-Adaptive Dual Routing for Efficient Long-Video Understanding
+
+URL Source: https://arxiv.org/pdf/2605.05848v2
+
+Published Time: Mon, 11 May 2026 01:15:00 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# VideoRouter: Query-Adaptive Dual Routing for Efficient Long-Video Understanding 
+
+Kuanwei Lin ∗
+
+, Wenhao Zhang ∗
+
+, Ge Li †
+
+School of Electronic and Computer Engineering, Peking University 
+
+{gwlin, whzhang25}@stu.pku.edu.cn geli@ece.pku.edu.cn 
+
+Abstract 
+
+Video large multimodal models increasingly face a scalability bottleneck: long videos produce excessively long visual-token sequences, which sharply increase memory and latency during inference. While existing compression methods are effective in specific settings, most are either weakly query-aware or apply a fixed compression policy across frames, proving suboptimal when visual evidence is unevenly distributed over time. To address this, we present VideoRouter , a query-adaptive dual-router framework built on InternVL for budgeted evidence allocation. The Semantic Router predicts the dominant allocation policy, choosing between broad temporal coverage and adaptive high-resolution preservation, while the Image Router uses early LLM layers to score frame relevance. This enables aggressive compression on less relevant frames while preserving detail on critical evidence frames. To train both routers, we build Video-QTR-10K for allocation-policy supervision and Video-FLR-200K for frame-relevance supervision. Experiments on VideoMME, MLVU, and LongVideoBench show that VideoRouter consistently improves over the InternVL baseline under comparable or lower budgets, achieving up to a 67.9% token reduction. 
+
+1 Introduction 
+
+Video understanding with Multimodal Large Language Models (MLLMs) [ 1– 5] is fundamentally bottlenecked by the massive number of visual tokens generated for long videos, causing severe memory and latency issues [ 6]. Existing token-compression methods [ 7 – 12 ] reduce this cost, but most of them allocate the same compression policy across frames or make token decisions before sufficient question-conditioned reasoning. This is suboptimal because long videos contain highly non-uniform evidence: some questions require broad temporal coverage, while others depend on a few spatially detailed moments, and many practical queries mix both needs. To address these issues, we frame long-video compression as budgeted evidence allocation : given a limited visual-token budget, the model should decide whether to spend tokens broadly for temporal coverage or concentrate them on high-evidence frames. Importantly, our routing labels should not be interpreted as a rigid taxonomy of user intent. Instead, they define the dominant allocation policy under a fixed budget: a Global policy preserves coarse coverage over the full video, while a Fragment 
+
+policy enables non-uniform high-resolution allocation over one or multiple evidence-bearing events. Motivated by this view, we propose VideoRouter , a query-adaptive dual-router framework built upon InternVL [ 13 ]. A Semantic Router first predicts the dominant allocation policy, selecting between uniform coverage and adaptive allocation. When adaptive allocation is selected, an Image Router                       
+
+> ∗Equal contribution.
+> †Corresponding author. Preprint.
+> arXiv:2605.05848v2 [cs.CV] 8 May 2026 12345678910 11 12 13 14 15 16
+> Video Timeline (Frame Index)
+> 0
+> 50
+> 100
+> 150
+> 200
+> 250
+> 300
+> 350
+> Allocated Visual Tokens per Frame
+> Dense (Scale=1)
+> Uniform Compression (Scale=2)
+> VideoRouter (Adaptive Scale=1/4)
+> 4000 6000 8000 10000 12000 14000 16000 18000
+> Average Visual Tokens (Lower is Faster)
+> 63.5
+> 64.0
+> 64.5
+> 65.0
+> 65.5
+> 66.0
+> 66.5
+> 67.0
+> 67.5
+> Video-MME Overall Accuracy (%)
+> InternVL3
+> (Dense)
+> InternVL3*
+> (Budget)
+> VideoRouter
+> (Default)
+> VideoRouter
+> (Extreme)
+> Higher Accuracy &
+> Fewer Tokens
+> Baseline
+> VideoRouter (Ours)
+
+Figure 1: Left: Frame-level dynamic token allocation by VideoRouter compared to dense and uniform baselines. Right: Accuracy vs. efficiency trade-off on Video-MME, demonstrating higher performance with significantly fewer visual tokens. reuses early multimodal LLM layers to estimate frame-query relevance and drive fine-grained token assignment. The two routers are complementary: the Semantic Router prevents over-focusing on holistic queries, while the Image Router prevents uniform compression from destroying localized evidence. Together, they dynamically retain high resolution for critical frames, preserve coarse context for less relevant frames, and operate under an explicit token budget. To supervise this routing behavior, we construct two specialized datasets. Video-QTR-10K provides 10,000 video-query pairs labeled by the preferred allocation policy, while Video-FLR-200K contains 200,664 QA pairs with frame-level relevance annotations. These datasets are not additional task-specific test knowledge; they provide supervision for deciding how to allocate visual tokens before answer generation. Our key contributions are summarized as follows: 1. Budgeted Evidence Allocation : We formulate long-video token compression as an explicit budgeted allocation problem, where the model chooses between broad temporal coverage and adaptive high-resolution preservation. 2. Dual-Router Architecture : We introduce a query-adaptive framework that combines policy-level semantic routing with frame-level relevance estimation from early multimodal LLM layers. 3. Routing Supervision : We present Video-QTR-10K and Video-FLR-200K, two dedicated datasets designed to supervise allocation-policy prediction and frame-query relevance estimation. 
+
+2 Related Work 
+
+Video token compression methods reduce the visual-token cost either before language modeling, during LLM inference, or through multi-stage pipelines. Pre-LLM approaches such as PruMerge [ 7]and VisionZip [ 8 ] inherit ideas from token dropping, merging, and adaptive tokenization [ 14 – 17 ], while intra-LLM methods such as FastV [ 9], DyToK [ 18 ], PyramidDrop [ 19 ], SparseVLM [ 10 ], and HiDrop [ 20 ] prune tokens after partial multimodal reasoning. Recent adaptive methods further exploit visual complexity or input complexity [ 21 –25 ]. These methods improve efficiency, but most of them allocate compression at the token or frame level without an explicit query-conditioned budget policy across the full video. Query-aware frame and token selection methods condition visual processing on language input. Image-level saliency methods such as CROP [ 26 ], and video methods such as LGTTP [ 27 ], PruneVid [ 28 ], QTSplus [ 29 ], GenS [ 30 ], and VideoTree [ 31 ], show that a subset of frames often dominates the answer. Router-based VLM designs such as long-tailed distribution-aware routing [ 32 ]mainly focus on token-to-expert or mixture-of-experts behavior. In contrast, VideoRouter cou-2Figure 2: Overview of the VideoRouter framework. The Semantic Router predicts the dominant allocation policy and selects either broad Uniform Compression or Adaptive Compression. Under Adaptive Compression, the Image Router’s frame-level scores drive token allocation dynamically. ples policy-level query routing with frame-level relevance estimation, enabling budgeted allocation between broad temporal coverage and high-resolution preservation. 
+
+3 Method 
+
+Given a video V = {ft}Tt=1 and a question q, our goal is to minimize visual-token cost while preserving answer quality under a fixed context budget. Long videos contain substantial redundancy, but the evidence needed for a query is often distributed unevenly across time. VideoRouter addresses this by decomposing compression into two decisions: a policy-level decision that selects the dominant allocation policy, and a frame-level decision that estimates where high-fidelity visual evidence should be preserved. The final compressed visual sequence is inserted into the LLM prompt by replacing image placeholders, followed by standard autoregressive decoding. 
+
+3.1 VideoRouter Architecture Backbone and Router Feature Extractor. The model architecture consists of the open-source InternVL3 backbone and dual routers. For each frame, the vision encoder produces patch features and projects them into the LLM hidden space. To keep the routing mechanism lightweight and avoid introducing heavy additional parameters, VideoRouter reuses the early language layers as the router feature extractor. Concretely, the first four decoder layers are copied to a shadow stack E1:4 , and the router features are computed as: 
+
+Hq = E1:4 (Emb( q)) , H(t) 
+
+> v,q
+
+= E1:4 ([ Zt; Emb( q)]) , (1) where Zt is the frame-t visual token sequence after vision projection, and [·; ·] denotes concatenation. This design leverages the multimodal fusion capabilities already present in the early layers of the LLM. 
+
+Semantic Router. The Semantic Router acts as a lightweight policy classifier over the question text to determine the dominant visual-token allocation policy. It first applies a Pooling operation to the token features Hq with attention masking to aggregate the global query context. Then, it applies a Strategy MLP with LayerNorm and GELU activation, supervised by a cross-entropy loss: 
+
+ps = gs(Pooling( Hq )) , ˆys = arg max  
+
+> c
+
+ps(c), ys ∈ { 0, 1}, (2) where ps(c) is the predicted probability of allocation policy c, ys = 0 denotes a Global allocation policy, and ys = 1 denotes a Fragment allocation policy. These labels specify how the token budget 3should be spent rather than imposing an exhaustive taxonomy of question semantics. If ˆys = 0 ,VideoRouter applies Uniform Compression to preserve broad temporal coverage; if ˆys = 1 , it routes the visual sequence to Adaptive Compression, where the Image Router’s per-frame scores dictate selective preservation of relevant frames. 
+
+Image Router. For adaptive allocation, the model needs to identify which frames contain evidence that should retain higher visual fidelity. Each frame is fused with the question tokens (Text & Image Token) and encoded by the shadow stack E1:4 . A lightweight Transformer Block with a learnable [CLS] token is then applied to capture the cross-modal interactions, followed by a Frame Score MLP to predict the per-frame relevance: 
+
+pt = gv
+
+
+
+H(t)
+
+> v,q
+
+
+
+, ˆyt = I[pt > 0.5] , yt ∈ { 0, 1}. (3) where pt is the predicted relevance probability for frame t. In our implementation, yt = 1 indicates a Relevant frame that should retain high fidelity, while yt = 0 indicates an Irrelevant frame that can undergo aggressive compression. 
+
+3.2 Inference 
+
+The primary objective during inference is to execute the dual-router’s decisions while strictly adhering to the LLM’s context window. To achieve this, we formulate the post-routing compression as a budget-constrained optimization problem, ensuring zero out-of-memory errors and predictable latency. 
+
+Dynamic Vision Budget Calculation. Before processing the video, VideoRouter dynamically calculates the available visual token budget Bimg . Given the model’s maximum context length Lmax ,the text prompt length Ltext , and the reserved generation length Lgen , the budget is defined as: 
+
+Bimg = Lmax − Ltext − Lgen − ϵ
+
+where ϵ is a small safety margin. This dynamic budget strictly dictates the subsequent frame dropping and pooling strategies. 
+
+Priority-Aware Frame Pooling. The Semantic Router’s prediction ˆys dictates the budget allocation policy. Let N be the raw visual tokens per frame. Full pseudocode is provided in Appendix F. For the Global allocation policy ( ˆys = 0 ), broad temporal coverage is prioritized. We apply a uniform spatial pooling scale sg = 2 to all frames. If the total token count still exceeds Bimg , VideoRouter safely falls back to uniform temporal subsampling. For the Fragment allocation policy ( ˆys = 1 ), token allocation is dynamic and guided by the Image Router’s relevance scores ˆyt. This policy can preserve multiple temporally distant evidence frames, so it is not limited to single-event questions. We adopt a two-tier resolution system: a high-fidelity scale s1 = 1 for critical frames ( ˆyt = 1 ) and an aggressive scale s0 = 4 for irrelevant frames ( ˆyt = 0 ). The framework allocates available token capacity following a strict priority hierarchy: 1. Guarantee Critical Context: Prioritize preserving all high-relevance frames at the high-fidelity scale s1.2. Provide Background Context: Allocate any remaining budget to low-relevance frames at scale 
+
+s0 to maintain a coarse temporal understanding. 3. Strategic Discarding: Under extreme budget constraints, discard low-priority frames first. If the budget cannot accommodate all critical frames, uniformly sample the high-priority set to ensure vital evidence still spans the timeline. The mathematical boundaries for these scenarios and the sampling execution are formalized in Algorithm 1 in the appendix. 
+
+Sequence Reconstruction. After spatial pooling and temporal dropping, the resulting sequence 
+
+Zfinal yields a highly condensed, variable-length token distribution per frame. We inject these refined tokens back into the multi-modal text prompt by replacing the designated image context placeholders. This dynamically compacted sequence is finally processed by the LLM backbone for standard autoregressive generation. 4Figure 3: Overview of the data construction pipeline. Stage 1 generates minimal sufficient frame-level labels for the Image Router, while Stage 2 derives Global vs. Fragment allocation-policy labels for the Semantic Router. All generated data undergoes a rigorous unified validation mechanism to ensure high fidelity. 
+
+4 Supervision and Data Construction 
+
+The routers in VideoRouter are trained to make allocation decisions rather than to answer benchmark questions directly. This section summarizes the supervision signals and training schedule; full construction details are provided in Appendix A. 
+
+4.1 Data Construction 
+
+Training VideoRouter requires two supervision signals: policy-level allocation labels for the Semantic Router and frame-level relevance labels for the Image Router. We construct Video-FLR-200K by identifying the minimal sufficient frames needed to answer generated reverse-QA pairs, and construct Video-QTR-10K by assigning each query category to the allocation policy that performs better in an empirical A/B probing benchmark. The raw visual materials are uniformly sampled from the open-source LLaVA-178K training dataset to maintain domain diversity. For a question category C,we assign the Fragment allocation label ( ys = 1 ) if: 
+
+Acc fragment (C) − Acc global (C) > τ (4) where τ is a predefined accuracy margin threshold; otherwise it receives the Global allocation label. All generated samples pass consistency, logical-coherence, and counterfactual-necessity filters before being included in the final datasets. A held-out label-quality audit is provided in Appendix B. 
+
+4.2 Multi-Stage Training Stage 1: Image Router Training. We first freeze the vision encoder, projection layer, and LLM backbone, and train only the feature extractor and Image Router on Video-FLR-200K with binary frame-relevance supervision: 
+
+Limg = − 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+[yt log( pt) + (1 − yt) log(1 − pt)] (5) where yt is the frame-relevance label and pt is the predicted relevance probability. 5Stage 2: Semantic Router Training. We then freeze the backbone, extractor, and Image Router, and train only the Semantic Router on Video-QTR-10K with cross-entropy loss: 
+
+Lsem = − X
+
+> c∈{ 0,1}
+
+ys,c log( ps(c)) (6) where c ∈ { 0, 1} denotes the allocation policy and ps(c) is the predicted probability of policy c.
+
+Stage 3: Joint Fine-Tuning. Finally, we freeze the vision encoder, unfreeze the LLM backbone, and jointly align the compressed visual sequence with answer generation: 
+
+L = LLM + λsLsem + λv Limg (7) where LLM is the auto-regressive language modeling loss and λs = λv = 0 .01 in our implementa-tion. 
+
+5 Experiments 
+
+5.1 Experimental Settings Evaluations and Inference Setup. We evaluate VideoRouter on several comprehensive video under-standing benchmarks designed to assess long-form temporal reasoning capabilities. These include Video-MME [ 33 ] (spanning short, medium, and long videos up to an hour), LongVideoBench [ 34 ](tailored for extended temporal reasoning), MLVU [ 35 ], LVBench, and EgoSchema (focusing on fine-grained spatiotemporal understanding). VideoRouter is built on the InternVL3-8B architecture with input frames resized to 448 × 448 . We report two evaluation protocols. First, for controlled comparisons, all budgeted methods start from the same 64 sampled frames and share the same maximum visual-token budget Bimg = 12 ,288 ; we report the actual post-compression tokens used by each method. This isolates the contribution of the allocation strategy from the number of observed frames. Second, for comparison with standard budgeted baselines, InternVL3* dynamically samples frames according to the same context budget and uses an average of 38 frames. VideoRouter samples 64 frames and fits them into the same maximum budget via dynamic dual-routing compression. The safety margin ϵ is set to 100 tokens in the dynamic budget calculation to reserve sufficient space for answer generation. 
+
+Implementation Details. All controlled VideoRouter experiments use 4 NVIDIA H20 GPUs with DeepSpeed ZeRO-2. We follow the three-stage curriculum in Sec. 4.2: Image Router pre-training, Semantic Router training, and one epoch of joint fine-tuning. Full hyperparameters are in Appendix H. 
+
+5.2 Main Results 
+
+Table 1: Performance comparison on long-video benchmarks. We report accuracy (%) on Video-MME, LongVideoBench, MLVU, LVBench, and EgoSchema. Results above the InternVL3 block are reported from prior work under their original settings, except Qwen2.5-VL + VideoRouter, which is our cross-backbone adaptation under the same budgeted allocation protocol. Bold method names mark our VideoRouter adaptations; the controlled InternVL3 comparison is provided in Table 2. 6Model Video-MME LongVideoBench MLVU LVBench EgoSchema Long Overall                                                                                                                                                                                      
+
+> Average Duration 2386s 1010s 473s 651s 4101s 180s
+> Proprietary MLLMs
+> GPT-4V [36] 53.5 59.9 59.1 49.2 -55.6 GPT-4o [37] 65.3 71.9 66.7 64.6 30.8 72.2
+> Open-source MLLMs
+> Oryx-1.5 [38] -58.8 56.3 67.5 --MiniCPM-v2.6 [39] 51.8 60.9 54.9 37.3 --mPLUG-Owl3 [40] 50.1 59.3 52.1 63.7 --NVILA [41] 54.8 64.2 -70.1 --LLaVA-Video [6] -63.3 58.2 70.8 41.5 57.3 Video-XL [42] 49.2 55.5 49.5 64.9 --VideoLLaMA2 [43] -47.9 -48.5 -51.7 Video-CCAM [44] 46.7 53.2 -58.5 --Kangaroo [45] 46.7 56.0 54.8 61.0 39.4 62.7 LongVA [46] 46.2 52.6 -56.3 --LongVILA [47] -60.1 57.1 ---LongVU [48] -60.6 -65.4 --
+> Compression Methods
+> LLaVA-OneVision [49] -58.2 56.5 64.7 -60.1 + FastV [9] -57.3 ----+ PruMerge [7] -52.9 ----+ DyCoke [23] -59.5 ----+ DyToK [18] 49.0 59.8 58.3 49.7 --+ QTSplus [29] -52.9 -60.9 36.7 -+ DToMA [12] -65.0 59.6 71.7 -59.3 Qwen2.5-VL [50] -65.1 56.0 70.2 45.3 65.0 + DIG [25] 55.3 -61.4 70.7 --+ FastV [9] -55.7 53.2 36.8 --+ DyToK [18] -60.8 57.9 44.1 --+VideoRouter 55.8 66.0 60.4 71.0 46.0 65.7 InternVL3 [13] -66.3 58.8 71.4 --InternVL3* 54.7 64.3 56.9 70.2 41.3 62.7
+> VideoRouter (Ours) 56.0 66.5 61.9 72.1 45.5 65.1
+
+Table 1 compares VideoRouter with proprietary MLLMs, open-source MLLMs, and token-compression methods. VideoRouter improves over the corresponding base backbones and remains competitive with specialized compression baselines; Qwen-specific efficiency diagnostics are in Appendix E. Table 2 isolates the allocation strategy under a controlled InternVL3-8B setting with the same 64 sampled frames and maximum token budget. VideoRouter outperforms uniform pooling, CLIP relevance pooling, and data-only fine-tuning, indicating that gains primarily come from query-conditioned budget allocation rather than data exposure alone; protocols are in Appendix D. Despite aggressive token reduction, VideoRouter often outperforms dense or uniformly compressed baselines by preserving high-fidelity details on evidence frames while retaining coarse context elsewhere. 
+
+5.3 Exploratory Experiment Token Budget, Sampling Frames, and Compression Scales. VideoRouter’s core advantage lies in dynamic token allocation (Algorithm 1). To clarify this mechanism, we analyze the token budget 
+
+Bimg , initial sampled frame count T , and compression scales sg , s 0, s 1 on LongVideoBench. Fig. 4(a) summarizes the main trend, while the full budget table is provided in Appendix G. Under extreme token budget scarcity (4K–8K tokens), 64-frame sampling outperforms 128-frame dense sampling significantly. Forcing 128 frames into this budget triggers hyper-aggressive compres-7Table 2: Controlled comparison on InternVL3-8B. The dense row is an uncompressed reference, while all budgeted rows start from the same 64 sampled frames where applicable and share the same maximum visual-token budget Bimg = 12 ,288 ; the table reports the actual post-compression visual tokens used by each method. “Data FT” fine-tunes the baseline on the same router-supervision QA data without using any routing module. 
+
+Method Frames Visual Tokens Video-MME LongVideoBench MLVU 
+
+InternVL3 Dense 64 16,384 66.3 58.8 71.4 InternVL3 Budget ∼38 9,528 64.3 56.9 70.2 Uniform Pooling 64 8,192 65.4 58.9 70.6 CLIP Relevance Pooling 64 7,936 65.8 59.7 71.0 Data FT + Uniform Pooling 64 8,192 65.2 58.1 70.7 
+
+VideoRouter 64 7,748 66.5 61.9 72.1 4k 8k 12k 16k 24k           
+
+> Visual Token Budget ( Bimg )
+> 50
+> 52
+> 54
+> 56
+> 58
+> 60
+> 62
+> 64
+> Accuracy on LongVideoBench (%)
+> Extreme Scarcity
+> (Forced s08or drop)
+> Abundant Capacity
+> (Optimal sg= 2, s0= 4 )
+> 64 Frames
+> 96 Frames
+> 128 Frames
+> 1 : 2 1 : 4 1 : 6 1 : 8
+> Extracted Early-Layer Depth ( k)
+> 76
+> 78
+> 80
+> 82
+> 84
+> 86
+> Image Router Accuracy (%)
+> Router Acc.
+> Latency Overhead
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> Routing Latency Overhead (%)
+
+Figure 4: (a) Unified analysis on LongVideoBench: The interplay between Token Budget, Sampled Frames, and dynamic compression scales. (b) The impact of the extracted early-layer depth ( k) on Image Router accuracy and relative latency overhead. sion ( s0 ≥ 8) on irrelevant frames and critical frame loss, damaging fine-grained spatial evidence. In contrast, 64-frame initialization maintains reasonable scales ( sg = 4 , s 0 = 8 ) without critical frame loss, preserving visual fidelity and achieving 61.3% accuracy at 8K budget. With abundant budget (16K–24K tokens), the trend reverses. The 64-frame configuration reaches a 62.6% performance ceiling due to insufficient temporal coverage, while the 128-frame setup fully utilizes the budget to maintain optimal scales ( sg = 2 , s 0 = 4 ), retaining high spatial fidelity across broader temporal context and hitting a 63.8% accuracy peak. 
+
+Routing Effectiveness and Early-Layer Depth. To evaluate dual-routing modules and justify default extraction depth k = 4 , we conduct quantitative assessments on dedicated test sets. The Semantic Router achieves 98.2% accuracy on 2350 test samples, demonstrating strong capacity to infer a query’s temporal scope from linguistic cues alone. The Image Router reuses early LLM layers 
+
+E1: k to score frame relevance, revealing a critical trade-off between extraction depth, accuracy on 2,500 samples, and latency overhead. As illustrated in Fig. 4(b), two layers E1:2 yield sub-optimal 78.5% accuracy, as superficial layers lack sufficient cross-modal semantic alignment for precise frame-to-text relevance. Increasing depth to k = 4 boosts accuracy to 83.4%, confirming these layers effectively capture multimodal cues for retaining critical frames. Further deepening to 6 or 8 layers brings marginal returns plateauing at 84.5%, while routing latency overhead rises linearly from 5.1% to over 10.4%. Thus, E1:4 hits the optimal Pareto frontier, delivering robust high-precision routing with minimal computational footprint. 8Table 3: Ablation studies across multiple video benchmarks. (a) Evaluates the individual contributions of the routing modules. (b) Validates the necessity of distinct router pre-training and joint fine-tuning stages. LVB denotes LongVideoBench. 
+
+(a) Module Effectiveness                     
+
+> Model MME LVB MLVU Long Overall
+> InternVL3* 54.7 64.3 56.9 70.2 w/o Image Router 55.1 65.4 58.9 70.6 w/o Semantic Router 55.5 65.6 61.2 69.8
+> VideoRouter 56.0 66.5 61.9 72.1
+
+(b) Training Strategy                     
+
+> Training Strategy MME LVB Ego Long Overall
+> InternVL3* 54.7 64.3 56.9 62.7 w/o Joint FT (Stage 3) 54.5 64.9 57.1 64.4 w/o Pre-train (Stage 1 & 2) 55.1 65.4 60.2 64.6
+> VideoRouter (Full) 56.0 66.5 61.9 65.1
+
+Table 4: End-to-end latency breakdown on InternVL3-8B with 64 sampled frames. Router time includes the shadow-stack forward pass and routing heads. TTFT is measured after video loading and includes visual encoding, routing, compression, and LLM prefill.                                               
+
+> Method Visual Tokens Router (s) Vision+Compress (s) LLM Prefill (s) TTFT (s) Peak Mem. (GB)
+> InternVL3 Dense 16,384 –1.7 6.7 8.4 36.5 InternVL3 Budget 9,528 –1.1 3.9 5.0 25.8 Uniform Pooling 8,192 –1.2 3.6 4.8 24.6 CLIP Relevance Pooling 7,936 0.2 1.3 3.4 4.9 24.3
+> VideoRouter ( s= 2 ,4)7,748 0.5 1.2 3.0 4.7 23.9 VideoRouter ( s= 4 ,8)5,262 0.5 1.2 2.5 4.2 22.4
+
+5.4 Ablation Studies Effectiveness of Dual-Router Components. To evaluate the individual contributions of the Semantic and Image Routers, we conduct ablation studies on Video-MME. All variants maintain a unified token budget of Bimg = 12 ,288 , using fixed global scales of sg = 2 for Global queries and s0 = 4 
+
+for irrelevant frames in Fragment queries. The full model outperforms all variants in Table 3(a). Removing the Image Router prevents fine-grained redundancy filtering, while removing the Semantic Router can over-apply adaptive allocation to holistic queries; thus policy prediction and frame-level relevance scoring are complementary. 
+
+Necessity of Joint Fine-Tuning. Table 3(b) validates the training curriculum. Skipping joint fine-tuning leaves the LLM poorly aligned with compressed visual tokens, while training without isolated router pre-training weakens routing supervision. 
+
+Efficiency and Overhead Analysis. VideoRouter adds a shadow-stack router pass, but Table 4 shows that reduced LLM prefill more than offsets this overhead, lowering TTFT and peak memory. 
+
+6 Conclusion 
+
+We presented VideoRouter, a query-adaptive framework for budgeted long-video token compression. By combining policy-level routing with frame-level relevance scoring, VideoRouter achieves up to a 67.9% token reduction while maintaining or improving accuracy across major benchmarks. Current limitations include primary evaluation on InternVL3-8B, offline access to sampled frames, and possible residual bias from VLM/LLM-assisted supervision, despite our Qwen2.5-VL adaptation and label-audit procedures. Since biases in the base VLM or automatically constructed supervision may affect which visual evidence the routers preserve or discard, deployment should audit performance across domains and demographic groups. 9References 
+
+[1] Muhammad Maaz, Hanoona Rasheed, Salman Khan, and Fahad Khan. Video-chatgpt: Towards detailed video understanding via large vision and language models. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 12585–12602, 2024. [2] Bin Lin, Yang Ye, Bin Zhu, Jiaxi Cui, Munan Ning, Peng Jin, and Li Yuan. Video-llava: Learning united visual representation by alignment before projection. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pages 5971–5984, 2024. [3] Peng Jin, Ryuichi Takanobu, Wancai Zhang, Xiaochun Cao, and Li Yuan. Chat-univi: Unified visual representation empowers large language models with image and video understanding. In 
+
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 13700–13710, 2024. [4] Yuanhan Zhang, Bo Li, Haotian Liu, Yong Jae Lee, Liangke Gui, Di Fu, Jiashi Feng, Ziwei Liu, and Chunyuan Li. Llava-next-video: Yielding zero-shot video understanding from image-language models. arXiv preprint arXiv:2404.08129 , 2024. [5] Lin Xu, Yilin Zhao, Daquan Zhou, Zhijie Lin, See Kiong Ng, and Jiashi Feng. Pllava: Parameter-free llava extension from images to videos for video dense captioning. arXiv preprint arXiv:2404.16994 , 2024. [6] Yuanhan Zhang, Jinming Wu, Wei Li, Bo Li, Zejun Ma, Ziwei Liu, and Chunyuan Li. Llava-video: Video instruction tuning with synthetic data. arXiv preprint arXiv:2410.02713 , 2024. [7] Yuzhang Shang, Mu Cai, Bingxin Xu, Yong Jae Lee, and Yan Yan. Llava-prumerge: Adaptive token reduction for efficient large multimodal models. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 22857–22867, 2025. [8] Senqiao Yang, Yukang Chen, Zhuotao Tian, Chengyao Wang, Jingyao Li, Bei Yu, and Jiaya Jia. Visionzip: Longer is better but not necessary in vision language models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 19792–19802, 2025. [9] Liang Chen, Haozhe Zhao, Tianyu Liu, Shuai Bai, Junyang Lin, Chang Zhou, and Baobao Chang. An image is worth 1/2 tokens after layer 2: Plug-and-play inference acceleration for large vision-language models. In European Conference on Computer Vision , pages 19–35. Springer, 2024. [10] Yuan Zhang, Chun-Kai Fan, Junpeng Ma, Wenzhao Zheng, Tao Huang, Kuan Cheng, Denis Gudovskiy, Tomoyuki Okuno, Yohei Nakata, Kurt Keutzer, et al. Sparsevlm: Visual token sparsification for efficient vision-language model inference. arXiv preprint arXiv:2410.04417 ,2024. [11] Mengyue Wang, Shuo Chen, Kristian Kersting, Volker Tresp, and Yunpu Ma. Metok: Multi-stage event-based token compression for efficient long video understanding. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 18881– 18895, 2025. [12] Bowen Yuan, Sisi You, and Bing-Kun Bao. Dtoma: Training-free dynamic token manipulation for long video understanding. In Proceedings of the Thirty-Fourth International Joint Conference on Artificial Intelligence , pages 2314–2322, 2025. [13] Zhe Chen, Jiannan Wu, Wenhai Wang, Weijie Su, Guo Chen, Sen Xing, Muyan Zhong, Qinglong Zhang, Xizhou Zhu, Lewei Lu, et al. Internvl: Scaling up vision foundation models and aligning for generic visual-linguistic tasks. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 24185–24198, 2024. [14] Daniel Bolya, Cheng-Yang Fu, Xiaoliang Dai, Peizhao Zhang, Christoph Feichtenhofer, and Judy Hoffman. Token merging: Your vit but faster. arXiv preprint arXiv:2210.09461 , 2022. 10 [15] Youwei Liang, Chongjian Ge, Zhan Tong, Yibing Song, Jue Wang, and Pengtao Xie. Not all patches are what you need: Expediting vision transformers via token reorganizations. arXiv preprint arXiv:2202.07800 , 2022. [16] Yongming Rao, Wenliang Zhao, Benlin Liu, Jiwen Lu, Jie Zhou, and Cho-Jui Hsieh. Dynamicvit: Efficient vision transformers with dynamic token sparsification. Advances in Neural Information Processing Systems , 34:13937–13949, 2021. [17] Michael Ryoo, AJ Piergiovanni, Anurag Arnab, Mostafa Dehghani, and Anelia Angelova. Tokenlearner: Adaptive space-time tokenization for videos. Advances in Neural Information Processing Systems , 34:12786–12797, 2021. [18] Yulin Li, Haokun Gui, Ziyang Fan, Junjie Wang, Bin Kang, Bin Chen, and Zhuotao Tian. Less is more, but where? dynamic token compression via llm-guided keyframe prior. arXiv preprint arXiv:2512.06866 , 2025. [19] Long Xing, Qidong Huang, Xiaoyi Dong, Jiajie Lu, Pan Zhang, Yuhang Zang, Yuhang Cao, Conghui He, Jiaqi Wang, Feng Wu, et al. Pyramiddrop: Accelerating your large vision-language models via pyramid visual redundancy reduction. arXiv preprint arXiv:2410.17247 , 2024. [20] Hao Wu, Yingqi Fan, Jinyang Dai, Junlong Tong, Yunpu Ma, and Xiaoyu Shen. Hidrop: Hierarchical vision token reduction in mllms via late injection, concave pyramid pruning, and early exit. arXiv preprint arXiv:2602.23699 , 2026. [21] Xiangchen Wang, Jinrui Zhang, Teng Wang, Haigang Zhang, and Feng Zheng. Seeing more, saying more: Lightweight language experts are dynamic video token compressors. In Proceed-ings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 541–558, 2025. [22] Long Cui, Weiyun Wang, Jie Shao, Zichen Wen, Gen Luo, Linfeng Zhang, Yanting Zhang, Yu Qiao, and Wenhai Wang. Vico: A training strategy towards semantic aware dynamic high-resolution. arXiv preprint arXiv:2510.12793 , 2025. [23] Keda Tao, Can Qin, Haoxuan You, Yang Sui, and Huan Wang. Dycoke: Dynamic compression of tokens for fast video large language models. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 18992–19001, 2025. [24] Shyamal Buch, Arsha Nagrani, Anurag Arnab, and Cordelia Schmid. Flexible frame selection for efficient video reasoning. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 29071–29082, 2025. [25] Jialuo Li, Bin Li, Jiahao Li, and Yan Lu. Divide, then ground: Adapting frame selection to query types for long-form video understanding. arXiv preprint arXiv:2512.04000 , 2025. [26] Jiawei Guo, Feifei Zhai, Pu Jian, Qianrun Wei, and Yu Zhou. Crop: Contextual region-oriented visual token pruning. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 9767–9783, 2025. [27] Yogesh Kumar. Language-guided temporal token pruning for efficient videollm processing. In 
+
+Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing ,pages 8935–8942, 2025. [28] Xiaohu Huang, Hao Zhou, and Kai Han. Prunevid: Visual token pruning for efficient video large language models. In Findings of the Association for Computational Linguistics: ACL 2025 , pages 19959–19973, 2025. [29] Siyou Li, Huanan Wu, Juexi Shao, Yinghao Ma, Yujian Gan, Yihao Luo, Yuwei Wang, Dong Nie, Lu Wang, Wenqing Wu, et al. Seeing the forest and the trees: Query-aware tokenizer for long-video multimodal language models. arXiv preprint arXiv:2511.11910 , 2025. [30] Linli Yao, Haoning Wu, Kun Ouyang, Yuanxing Zhang, Caiming Xiong, Bei Chen, Xu Sun, and Junnan Li. Generative frame sampler for long video understanding. In Findings of the Association for Computational Linguistics: ACL 2025 , pages 17900–17917, 2025. 11 [31] Ziyang Wang, Shoubin Yu, Elias Stengel-Eskin, Jaehong Yoon, Feng Cheng, Gedas Bertasius, and Mohit Bansal. Videotree: Adaptive tree-based video representation for llm reasoning on long videos. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 3272–3283, 2025. [32] Chaoxiang Cai, Longrong Yang, Minghe Weng, Xuewei Li, Zequn Qin, and Xi Li. Long-tailed distribution-aware router for mixture-of-experts in large vision-language model. arXiv preprint arXiv:2507.01351 , 2025. [33] Chaoyou Fu, Yuhan Dai, Yongdong Luo, Lei Li, Shuhuai Ren, Renrui Zhang, Zihan Wang, Chenyu Zhou, Yunhang Shen, Mengdan Zhang, et al. Video-mme: The first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 24108–24118, 2025. [34] Haoning Wu, Dongxu Li, Bei Chen, and Junnan Li. Longvideobench: A benchmark for long-context interleaved video-language understanding. Advances in Neural Information Processing Systems , 37:28828–28857, 2024. [35] Junjie Zhou, Yan Shu, Bo Zhao, Boya Wu, Zhengyang Liang, Shitao Xiao, Minghao Qin, Xi Yang, Yongping Xiong, Bo Zhang, et al. Mlvu: Benchmarking multi-task long video understanding. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 13691–13701, 2025. [36] Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al. Gpt-4 technical report. arXiv preprint arXiv:2303.08774 , 2023. [37] Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al. Gpt-4o system card. arXiv preprint arXiv:2410.21276 , 2024. [38] Zuyan Liu, Yuhao Dong, Ziwei Liu, Winston Hu, Jiwen Lu, and Yongming Rao. Oryx mllm: On-demand spatial-temporal understanding at arbitrary resolution. arXiv preprint arXiv:2409.12961 ,2024. [39] Yuan Yao, Tianyu Yu, Ao Zhang, Chongyi Wang, Junbo Cui, Hongji Zhu, Tianchi Cai, Haoyu Li, Weilin Zhao, Zhihui He, et al. Minicpm-v: A gpt-4v level mllm on your phone. arXiv preprint arXiv:2408.01800 , 2024. [40] Jiabo Ye, Haiyang Xu, Haowei Liu, Anwen Hu, Ming Yan, Qi Qian, Ji Zhang, Fei Huang, and Jingren Zhou. mplug-owl3: Towards long image-sequence understanding in multi-modal large language models. arXiv preprint arXiv:2408.04840 , 2024. [41] Zhijian Liu, Ligeng Zhu, Baifeng Shi, Zhuoyang Zhang, Yuming Lou, Shang Yang, Haocheng Xi, Shiyi Cao, Yuxian Gu, Dacheng Li, et al. Nvila: Efficient frontier visual language models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,pages 4122–4134, 2025. [42] Yan Shu, Zheng Liu, Peitian Zhang, Minghao Qin, Junjie Zhou, Zhengyang Liang, Tiejun Huang, and Bo Zhao. Video-xl: Extra-long vision language model for hour-scale video understanding. In Proceedings of the Computer Vision and Pattern Recognition Conference ,pages 26160–26169, 2025. [43] Zesen Cheng, Sicong Leng, Hang Zhang, Yifei Xin, Xin Li, Guanzheng Chen, Yongxin Zhu, Wenqi Zhang, Ziyang Luo, Deli Zhao, et al. Videollama 2: Advancing spatial-temporal modeling and audio understanding in video-llms. arXiv preprint arXiv:2406.07476 , 2024. [44] Jiajun Fei, Dian Li, Zhidong Deng, Zekun Wang, Gang Liu, and Hui Wang. Video-ccam: Enhancing video-language understanding with causal cross-attention masks for short and long videos. arXiv preprint arXiv:2408.14023 , 2024. [45] Jiajun Liu, Yibing Wang, Hanghang Ma, Xiaoping Wu, Xiaoqi Ma, Xiaoming Wei, Jianbin Jiao, Enhua Wu, and Jie Hu. Kangaroo: A powerful video-language model supporting long-context video input. International Journal of Computer Vision , 134(3):114, 2026. 12 [46] Peiyuan Zhang, Kaichen Zhang, Bo Li, Guangtao Zeng, Jingkang Yang, Yuanhan Zhang, Ziyue Wang, Haoran Tan, Chunyuan Li, and Ziwei Liu. Long context transfer from language to vision. 
+
+arXiv preprint arXiv:2406.16852 , 2024. [47] Yukang Chen, Fuzhao Xue, Dacheng Li, Qinghao Hu, Ligeng Zhu, Xiuyu Li, Yunhao Fang, Haotian Tang, Shang Yang, Zhijian Liu, et al. Longvila: Scaling long-context visual language models for long videos. arXiv preprint arXiv:2408.10188 , 2024. [48] Xiaoqian Shen, Yunyang Xiong, Changsheng Zhao, Lemeng Wu, Jun Chen, Chenchen Zhu, Zechun Liu, Fanyi Xiao, Balakrishnan Varadarajan, Florian Bordes, et al. Longvu: Spa-tiotemporal adaptive compression for long video-language understanding. arXiv preprint arXiv:2410.17434 , 2024. [49] Bo Li, Yuanhan Zhang, Dong Guo, Renrui Zhang, Feng Li, Hao Zhang, Kaichen Zhang, Peiyuan Zhang, Yanwei Li, Ziwei Liu, et al. Llava-onevision: Easy visual task transfer. arXiv preprint arXiv:2408.03326 , 2024. [50] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, et al. Qwen2.5-vl technical report. arXiv preprint arXiv:2502.13923 ,2025. 13 A Additional Data Construction Details 
+
+Training VideoRouter requires high-quality supervision for two routing decisions: frame-level relevance for the Image Router and allocation-policy selection for the Semantic Router. Raw visual materials are uniformly sampled from the open-source LLaVA-178K training dataset to avoid benchmark leakage and to cover diverse visual domains. 
+
+Image Router data. We seek the minimal sufficient set of frames required to answer a specific query. Instead of heuristic sampling, we employ an inversion strategy. First, a frontier VLM densely captions uniformly sampled video frames, extracting fine-grained spatial and temporal details. Second, an LLM examiner generates reverse-QA pairs that depend on specific visual cues from a subset of frames. Finally, we test whether answering each generated question requires each individual frame; frames deemed essential receive a binary relevance label of 1. 
+
+Semantic Router data. To derive allocation-policy labels, we construct a probing benchmark with 2,500 multiple-choice questions covering diverse task categories. We compare two forced policies using the same InternVL3-8B backbone: an adaptive Fragment policy equipped with the trained Image Router and a Global policy using uniform frame pooling. A category receives the Fragment label if the adaptive policy improves over the Global policy by more than the margin τ ; otherwise it receives the Global label. 
+
+Unified validation. All generated samples pass three filters. First, a consistency check verifies that the designated visual input is sufficient to recover the target answer. Second, an LLM-based logical-coherence filter removes contradictions between the generated QA, dense captions, and allocation label. Third, a counterfactual necessity test masks labeled positive frames or forces the alternative allocation policy; labels are corrected or removed if the answer remains recoverable without the claimed evidence. Spatial           
+
+> (N=180)
+> Count
+> (N=178) Desc-Object
+> (N=175)
+> Desc-Human
+> (N=168)
+> Fine Action
+> (N=162)
+> Attr Change
+> (N=113)
+> Cam Dir.
+> (N=103)
+> Obj Dir.
+> (N=95)
+> Speed
+> (N=91)
+> Temporal
+> (N=180)
+> Causal
+> (N=180)
+> Desc-Scene
+> (N=180)
+> Binary
+> (N=180)
+> Plot Und.
+> (N=178)
+> Time Order
+> (N=172)
+> Non-Exist
+> (N=165)
+> Fragment Mode
+> (50.6%)
+> Global Mode
+> (49.4%)
+> LLaVA-178K
+> (N=2,500)
+> 020 40 60 80 100
+> Accuracy (%)
+> Spatial
+> Count
+> Desc-Object
+> Desc-Human
+> Fine Action
+> Attr Change
+> Cam Dir.
+> Obj Dir.
+> Speed
+> Temporal
+> Causal
+> Desc-Scene
+> Binary
+> Plot Und.
+> Time Order
+> Non-Exist
+> Fragment-Favored ( >)
+> Global-Favored ( < = )
+> InternVL3 + Image Router (Fragment)
+> InternVL3 Global Compress (Global)
+
+Figure 5: Empirical A/B probing study for Semantic Router supervision. The left panel shows the distribution of sampled question categories, while the right panel compares forced Global and Fragment allocation policies. Categories with a sufficient Fragment-policy margin are assigned adaptive-allocation labels; the remaining categories are assigned Global allocation labels. 
+
+B Label Quality Audit 
+
+To estimate the quality of the generated supervision, we audit a held-out subset of 500 samples, including 250 policy-label examples from Video-QTR-10K and 250 frame-relevance examples from Video-FLR-200K. Each sample is independently checked by two annotators using the source video frames, generated question, answer, and assigned labels. For allocation-policy labels, annotators decide whether broad coverage or adaptive high-resolution preservation is more appropriate under a fixed budget. For frame-relevance labels, annotators mark whether each positive frame contains evidence necessary to answer the query. 14 The audit yields 94.0% agreement with the generated allocation-policy labels and 88.4% agreement with frame-relevance labels. Disagreements are concentrated in mixed queries requiring both broad temporal context and localized evidence, as well as visually ambiguous frames where multiple adjacent frames contain near-duplicate evidence. These results suggest that the validation pipeline substantially reduces teacher noise, while also motivating the use of a policy-level router rather than treating Global/Fragment as an exhaustive semantic taxonomy. 
+
+C Data Statistics and Split Integrity 
+
+Video-FLR-200K contains 200,664 QA instances with frame-level relevance annotations, and Video-QTR-10K contains 10,000 video-query pairs with allocation-policy labels. We reserve held-out subsets for router validation and label-quality auditing, and no benchmark validation or test videos are used during data construction. The raw visual materials are sampled from the training split of LLaVA-178K to provide broad visual diversity while avoiding contamination from Video-MME, LongVideoBench, MLVU, LVBench, and EgoSchema evaluation examples. The generated labels are used only to supervise routing and allocation decisions. They do not provide direct benchmark answers at inference time. This separation is important because VideoRouter changes how visual evidence is represented under a budget, rather than adding task-specific answer memorization. 
+
+D Additional Baseline Protocols 
+
+We describe the controlled baselines used in Table 2 and Table 4. Except for the dense uncompressed reference row, all controlled methods use InternVL3-8B, the same 64 sampled input frames where applicable, and the same maximum visual-token budget Bimg = 12 ,288 . The table reports actual post-compression visual tokens because some fixed pooling strategies do not consume the full maximum budget exactly. 
+
+Uniform Pooling. Uniform Pooling applies the same spatial pooling scale to every sampled frame, independent of the query. We use the strongest fixed scale that fits comfortably within the budget while preserving all 64 frames, yielding 8,192 visual tokens. We also tried using a weaker pooling scale to consume more tokens, but it exceeded the effective budget once text and generation reservations were included. 
+
+CLIP Relevance Pooling. CLIP Relevance Pooling computes frame-query similarity using a frozen CLIP-style image-text encoder. Frames are ranked by similarity; the highest-scoring frames retain higher spatial fidelity, while lower-scoring frames are aggressively pooled until the resulting sequence fits the maximum budget. This baseline uses no VideoRouter training data or early LLM features, and therefore tests whether a training-free relevance score is sufficient for budget allocation. 
+
+Data FT + Uniform Pooling. This baseline fine-tunes InternVL3-8B on the same router-supervision QA data used by VideoRouter but removes both routing modules at inference time. It then applies uniform pooling to all frames. This isolates the effect of data exposure from the effect of dynamic allocation, since it sees the same training examples but cannot adapt token allocation per query or frame. 
+
+Latency measurement. TTFT is averaged over the same evaluation subset after video loading. It includes visual encoding, optional routing, compression, and LLM prefill. Router time includes the shadow-stack forward pass and routing heads. The latency table is intended to account for the router overhead rather than reporting token reduction alone. All latency numbers are reported as single-sample inference averages on the same hardware configuration used in the main experiments. 
+
+E Cross-Backbone Adaptation on Qwen2.5-VL 
+
+To verify that VideoRouter is not tied to InternVL3-specific implementation details, we instantiate the same routing framework on Qwen2.5-VL. The adaptation keeps the allocation algorithm unchanged: the Semantic Router predicts the dominant allocation policy, the Image Router scores frame relevance, and the resulting frame scores drive the same priority-aware pooling rule. The only backbone-specific 15 change is the router feature extractor, where we reuse the first four language layers of Qwen2.5-VL as the shadow stack and attach the same lightweight router heads. Qwen2.5-VL uses dynamic-resolution visual tokenization [ 50 ]. As an approximate image-frame intuition, its 14-pixel patching followed by a 2 × 2 spatial merge makes one final visual token correspond roughly to a 28 × 28 image region; for a 448 × 448 image, this would be about 16 × 16 = 256 spatial visual tokens before video-specific temporal packing and downstream budgeted pooling. The exact video token count is not fixed per frame and depends on dynamic resizing, temporal packing, and text/generation reservations, so we report actual post-compression visual tokens in Table 6. The cross-backbone experiment uses the same high-level evaluation protocol as the main budgeted setting: 64 sampled frames, a maximum visual-token budget of 12,288, and the same safety margin for text and generation tokens. We compare against Qwen2.5-VL baselines under the same input-frame setting and report actual post-compression visual tokens to make the efficiency comparison explicit. Table 5 mirrors the controlled InternVL3 comparison in the main paper, while Table 6 reports Qwen-specific efficiency and latency diagnostics. Table 5: Controlled fair comparison using Qwen2.5-VL as the base model. The dense row is an uncompressed 64-frame reference, while all budgeted rows use the same 64 sampled input frames and the same maximum visual-token budget. The table reports actual post-compression visual tokens.                                    
+
+> Method Frames Visual Tokens Video-MME LongVideoBench MLVU
+> Qwen2.5-VL Dense 64 16,384 65.5 56.8 70.5 Qwen2.5-VL Budget 64 9,680 65.1 56.0 70.2 Uniform Pooling 64 8,192 65.3 56.9 70.3 CLIP Relevance Pooling 64 7,936 65.6 57.6 70.7 Data FT + Uniform Pooling 64 8,192 65.4 56.6 70.6
+> Qwen2.5-VL + VideoRouter 64 7,910 66.0 60.4 71.0
+
+The Qwen controlled comparison follows the same pattern as the InternVL3 study: using the same frames and budget, training-free CLIP relevance improves over uniform pooling but remains below VideoRouter, while data-only fine-tuning does not recover the gains of query-conditioned allocation. The largest margin appears on LongVideoBench, consistent with the paper’s central claim that dynamic evidence allocation is most useful when sparse key events must be preserved under a long-video budget. Table 6: Controlled cross-backbone comparison using Qwen2.5-VL as the base model. Both rows use 64 sampled input frames and the same maximum visual-token budget; the table reports actual post-compression visual tokens, TTFT, peak memory, and representative benchmark accuracy.                   
+
+> Method Frames Visual Tokens TTFT (s) Peak Mem. (GB) Video-MME Overall LongVideoBench
+> Qwen2.5-VL Budget Baseline 64 9,680 5.3 26.1 65.1 56.0 + VideoRouter 64 7,910 4.9 24.7 66.0 60.4
+
+The comparison shows that VideoRouter reduces the actual visual-token count by 18.3% relative to the Qwen2.5-VL budget baseline, lowers TTFT by 0.4s, and improves LongVideoBench by 4.4 points. This trend is consistent with the InternVL3 experiments: dynamic allocation is most beneficial on long-context benchmarks where preserving sparse high-value evidence matters more than uniformly retaining all visual tokens. 
+
+F Dynamic Allocation Algorithm G Budget Sensitivity 
+
+Table 7 reports the complete LongVideoBench budget sweep. We render it here as a non-floating table to keep the result adjacent to the discussion in the appendix. 16 Algorithm 1 Dynamic Token Allocation under Budget Constraint 
+
+Input: Token budget Bimg , frames V = {ft}Tt=1 , relevance scores {ˆyt}Tt=1 , tokens per frame N ,pooling scales s1, s 0
+
+Output: Pooled visual token sequence Zfinal  
+
+> 1:
+
+Initialize F1 ← { ft | ˆyt = 1 }, F0 ← { ft | ˆyt = 0 } 
+
+> 2:
+
+Calculate C1 ← |F 1| · (N/s 21), C0 ← |F 0| · (N/s 20) 
+
+> 3:
+
+if C1 + C0 ≤ Bimg then  
+
+> 4:
+
+Fkeep ← F 1 ∪ F 0 ▷ Sufficient budget: keep all  
+
+> 5:
+
+else if C1 ≤ Bimg then  
+
+> 6:
+
+k ← ⌊ (Bimg − C 1)/(N/s 20)⌋ ▷ Partial budget: sample redundant  
+
+> 7:
+
+F′ 
+
+> 0
+
+← UniformSample (F0, k ) 
+
+> 8:
+
+Fkeep ← F 1 ∪ F ′ 
+
+> 0
+> 9:
+
+else  
+
+> 10:
+
+k ← ⌊ Bimg /(N/s 21)⌋ ▷ Extreme budget: sample critical  
+
+> 11:
+
+Fkeep ← UniformSample (F1, k ) 
+
+> 12:
+
+end if  
+
+> 13:
+
+Zfinal ← [MeanPool (ft, s 1 if ˆyt = 1 else s0) for ft in V if ft ∈ F keep ] 
+
+> 14:
+
+return Zfinal 
+
+Table 7: Budget sensitivity on LongVideoBench accuracy (%). Each column denotes a rounded available visual-token budget Bimg after reserving text and generation tokens: 4K, 8K, 12K, 16K, and 24K correspond approximately to 4,096, 8,192, 12,288, 16,384, and 24,576 visual tokens. All methods use InternVL3-8B. 
+
+# Method Visual-token budget Bimg 
+
+# 4K 8K 12K 16K 24K 
+
+# Uniform Pooling (64f) 55.8 58.0 58.9 60.0 60.7 CLIP Relevance Pooling (64f) 56.9 59.2 60.3 61.1 61.5 
+
+# VideoRouter (64f) 58.4 61.3 61.9 62.6 62.6 
+
+# VideoRouter (128f) 54.9 59.8 62.4 63.4 63.8 
+
+H Additional Implementation Details 
+
+All controlled InternVL3 VideoRouter experiments use InternVL3-8B with input frames resized to 
+
+448 × 448 . Stage 1 trains the Image Router on Video-FLR-200K for 5 epochs with learning rate 
+
+5 × 10 −5, per-device batch size 16, and 4 gradient accumulation steps. Stage 2 trains the Semantic Router on Video-QTR-10K for 2 epochs with learning rate 1 × 10 −5, per-device batch size 4, and 4 gradient accumulation steps. Stage 3 jointly aligns routing and generation for 1 epoch with learning rate 5 × 10 −6, per-device batch size 4, and 4 gradient accumulation steps. Unless otherwise specified, we set the safety margin in the dynamic budget calculation to ϵ = 100 tokens. 
+
+I Router Training Dynamics 
+
+Fig. 6 shows that both routing modules converge stably. The Semantic Router converges rapidly, suggesting that early language features encode useful policy-level priors. The Image Router im-proves more gradually because frame-level relevance requires cross-modal alignment between visual evidence and the query. 
+
+J Prompt Templates 
+
+Fig. 7–Fig. 11 show the prompt templates used by the automated data construction and validation pipeline. 17 Table 8: Detailed hyperparameters for the three-stage training curriculum. The Global and Fragment scales denote the spatial pooling scales used during joint fine-tuning and inference to fit routed visual tokens into the predefined budget. 
+
+Hyperparameter Stage 1 Stage 2 Stage 3 Image Router Semantic Router Joint FT 
+
+model_max_length 12288 12288 12288 
+
+num_train_epochs 5 2 1
+
+batch_size (per device) 16 4 4
+
+gradient_accumulation 4 4 4
+
+learning_rate 5 × 10 −5 1 × 10 −5 5 × 10 −6
+
+weight_decay 0.0 0.0 0.05 
+
+warm_up_ratio 0.03 0.03 0.03 
+
+lr_scheduler_type Cosine Cosine Cosine 
+
+freeze_vision_model True True True 
+
+freeze_language_model True True False 
+
+freeze_Semantic_Router True False False 
+
+freeze_Image_Router False True False 
+
+dropout 0.0 0.0 0.0 
+
+global_scale (sg ) – – 2
+
+fragment_scale (s1, s 0) – – 1, 4 
+
+Figure 6: Training curves for the Semantic Router and Image Router. 
+
+Figure 7: Prompt template for dense captioning, designed to extract objective visual details from uniformly sampled frames. 18 Figure 8: Prompt template for reverse-QA generation, encouraging questions that rely on localized visual cues. 
+
+Figure 9: Prompt template for rule-guided QA generation based on statistically selected allocation-policy categories. 
+
+Figure 10: Prompt template for consistency and counterfactual validation, ensuring visual sufficiency and necessity. 19 Figure 11: Prompt template for logical-coherence filtering, identifying physical contradictions and allocation-policy violations. 20

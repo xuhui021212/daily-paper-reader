@@ -1,0 +1,2204 @@
+Title: VISD: Enhancing Video Reasoning via Structured Self-Distillation
+
+URL Source: https://arxiv.org/pdf/2605.06094v2
+
+Published Time: Mon, 11 May 2026 01:40:32 GMT
+
+Number of Pages: 34
+
+Markdown Content:
+# VISD: Enhancing Video Reasoning via Structured Self-Distillation 
+
+Hao Lin 1∗
+
+, Kunyang Lv 2∗
+
+, Xu Jiang 3, Jingqi Tian 4,Zhongjing Du 3, Jiayu Ding 3, Qiaoman Zhang 3, Hongbo Jin 3†
+
+> 1
+
+HUST, 2Wuhan University, 3Peking University, 4Tsinghua University 
+
+Abstract 
+
+Training VideoLLMs for complex reasoning remains challenging due to sparse sequence-level rewards and the lack of fine-grained credit assignment over long, temporally grounded reasoning trajectories. While reinforcement learning with ver-ifiable rewards (RLVR) provides reliable supervision, it fails to capture token-level contributions, leading to inefficient learning. Conversely, existing self-distillation methods offer dense supervision but lack structure and diagnostic specificity, and often interact unstably with reinforcement learning. In this work, we propose 
+
+VISD , a structured self-distillation framework that introduces diagnostically mean-ingful privileged information for video reasoning. VISD employs a video-aware judge model to decompose reasoning quality into multiple dimensions, including answer correctness, logical consistency, and spatio-temporal grounding, and uses this structured feedback to guide a teacher policy for token-level supervision. To stably integrate dense supervision with RL, we introduce a direction–magnitude decoupling mechanism, where rollout-level advantages computed from rewards de-termine update direction, while structured privileged signals modulate token-level update magnitudes. This design enables semantically aligned and fine-grained credit assignment, improving both reasoning faithfulness and training efficiency. Additionally, VISD incorporates curriculum scheduling and EMA-based teacher stabilization to support robust optimization over long video sequences. Experi-ments on diverse benchmarks show that VISD consistently outperforms strong baselines, improving answer accuracy and spatio-temporal grounding quality. No-tably, VISD reaches these gains with nearly 2× faster convergence in optimization steps, highlighting the effectiveness of structured self supervision in improving both performance and sample efficiency for VideoLLMs. 
+
+1 Introduction 
+
+Recent progress in VideoLLMs [ 29 , 50 , 10 , 48 ] has significantly advanced multimodal reasoning, enabling models to answer complex questions grounded in dynamic visual content. Despite these improvements, training VideoLLMs remains fundamentally challenging. Unlike static image or text reasoning, video understanding requires aligning long reasoning trajectories with temporally evolving visual evidence [ 30 , 9, 44 , 38 ], where both the correctness of the final answer and the faithfulness of intermediate reasoning are crucial. This introduces a unique difficulty: learning signals must not only indicate whether an output is correct, but also identify where and why the reasoning process succeeds or fails. Without such fine-grained guidance, training often becomes inefficient, requiring a large number of samples to propagate sparse rewards through long reasoning trajectories. 
+
+> ∗These authors contributed equally to this work.
+> †Corresponding Author Preprint.
+> arXiv:2605.06094v2 [cs.CV] 8 May 2026
+
+A natural approach to training such models is reinforcement learning with verifiable rewards [ 13 , 9 ,25 ] (RLVR), where correctness signals are derived from ground-truth answers or external verifiers. While effective in providing reliable optimization directions, these rewards are inherently sparse and operate at the sequence level [ 13 , 46 , 54 ]. As a result, they fail to capture the heterogeneous contri-butions of individual tokens within long reasoning chains, especially when errors arise from subtle temporal misalignment or incorrect visual grounding. This limitation becomes more pronounced in video settings, where a correct answer may still be supported by flawed reasoning, and vice versa. An alternative line of work leverages self-distillation to provide dense token-level supervision [ 53 ,18 , 46 , 35 ]. However, existing approaches typically treat the additional supervision as unstructured or modality-agnostic signals. When directly applied to VideoLLMs, this leads to two key issues. First, the supervision lacks diagnostic specificity, making it difficult to distinguish between different types of reasoning errors, such as logical inconsistency versus grounding failure [ 28 , 32 ]. Second, the interaction between self-distillation and reinforcement learning is often unstable, as auxiliary signals may override or conflict with reward-driven optimization [21, 24]. In this work, we propose VISD , a structured self-distillation framework that integrates reinforcement learning with structured privileged information. The central idea is to elevate self-distillation from a generic auxiliary signal to a structured supervision space that captures the compositional nature of reasoning errors in video tasks. Concretely, VISD introduces a video-aware judge model that evaluates each sampled reasoning trajectory and produces structured feedback along multiple dimensions, including answer correctness, reasoning consistency, and spatio-temporal grounding quality. This feedback is used as privileged information to condition a teacher policy, which provides token-level guidance that is both fine-grained and diagnostically meaningful. In contrast to prior approaches [ 53 ,18 , 46 , 45 ] that rely on implicit or latent supervision, our design explicitly encodes the causes of reasoning failures, enabling more targeted corrections during training. GRPO      
+
+> Video Input
+> Question
+> What is he
+> doing?
+> Policy Model
+> Sample Multiple Responses
+> 𝒚 (𝟏 )
+> 𝒚 (𝟐 )
+> 𝒚 (𝑮 )
+> Rule -based Reward
+> Accuracy
+> Temporal
+> Spatial
+> Format
+> Group Normalization
+> Relative Advantage 𝐴 ⅈ
+> Sparse Sequence -level Update
+> VISD
+> Video Input
+> Question
+> What is he
+> doing?
+> Policy Model Sample Response
+> Rule -based Reward
+> Accuracy
+> Temporal
+> Spatial
+> Format
+> Teacher Model
+> Dense Token -level
+> Update
+> Group Normalization
+> Relative Advantage 𝐴 ⅈ
+
+More Dense  Token -level Signal 
+
+GRPO 
+
+> Probabilities
+> Tokens
+> Probabilities
+> Tokens
+
+VISD  Token -level 
+
+> Update
+> Sequence -level
+> Update
+> Update Comparison
+
+Higher Training Efficiency 
+
+> Training Steps
+> Performance
+
+VISD 
+
+GRPO 
+
+> +
+> Privileged Information
+> Faster Convergence
+> &
+> Higher Performance
+> At 23s
+> Input
+> Input
+> 𝒚 (𝟏 )
+> Higher Rollout Efficiency
+
+Figure 1: Comparison between RLVR method and VISD . (a) The RLVR method, e.g., GRPO, provides sparse sequence-level signals and fails to capture fine-grained spatial and temporal evidence. (b) 
+
+VISD uses dense token-level updates, thereby improving convergence speed and overall performance. To effectively integrate structured supervision with reinforcement learning, we extend the direction– magnitude decoupling paradigm. Specifically, rollout-level advantages computed from rewards determine the direction of policy updates, ensuring alignment with task objectives, while structured privileged information modulates the magnitude of token-level updates. This separation allows the model to benefit from dense supervision without compromising the stability of reward-driven optimization. Importantly, because the privileged information is structured, the resulting credit assignment is not only fine-grained but also semantically aligned with different aspects of video reasoning, as summarized in Figure 1. As a result, VISD not only improves the quality and faithfulness 2of reasoning, but also significantly enhances learning efficiency by enabling faster convergence with more informative and structured training signals. Training VideoLLMs further poses challenges due to long-horizon dependencies and heterogeneous reward signals [ 10 , 30 , 9]. VISD addresses these issues through a set of principled optimization strategies. We adopt a curriculum that gradually transitions from structured self-distillation to reinforcement learning and maintain an exponential moving average teacher to stabilize token-level supervision. Together, these designs enable robust and scalable training under complex video reasoning scenarios. We evaluate VISD on the Open-o3-Video benchmarks [ 30 ] and demonstrate consistent improvements over strong baselines across a wide range of video reasoning tasks [ 10 , 9]. Beyond quantitative gains in accuracy, VISD also yields better grounding quality and more interpretable reasoning behaviors, highlighting the benefits of structured supervision. In summary, our main contributions are as follows: • We propose VISD , a structured self-distillation framework tailored for video reasoning. VISD leverages a video-aware judge model to evaluate reasoning quality across multiple dimensions, providing diagnostically meaningful token-level supervision. • We introduce a direction–magnitude decoupling mechanism to stably integrate self super-vision with reinforcement learning: rollout-level advantages determine update directions, while structured privileged signals modulate token-level update magnitudes. • We demonstrate the effectiveness of VISD through extensive evaluation on diverse video benchmarks. VISD consistently outperforms strong baselines, improving answer accuracy and spatio-temporal grounding quality while achieving nearly 2× faster convergence in optimization steps. 
+
+2 Related Work 
+
+VISD is most closely related to three lines of work: video large language models, reinforcement learning with verifiable rewards, and on-policy/self-distillation methods for fine-grained credit assignment. Recent VideoLLMs extend vision-language models to dynamic visual understanding through frame sampling, temporal aggregation, and video-specific instruction tuning [ 29 , 50 , 52 , 49 ,10 , 22 , 17 , 7 ]. While these models improve video question answering and temporal reasoning, they are usually trained from static annotations and therefore provide limited supervision for identifying which step of a long reasoning trajectory causes an error. RLVR methods address reasoning by optimizing sequence-level rewards [ 13 , 34 , 9 , 23 , 40 ], but their scalar advantages remain coarse for localized temporal, spatial, and object-grounding mistakes. Self-distillation and on-policy distillation provide denser teacher-derived token signals [ 15 , 11 , 33 , 1, 53 , 18 , 46 ], yet existing formulations often treat the teacher signal as generic distributional guidance rather than an explicit diagnosis of multimodal reasoning failures. VISD differs by conditioning the teacher on video-aware judge feedback: the rollout-level reward still determines the update direction, while feedback-conditioned teacher replay modulates token-level magnitudes according to answer consistency, temporal coverage, and spatial grounding errors. Extended related works are provided in Appendix A. 
+
+3 Method 
+
+3.1 VISD Framework Overview 
+
+We propose VISD , a structured self-distillation framework designed for video reasoning, where the core challenge lies in aligning long-horizon reasoning trajectories with fine-grained spatio-temporal evidence. Unlike conventional reinforcement learning approaches that rely on sparse sequence-level rewards [ 13 , 46 ], VISD introduces structured privileged supervision to enable token-level credit assignment that is both semantically meaningful and modality-aware. Formally, given a video-question pair x = ( v, q ), a policy model πθ autoregressively generates a reasoning trajectory y = ( y1, . . . , y T ). The trajectory may include intermediate reasoning steps, temporal references, object mentions, and the final answer. A verifier provides a scalar reward 3What is he 
+
+> doing?
+
+Input Data 
+
+VISD                                               
+
+> Student Model
+> 𝒚 (𝑮 )
+> 𝒚 (𝟏 )
+> 𝒚 (𝟐 )
+> Sample Multiple Responses
+> Judge Model
+> Privileged Evidence
+> Structured Privileged Information Generation
+> Temporal
+> Spatial
+> Answer
+> Student
+> Response
+> Wrong Bounding Box
+> Timeline
+> Wrong Time Positioning
+> Feedback
+> The student's final answer
+> has a misaligned bounding
+> box and incorrect
+> timestamp…
+> Self -Teacher
+> Model
+> Direction –magnitude Decoupling Update
+> 𝐴 ⅈ
+> Rule -based
+> Reward
+> Group Normalization
+> Relative Advantage
+> Direction –Magnitude Decoupling Update
+> Probabilities
+> Tokens For each token
+> Student Probabilities
+> Teacher Probabilities
+> Δ𝑡 =log 𝑃 𝑇 𝑦 𝑡 𝑥 ,𝑟 ,𝑦 <𝑡 −log 𝑃 𝑆 𝑦 𝑡 𝑥 ,𝑦 <𝑡
+> Advantage
+> 𝑤 𝑡 =exp sign 𝐴 ⋅Δ𝑡
+> ෢𝐴 𝑡 =𝐴 ⋅clip 𝑤 𝑡 ,1−𝜖 ,1+𝜖
+> ℒ=𝔼 ෍
+> 𝑡 =1
+> 𝑇
+> min 𝜌 𝑡 ෢𝐴 𝑡 ,clip 𝜌 𝑡 ,1−𝜖 ,1+𝜖 ෢𝐴 𝑡 Original
+> Prompt
+> Copy
+> Paste
+> Original
+> Prompt
+> Student
+> Respons e
+> Feedback Privileged
+> Evidence
+
+Token -level 
+
+Signal 
+
+> Teacher Input
+
+Figure 2: Overview of VISD. VISD first uses a video-aware judge to generate structured privileged feedback for each student rollout, then replays the same completion with a feedback-conditioned teacher. The rollout-level reward advantage determines the update direction, while the teacher-student discrepancy modulates token-level update magnitudes for fine-grained credit assignment. 
+
+R(x, y ), which reflects task-level correctness and, when applicable, grounding quality. However, such reward signals are inherently sparse and fail to capture the heterogeneous contributions of individual tokens in long reasoning sequences. To address this limitation, VISD augments the standard on-policy training pipeline with two auxiliary components. First, a teacher policy is instantiated from the same model but conditioned on privileged information, providing token-level assessments along the student’s trajectory. Second, a dedicated judge model produces structured feedback tailored to video reasoning, which serves as the source of privileged information. The resulting framework retains the on-policy nature of reinforcement learning while introducing a structured signal pathway that refines credit assignment at token level. The overall training objective follows a policy-gradient formulation, illustrated in Figure 2: 
+
+∇θ J = Ey∼πθ (·| x)
+
+" TX
+
+t=1 
+
+ˆAt∇θ log πθ (yt|x, y <t )
+
+#
+
+(1) where ˆAt denotes a token-level advantage that integrates both environment reward and structured privileged information. Crucially, VISD preserves the reliability of environment-driven optimization while enriching it with fine-grained, structured signals that are particularly suited for video reasoning. The full VISD training procedure is summarized in Algorithm 1 in Appendix C.1. 
+
+3.2 Structured Privileged Information Generation 
+
+A key observation underlying our design is that, in video reasoning, not all errors are equal: incorrect predictions may arise from temporal misalignment, spatial grounding failures, or inconsistencies between reasoning and answer. Capturing such distinctions is essential for effective learning, yet existing self-distillation methods [ 53 , 18 , 46 ] treat privileged information as an unstructured signal, limiting their ability to guide fine-grained corrections. To overcome this limitation, VISD introduces a judge model J that transforms each rollout trajectory into a structured representation of reasoning quality. Given an input x, a sampled trajectory y, verified answer-side information a⋆, and available grounding evidence e, the judge produces structured feedback f = J(x, y, a ⋆, e ). We package the teacher-side privileged context as r = ( a⋆, e, f ). The feedback f encapsulates multiple complementary aspects of evaluation. Specifically, it assesses (i) the correctness of the predicted answer, (ii) the consistency between the reasoning process and the 4answer, and (iii) the underlying causes of inconsistencies when they arise. More importantly, to account for the unique challenges of video understanding, the judge incorporates modality-specific feedback by explicitly evaluating temporal alignment and spatial grounding. This includes identifying whether the reasoning references incorrect time windows, whether objects are mislocalized, and whether the cited evidence is inconsistent with the visual content, etc. The teacher distribution is thus defined as: 
+
+PT (yt|x, r, y <t ) = π¯θ (yt|x, r, y <t ) (2) where ¯θ denotes the teacher parameters; in the main EMA setting, ¯θ ≡ θema . The conditioning on r allows the teacher to rescore the same student completion using verified answer/evidence and rollout-specific judge feedback. 
+
+3.3 Direction–Magnitude Decoupled Structured Self-Distillation 
+
+Given a sampled trajectory, we compute the token-level discrepancy between teacher and student distributions on a compact top-K local support. At each position t, we construct a teacher-centered support 
+
+Ut = TopK PT (·| x,r,y <t )(K) ∪ { yt}, (3) which augments the teacher top-K candidates with the realized on-policy token so that the generated action is always covered. Let ePT (· | x, r, y <t ) and ePS (· | x, y <t ) denote the teacher and student distributions renormalized over Ut. We define: 
+
+∆t = sg 
+
+
+
+log ePT (yt|x, r, y <t ) − log ePS (yt|x, y <t )
+
+
+
+(4) where sg( ·) denotes the stop-gradient operator. This top-K local-support discrepancy measures how the structured privileged information revises the model’s belief about the realized token within a locally relevant candidate set. In contrast to standard self-distillation, where such discrepancies are treated as flat signals, here ∆t implicitly encodes structured corrections derived from the judge, including temporal, spatial, and logical inconsistencies. We provide the detailed top-K support derivation, including direction preservation and bounded magnitude redistribution, in Appendix E.3. Unlike existing mainstream self-distillation paradigms, VISD adopts a direction–magnitude decou-pling strategy to integrate structured privileged information into policy optimization. The central principle is to separate what direction the policy should move from how strongly each token should be updated , thereby preventing unreliable signals from corrupting the optimization trajectory. The sequence-level advantage A, computed from the reward, determines whether a trajectory should be reinforced or penalized. We then define a token-level reweighting factor: 
+
+wt = exp  sign( A) · ∆t
+
+ (5) When the trajectory has positive advantage, tokens favored by the teacher receive larger update magnitudes; when it has negative advantage, tokens disfavored by the teacher receive stronger suppression. To ensure stability, we clip the reweighting factor: 
+
+mt = clip( wt, 1 − ϵw, 1 + ϵw), (6) where ϵw bounds the amount of token-level credit redistribution. This formulation keeps the sign of the token-level advantage determined by the rollout-level advantage, while the structured privileged information redistributes credit within the trajectory. Because the teacher is conditioned on diagnosti-cally meaningful feedback, the resulting reweighting reflects not only confidence differences, but also the semantic causes of errors. 
+
+3.4 Stable Policy Optimization for Long Video Sequences 
+
+Optimizing VideoLLMs over long reasoning trajectories is inherently challenging due to sparse rewards, heterogeneous supervision signals, and the instability introduced by token-level credit assignment. In practice, these challenges are further amplified by the multi-dimensional nature of video reasoning, where correctness, reasoning consistency, and spatio-temporal grounding often induce rewards with different scales and statistical properties. VISD addresses these issues through a set of design choices that ensure stable and robust optimization. 5We adopt a curriculum strategy that gradually transitions from structured self-distillation to rein-forcement learning. At the early stage of training, updates are modulated by the teacher-induced token-level reweighting, allowing the model to quickly acquire fine-grained reasoning patterns guided by structured privileged information. As training progresses, the influence of self-distillation is gradually annealed, and the optimization increasingly relies on environment rewards. Formally, for rollout i, the final token-level advantage is defined as: 
+
+ˆA(i) 
+
+> t
+
+= A(i) ·  (1 − λ) + λ · m(i)
+
+> t
+
+ (7) where λ ∈ [0 , 1] controls the strength of teacher-induced token reweighting. This formulation effectively interpolates between structured self-distillation and standard reinforcement learning, ensuring both efficient early learning and stable long-term convergence. To stabilize the teacher signal, we maintain an exponential moving average version of the policy parameters to construct the teacher model. Specifically, the teacher parameters ¯θ are updated as: 
+
+¯θ ← τ ¯θ + (1 − τ )θ (8) where τ is a decay factor close to 1. The teacher distribution is then defined using π¯θ instead of the instantaneous student parameters. This design reduces high-frequency fluctuations in the teacher signal and mitigates instability caused by rapidly changing policy distributions, which is especially critical in long-horizon video reasoning. Finally, we optimize the policy using the GRPO-style clipped surrogate objective: 
+
+JVISD = E
+
+ 1
+
+G
+
+> G
+
+X
+
+> i=1
+
+1
+
+|y(i)|
+
+> |y(i)|
+
+X
+
+> t=1
+
+min 
+
+
+
+ρ(i) 
+
+> t
+
+ˆA(i) 
+
+> t
+
+, clip( ρ(i) 
+
+> t
+
+, 1 − ϵpg , 1 + ϵpg ) ˆA(i)
+
+> t
+
+ (9) where ρ(i) 
+
+> t
+
+is the importance sampling ratio between the current and old policies for token t in rollout 
+
+i, and ϵpg is the policy-gradient clipping range. We do not add a reference-model KL penalty or a separate distillation loss; the teacher only modifies the magnitude of the GRPO advantage. This preserves the stability benefits of trust-region optimization while incorporating structured token-level credit assignment. These mechanisms together enable VISD to effectively scale structured self-distillation to long video sequences, achieving stable optimization despite the complexity of multi-dimensional rewards and long-horizon dependencies. 
+
+4 Experiments 
+
+4.1 Experimental Setup Benchmarks. We evaluate VISD on the Open-o3-Video [ 30 ] benchmark suite, which consists of diverse video reasoning tasks covering temporal understanding, object grounding, and compositional reasoning. The benchmarks include both short and long video scenarios, requiring models to reason over dynamic visual content and produce multi-step explanations. We also evaluate on Video-MME-v2 [ 10 ], which provides a more challenging video understanding setting with fine-grained level-wise and consistency-oriented metrics. We additionally evaluate zero-shot temporal grounding on Charades-STA [12]. 
+
+Implementation Details. VISD starts from the same SFT initialization recipe as Open-o3-Video and then applies our self-distillation RL training for video reasoning. The SFT initialization establishes the grounded reasoning format, while the VISD RL stage optimizes answer correctness and grounding quality on STGR-RL prompts through feedback-conditioned teacher replay. During RL, VISD uses feedback-conditioned teacher replay only as a training-time token-credit signal. Unless otherwise specified, all VISD (Ours) results are evaluated with the student checkpoint at optimization step 1200. The Open-o3-Video and VisionCoach baselines are evaluated using their fully trained RL checkpoints, which require more than 2300 optimization steps; thus, VISD reaches stronger performance with about 50% of the optimization steps. More implementation, training, and evaluation details are provided in Appendices C.1, C.2, and C.3. 6Table 1: V-STAR results. Chain1 denotes what–when–where , while Chain2 denotes what–where–when . ∗
+
+indicates rows evaluated by us. 
+
+Model What When (Temporal IoU) Where (Spatial IoU) Overall Acc Chain1 Chain2 Chain1 Chain2 mAM mLGM 
+
+Proprietary Models 
+
+Gemini-2-Flash 53.0 24.5 23.8 4.6 2.2 26.9 35.6 GPT-4o 60.8 16.7 12.8 6.5 3.0 26.8 38.2 
+
+Open-source Models 
+
+TRACE 17.6 19.1 17.1 0.0 0.0 12.0 13.3 Oryx-1.5-7B 20.5 13.5 14.8 10.1 3.5 15.1 13.8 VideoChat2 36.2 13.7 12.5 2.5 1.0 17.0 20.3 Qwen2.5-VL-7B ∗ 33.5 15.4 13.8 17.0 2.5 19.3 22.4 InternVL-2.5-8B 44.2 8.7 7.8 0.7 0.1 17.6 24.9 Video-LLaMA3 41.9 23.0 23.1 0.9 0.2 21.7 27.0 LLaVA-Video 49.5 10.5 12.2 1.9 1.3 20.8 27.3 Open-o3-Video-7B ∗ 60.1 25.0 23.6 25.6 5.6 33.4 45.8 VisionCoach-7B ∗ 61.2 25.4 25.4 27.1 5.3 34.3 47.5 
+
+VISD (Ours) 61.9 26.8 27.2 26.7 6.3 35.1 48.9 
+
+∆ vs. Qwen2.5-VL-7B +28.4 +11.4 +13.4 +9.7 +3.8 +15.8 +26.5 
+
+Table 2: General benchmark results. “LRR” refers to LongVideo-Reason-eval [ 5]. The Average score is computed over the bold-faced dataset-level metrics. ∗ indicates rows evaluated by us; for rows marked with †,the WorldSense scores are evaluated by us.                                                                                                                    
+
+> Model WorldSense VideoMMMU LRR TVGBench Average Overall Recognition Understanding Reasoning Overall Comprehension Adaptation Perception Acc mIoU Score
+> Proprietary Models
+> GPT-4o 42.6 ---61.2 --66.0 ---
+> Tool-calling Methods
+> LongVT-RL-7B ∗36.1 33.1 39.1 37.8 52.1 49.3 43.0 64.0 75.1 10.6 43.5
+> Tool-free Methods
+> Qwen2.5-VL-7B †35.5 32.9 38.4 37.0 51.2 --64.7 59.3 16.3 40.6 VideoRFT-7B †38.4 36.5 40.0 40.1 51.1 --66.0 69.4 14.3 43.3 VideoR1-7B †36.9 35.3 37.7 39.0 52.4 --65.3 68.9 9.6 42.0 Open-o3-Video-7B ∗38.9 37.4 39.7 40.5 52.6 49.1 41.3 67.4 69.1 19.2 44.9 VisionCoach-7B ∗39.2 38.4 40.2 39.6 53.8 49.0 42.2 70.3 70.7 21.0 46.2
+> VISD (Ours) 39.9 39.4 40.4 40.5 53.8 49.7 42.3 69.3 73.5 24.8 48.0
+> ∆vs. Qwen2.5-VL-7B +4.4 +6.5 +2.0 +3.5 +2.6 --+4.6 +14.2 +8.5 +7.4
+
+4.2 Main Results 
+
+Spatio-Temporal Grounding on V-STAR [ 7]. Table 1 compares VISD with closed-source mod-els [ 19 , 8], general video LLMs [ 2], and recent reasoning-focused frameworks [ 9, 30 , 20 ]. VISD improves answer accuracy over Qwen2.5-VL-7B by +28.4 points and obtains the best overall V-STAR scores, improving mAM/mLGM over VisionCoach from 34.3/47.5 to 35.1/48.9. The gains appear not only in final answering, but also in temporal localization and spatial grounding, which is the setting where sparse sequence-level rewards are least informative. Table 4: Charades-STA results. We report zero-shot temporal grounding with recall at IoU thresh-olds 0.3, 0.5, and 0.7, together with mIoU. 
+
+Model R@0.3 R@0.5 R@0.7 mIoU 
+
+General Video LLMs 
+
+VideoChat 9.0 3.3 1.3 6.5 VideoLLaMA 10.4 3.8 0.9 7.1 Video-ChatGPT 20.0 7.7 1.7 13.7 Valley 28.4 1.8 0.3 21.4 
+
+Temporal Grounding Video LLMs 
+
+GroundingGPT - 29.6 11.9 -Momentor 42.6 26.6 11.6 28.5 TimeChat - 32.2 13.4 -HawkEye 50.6 31.4 14.5 33.7 VTG-LLM 51.2 33.8 15.7 34.4 VTimeLLM 51.0 27.5 11.4 31.2 
+
+Grounded Reasoning Models 
+
+Open-o3-video 62.6 45.6 24.5 42.5 VisionCoach 63.2 45.8 24.7 42.7 
+
+VISD (Ours) 67.3 46.1 21.6 44.6 
+
+General Video Understanding. Beyond V-STAR, VISD also improves the average score across broader video reasoning benchmarks [ 10 , 17 , 16 , 5, 41 ]. As shown in Table 2, VISD outperforms Qwen2.5-VL-7B by +7.4 average points and improves over Vi-sionCoach by +1.8 average points, with the strongest gains on long-video reasoning and temporal ground-ing metrics such as LRR and TVGBench. On Video-MME-v2, VISD also improves the non-linear score from 8.6 to 9.4 over VisionCoach and obtains the best average accuracy (Table 3). These results sug-gest that feedback-conditioned token supervision pre-serves general video QA ability while improving the grounding-oriented behaviors targeted by VISD. Additional qualitative examples are provided in Ap-pendix F. 7Table 3: Video-MME-v2 results. We report the official non-linear score, level-wise scores, consistency, coherence, and average accuracy using 64 sampled frames without subtitles.                                                             
+
+> Model Frames Non-Lin Score Level 1 Level 2 Level 3 Consistency Coherence Avg Acc
+> Qwen2.5-VL-7B 64 7.9 11.4 6.7 6.7 8.2 7.3 21.3 VideoRFT-7B 64 8.2 11.8 7.4 6.8 8.8 7.2 21.7 Video-R1-7B 64 7.7 11.1 6.7 6.4 8.0 7.2 20.7 Open-o3-Video-7B 64 7.8 11.0 6.9 6.6 8.3 6.9 21.2 VisionCoach-7B 64 8.6 12.1 7.3 7.5 9.0 7.9 22.1
+> VISD (Ours) 64 9.4 13.4 8.2 7.9 10.2 8.0 23.8 0500 1000 1500 2000
+> Steps
+> 1.8
+> 2.0
+> 2.2
+> Total reward
+> w/o Feedback
+> VISD (Feedback + EMA)
+
+(a) 0 500 1000 1500 2000  
+
+> Steps
+> 1.8
+> 2.0
+> 2.2
+> Total reward
+> Feedback + Current
+> Feedback + Sync-10
+> VISD (Feedback + EMA)
+> Teacher off
+
+(b) 0 500 1000 1500 2000  
+
+> Steps
+> 1.8
+> 2.0
+> 2.2
+> Total reward
+> Top-K VISD (K=16)
+> Sampled-token VISD
+
+(c) 
+
+Figure 3: Training ablation curves. (a) Feedback conditioning compares VISD with and without judge feedback, showing that structured feedback leads to a stronger final reward trajectory. (b) Teacher update strategy compares current-policy, Sync-10, and EMA teachers, where EMA provides the most stable optimization and best final reward. (c) Top-K support versus sampled token compares two teacher-student credit formulations, showing a modest but consistent advantage for VISD’s local top-K support. 
+
+Temporal Grounding on Charades-STA. On Charades-STA [ 12 ], VISD improves R@0.3, R@0.5, and mIoU over Open-o3-Video and VisionCoach (Table 4), indicating stronger zero-shot moment localization. This is a useful stress test because the model must output a temporal segment without task-specific fine-tuning on the target benchmark. 
+
+4.3 Ablation Studies 
+
+We study three questions that correspond to the main design choices in VISD. First, does structured judge feedback provide additional benefit beyond using verified answer information alone? Second, does the improvement come from a particular teacher-parameter update heuristic, or is the update rule mainly a stabilization choice? Third, is it sufficient to compare the teacher only on the realized sampled token, or does VISD’s local top-K support provide a more useful token-level magnitude signal? We pair reward curves with downstream benchmark tables because training reward alone may not fully reflect grounding quality. Table 5 reports the final training statistics corresponding to the ablation curves in Figure 3. Reward and answer accuracy summarize final optimization quality, while gradient norm serves as a stability diagnostic for teacher-update strategies. Table 5: Training ablation on feedback conditioning and teacher update strategy. We report final training reward, answer accuracy, and gradient norm for the main feedback and teacher-parameter variants, averaged over the final 100 training steps. Method Feedback Teacher Reward ↑ Ans. Acc. ↑ Grad Norm ↓
+
+VISD w/o Feedback No EMA 2.280 0.565 2.63 
+
+VISD w/ current-policy teacher Yes Current 2.228 0.557 3.49 VISD w/ Sync-10 teacher Yes Sync-10 2.253 0.558 11.63 
+
+VISD w/ EMA teacher (Ours) Yes EMA 2.318 0.571 3.58 
+
+Structured feedback. The no-feedback variant keeps the same policy-gradient objective and teacher replay, but conditions the teacher only on verified answer-side information. Structured feedback improves final reward from 2.280 to 2.318 and answer accuracy from 0.565 to 0.571 (Figure 3 (a) and Table 5). The same trend appears in Tables 6 and 7, where the full VISD configuration obtains the best overall VSTAR score and the best average general-video score. This suggests that the benefit is not merely from exposing the verified answer to the teacher; the judge feedback contributes diagnostic context that changes how token-level update magnitudes are distributed along the rollout. Because 8Table 6: VSTAR ablation results. We compare feedback/teacher variants and top-K versus sampled-token credit on answer accuracy, temporal IoU, spatial IoU, and overall VSTAR metrics. 
+
+Model What When (Temporal IoU) Where (Spatial IoU) Overall Acc Chain1 Chain2 Chain1 Chain2 mAM mLGM 
+
+Ablation Variants 
+
+VISD w/o Feedback 59.7 25.2 24.8 23.7 5.5 33.1 45.3 VISD w/ current-policy teacher 60.2 23.8 21.7 23.5 5.7 32.5 44.8 VISD w/ Sync-10 teacher 58.6 28.8 27.3 11.2 2.7 31.2 42.8 
+
+VISD w/ EMA teacher (Ours) 61.9 26.8 27.2 26.7 6.3 35.1 48.9 
+
+Top-K Analysis 
+
+VISD w/ sampled token 61.3 25.2 25.4 24.8 6.1 34.0 47.0 
+
+VISD w/ top-K (Ours) 61.9 26.8 27.2 26.7 6.3 35.1 48.9 
+
+Table 7: General video reasoning ablation results. We evaluate the same ablation variants on broad video understanding and temporal-grounding benchmarks, reporting the average over dataset-level metrics.                                                                                    
+
+> Model WorldSense VideoMMMU LRR TVGBench Average Overall Recognition Understanding Reasoning Overall Comprehension Adaptation Perception Acc mIoU Score
+> Ablation Variants
+> VISD w/o Feedback 38.8 37.8 39.1 40.2 52.6 49.0 38.7 70.0 73.4 22.3 46.8 VISD w/ current-policy teacher 39.2 37.8 40.6 40.1 52.0 48.7 39.0 68.3 75.3 18.7 46.3 VISD w/ Sync-10 teacher 38.8 37.8 39.5 39.8 48.9 43.3 40.0 63.3 64.7 24.0 44.1
+> VISD w/ EMA teacher (Ours) 39.9 39.4 40.4 40.5 53.8 49.7 42.3 69.3 73.5 24.8 48.0
+> Top-KAnalysis
+> VISD w/ sampled token 38.8 38.2 39.1 39.5 55.0 51.3 42.7 71.0 72.9 23.9 47.7
+> VISD w/ top-K(Ours) 39.9 39.4 40.4 40.5 53.8 49.7 42.3 69.3 73.5 24.8 48.0
+
+the reinforcement advantage still determines the update direction, this extra context refines credit assignment without replacing the reward signal. This mirrors the distinction made in recent self-distillation work between using richer feedback and performing denser token-level credit assignment: in VISD, the judge supplies the richer feedback, while teacher replay turns it into token-wise magnitude modulation. Additional benchmark, training-curve, and mechanism analyses are provided in Appendices D.1, D.2, and E.1. 
+
+Teacher update strategy. With judge feedback fixed, we compare a current-policy teacher, a Sync-10 teacher, and an EMA teacher (Figure 3 (b) ). The three variants are close while teacher guidance is active, suggesting that the early gain comes mainly from feedback-conditioned token credit rather than a particular synchronization trick. After the teacher weight is annealed to zero, Sync-10 shows a sharp transient drop and a much larger final gradient norm, while EMA gives the best reward, answer accuracy, VSTAR overall score, and general-video average (Tables 5, 6, and 7). We therefore view EMA as a stabilizing parameterization of the feedback-conditioned teacher, not as the primary source of VISD’s gains. Additional optimization diagnostics are provided in Appendix D.3. 
+
+Top-K support vs. sampled token. We compare VISD’s teacher top-K local support with a sampled-token variant that computes the teacher–student comparison only on the realized token. The sampled-token variant is viable and remains close on several general video benchmarks, but top-K
+
+maintains a stronger reward trajectory and better grounding scores, including VSTAR mAM/mLGM and TVGBench (Figure 3 (c) ; Tables 6 and 7). This pattern is consistent with the motivation of local-support distillation: the teacher top-K set gives a compact distribution-level comparison around the prefix, whereas the sampled-token variant observes only one realized point from that support. 
+
+5 Conclusion 
+
+In this work, we presented VISD, a structured self-distillation framework that addresses the challenge of fine-grained credit assignment in long-horizon video reasoning. Recognizing that errors in video QA and grounded reasoning are inherently structured—arising from temporal misalignment, logical inconsistency, or spatial grounding failures—VISD leverages a video-aware judge to generate diagnostically meaningful, token-level supervision. We integrate this privileged information into reinforcement learning via a novel direction-magnitude decoupling mechanism, which preserves policy stability while enabling semantically aligned credit assignment. Supported by curriculum scheduling and EMA-based teacher stabilization, VISD robustly scales to complex video sequences. Extensive experiments demonstrate that VISD significantly accelerates convergence and improves 9accuracy, grounding, and interpretability over strong baselines. Future work will explore more efficient judge modeling and richer feedback structures for broader grounded reasoning applications. 
+
+References 
+
+[1] Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos Garea, Matthieu Geist, and Olivier Bachem. On-policy distillation of language models: Learning from self-generated mistakes. In The twelfth international conference on learning representations ,2024. [2] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, et al. Qwen2. 5-vl technical report. arXiv preprint arXiv:2502.13923 ,2025. [3] Ruizhe Chen, Tianze Luo, Zhiting Fan, Heqing Zou, Zhaopeng Feng, Guiyang Xie, Hansheng Zhang, Zhuochen Wang, Zuozhu Liu, and Zhang Huaijian. Datasets and recipes for video temporal grounding via reinforcement learning. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing: Industry Track , pages 983–992, 2025. [4] Yukang Chen, Fuzhao Xue, Dacheng Li, Qinghao Hu, Ligeng Zhu, Xiuyu Li, Yunhao Fang, Haotian Tang, Shang Yang, Zhijian Liu, et al. Longvila: Scaling long-context visual language models for long videos. In The Thirteenth International Conference on Learning Representa-tions , 2024. [5] Yukang Chen, Wei Huang, Baifeng Shi, Qinghao Hu, Hanrong Ye, Ligeng Zhu, Zhijian Liu, Pavlo Molchanov, Jan Kautz, Xiaojuan Qi, et al. Scaling rl to long videos. arXiv preprint arXiv:2507.07966 , 2025. [6] Zhe Chen, Weiyun Wang, Yue Cao, Yangzhou Liu, Zhangwei Gao, Erfei Cui, Jinguo Zhu, Shen-glong Ye, Hao Tian, Zhaoyang Liu, et al. Expanding performance boundaries of open-source multimodal models with model, data, and test-time scaling. arXiv preprint arXiv:2412.05271 ,2024. [7] Zixu Cheng, Jian Hu, Ziquan Liu, Chenyang Si, Wei Li, and Shaogang Gong. V-star: Bench-marking video-llms on video spatio-temporal reasoning. arXiv preprint arXiv:2503.11495 ,2025. [8] Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Marcel Blistein, Ori Ram, Dan Zhang, Evan Rosen, et al. Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. arXiv preprint arXiv:2507.06261 , 2025. [9] Kaituo Feng, Kaixiong Gong, Bohao Li, Zonghao Guo, Yibing Wang, Tianshuo Peng, Junfei Wu, Xiaoying Zhang, Benyou Wang, and Xiangyu Yue. Video-r1: Reinforcing video reasoning in mllms. arXiv preprint arXiv:2503.21776 , 2025. [10] Chaoyou Fu, Haozhi Yuan, Yuhao Dong, Yi-Fan Zhang, Yunhang Shen, Xiaoxing Hu, Xueying Li, Jinsen Su, Chengwu Long, Xiaoyao Xie, et al. Video-mme-v2: Towards the next stage in benchmarks for comprehensive video understanding. arXiv preprint arXiv:2604.05015 , 2026. [11] Tommaso Furlanello, Zachary Lipton, Michael Tschannen, Laurent Itti, and Anima Anandkumar. Born again neural networks. In International conference on machine learning , pages 1607–1616. PMLR, 2018. [12] Jiyang Gao, Chen Sun, Zhenheng Yang, and Ram Nevatia. Tall: Temporal activity localization via language query. In Proceedings of the IEEE international conference on computer vision ,pages 5267–5275, 2017. [13] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, et al. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 , 2025. 10 [14] Yongxin Guo, Jingyu Liu, Mingda Li, Qingbin Liu, Xi Chen, and Xiaoying Tang. Trace: Temporal grounding video llm via causal event modeling. arXiv preprint arXiv:2410.05643 ,2024. [15] Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. 2015. [16] Jack Hong, Shilin Yan, Jiayin Cai, Xiaolong Jiang, Yao Hu, and Weidi Xie. Worldsense: Evaluat-ing real-world omnimodal understanding for multimodal llms. arXiv preprint arXiv:2502.04326 ,2025. [17] Kairui Hu, Penghao Wu, Fanyi Pu, Wang Xiao, Yuanhan Zhang, Xiang Yue, Bo Li, and Ziwei Liu. Video-mmmu: Evaluating knowledge acquisition from multi-discipline professional videos. 
+
+arXiv preprint arXiv:2501.13826 , 2025. [18] Jonas Hübotter, Frederike Lübeck, Lejs Behric, Anton Baumann, Marco Bagatella, Daniel Marta, Ido Hakimi, Idan Shenfeld, Thomas Kleine Buening, Carlos Guestrin, et al. Reinforcement learning via self-distillation. arXiv preprint arXiv:2601.20802 , 2026. [19] Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al. Gpt-4o system card. arXiv preprint arXiv:2410.21276 , 2024. [20] Daeun Lee, Shoubin Yu, Yue Zhang, and Mohit Bansal. Visioncoach: Reinforcing grounded video reasoning via visual-perception prompting. arXiv preprint arXiv:2603.14659 , 2026. [21] Gengsheng Li, Tianyu Yang, Junfeng Fang, Mingyang Song, Mao Zheng, Haiyun Guo, Dan Zhang, Jinqiao Wang, and Tat-Seng Chua. Unifying group-relative and self-distillation policy optimization via sample routing. arXiv preprint arXiv:2604.02288 , 2026. [22] Kunchang Li, Yali Wang, Yinan He, Yizhuo Li, Yi Wang, Yi Liu, Zun Wang, Jilan Xu, Guo Chen, Ping Luo, et al. Mvbench: A comprehensive multi-modal video understanding benchmark. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,pages 22195–22206, 2024. [23] Xinhao Li, Ziang Yan, Desen Meng, Lu Dong, Xiangyu Zeng, Yinan He, Yali Wang, Yu Qiao, Yi Wang, and Limin Wang. Videochat-r1: Enhancing spatio-temporal perception via reinforce-ment fine-tuning. arXiv preprint arXiv:2504.06958 , 2025. [24] Yaxuan Li, Yuxin Zuo, Bingxiang He, Jinqian Zhang, Chaojun Xiao, Cheng Qian, Tianyu Yu, Huan-ang Gao, Wenkai Yang, Zhiyuan Liu, et al. Rethinking on-policy distillation of large language models: Phenomenology, mechanism, and recipe. arXiv preprint arXiv:2604.13016 ,2026. [25] Baohao Liao, Hanze Dong, Xinxing Xu, Christof Monz, and Jiang Bian. Self-hinting language models enhance reinforcement learning. arXiv preprint arXiv:2602.03143 , 2026. [26] Ruyang Liu, Chen Li, Haoran Tang, Yixiao Ge, Ying Shan, and Ge Li. St-llm: Large language models are effective temporal learners. In European Conference on Computer Vision , pages 1–18. Springer, 2024. [27] Zuyan Liu, Yuhao Dong, Ziwei Liu, Winston Hu, Jiwen Lu, and Yongming Rao. Oryx mllm: On-demand spatial-temporal understanding at arbitrary resolution. arXiv preprint arXiv:2409.12961 ,2024. [28] Chiyu Ma, Shuo Yang, Kexin Huang, Jinda Lu, Haoming Meng, Shangshang Wang, Bolin Ding, Soroush Vosoughi, Guoyin Wang, and Jingren Zhou. Fipo: Eliciting deep reasoning with future-kl influenced policy optimization. arXiv preprint arXiv:2603.19835 , 2026. [29] Muhammad Maaz, Hanoona Rasheed, Salman Khan, and Fahad Khan. Video-chatgpt: Towards detailed video understanding via large vision and language models. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 12585–12602, 2024. 11 [30] Jiahao Meng, Xiangtai Li, Haochen Wang, Yue Tan, Tao Zhang, Lingdong Kong, Yunhai Tong, Anran Wang, Zhiyang Teng, Yujing Wang, et al. Open-o3 video: Grounded video reasoning with explicit spatio-temporal evidence. arXiv preprint arXiv:2510.20579 , 2025. [31] Kun Ouyang, Yuanxin Liu, Haoning Wu, Yi Liu, Hao Zhou, Jie Zhou, Fandong Meng, and Xu Sun. Spacer: Reinforcing mllms in video spatial reasoning. arXiv preprint arXiv:2504.01805 ,2025. [32] Ruotian Peng, Yi Ren, Zhouliang Yu, Weiyang Liu, and Yandong Wen. Simko: Simple pass@ k policy optimization. arXiv preprint arXiv:2510.14807 , 2025. [33] Andrei A Rusu, Sergio Gomez Colmenarejo, Caglar Gulcehre, Guillaume Desjardins, James Kirkpatrick, Razvan Pascanu, Volodymyr Mnih, Koray Kavukcuoglu, and Raia Hadsell. Policy distillation. arXiv preprint arXiv:1511.06295 , 2015. [34] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. [35] Idan Shenfeld, Mehul Damani, Jonas Hübotter, and Pulkit Agrawal. Self-distillation enables continual learning. arXiv preprint arXiv:2601.19897 , 2026. [36] Yan Shu, Zheng Liu, Peitian Zhang, Minghao Qin, Junjie Zhou, Zhengyang Liang, Tiejun Huang, and Bo Zhao. Video-xl: Extra-long vision language model for hour-scale video understanding. In Proceedings of the Computer Vision and Pattern Recognition Conference ,pages 26160–26169, 2025. [37] Shangkun Sun, Ruyang Liu, Haoran Tang, Yixiao Ge, Haibo Lu, Jiankun Yang, and Chen Li. Ppllava: Varied video sequence understanding with prompt guidance. arXiv preprint arXiv:2411.02327 , 2024. [38] Xiaokun Sun, Zezhong Wu, Zewen Ding, and Linli Xu. Mvp: Enhancing video large language models via self-supervised masked video prediction. arXiv preprint arXiv:2601.03781 , 2026. [39] Haochen Wang, Xiangtai Li, Zilong Huang, Anran Wang, Jiacong Wang, Tao Zhang, Jiani Zheng, Sule Bai, Zijian Kang, Jiashi Feng, et al. Traceable evidence enhanced visual grounded reasoning: Evaluation and methodology. arXiv preprint arXiv:2507.07999 , 2025. [40] Qi Wang, Yanrui Yu, Ye Yuan, Rui Mao, and Tianfei Zhou. Videorft: Incentivizing video reasoning capability in mllms via reinforced fine-tuning. arXiv preprint arXiv:2505.12434 ,2025. [41] Ye Wang, Ziheng Wang, Boshen Xu, Yang Du, Kejun Lin, Zihan Xiao, Zihao Yue, Jianzhong Ju, Liang Zhang, Dingyi Yang, et al. Time-r1: Post-training large vision language model for temporal video grounding. arXiv preprint arXiv:2503.13377 , 2025. [42] Yi Wang, Xinhao Li, Ziang Yan, Yinan He, Jiashuo Yu, Xiangyu Zeng, Chenting Wang, Changlian Ma, Haian Huang, Jianfei Gao, et al. Internvideo2. 5: Empowering video mllms with long and rich context modeling. arXiv preprint arXiv:2501.12386 , 2025. [43] Ziyang Wang, Jaehong Yoon, Shoubin Yu, Md Mohaiminul Islam, Gedas Bertasius, and Mohit Bansal. Video-rts: Rethinking reinforcement learning and test-time scaling for efficient and enhanced video reasoning. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 28114–28128, 2025. [44] Ziyue Wang, Sheng Jin, Zhongrong Zuo, Jiawei Wu, Han Qiu, Qi She, Hao Zhang, and Xudong Jiang. Video-ktr: Reinforcing video reasoning via key token attribution. arXiv preprint arXiv:2601.19686 , 2026. [45] Ziang Yan, Xinhao Li, Yinan He, Zhengrong Yue, Xiangyu Zeng, Yali Wang, Yu Qiao, Limin Wang, and Yi Wang. Videochat-r1. 5: Visual test-time scaling to reinforce multimodal reasoning by iterative perception. arXiv preprint arXiv:2509.21100 , 2025. 12 [46] Chenxu Yang, Chuanyu Qin, Qingyi Si, Minghui Chen, Naibin Gu, Dingyu Yao, Zheng Lin, Weiping Wang, Jiaqi Wang, and Nan Duan. Self-distilled rlvr. arXiv preprint arXiv:2604.03128 ,2026. [47] Zuhao Yang, Sudong Wang, Kaichen Zhang, Keming Wu, Sicong Leng, Yifan Zhang, Bo Li, Chengwei Qin, Shijian Lu, Xingxuan Li, et al. Longvt: Incentivizing" thinking with long videos" via native tool calling. arXiv preprint arXiv:2511.20785 , 2025. [48] Xiangyu Zeng, Zhiqiu Zhang, Yuhan Zhu, Xinhao Li, Zikang Wang, Changlian Ma, Qingyu Zhang, Zizheng Huang, Kun Ouyang, Tianxiang Jiang, et al. Video-o3: Native interleaved clue seeking for long video multi-hop reasoning. arXiv preprint arXiv:2601.23224 , 2026. [49] Boqiang Zhang, Kehan Li, Zesen Cheng, Zhiqiang Hu, Yuqian Yuan, Guanzheng Chen, Sicong Leng, Yuming Jiang, Hang Zhang, Xin Li, et al. Videollama 3: Frontier multimodal foundation models for image and video understanding. arXiv preprint arXiv:2501.13106 , 2025. [50] Hang Zhang, Xin Li, and Lidong Bing. Video-llama: An instruction-tuned audio-visual language model for video understanding. In Proceedings of the 2023 conference on empirical methods in natural language processing: system demonstrations , pages 543–553, 2023. [51] Haoji Zhang, Xin Gu, Jiawen Li, Chixiang Ma, Sule Bai, Chubin Zhang, Bowen Zhang, Zhichao Zhou, Dongliang He, and Yansong Tang. Thinking with videos: Multimodal tool-augmented reinforcement learning for long video reasoning. arXiv preprint arXiv:2508.04416 , 2025. [52] Yuanhan Zhang, Jinming Wu, Wei Li, Bo Li, Zejun Ma, Ziwei Liu, and Chunyuan Li. Llava-video: Video instruction tuning with synthetic data. Transactions on Machine Learning Research , 2025. [53] Siyan Zhao, Zhihui Xie, Mengchen Liu, Jing Huang, Guan Pang, Feiyu Chen, and Aditya Grover. Self-distilled reasoner: On-policy self-distillation for large language models. arXiv preprint arXiv:2601.18734 , 2026. [54] Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang, Yuqiong Liu, Rui Men, An Yang, et al. Group sequence policy optimization. arXiv preprint arXiv:2507.18071 , 2025. 13 Appendix Contents 
+
+A Extended Related Work 15 B Limitations and Future Works 16 C Implementation and Evaluation Details 16 
+
+C.1 Algorithm Details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 C.2 Training Details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 C.3 Evaluation Details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 
+
+D Additional Experimental Results 20 
+
+D.1 Benchmark-Level Ablation Results . . . . . . . . . . . . . . . . . . . . . . . . . . 20 D.2 Additional Training Curves . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 D.3 Teacher Stability Diagnostics . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 D.4 Training Details for Ablation Settings . . . . . . . . . . . . . . . . . . . . . . . . 22 
+
+E Mechanistic Analysis and Qualitative Diagnostics 23 
+
+E.1 How Judge Feedback Affects Credit Assignment . . . . . . . . . . . . . . . . . . 23 E.2 Trajectory-Dependent Judge Feedback . . . . . . . . . . . . . . . . . . . . . . . . 23 E.3 Top-K Local Support Ratio . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 E.4 Feedback-Conditioned Credit as an Information Layer . . . . . . . . . . . . . . . 24 
+
+F Qualitative Case Studies 28 G Judge Prompt Template 33 
+
+G.1 System Prompt . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 33 G.2 User Prompt Assembly . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 34 
+
+H Broader Impacts 34 
+
+14 A Extended Related Work 
+
+Video large language models. Recent advances in video large language models (VideoLLMs) have extended the success of vision-language models to dynamic visual understanding [ 29 , 50 , 52 , 49 , 26 ]. Existing approaches typically build upon pretrained image-language backbones and incorporate temporal modeling through frame sampling [ 52 , 49 ], temporal attention modules [ 42 ], or lightweight adapters that aggregate information across frames [ 4, 36 ]. These designs have enabled strong performance on a wide range of video tasks [ 10 , 22 , 17 , 7, 37 ], including question answering, captioning, and temporal reasoning. Despite these improvements, most VideoLLMs are trained using supervised fine-tuning or imitation learning on static annotations [ 52 , 49 ]. While effective for aligning model outputs with ground-truth answers, such training paradigms treat reasoning as a one-shot prediction problem and do not explicitly model the process of multi-step reasoning over time. As a result, models often produce superficially correct answers that are not faithfully grounded in the underlying video content, especially in long or complex scenarios where errors may arise from incorrect temporal alignment or missing visual evidence [ 41 , 3 , 31 , 39 ]. Several recent works attempt to address these limitations by incorporating iterative reasoning or external feedback signals [ 23 , 40 , 43 , 51 ]. However, these methods typically rely on heuristic supervision or unstructured feedback, which limits their ability to provide precise guidance for correcting intermediate reasoning steps. Consequently, enabling fine-grained and interpretable credit assignment remains an open challenge in VideoLLM training. 
+
+Reinforcement learning for multimodal reasoning. Reinforcement learning has emerged as a powerful paradigm for improving reasoning capabilities in large language models by optimizing policies against task-level rewards [ 13 , 34 ]. In particular, reinforcement learning with verifiable rewards (RLVR) provides a principled way to incorporate correctness signals derived from ground-truth answers or external verifiers. This paradigm has been increasingly applied to multimodal settings [ 9 , 23 , 40 ], where reward functions may jointly consider answer accuracy, grounding consistency, and other task-specific criteria. While reinforcement learning offers reliable optimization signals, its effectiveness is fundamentally constrained by the granularity of reward design [ 13 , 34 , 46 ]. In most cases, rewards are defined at the sequence level, providing only a scalar signal for an entire reasoning trajectory. This leads to coarse credit assignment, making it difficult to identify which parts of a long reasoning sequence are responsible for success or failure. The problem is particularly severe in video reasoning, where errors are often localized and structured, such as referencing an incorrect time window or misidentifying objects in specific frames. Recent efforts have explored combining reinforcement learning with auxiliary supervision to improve credit assignment [ 53 , 18 , 46 ], including approaches that incorporate token-level guidance or policy regularization. However, these methods typically treat auxiliary signals as generic constraints or smoothness priors, without explicitly modeling the structure of reasoning errors [ 53 , 18 , 46 ]. As a result, they struggle to provide targeted corrections in complex multimodal scenarios. 
+
+Self-distillation and fine-grained credit assignment. Self-distillation provides an alternative approach to improving sequence models by introducing dense, token-level supervision derived from teacher signals [ 15 , 11 , 33 ]. In the context of reasoning tasks, recent methods leverage self-distillation to refine intermediate predictions, often by comparing model outputs under different conditions or by integrating teacher policies into reinforcement learning frameworks [ 53 , 18 , 46 ]. These approaches enable more fine-grained credit assignment than pure reinforcement learning, and have been shown to improve training efficiency and reasoning quality. However, existing self-distillation methods largely rely on unstructured or modality-agnostic signals [ 53 , 18 , 46 ]. The teacher guidance is typically expressed as a distributional difference or preference signal, without explicitly capturing the underlying causes of reasoning errors. Unlike on-policy distillation methods that introduce dense distribution-matching or reverse-KL-style objectives, VISD does not add a separate distillation loss; the teacher signal only reweights the magnitude of the on-policy gradient while the reward advantage determines its direction. This limitation becomes more pronounced in video reasoning, where failures may stem from diverse sources [ 30 , 41 , 31 , 39 ], including logical inconsistency, temporal misalignment, and incorrect visual grounding. Without distinguishing between these factors, token-level supervision may lack diagnostic specificity, leading to suboptimal learning dynamics. Furthermore, integrating self-distillation with reinforcement learning introduces additional challenges. Naively combining the two can result in unstable optimization, as auxiliary signals may conflict with reward-driven updates or dominate the learning process. This highlights the need for a principled 15 framework that not only provides fine-grained supervision, but also aligns it with the underlying structure of multimodal reasoning and preserves the stability of policy optimization. 
+
+B Limitations and Future Works 
+
+Our current evaluation mainly focuses on publicly available benchmarks for video reasoning and grounding. While these benchmarks cover short-video reasoning, long-video understanding, temporal grounding, and spatial grounding, they still cannot fully capture the diversity and noise of real-world video use cases. Future work can therefore extend VISD to more open-ended, noisy, and complex real-world video tasks, including settings with weaker supervision, more diverse video quality, and less standardized answer formats. Our current method mainly focuses on video reasoning with explicit temporal and spatial grounding signals. This setting is a natural testbed for studying fine-grained credit assignment, but it does not exhaust the full range of structured outputs that VideoLLMs may need to produce. Future work can extend VISD to richer structured outputs, such as denser event descriptions or more compositional grounded reasoning formats, as well as more open-ended interactive video tasks. 
+
+C Implementation and Evaluation Details 
+
+C.1 Algorithm Details Teacher and judge roles. The feedback-conditioned teacher is initialized from the same SFT-initialized model as the student. For each sampled student rollout, an external LLM judge reads the question, the student completion, the verified answer, and available grounding evidence, then produces structured process feedback about answer correctness, reasoning consistency, temporal alignment, and spatial grounding. The judge uses these video-specific cues to diagnose the student’s rollout, but the final training reward is still computed by the original verifier from the ground-truth answer and grounding annotations. The full judge prompt template is provided in Appendix G. In the main experiments, we use GPT-5.4 as the judge because it provides strong instruction following and reasoning capabilities for diagnosing long video reasoning trajectories. The judge is used only during training: it does not replace the verifier reward, does not provide gradients, and is not used at inference time. Instead, its feedback is treated as privileged diagnostic context that tells the teacher not only whether a rollout is correct, but also how its reasoning or grounding succeeds or fails. The teacher does not generate a new answer; it replays the same student completion under the hidden answer/evidence/feedback context and provides stop-gradient token scores. The resulting teacher-student token score is used only to reweight the on-policy gradient magnitude, while the rollout-level advantage determines the update direction. 
+
+Reward. The verifier reward is consistent with Open-o3-Video [ 30 ] and VisionCoach [ 20 ], covering answer correctness, format correctness, final-answer grounding, and reasoning-trace grounding. VISD does not introduce a new reward source; instead, it changes how the resulting rollout reward is converted into token-level credit through feedback-conditioned teacher reweighting. Each sampled rollout is scored by this verifier before computing the group-relative advantage. For a prompt x,completion y, verified answer a⋆, and available grounding evidence e, the scalar reward is the sum of the applicable components: 
+
+R(x, y, a ⋆, e ) = X
+
+> k∈K (x)
+
+αkrk(x, y, a ⋆, e ),
+
+K(x) ⊆ { ans , fmt , ans -tmp , ans -spa , thk -tmp , thk -spa }.
+
+(10) Here K(x) masks out reward terms that are not supported by the current sample, and the main experiments use the configured component weights αk when summing the rollout reward. The answer reward checks exact correctness for multiple-choice questions and ROUGE-based similarity for free-form answers. For temporal and spatial grounding answers, the verifier additionally computes temporal IoU between parsed answer intervals and ground-truth intervals, and visual IoU between parsed answer boxes and ground-truth boxes. The format reward checks the structured response format, including paired <think> and <answer> tags and valid grounding tags such as <obj> ,
+
+<box> , and <t> when grounding is required. 16 For reasoning traces, VISD parses timestamps and object-box-time tuples from the <think> section. When interval supervision is available, the thinking temporal reward measures the fraction of parsed timestamps that fall inside the annotated interval: 
+
+rseg thk -tmp = 1
+
+M
+
+> M
+
+X
+
+> m=1
+
+1[s⋆ ≤ tm ≤ e⋆] . (11) When key-frame supervision is available, it instead uses an adaptive proximity score to the nearest annotated time: 
+
+rpt thk -tmp = 1
+
+M
+
+> M
+
+X
+
+> m=1
+
+exp − min j |tm − t⋆j |2
+
+2σ2
+
+> s
+
+!
+
+, (12) where σs is annealed during training so that early learning tolerates coarse temporal localization and later learning encourages tighter alignment. For thinking spatial reward, a predicted tuple contributes only when its timestamp matches an annotated key frame within a small temporal tolerance; the reward then averages IoU scores between predicted boxes and ground-truth boxes on the matched frame: 
+
+rthk -spa = 1
+
+Z
+
+X
+
+> m∈I
+
+max  
+
+> b⋆∈B ⋆(tm)
+
+IoU( bm, b ⋆), I = {m : min  
+
+> j
+
+|tm − t⋆j | ≤ τ }. (13) If no valid prediction or supervision is available for a component, that component contributes zero or is masked out. The summed rollout reward in Eq. (10) is then used to compute the standard group-relative advantage in Eq. (14) ; in the main VISD experiments, judge feedback and teacher replay do not create separate reward components or change the reward-determined advantage direction. 
+
+GRPO-style VISD objective. For each prompt x, the old policy samples a group of rollouts 
+
+{y(i)}Gi=1 . After scoring each rollout with the verifier, VISD first computes the standard group-relative advantage: 
+
+A(i) = R(x, y (i)) − μG
+
+σG + ϵ , μG = 1
+
+G
+
+> G
+
+X
+
+> j=1
+
+R(x, y (j)), (14) where σG is the standard deviation of rewards within the same rollout group. At token position t
+
+of rollout i, let ∆(i) 
+
+> t
+
+denote the stop-gradient top-K teacher-student log-ratio on the realized token, as defined in Appendix E.3. VISD converts this ratio into a positive token modifier and reweighted advantage: 
+
+m(i) 
+
+> t
+
+= clip 
+
+
+
+exp 
+
+
+
+sign( A(i))∆ (i)
+
+> t
+
+
+
+, 1 − ϵw, 1 + ϵw
+
+
+
+, ˆA(i) 
+
+> t
+
+= A(i) h
+
+(1 − λs) + λsm(i)
+
+> t
+
+i
+
+.
+
+(15) The final policy objective keeps the GRPO clipped surrogate form, but replaces the rollout-level advantage with the token-reweighted advantage: 
+
+JVISD (θ) = E
+
+ 1
+
+G
+
+> G
+
+X
+
+> i=1
+
+1
+
+|y(i)|
+
+> |y(i)|
+
+X
+
+> t=1
+
+min 
+
+
+
+ρ(i) 
+
+> t
+
+(θ) ˆA(i) 
+
+> t
+
+,
+
+clip 
+
+
+
+ρ(i) 
+
+> t
+
+(θ), 1 − ϵpg , 1 + ϵpg 
+
+ ˆA(i)
+
+> t
+
+
+
+.
+
+(16) Here the token-level importance ratio is 
+
+ρ(i) 
+
+> t
+
+(θ) = πθ (y(i) 
+
+> t
+
+| x, y (i)
+
+> <t
+
+)
+
+πθold (y(i) 
+
+> t
+
+| x, y (i)
+
+> <t
+
+) . (17) The implementation minimizes −J VISD . When λs = 0 , ˆA(i) 
+
+> t
+
+= A(i), so VISD recovers the standard GRPO clipped surrogate. 17 Algorithm 1 VISD training procedure with feedback-conditioned teacher replay 
+
+Require: Student policy πθ , EMA teacher π¯θ , RL data D = {(x, a ⋆, e )}, judge J, verifier R, group size G,top-K size K, VISD mixing schedule λs, credit clip bound ϵw 
+
+> 1:
+
+for each training iteration s do  
+
+> 2:
+
+Set rollout policy θold ← θ 
+
+> 3:
+
+Sample a batch of video-question prompts {x} from D 
+
+> 4:
+
+for each prompt x with verified answer/evidence (a⋆, e ) do 
+
+// Step 1: on-policy video reasoning rollouts  
+
+> 5:
+
+Sample G completions y(1) , . . . , y (G) ∼ πθold (· | x)
+
+// Step 2: rollout-level reward and update direction  
+
+> 6:
+
+for i = 1 , . . . , G do  
+
+> 7:
+
+Obtain reward R(i) ← R(x, y (i), a ⋆, e ) 
+
+> 8:
+
+end for  
+
+> 9:
+
+Compute group-relative advantages A(i) ← (R(i) − μG)/(σG + ϵ)
+
+// Step 3: trajectory-dependent diagnosis  
+
+> 10:
+
+for i = 1 , . . . , G do  
+
+> 11:
+
+Generate structured feedback f (i) ← J(x, y (i), a ⋆, e ) 
+
+> 12:
+
+Set privileged context r(i) ← (a⋆, e, f (i)) and replay the same completion y(i) 
+
+> 13:
+
+for t = 1 , . . . , |y(i)| do  
+
+> 14:
+
+Construct U(i) 
+
+> t
+
+← TopK PT (·| x,r (i),y (i) 
+
+> <t )
+
+(K) ∪ { y(i) 
+
+> t
+
+} 
+
+> 15:
+
+Renormalize teacher and student distributions on U(i) 
+
+> t
+> 16:
+
+Compute the top-K support log-ratio as in Eq. (4) 
+
+∆(i) 
+
+> t
+
+← sg 
+
+h
+
+log ePT (y(i) 
+
+> t
+
+| x, r (i), y (i) 
+
+> <t
+
+) − log ePS (y(i) 
+
+> t
+
+| x, y (i) 
+
+> <t
+
+)
+
+i 
+
+> 17:
+
+Convert to clipped token weight m(i) 
+
+> t
+
+← clip 
+
+
+
+exp(sign( A(i))∆ (i) 
+
+> t
+
+), 1 − ϵw , 1 + ϵw
+
+ 
+
+> 18:
+
+Set token advantage ˆA(i) 
+
+> t
+
+← A(i) ·
+
+
+
+(1 − λs) + λsm(i)
+
+> t
+
+ 
+
+> 19:
+
+end for  
+
+> 20:
+
+end for  
+
+> 21:
+
+end for 
+
+// Step 4: direction-preserving policy update  
+
+> 22:
+
+Update θ with the clipped policy-gradient objective using { ˆA(i) 
+
+> t
+
+} 
+
+> 23:
+
+Update EMA teacher ¯θ ← τ ¯θ + (1 − τ )θ and anneal λs 
+
+> 24:
+
+end for 
+
+C.2 Training Details Training data and initialization. VISD uses the same SFT initialization recipe as Open-o3-Video, and our main method is applied in the subsequent RL stage. The SFT initialization uses STGR-CoT-30k, which contains four groups of grounded reasoning data: temporal grounding CoT samples, spatial grounding samples, spatio-temporal reasoning samples curated from temporal grounding and dense-captioning sources, and general video reasoning CoT samples. This initialization stage teaches the model to produce the grounded reasoning format used throughout our experiments, including temporal references, object mentions, bounding boxes, and final answers. Starting from this SFT-initialized model, we further optimize VISD on STGR-RL-36k with on-policy rollouts. The RL data follows the same broad task coverage and includes temporal grounding, spatial grounding, spatio-temporal reasoning, and general video QA prompts. Each RL example contains a video, a question, a verified answer, and, when available, grounding-related metadata such as key frames, key objects, temporal segments, or spatial regions. The RL stage optimizes answer correctness and spatio-temporal grounding under task-specific rewards, while VISD introduces judge feedback and teacher replay as training-time privileged signals for token-level credit reweighting. 
+
+Optimization details. We train VISD on 2 nodes with 8 NVIDIA A100 GPUs per node, using DeepSpeed ZeRO-3 and FlashAttention-2. Both the SFT initialization stage and the RL stage are trained for one epoch with learning rate 1 × 10 −6. For each prompt, the policy samples G = 4 
+
+on-policy completions. The maximum prompt length is 16,384 tokens and the maximum completion length is 768 tokens. We use a per-device training batch size of 1, gradient accumulation of 1, learning rate 1 × 10 −6, weight decay 0.01, and gradient clipping with maximum norm 5. The maximum visual 18 input resolution is controlled by a pixel budget of 401,408 pixels during training. The main VISD result evaluates the student policy from the EMA-teacher training setting at optimization step 1200. 
+
+VISD training configuration. While teacher guidance is active, we maintain an EMA teacher and update it every optimization step with update rate 0.01. We do not use a reference model, a teacher KL loss, or a separate distillation loss in the main VISD setting. The VISD top-K support size is 
+
+K = 16 , and the token weight is clipped to [0 .8, 1.2] . The VISD mixing coefficient starts from 0.5 and linearly anneals to 0 over the first 600 optimization steps, gradually reducing the objective to standard on-policy RL. Table 8 summarizes the main model configuration and optimization hyperparameters used in VISD. Table 8: Main model configuration and training hyperparameters for VISD. The table summarizes the backbone, teacher/evaluator setup, rollout configuration, token-credit reweighting, and optimization hyperparameters. Parameter Value                            
+
+> Model, teacher, and evaluator
+> Base VideoLLM Qwen2.5-VL-7B Teacher initialization Same as student initialization Teacher update EMA, update rate 0.01 VSTAR answer evaluator Qwen2.5-72B-Instruct
+> Rollout and sequence length
+> Rollouts per prompt 4Max prompt length 16,384 Max completion length 768 Training pixel budget 401,408
+> VISD credit reweighting
+> Top-Ksupport size 16 Token-weight clip range [0 .8,1.2]
+> Initial VISD mixing coefficient 0.5 Mixing annealing steps 600 Reference-model KL Not used Auxiliary distillation loss Not used
+> Optimization
+> SFT epochs 1RL epochs 1Per-device batch size 1Gradient accumulation 1Optimizer AdamW Learning rate 1×10 −6
+> Weight decay 0.01 Max gradient norm 5Precision bfloat16
+
+C.3 Evaluation Details Baselines. We compare VISD with both proprietary and open-source video reasoning models. For VSTAR, we include proprietary models such as GPT-4o [ 19 ] and Gemini-2-Flash [ 8 ], as well as open-source VideoLLMs including TRACE [ 14 ], Oryx-1.5-7B [ 27 ], VideoChat2 [ 22 ], Qwen2.5-VL-7B [ 2 ], InternVL-2.5-8B [ 6], Video-LLaMA3 [ 49 ], LLaVA-Video [ 52 ], Open-o3-Video [ 30 ], and VisionCoach [ 20 ]. For broader video understanding benchmarks, we additionally compare against recent reasoning-oriented or tool-based baselines, including LongVT-RL [ 47 ], VideoRFT [ 40 ], and Video-R1 [ 9]. For zero-shot temporal grounding on Charades-STA [ 12 ], we report representative gen-eral VideoLLMs and temporal-grounding VideoLLMs, following the standard comparison protocol used in prior work. Rows marked with ∗ are evaluated by us under the same inference pipeline, while rows marked with † combine available reported results with our own evaluations when necessary. 
+
+VSTAR metrics. VSTAR evaluates grounded video reasoning along three dimensions: what ,
+
+when , and where . The what dimension is measured by answer accuracy. The when dimension is measured by temporal IoU between predicted and ground-truth temporal intervals. The where 
+
+dimension is measured by spatial IoU between predicted and ground-truth bounding boxes. VSTAR 19 reports two reasoning chains: Chain1 follows the order what–when–where , while Chain2 follows 
+
+what–where–when . For each chain, the arithmetic mean is computed as 
+
+AM = 13 (Acc + tIoU + sIoU) , (18) and VSTAR further reports mAM by averaging AM over the two chains. The benchmark also reports mLGM, a logarithmic geometric-style aggregate that reduces the collapse caused by any single near-zero grounding dimension. Together, mAM and mLGM summarize answer correctness, temporal localization, and spatial grounding into overall spatio-temporal reasoning scores. 
+
+General video understanding metrics. For WorldSense [ 16 ], VideoMMMU [ 17 ], Video-MME-v2 [ 10 ], and LongVideo-Reason [ 5], we follow the official benchmark protocols and report the benchmark-level accuracy or score used by each dataset. For WorldSense and VideoMMMU, we additionally report their category-level scores when available. For Video-MME-v2 [ 10 ], we report the official non-linear score, level-wise scores, consistency, coherence, and average accuracy using 64 sampled frames without subtitles. 
+
+Temporal grounding metrics. For TVGBench [ 41 ] and Charades-STA [ 12 ], we evaluate temporal grounding using temporal Intersection over Union (tIoU) between the predicted and ground-truth intervals. For Charades-STA, we report Recall at IoU thresholds 0.3, 0.5, and 0.7, together with mean IoU. For TVGBench, we report mean IoU following the benchmark protocol. 
+
+Evaluation protocol. All evaluations are conducted on 8 NVIDIA A100 GPUs. For VSTAR [ 7], we follow the official evaluation pipeline with 16 sampled frames and report answer accuracy, temporal IoU, spatial IoU, mAM, and mLGM. The generated VSTAR answers are evaluated by a Qwen2.5-72B-Instruct judge following the benchmark protocol. For Video-MME-v2 [ 10 ], we sample 64 frames without subtitles and report the official non-linear score, level-wise scores, consistency, coherence, and average accuracy. For WorldSense [ 16 ], VideoMMMU [ 17 ], Video-MME-v2 [ 10 ], LongVideo-Reason [ 5 ], TVGBench [ 41 ], and Charades-STA [ 12 ], we use the corresponding official or benchmark-provided evaluation scripts, keeping decoding deterministic for all evaluated models. 
+
+D Additional Experimental Results 
+
+D.1 Benchmark-Level Ablation Results 
+
+Tables 9 and 10 provide additional benchmark-level ablation results for Video-MME-v2, Charades-STA, and TVGBench. The VSTAR and general video reasoning ablation results are reported in Section 4.3. These results complement the training curves in Section 4.3: the benchmark scores are not meant to replace the main comparison, but to check whether the same design choices remain visible under downstream evaluation. Table 9: Video-MME-v2 ablation results. All evaluated ablation models use 64 sampled frames without subtitles. We separate teacher/feedback ablations from the top-K analysis because they vary different design axes.                                                           
+
+> Model Frames Non-Lin Score Level 1 Level 2 Level 3 Consistency Coherence Avg Acc
+> Ablation Variants
+> VISD w/o Feedback 64 7.6 11.0 6.4 6.5 8.1 6.7 20.9 VISD w/ current-policy teacher 64 7.7 10.2 7.0 6.7 8.0 6.9 21.2 VISD w/ Sync-10 teacher 64 8.1 12.6 6.7 6.5 9.1 6.3 21.7
+> VISD w/ EMA teacher (Ours) 64 9.4 13.4 8.2 7.9 10.2 8.0 23.8
+> Top-KAnalysis
+> VISD w/ sampled token 64 8.1 11.9 6.7 6.9 8.6 7.2 21.5
+> VISD w/ top-K(Ours) 64 9.4 13.4 8.2 7.9 10.2 8.0 23.8
+
+D.2 Additional Training Curves Top-K support versus sampled token. Figure 4 provides the component-level training curves for the top-K support and sampled-token variants discussed in Section 4.3. The sampled-token variant remains competitive on several signals, but the top-K support gives a slightly stronger and more stable trend on total reward and several grounding-related components, matching the benchmark-level differences in Tables 6, 7, 9, and 10. 20 Table 10: Detailed temporal-grounding ablation results. We report Charades-STA and TVGBench temporal-grounding metrics. Teacher/feedback ablations and top-K analysis are shown as separate blocks. 
+
+Model Charades-STA TVGBench R@0.3 R@0.5 R@0.7 mIoU R@0.3 R@0.5 R@0.7 mIoU 
+
+Ablation Variants 
+
+VISD w/o Feedback 60.5 40.7 18.5 40.2 32.5 21.4 11.8 22.3 VISD w/ current-policy teacher 48.8 27.5 11.2 31.8 28.2 16.4 7.0 18.7 VISD w/ Sync-10 teacher 66.6 42.8 19.2 43.2 35.6 22.2 10.4 24.0 
+
+VISD w/ EMA teacher (Ours) 67.3 46.1 21.6 44.6 34.5 24.5 13.4 24.8 
+
+Top-K Analysis 
+
+VISD w/ sampled token 63.6 41.4 18.8 41.7 35.0 21.5 12.8 23.9 
+
+VISD w/ top-K (Ours) 67.3 46.1 21.6 44.6 34.5 24.5 13.4 24.8 0 500 1000 1500 2000 
+
+> Steps
+> 1.8
+> 2.0
+> 2.2
+> Total reward
+> Top-K VISD (K=16)
+> Sampled-token VISD
+
+(a) 0 500 1000 1500 2000  
+
+> Steps
+> 1.6
+> 1.8
+> 2.0
+> 2.2
+> 2.4
+> Group mean reward
+> Top-K VISD (K=16)
+> Sampled-token VISD
+
+(b) 0 500 1000 1500 2000  
+
+> Steps
+> 0.475
+> 0.500
+> 0.525
+> 0.550
+> 0.575
+> Answer accuracy
+> Top-K VISD (K=16)
+> Sampled-token VISD
+
+(c) 0 500 1000 1500 2000 
+
+> Steps
+> 0.03
+> 0.04
+> 0.05
+> 0.06
+> 0.07
+> Temporal IoU
+> Top-K VISD (K=16)
+> Sampled-token VISD
+
+(d) 0 500 1000 1500 2000  
+
+> Steps
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> Spatial IoU
+> Top-K VISD (K=16)
+> Sampled-token VISD
+
+(e) 0 500 1000 1500 2000  
+
+> Steps
+> 0.225
+> 0.250
+> 0.275
+> 0.300
+> 0.325
+> Temporal point
+> Top-K VISD (K=16)
+> Sampled-token VISD
+
+(f) 0 500 1000 1500 2000 
+
+> Steps
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> 0.10
+> Temporal segment
+> Top-K VISD (K=16)
+> Sampled-token VISD
+
+(g) 0 500 1000 1500 2000  
+
+> Steps
+> 0.100
+> 0.125
+> 0.150
+> 0.175
+> 0.200
+> Spatial grounding
+> Top-K VISD (K=16)
+> Sampled-token VISD
+
+(h) 0 500 1000 1500 2000  
+
+> Steps
+> 0.875
+> 0.900
+> 0.925
+> 0.950
+> 0.975
+> 1.000
+> Format reward
+> Top-K VISD (K=16)
+> Sampled-token VISD
+
+(i) 
+
+Figure 4: Top-K support versus sampled-token training curves. We compare (a) total reward, (b) group mean reward, (c) answer accuracy, (d) temporal IoU, (e) spatial IoU, (f) temporal point, (g) temporal segment, (h) 
+
+spatial grounding, and (i) format reward. 
+
+Feedback conditioning. Figure 5 compares the feedback and no-feedback variants across individual reward components. We report each component as a separate small panel rather than a dense single-axis multi-panel plot for readability. These curves are noisier than the total reward curve, especially for sparse grounding sub-rewards, so we keep them in the appendix. They are nevertheless useful as a sanity check: VISD’s improvement is not caused by a single formatting artifact, but is accompanied by stronger answer and grounding-related signals over training. 
+
+D.3 Teacher Stability Diagnostics 
+
+Figure 6 provides additional optimization diagnostics for the teacher update ablation. The Sync-10 teacher synchronizes parameters with the student every 10 steps and keeps them frozen between synchronizations, whereas the current-policy teacher uses the instantaneous student parameters. The EMA teacher smooths high-frequency parameter changes and gives a more stable teacher signal. 21 0 500 1000 1500 2000 
+
+> Steps
+> 1.8
+> 2.0
+> 2.2
+> Total reward
+> w/o Feedback
+> VISD (Feedback + EMA)
+
+(a) 0 500 1000 1500 2000  
+
+> Steps
+> 1.6
+> 1.8
+> 2.0
+> 2.2
+> 2.4
+> Group mean reward
+> w/o Feedback
+> VISD (Feedback + EMA)
+
+(b) 0 500 1000 1500 2000 
+
+Steps 
+
+0.475 
+
+0.500 
+
+0.525 
+
+0.550 
+
+0.575  
+
+> Answer accuracy reward
+> w/o Feedback
+> VISD (Feedback + EMA)
+
+(c) 0 500 1000 1500 2000 
+
+Steps 
+
+0.03 
+
+0.04 
+
+0.05 
+
+0.06 
+
+0.07 
+
+> Answer temporal IoU reward
+> w/o Feedback
+> VISD (Feedback + EMA)
+
+(d) 0 500 1000 1500 2000 
+
+Steps 
+
+0.02 
+
+0.04 
+
+0.06 
+
+0.08  
+
+> Answer spatial IoU reward
+> w/o Feedback
+> VISD (Feedback + EMA)
+
+(e) 0 500 1000 1500 2000 
+
+Steps 
+
+0.225 
+
+0.250 
+
+0.275 
+
+0.300 
+
+0.325  
+
+> Temporal point reward
+> w/o Feedback
+> VISD (Feedback + EMA)
+
+(f) 0 500 1000 1500 2000 
+
+Steps 
+
+0.02 
+
+0.04 
+
+0.06 
+
+0.08 
+
+0.10 
+
+> Temporal segment reward
+> w/o Feedback
+> VISD (Feedback + EMA)
+
+(g) 0 500 1000 1500 2000 
+
+Steps 
+
+0.100 
+
+0.125 
+
+0.150 
+
+0.175 
+
+0.200  
+
+> Spatial grounding reward
+> w/o Feedback
+> VISD (Feedback + EMA)
+
+(h) 0 500 1000 1500 2000 
+
+Steps 
+
+0.875 
+
+0.900 
+
+0.925 
+
+0.950 
+
+0.975 
+
+1.000  
+
+> Format reward
+> w/o Feedback
+> VISD (Feedback + EMA)
+
+(i) 
+
+Figure 5: Component-level reward curves for feedback ablation. Each panel compares VISD with and without judge feedback for one reward component: (a) total reward, (b) group mean reward, (c) answer accuracy, (d) 
+
+temporal IoU, (e) spatial IoU, (f) temporal point, (g) temporal segment, (h) spatial grounding, and (i) format. 
+
+Consistent with Table 5, the Sync-10 variant exhibits a substantially larger gradient norm and a sharper disturbance as the teacher weight approaches zero, while EMA preserves the best final reward. 0 500 1000 1500 2000 
+
+Steps 
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 
+
+> Gradient norm
+
+Feedback + Current 
+
+Feedback + Sync-10 
+
+VISD (Feedback + EMA) 
+
+Teacher off 
+
+(a) 0 500 1000 1500 2000 
+
+Steps 
+
+0.5 
+
+1.0 
+
+1.5 
+
+2.0 
+
+> Response entropy
+
+Feedback + Current 
+
+Feedback + Sync-10 
+
+VISD (Feedback + EMA) 
+
+Teacher off (b) 
+
+Figure 6: Teacher update stability diagnostics. We show (a) gradient norm and (b) response entropy for different teacher parameterizations. 
+
+D.4 Training Details for Ablation Settings 
+
+The ablation curves are plotted by training step. For the feedback comparison, the no-feedback setting uses the same reinforcement-learning and teacher-replay pipeline but removes the judge-generated 22 process feedback. Teacher-weight annotations are shown only in the teacher-update comparison, where all compared settings share the same teacher schedule. For the teacher-update ablation, all compared variants use judge feedback. The current-policy teacher directly uses the latest student parameters. The Sync-10 teacher synchronizes teacher parameters with the student every 10 training steps and keeps them frozen between synchronizations. The EMA teacher updates teacher parameters as an exponential moving average of the student parameters. All reported final metrics in Table 5 are averaged over the final 100 training steps. 
+
+E Mechanistic Analysis and Qualitative Diagnostics 
+
+E.1 How Judge Feedback Affects Credit Assignment 
+
+The ablation in Section 4.3 shows that judge feedback improves training, but it does not by itself explain how the feedback enters the policy update. VISD uses the judge as a trajectory-level diagnostic channel. As illustrated in Appendix E.2, different rollouts of the same question receive different judge evaluations: the judge distinguishes failed, partially correct, and correct trajectories, and points to whether the error comes from the answer, temporal coverage, spatial grounding, or the consistency between reasoning and answer. This suggests that the feedback is not merely an additional prompt field, but a rollout-dependent description of how the attempt succeeds or fails. The teacher then converts this diagnosis into token-level magnitude modulation. An answer-only teacher observes the verified answer-side information, while the feedback-conditioned teacher additionally observes the judge diagnosis. Thus, the teacher replay distribution changes from 
+
+q(· | x, a ⋆, y <t ) to q(· | x, a ⋆, f, y <t ), where f denotes judge feedback. The rollout-level advantage still determines whether the whole trajectory should be reinforced or suppressed; the teacher-student ratio only modulates the relative update magnitude of individual tokens. This direction–magnitude separation prevents the judge from overwriting the reward direction, while still allowing feedback to redistribute learning pressure within the trajectory. We provide a formal decomposition and token-level visualizations in Appendix E.4. The qualitative comparison shows that feedback-conditioned replay does not uniformly change all tokens relative to answer-only replay. Instead, the additional changes are sparse and tend to appear around tokens tied to diagnosed process errors, such as spurious actions, incomplete temporal coverage, or answer-critical object descriptions. These visualizations are intended as mechanism evidence rather than standalone performance evidence: they illustrate how the extra information in judge feedback can influence credit assignment over process tokens on top of answer-only supervision. 
+
+E.2 Trajectory-Dependent Judge Feedback 
+
+Figure 7 shows the judge feedback for different rollouts of the same video question. The judge assigns different evaluations to failed, partially correct, and correct trajectories, and provides diagnosis about the corresponding failure modes. This example supports the role of the judge as a rollout-dependent diagnostic channel: the feedback describes not only whether a rollout succeeds, but also how its reasoning, answer, and temporal evidence agree or conflict . VISD uses this signal as privileged context for teacher replay, while the rollout-level reward advantage remains responsible for the sign of the policy update. 
+
+E.3 Top-K Local Support Ratio 
+
+This section clarifies the top-K ratio used by VISD. Let qt(v) denote the feedback-conditioned teacher distribution at token position t, and let πt(v) denote the student distribution under the ordinary rollout context: 
+
+qt(v) = q(v | x, a ⋆, e, f, y <t ), πt(v) = πθ (v | x, y <t ). (19) VISD constructs a teacher-centered local support by augmenting the teacher top-K candidates with the realized rollout token: 
+
+Ut = TopK qt (K) ∪ { yt}. (20) The augmentation by yt is not an additional sampled-token objective; it only ensures that the on-policy token receiving the policy-gradient update is always covered by the local support. Within Ut, teacher 23 and student probabilities are renormalized as 
+
+eqt(v) = qt(v)
+
+P 
+
+> u∈U t
+
+qt(u) , eπt(v) = πt(v)
+
+P 
+
+> u∈U t
+
+πt(u) , v ∈ U t. (21) VISD then computes the teacher-student evidence ratio on the realized token: 
+
+∆Kt = sg [log eqt(yt) − log eπt(yt)] . (22) Unlike a top-K KL loss, Eq. 22 does not introduce gradients over all tokens in Ut. It only provides a stop-gradient scalar used to reweight the policy-gradient term of the generated token. 
+
+Local-support calibration. Let 
+
+Qt(Ut) = X
+
+> u∈U t
+
+qt(u), Pt(Ut) = X
+
+> u∈U t
+
+πt(u). (23) Then Eq. 22 admits the exact decomposition 
+
+∆Kt = log qt(yt) − log πt(yt)
+
+| {z }
+
+> token evidence ratio
+
++ log Pt(Ut)
+
+Qt(Ut)
+
+| {z }
+
+> local-support calibration
+
+. (24) This identity shows that the top-K ratio preserves the original teacher-student evidence ratio on the realized token, while adding a calibration term that accounts for how much probability mass the teacher and student assign to the teacher-supported local region. 
+
+Direction preservation and bounded redistribution. VISD converts the local-support ratio into a positive token weight: 
+
+mt = clip  exp  sign( A)∆ Kt
+
+ , 1 − ϵw, 1 + ϵw
+
+ . (25) The token-level advantage is 
+
+ˆAt = A [(1 − λ) + λm t] . (26) Because mt > 0, the reweighting cannot flip the rollout-level update direction: 
+
+sign( ˆAt) = sign( A), A̸ = 0 . (27) Moreover, since mt ∈ [1 − ϵw, 1 + ϵw],
+
+ˆAt
+
+A ∈ [1 − λϵ w, 1 + λϵ w]. (28) Thus, the teacher-conditioned signal only redistributes token-level update magnitudes within a bounded range, and the update naturally reduces to the standard rollout advantage as λ anneals to zero. 
+
+E.4 Feedback-Conditioned Credit as an Information Layer 
+
+This section formalizes the difference between answer-only teacher replay and feedback-conditioned teacher replay. Let a⋆ denote verified answer-side information and let f denote judge feedback for a sampled student rollout. At token position t, we compare the two teacher contexts on a common local support and let eqat and eqa,f t denote the renormalized teacher distributions under answer-only and feedback-conditioned contexts, respectively. The answer-only teacher-student log-ratio is 
+
+∆ans  
+
+> t
+
+= log eqat (yt) − log eπt(yt), (29) whereas the feedback-conditioned log-ratio is 
+
+∆fb  
+
+> t
+
+= log eqa,f t (yt) − log eπt(yt). (30) Their difference isolates the contribution of judge feedback: 
+
+δjudge  
+
+> t
+
+= ∆ fb  
+
+> t
+
+− ∆ans  
+
+> t
+
+= log eqa,f t (yt) − log eqat (yt). (31) 24 Equation 31 makes explicit that judge feedback acts as an additional information layer on top of answer-only supervision. It does not introduce a separate teacher-generation target; instead, it changes how the teacher scores the same original student completion. VISD applies this signal through a positive token-wise reweighting factor. As shown in Appendix E.3, the judge-conditioned teacher can change the relative magnitude assigned to different tokens, but it cannot flip the rollout-level reinforcement direction. This property is important for our interpretation: feedback contributes diagnostic information for which process-relevant tokens should receive different update magnitudes, while the reward advantage still decides whether the trajectory is promoted or suppressed. Figure 8 should therefore be read as a controlled comparison: the student rollout, reward, and displayed token sequence are fixed, and only the teacher-side context changes from answer-only information to feedback-conditioned diagnostic context. The visual differences between (a) and 
+
+(b) instantiate δjudge  
+
+> t
+
+in Equation 31: they show where the added feedback context changes the teacher-side token evidence used for magnitude reweighting. 25 Question: How does the setting and activity of the man at 148 seconds infer 
+
+his participation or attention level compared to the group dynamic around 154 
+
+seconds in? 
+
+Ground Truth Answer: At 148 seconds, the man is alone and focused on 
+
+something in his hands, suggesting personal distraction or detachment. By 
+
+154 seconds, the lively group setting implies greater social engagement, 
+
+indicating a shift from individual focus to shared interaction. 
+
+<think> The video shows a 
+
+<obj>man</obj><box>[13,72,231,224]</box>at<t>154</t> 
+
+s in a group conversation, suggesting active 
+
+participation. Later, the 
+
+<obj>man</obj><box>[206,87,412,222]</box>at<t>181</t 
+
+>s sits alone, looks down, and avoids interaction, 
+
+indicating reduced focus and contribution. </think> 
+
+<answer> The man shifts from group participation to 
+
+sitting alone and disengaged. </answer>    
+
+> The model answer reverses the
+> temporal sequence: it claims the man
+> starts engaged at the group table
+> then becomes isolated, whereas the
+> verified answer states he is isolated
+> at 148s and then the group setting
+> appears at 154s. The student output
+> also uses incorrect timestamps (154s
+> and 181s) that do not match the
+> question.
+> The model answer is semantically
+> consistent but only partially captures
+> the verified answer. It correctly
+> notes the man's disengagement via
+> looking down but omits the verified
+> answer's key contrast with the
+> higher -participation group dynamic at
+> 154s and the inferred shift from
+> personal focus to social interaction.
+
+<think> The video shows an outdoor bar gathering. At 
+
+<t>148.0</t>s, the <obj>man at 148 
+
+seconds</obj><box>[210,99,416,224]</box>at<t>148.0 
+
+</t>s sits with his head down, appearing disengaged. 
+
+By <t>154.0</t>s, the 
+
+<obj>group</obj><box>[0,99,448,224]</box>at<t>154. 
+
+0</t>s is talking and smiling, highlighting his absence 
+
+from the interaction. </think> 
+
+<answer> The man looks down and appears disengaged 
+
+from the social conversation. </answer> 
+
+<think> At 148 seconds, the 
+
+<obj>man</obj><box>[0,72,307,224]</box>at<t>148</t>s 
+
+looks down at his phone, suggesting disengagement. At 
+
+154 seconds, the 
+
+<obj>man</obj><box>[210,36,403,224]</box>at<t>154</t 
+
+>s is laughing, standing, and turning toward the group, 
+
+The model answer is fully 
+
+semantically consistent with the 
+
+verified answer. 
+
+showing increased participation. </think> 
+
+<answer> He shifts from being phone -focused and disengaged to laughing and actively 
+
+interacting with the group. </answer> 
+
+Judge Response Rollout A  Rollout B  Rollout C Figure 7: Trajectory-dependent judge feedback. For the same video question, the judge provides different evaluations and diagnoses for different student rollouts. The feedback is used as privileged information for teacher replay rather than as a replacement for the reinforcement reward. 
+
+26 Teacher stronger Student stronger                                                                                                                                                                                                            
+
+> <th ink >Initially ,the <obj >lady in pink </ obj >< box >[ 21,147,2
+> 24,420]</ box >at <t >13.9</ t>s is seen from the side ,moving
+> her right hand across her face .Sub sequently ,the <obj >lady in pink </ obj >< box >[ 0,1
+> 18,96,323]</ box >at <t >15.5</ t>s is visible from her
+> back as she starts to move forward .Finally ,the <obj >lady in pink </ obj >< box >[ 0,3
+> 19,116,420]</ box >at <t >16.2</ t>s is shown walking
+> away from the camera towards the right side of the frame .Her full -body motion is captured as she walks .</ think >\n
+> <answer >The lady in the pink outfit moves her hand across her face and then walks away from the camera towards the right side
+> of the frame .</ answer >
+> 1
+> 2
+> 34
+> 5
+
+(a) Answer-only teacher replay Teacher stronger Student stronger                                                                                                                                                                                                            
+
+> <th ink >Initially ,the <obj >lady in pink </ obj >< box >[ 21,147,2
+> 24,420]</ box >at <t >13.9</ t>s is seen from the side ,moving
+> her right hand across her face .Sub sequently ,the <obj >lady in pink </ obj >< box >[ 0,1
+> 18,96,323]</ box >at <t >15.5</ t>s is visible from her
+> back as she starts to move forward .Finally ,the <obj >lady in pink </ obj >< box >[ 0,3
+> 19,116,420]</ box >at <t >16.2</ t>s is shown walking
+> away from the camera towards the right side of the frame .Her full -body motion is captured as she walks .</ think >\n
+> <answer >The lady in the pink outfit moves her hand across her face and then walks away from the camera towards the right side
+> of the frame .</ answer >
+> 1
+> 2
+> 34
+> 5
+
+(b) Feedback-conditioned teacher replay 
+
+Figure 8: Answer-only versus feedback-conditioned token credit. (a) and (b) visualize the same fixed student rollout; only the teacher context changes. Warmer and cooler token backgrounds indicate positive or negative teacher-student token evidence used to modulate policy-gradient magnitude. In the answer-only replay, the teacher is conditioned on verified answer-side information, so the token-credit pattern mainly reflects whether the generated trajectory is compatible with the final answer. In the feedback-conditioned replay, the teacher additionally receives the judge diagnosis of the rollout, which specifies process-level issues in the reasoning trajectory. The important comparison is therefore not whether every token changes, but whether feedback changes token evidence at reasoning, grounding, and answer-relevant positions. The numbered outlines mark representative process-relevant positions affected by feedback: 1 marks the early evidence across her face ,which changes from student-favored to teacher-favored after feedback; 2 marks the intermediate visibility claim 
+
+is visible ; 3 marks later camera evidence; 4 marks full-body motion is ; and 5 marks the answer phrase 
+
+across her face and then walks away . The most visible changes occur around the action evidence in 
+
+1, the motion evidence in 4, and the answer-level action phrase in 5. Most other tokens remain close to the answer-only pattern, indicating that feedback selectively changes process-relevant credit rather than uniformly shifting the entire trajectory. This illustrates the intended mechanism of VISD: the rollout-level advantage still determines the update direction, whereas judge feedback adds an information layer that redistributes token-level update magnitudes toward process-relevant parts of the same trajectory. 
+
+27 F Qualitative Case Studies 
+
+To further illustrate the effectiveness of VISD, we provide qualitative case studies covering diverse video understanding scenarios. As shown in Figures 9–17, VISD grounds its reasoning in precise visual evidence, localizing relevant objects, actors, actions, and temporal intervals before producing the final answer. Compared with existing video reasoning models, which often rely on incomplete observations or incorrect temporal and spatial evidence, VISD demonstrates stronger alignment between visual grounding, intermediate reasoning, and response generation. These examples show that VISD not only answers correctly, but also provides more faithful and interpretable reasoning processes across both spatial and temporal video understanding tasks. Question: what is above the child? 
+
+Ground Truth Answer: there is a stop sign above a 
+
+child. 
+
+Open-o3 Video: <think> The video shows a child skiing 
+
+on a snowy slope. Above the child, there is a blue 
+
+archway. A person wearing a black jacket and holding a 
+
+stick is standing near this archway. This person 
+
+appears to be an instructor or a staff member. The 
+
+archway is positioned directly above the child as they 
+
+ski. At <t>28.6</t>s, the child is seen skiing under the 
+
+archway, confirming its position above them. </think> 
+
+<answer> A blue archway is above the child. </answer> 
+
+VisionCoach : <think> The video shows a 
+
+<obj>child</obj><box>[202,105,340,349]</box>at<t>28.5</t>s 
+
+skiing on a snowy slope. Above the child, a blue arch is visible. 
+
+This arch is a gate used for ski slalom events. 
+
+A<obj>person</obj><box>[101,113,168,270]</box>at<t>28.5</t>s 
+
+can be seen standing behind the gate, which is a common setup 
+
+for ski slalom competitions. </think> 
+
+<answer> A blue arch is positioned above the child. </answer> 
+
+VISD : <think> The sign is a green 
+
+rectangular sign with white text that 
+
+reads "STOP" and an arrow pointing 
+
+upwards. The person is standing next 
+
+to it. The person is wearing dark 
+
+clothing and appears to be observing 
+
+the children. The child is skiing on the . 
+
+snow. The <obj>sign</obj><box>[260,47,322,155]</box>at<t>2.0< 
+
+/t>s is positioned above the 
+
+<obj>child</obj><box>[125,170,247,340]</box>at<t>2.0</t>s. </t 
+
+hink> 
+
+<answer> A green stop sign is above the child. </answer> 
+
+> Child
+> Sign
+
+Ground Truth Temporal Window: 0.0s-8.1s 
+
+Figure 9: Visualization . For spatial relation reasoning, VISD accurately localizes the queried child and identifies the object positioned above him, providing precise visual evidence while avoiding confusion with nearby objects. In contrast, related video reasoning models either give incorrect answers or rely on incomplete spatial grounding. 28 Question: What does the panda that takes a blue 
+
+bucket do in this video? 
+
+Ground Truth Answer: D
+
+Open-o3 Video: <think> The video shows a panda taking 
+
+a blue bucket and putting it on its back. Later, the 
+
+same 
+
+<obj>panda</obj><box>[197,147,386,252]</box>at<t>21.5 
+
+</t>s is seen walking around with the bucket on its back. 
+
+This action is repeated as the panda continues to carry 
+
+the bucket while walking. Therefore, the panda puts 
+
+the bucket on other pandas .</think> 
+
+<answer> B</answer> 
+
+VisionCoach : <think> The video shows a panda holding a blue 
+
+bucket in its mouth. The 
+
+<obj>panda</obj><box>[160,164,399,273]</box>at<t>21.5</t>s 
+
+then proceeds to put the bucket down on the ground. Following 
+
+this action, the 
+
+<obj>panda</obj><box>[160,164,399,273]</box>at<t>22.5</t>s is 
+
+seen lying down next to the bucket. This sequence of events 
+
+confirms that the panda puts the bucket on the ground. </think> 
+
+<answer> B</answer> 
+
+VISD : <think> The reasoning process 
+
+begins by observing the panda holding a 
+
+blue bucket. The baby panda is clearly 
+
+interacting with the bucket, which it is 
+
+holding. The person is assisting the 
+
+panda, indicating the panda is putting 
+
+itself into the bucket. The <obj>baby 
+
+panda</obj><box>[170,109,386,280]</box>at<t>28</t>s is 
+
+positioned inside the 
+
+<obj>bucket</obj><box>[170,155,386,280]</box>at<t>28</t>s, 
+
+confirming the action. </think> 
+
+<answer> D</answer> 
+
+A. Throwing the bucket away. 
+
+B. Putting the bucket on other pandas. 
+
+C. Eating food in the bucket. 
+
+D. Putting itself in the bucket.  
+
+> Panda Bucket
+
+Qwen2.5-VL-7B: BFigure 10: Visualization . For temporal action reasoning, VISD grounds the panda and bucket across relevant frames and correctly infers that the panda is putting itself in the bucket. Competing models miss this action transition and produce incorrect answers. Question: who leans on the baby walker outdoors? 
+
+Ground Truth Answer: a baby leans on a baby walker 
+
+outdoors. 
+
+Open-o3 Video: <think> The video shows a baby sitting 
+
+in a stroller outdoors. At <t>2.3</t>s, the 
+
+<obj>baby</obj><box>[197,101,403,280]</box> is looking 
+
+towards the left while the person leans on the walker. 
+
+This action continues as the train passes by. For 
+
+instance, at <t>11.6</t>s , the 
+
+<obj>baby</obj><box>[197,101,403,280]</box> is still 
+
+looking left, and the person remains leaning on the 
+
+walker. Towards the end of the clip, at <t>35.0</t>s, the 
+
+<obj>baby</obj><box>[197,101,403,280]</box> is still 
+
+looking left, and the person is still leaning on the 
+
+walker .</think> 
+
+<answer> A person leans on the baby walker 
+
+outdoors. </answer> 
+
+VisionCoach : <think> The video shows a 
+
+<obj>baby</obj><box>[151,78,407,336]</box> at<t>35.0</t>s 
+
+sitting in a stroller, leaning on its handle. A <obj>person's 
+
+hand</obj><box>[0,0,181,224]</box>at<t>35.0</t>s is seen resting 
+
+on the stroller's handlebar, indicating they are leaning on it. This 
+
+action continues as the 
+
+<obj>baby</obj><box>[151,78,407,336]</box> at<t>35.0</t>s 
+
+remains seated in the stroller, confirming that a person is 
+
+leaning on the baby walker. </think> 
+
+<answer> A person leans on the baby walker outdoors. </answer> 
+
+VISD : <think> The 
+
+<obj>baby</obj><box>[112,50,451,280]< 
+
+/box>at<t>2.3</t>s is leaning on the 
+
+walker</obj><box>[160,0,644,280]</bo 
+
+x>at<t>2.3</t>s, which is positioned 
+
+against a chain-link fence. The baby has his hands on the 
+
+walker's handlebars, indicating he is leaning on it for support. 
+
+The walker is stationary, and the 
+
+<obj>baby</obj><box>[110,50,451,280]</box> at<t>2.3</t>s is 
+
+the only one interacting with it. </think> 
+
+<answer> A baby leans on the baby walker outdoors. </answer> 
+
+Ground Truth Temporal Window: 0.0s-12.1s 
+
+> Baby
+> Baby Walker
+
+Figure 11: Visualization . For outdoor spatial interaction reasoning, VISD accurately localizes both the baby and the baby walker, identifies the baby as the one leaning on the walker, and provides precise visual evidence grounded in the relevant temporal window. Other models instead confuse the person with the baby and produce an incorrect answer. 29 Question: During which time period does the 
+
+person look out the window? 
+
+Ground Truth Answer: 21.50s-30.00s .
+
+Open-o3 Video: <think> First, identify the action of 
+
+looking out the window. The person is initially looking 
+
+down at the table. At 0.0s, she looks up and to the 
+
+left, which is the direction of the window. She 
+
+continues to look in that direction until 2.5s. Then, she 
+
+looks back down at the table. This sequence matches 
+
+the description of "the person looks out the window." 
+
+The action starts when she looks up and to the left 
+
+and ends when she looks back down. </think> 
+
+<answer> From 0.0s to 2.5s </answer> 
+
+VisionCoach : <think> The video shows a person sitting at a table. 
+
+Initially, the person is looking straight ahead. At 12.5s, the 
+
+person begins to turn their head towards the left side of the 
+
+frame, which corresponds to the window. The person continues 
+
+to look out the window, and by 17.8s, the person is looking 
+
+directly out the window, confirming the event has 
+
+occurred. </think> 
+
+<answer> From 12.5s to 17.8s </answer> 
+
+VISD : <think> Initially, the person is 
+
+looking towards the left side of the 
+
+frame, which is the direction of the 
+
+window. As the video progresses, the 
+
+person's gaze shifts slightly, and the 
+
+window becomes more prominent in the 
+
+frame. The person's head turns more 
+
+towards the window, and the light from the window becomes 
+
+more noticeable. This suggests the person is looking out the 
+
+window. The action continues as the person turns their head 
+
+more towards the window. </think> 
+
+<answer> From 21.5s to 28.0s </answer> Figure 12: Visualization . For temporal localization reasoning, VISD accurately grounds the person’s gaze direction across frames and identifies the correct time window when the person looks out of the window. Other models focus on earlier or incomplete head movements and produce incorrect intervals, whereas VISD captures the sustained window-looking action and matches the ground-truth period. Question: What changed on the table while the 
+
+camera was looking away? 
+
+Ground Truth Answer: C
+
+Open-o3 Video: <think> The video shows a table with 
+
+various items. At the beginning, an apple is visible 
+
+among other objects. After the camera moves away, 
+
+it returns to show that the 
+
+<obj>apple</obj><box>[602,203,709,358]</box>at<t>4. 
+
+0</t>s has been removed from the table . This 
+
+confirms that the apple was taken off the 
+
+table. </think> 
+
+<answer> A</answer> 
+
+VisionCoach : <think> The video shows a table with various items 
+
+arranged on it. Initially, an apple is visible among other objects 
+
+like a remote control, a piece of clothing, and a small ball. After 
+
+the camera moves away, the scene changes. Upon returning, the 
+
+<obj>apple</obj><box>[602,223,709,411]</box>at<t>5.8</t>s is no 
+
+longer present on the table. This confirms that the apple has 
+
+been removed. <think> 
+
+<answer> A</answer> 
+
+VISD : <think> The reasoning process 
+
+begins by observing the objects on 
+
+the table before the camera moves. 
+
+The 
+
+<obj>apple</obj><box>[604,219,708,35 
+
+6]</box>at<t>5</t>s is clearly visible 
+
+next to the remote control. After the 
+
+camera moves, the apple is no longer 
+
+present on the table. The ball cloth 
+
+remains in its original position. This indicates that the 
+
+<obj>apple</obj><box>[604,219,708,356]</box>at<t>7</t>s 
+
+has been removed. </think> 
+
+<answer> C</answer> 
+
+A. Nothing changed visibly on the table while the 
+
+camera was looking away. 
+
+B. The ball cloth changed location. 
+
+C. An apple was removed. Apple 
+
+> Apple
+
+Figure 13: Visualization . In object disappearance reasoning, VISD explicitly grounds the apple before and after the camera movement, correctly identifying that the apple has been removed from the table. Although related models partially recognize the same visual change in their reasoning process, they still produce an inconsistent final answer, highlighting VISD’s stronger alignment between visual grounding, reasoning, and response generation. 30 Question: what kicks the white cat? 
+
+Ground Truth Answer: there is a yellow cat 
+
+kicking a white cat. 
+
+Open-o3 Video: <think> The video shows two kittens 
+
+playing on a white surface. At the beginning of the clip, 
+
+the white kitten is lying on top of the <obj>orange 
+
+kitten</obj><box>[10,120,616,448]</box> at<t>1.3</t>s .
+
+As the play progresses, the white kitten starts to kick 
+
+its hind legs. The orange kitten reacts by rolling over 
+
+onto its back. This sequence clearly shows that the 
+
+<obj>orange 
+
+kitten</obj><box>[10,120,616,448]</box>at <t>11.9</t>s 
+
+is the one kicking the <obj>white 
+
+kitten</obj><box>[10,0,490,242]</box> at<t>11.9</t>s .</ 
+
+think> 
+
+<answer> The orange kitten kicks the white 
+
+kitten. </answer> 
+
+VisionCoach : <think> The video shows two kittens playing on a white 
+
+sheet. Initially, the white kitten is on top of the orange. The 
+
+<obj>orange kitten</obj><box>[22,126,579,412]</box> at<t>19.9</t>s 
+
+then flips over and starts to kick the <obj>white 
+
+kitten</obj><box>[10,0,486,295]</box> at<t>19.9</t>s . This action 
+
+continues as the <obj>orange 
+
+kitten</obj><box>[22,126,579,412]</box>at<t>19.9</t>s repeatedly 
+
+kicks the <obj>white 
+
+kitten</obj><box>[10,0,486,295]</box> at<t>19.9</t>s .</think> 
+
+<answer> The orange kitten kicks the white kitten. </answer> 
+
+VISD : <think> The video shows two kittens 
+
+playing on a white surface. The <obj>white 
+
+kitten</obj><box>[10,0,500,269]</box>at<t>1 
+
+1.5</t>s is lying down but its body is twisted 
+
+towards the orange kitten. The <obj>orange 
+
+kitten</obj><box>[58,101,613,443]</box>at 
+
+<t>11.5</t>s is the one that appears to be kicking the white kitten. 
+
+The <obj>white 
+
+kitten</obj><box>[10,0,500,269]</box>at<t>11.5</t>s is reacting to 
+
+the movement of the orange kitten. </think> 
+
+<answer> The orange kitten kicks the white cat. </answer> 
+
+Ground Truth Temporal Window: 9.4s-11.7s 
+
+> White Kitten
+> Orange Kitten
+
+Figure 14: Visualization . VISD not only answers correctly but also localizes the action within the correct temporal window, identifying the moment when the orange kitten kicks the white kitten. Although related video reasoning models produce the correct final answer, they rely on inaccurate temporal evidence. Question: During which time period does the 
+
+person get up to turn off the light? 
+
+Ground Truth Answer: 19.70s-25.80s. 
+
+Open-o3 Video: <think> The video starts with a person 
+
+sitting on the floor, wrapped in a blanket, and appears 
+
+to be crying. This is the initial state. At 0:13, the 
+
+person starts to move, lifting their head and upper 
+
+body. By 0:15, the person is standing up, holding the 
+
+blanket. At 0:16, the person turns towards the door. 
+
+At 0:17, the person reaches for the light switch and 
+
+turns it off. The action of turning off the light is 
+
+completed by 0:18. Therefore, the event "person gets 
+
+up to turn off the light" starts when they turn 
+
+towards the switch and ends when the light is 
+
+off. </think> 
+
+<answer> From 0:15 to 0:18 </answer> 
+
+VisionCoach : <think> The video shows a sequence of events. 
+
+Initially, a person is seen sitting on the floor, wrapped in a 
+
+blanket, appearing to be in distress. The scene then transitions 
+
+to another person entering the room. This second person, 
+
+dressed in a black t-shirt and pants, walks towards the door and 
+
+turns it. Following this action, the light is turned off, and the 
+
+room becomes dark. The transition from the first person to the 
+
+second person is clear, and the action of turning off the light is 
+
+the final event in the sequence. </think> 
+
+<answer> From 14.5s to 19.5s </answer> 
+
+VISD : <think> The video shows a sequence of events 
+
+where a person is initially sitting on the floor, 
+
+wrapped in a blanket. The person then stands up and 
+
+moves towards the door. The light in the room 
+
+appears to be on, and the person seems to be 
+
+preparing to leave. The person then bends down, 
+
+possibly to pick something up or adjust their position. 
+
+The next moment, the person is seen standing in a 
+
+different room, and the light in the original room appears to 
+
+have been turned off. The person is now in a darker area, 
+
+indicating the light has been turned off. The transition from 
+
+the brightly lit room to the darker one suggests the light was 
+
+turned off by the person. </think> 
+
+<answer> From 19.5s to 24.0s </answer> 
+
+Figure 15: Visualization . For temporal action localization reasoning, VISD accurately grounds the key transition from the lit room to the dark room and identifies the correct time interval when the person gets up to turn off the light. In contrast, related video reasoning models focus on earlier incomplete movements, such as sitting up or approaching the switch, resulting in incorrect temporal predictions. 31 Question: What is the lorry doing in the video? 
+
+Ground Truth Answer: A lorry is running slowly 
+
+along the mountain highway. 
+
+Open-o3 Video: <think> The video shows a large black 
+
+and white lorry driving on a road. The camera follows 
+
+the vehicle as it moves forward. At one point, the 
+
+<obj>lorry</obj><box>[696,385,1109,865]</box> at<t>1 
+
+825.5</t>s is seen from behind, driving away from 
+
+the camera. The road is surrounded by greenery, 
+
+indicating that the lorry is traveling through a rural 
+
+area. </think> 
+
+<answer> The lorry is driving down a road, passing by a 
+
+forested area. </answer> 
+
+VisionCoach : <think> The video shows a 
+
+<obj>lorry</obj><box>[693,381,1197,901]</box> at<t>1303.9</t>s 
+
+driving on a road. The camera remains stationary throughout the 
+
+segment, providing a consistent view of the vehicle. The 
+
+<obj>lorry</obj><box>[693,381,1197,901]</box> at<t>1303.9</t>s is 
+
+seen moving forward, passing by a hillside covered in greenery. 
+
+This continuous action confirms that the lorry is in 
+
+motion. </think> 
+
+<answer> The lorry is driving on a road, passing by a hillside 
+
+covered in greenery. </answer> 
+
+VISD : <think> The reasoning process 
+
+begins by observing the lorry on a road. 
+
+The road is a two-lane highway with clear 
+
+lane markings. The 
+
+<obj>trees</obj><box>[0,0,840,399]</box> 
+
+at<t>1173.5</t>s line both sides of the 
+
+road, indicating it's a rural or suburban 
+
+area. The lorry is moving forward, as its position relative to 
+
+the road markings suggests motion. The road has no other 
+
+vehicles in sight, implying the 
+
+<obj>lorry</obj><box>[286,193,489,349]</box>at<t>1173.5</t>s 
+
+is the only vehicle present. </think> 
+
+<answer> The lorry is driving down a road surrounded by 
+
+greenery. </answer> 
+
+Ground Truth Temporal Window: 1137s-1184.0s 
+
+> Lorry
+
+Figure 16: Visualization . VISD correctly answers the question and localizes the lorry within the ground-truth temporal window. Although other models also produce the correct answer, they ground their reasoning in an incorrect time interval, showing less precise temporal localization. Question: Which activity do the two ghost cowboys 
+
+enjoy while horse riding as depicted in the video? 
+
+Ground Truth Answer: C
+
+Open-o3 Video: <think> The video shows several 
+
+individuals participating in a drawing game. Among 
+
+them, one man is seen wearing glasses while standing at 
+
+a whiteboard. Another man, also wearing glasses, is 
+
+seated among other participants. A third man, who is 
+
+not wearing glasses, is shown drawing on a whiteboard. 
+
+Based on this observation, there are two individuals 
+
+wearing glasses. </think> 
+
+<answer> B</answer> 
+
+VisionCoach : <think> The video shows the two ghost cowboys 
+
+riding horses. Initially, they are seen talking to each other 
+
+while riding. Later, they are shown dancing together in the 
+
+desert. This sequence of actions confirms that they enjoy 
+
+dancing. </think> 
+
+<answer> B</answer> 
+
+VISD : <think> The video shows the 
+
+<obj>two ghost 
+
+cowboys</obj><box>[34,25,438,269]< 
+
+/box>at<t>17</t>s riding horses side 
+
+by side, with the 
+
+<obj>cowboy</obj><box>[ 109,101,358, 
+
+277]</box>at<t>17</t>s looking at each other and smiling, 
+
+indicating a friendly interaction. The horse is moving forward 
+
+calmly. The 
+
+<obj>cowboy</obj><box>[130,101,358,277]</box>at<t>17</t>s is 
+
+holding the reins and looking towards his companion, 
+
+suggesting they are enjoying their ride together. There's no 
+
+indication of fighting, dancing, or quarrelling. </think> 
+
+<answer> C</answer> 
+
+A. Fighting. B. Dancing. 
+
+C. Singing. D. Quarrelling. 
+
+Qwen2.5-VL-7B: B
+
+> Two ghost cowboys
+
+Figure 17: Visualization . In fine-grained activity reasoning, VISD accurately grounds the two ghost cowboys during horse riding and identifies their smiling, friendly interaction, correctly inferring that they enjoy singing rather than dancing, fighting, or quarrelling. In contrast, competing models are distracted by later or irrelevant visual cues and produce incorrect answers. 32 G Judge Prompt Template 
+
+We provide the core prompt template used by the video-aware judge to generate structured privileged feedback. The template contains a fixed system instruction and the user prompt assembled from the task type, reference answer, optional grounding evidence, and the student rollout. Placeholders such as {question} and {student_output} denote fields filled at training time. 
+
+G.1 System Prompt 
+
+[prompt] ## Role You are a strict video and image QA judge. ## Mission You are judging a student model’s response. Your feedback will be given to a teacher model, which will use it to better guide the student model. Judge whether the student’s final answer is correct, whether the student’s reasoning broadly supports that final answer, and what the single most likely high-level source of error is when the response is not fully correct. ## Input Boundaries - Use only the information provided in the prompt. - You do not see the original video frames directly. - Do not pretend to verify frame-by-frame visual alignment that is not supported by the provided text or hidden grounding evidence. - For structured answers, compare the provided fields against the reference answer and grounding evidence when available. - Treat semantically equivalent natural-language answers as correct even if the wording differs. ## Output Format - Return strict JSON only with key: feedback. - Do not return markdown, prose outside JSON, or extra keys. ## Feedback Requirements - The feedback should be concise, factual, correction-oriented, and usually two to four sentences. - Mention only the issues that actually appear; do not give an exhaustive recap. - If the response is fully correct and no clear issue is observed, provide a brief positive feedback sentence stating that the final answer is correct and the reasoning broadly supports it. ## Evaluation Focus 1. Answer diagnosis. Say whether the student final answer is fully correct, partly correct, or wrong. Briefly name the problematic part. For natural-language answers, focus on semantic meaning rather than exact wording . For structured answers, say which part is wrong or missing. 2. Reasoning-versus-answer consistency. Judge whether the student’s reasoning broadly supports the final answer. If the reasoning points to one event, object, text clue, time range, or spatial reference but the final answer states another, say so. If the reasoning is too weak, too broad, or too incomplete to justify the final answer, say that clearly. 3. High-level error cause. When the response is not fully correct, pick the single most likely high-level cause and mention it briefly. Prefer one of these categories: the reasoning focused on the wrong event, time span, or object; the reasoning was too broad or lacked enough evidence to support such a specific answer; the reasoning was mostly on the right track but the final answer overreached, drifted, or stated the wrong thing; or the output was incomplete and never produced a real final answer. Do not invent fine-grained step-by-step visual mistakes when they are not well supported by the text. ## Task Compare the verified answer against the student’s final answer and reasoning text, then return the feedback JSON. If keyframe object evidence is provided: Hidden grounding evidence may be provided in the user prompt. If keyframe object evidence is not provided: No hidden grounding evidence is required for this sample. If the student output does not contain a final <answer> or </answer> tag: The student output does not contain a final <answer> or </answer> tag. You must still analyze the student’s reasoning text and provide corrective feedback. In the feedback, explicitly point out that the final answer was not produced and that the response may have been truncated because the thinking section was too long. Treat the missing final answer as an incomplete response. 
+
+33 G.2 User Prompt Assembly 
+
+> Please judge the following sample. ## Task And Reference Context - Task type: {task} - Question: {question} - Standard answer: {standard_answer} - Keyframe object evidence: {keyframe_object_evidence_json_or_null} - Keyframe object evidence is hidden grounding reference. Use it only to judge whether the student’s reasoning points to the right time, object, and spatial region. ## Student Submission - Student final answer: {model_answer_or_null_no_answer_tag_found} - Student full output: {student_output} ## Required Output {"feedback": "{concise diagnostic feedback}" }
+
+H Broader Impacts 
+
+VISD aims to improve video understanding systems in tasks that require more reliable reasoning over temporal and spatial evidence. Such capability can be beneficial for applications including video retrieval, assistive video understanding, educational tools, and human-in-the-loop video analysis, where better grounding may improve interpretability and reduce obvious reasoning errors. At the same time, stronger video reasoning models may also introduce risks. They could be used in surveillance-related settings, content analysis pipelines, or other scenarios where incorrect or overconfident predictions may affect downstream decisions. Like other large multimodal models, they may also inherit biases from pretraining data or produce misleading grounded explanations when the underlying prediction is wrong. In this work, we evaluate VISD only on public research benchmarks and release code for research purposes, and we view responsible deployment, dataset governance, and more robust evaluation under open-world settings as important future directions. 34

@@ -1,0 +1,482 @@
+Title: Semantic-Aware Adaptive Visual Memory for Streaming Video Understanding
+
+URL Source: https://arxiv.org/pdf/2605.07897v1
+
+Published Time: Mon, 11 May 2026 01:26:51 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Semantic-Aware Adaptive Visual Memory for Streaming Video Understanding 
+
+## Hang Wu 1 Sherin Mary Mathews 2 Yujun Cai 3,§
+
+## Ming-Hsuan Yang 1 Yiwei Wang 1
+
+> 1
+
+University of California, Merced 2US Bank 3University of Queensland 
+
+> §
+
+Corresponding Author 
+
+## Abstract 
+
+Online streaming video understanding requires models to process continuous visual inputs and respond to user queries in real time, where the unbounded stream and unpredictable query timing turn memory management into a central challenge. Existing methods typically compress visual tokens via visual similarity heuristics, or augment compression with KV-cache-level retrieval. However, compression decisions rarely incorporate semantic signals, and retrieval is often added after compression is finalized, making the two stages hard to coordinate. We present SAVEMem , a training-free dual-stage framework that brings semantic awareness into memory generation and lets the retrieval scope adapt per query. In Stage 1, SAVEMem builds a three-tier streaming memory online under a constant memory budget. A fixed pseudo-question bank provides a lightweight semantic prior, so that long-term retention is shaped by semantic salience rather than visual similarity alone. In Stage 2, SAVEMem performs query-aware retrieval over this memory. An anchor-conditioned recency gate adapts the retrieval scope from short-term to mid- and long-term memory based on whether the query targets the present or the distant past. Within this scope, late interaction between query and memory tokens selects candidate frames for answering. Applied to Qwen2.5-VL without training, SAVEMem improves the OVO-Bench overall score from 52.27 to 62.69 and yields consistent gains on StreamingBench and ODV-Bench, while reducing peak GPU memory by 48% at 128 frames over the backbone.  
+
+> Date:
+
+May 11, 2026  
+
+> Corresponding:
+
+hangwu@ucmerced.edu , vanora.caiyj@gmail.com  
+
+> Code:
+
+https://github.com/wuhang03/savemem 
+
+## 1 Introduction 
+
+Online streaming video understanding requires models to process continuous visual inputs and respond to user queries in real time as the video unfolds, in contrast to offline settings where the entire video is available before inference [ 30 , 31 , 38 , 43 ]. This online setting is central to real-world applications such as robotic manipulation [ 16 ], autonomous driving [ 4], and smart glasses [ 13 ]. Compared with offline video question answering on a closed clip, streaming introduces coupled difficulties that reshape the role of memory. A causal constraint restricts the model to frames in [0, 𝑡 ] at time 𝑡 , ruling out bidirectional attention and global pooling [ 3, 36 ]. Moreover, the stream is in principle unbounded while queries arrive at unpredictable moments and may target either the present or distant past [ 15 , 22 ], so the model must continually decide what to retain at multiple temporal granularities to answer whenever a query arrives. 1                          
+
+> arXiv:2605.07897v1 [cs.CV] 8 May 2026 Stage 1: Semantic Memory Generation Stage 2: Adaptive Memory Retrieval
+> Query -agnostic Query -aware
+> User Query
+> MLLM
+> Short -term
+> Retrieve
+> Pipeline Performance
+> Case Study
+> Pseudo
+> Question
+> Video
+> Frames
+> Semantic Memory
+> Mid -term
+> Long -term
+> Selective
+> Forgetting
+> Retrieved
+> Candidate
+> Frames
+> Question: What did the person do before preparing meat ?
+> A. mix and pickle B. string together C. prepare seasonings and side dishes D. roast ingredients
+> Short -term
+> Long -term
+> Mid -term prepare seasonings and side dishes
+> prepare meat
+> Answer
+
+Figure 1 Overview of SAVEMem. A two-stage pipeline decouples query-agnostic semantic memory generation from query-aware retrieval, yielding consistent gains over Qwen2.5-VL backbones across multiple streaming benchmarks. 
+
+To meet these requirements under a finite budget, existing work mainly focuses on compressing visual tokens before they enter the LLM [ 2, 37 , 40 , 41 ] via visual similarity heuristics, with FluxMem [ 37 ] as a strong recent example using a hierarchical memory governed by adaptive Otsu-based thresholds [ 23 ]. Another line of work manages the KV cache during the prefill stage to cope with unpredictable queries: ReKV [ 6 ] and LiveVLM [ 21 ] retrieve query-relevant KV-cache entries at inference, while WeaveTime [ 47 ] triggers coarse-to-fine recall via prediction uncertainty. SimpleStream [ 27 ]further shows that feeding only the last 𝑁 frames to an off-the-shelf VLM is already competitive on many benchmarks, hinting at a perception-memory trade-off between present- and past-oriented queries. Despite this progress, two aspects remain under-explored. On the one hand, compression decisions rely mostly on visual similarity, leaving limited room for semantic signals to shape long-term retention. On the other hand, retrieval is typically added at the KV-cache level after compression is finalized and often requires fine-tuning, making retention and retrieval hard to coordinate as a single pipeline. Motivated by these observations, we present SAVEMem , a training-free dual-stage framework that brings semantic awareness into compression and lets the retrieval scope adapt per query. As shown in Fig. 1, SAVEMem builds a three-tier streaming memory online in Stage 1, where a fixed pseudo-question bank provides a lightweight semantic prior so that long-term retention is shaped by semantic salience rather than visual similarity alone, all under a constant memory budget. In Stage 2, SAVEMem performs query-aware retrieval over the memory built in Stage 1, where an anchor-conditioned recency gate adapts the retrieval scope from short-term to mid- and long-term memory based on whether the query targets the present or the distant past. Within this scope, late interaction between query and memory tokens yields frame-level relevance scores, based on which candidate frames are retrieved and fed to the model for answering. Applied to Qwen2.5-VL-7B [ 1], SAVEMem improves the OVO-Bench [ 22 ] overall score from 52.27 to 62.69, surpassing recent training-free competitors such as FluxMem [ 37 ] and HERMES [ 44 ]. Consistent improvements on StreamingBench [ 15 ] and ODV-Bench [ 41 ] further suggest that decoupling query-agnostic compression from query-aware retrieval is a practical direction for scaling to long-form streaming video without training. Our main contributions can be summarized as below: 
+
+• We present SAVEMem, a training-free dual-stage framework that introduces semantic priors into streaming compression and adapts the retrieval scope per query for online streaming video understanding. 
+
+• Applied to Qwen2.5-VL without training, SAVEMem improves over the backbones on three streaming benchmarks 2and compares favorably with recent training-free methods. 
+
+• Efficiency analysis shows sub-linear token growth and nearly flat peak GPU memory with respect to video length, reducing memory usage by 48% at 128 frames over the backbone. 
+
+## 2 Related Work 
+
+Multimodal Large Language Models. Recent advances in Multimodal Large Language Models (MLLMs) [ 14 , 32 ]have broadened their application to video understanding. Typically, these models comprise a visual encoder for extracting frame-level representations, a modality projector to map visual features into the language space, and a Large Language Model (LLM) to generate contextual responses [ 1 , 14 , 18 , 28 , 34 , 42 , 46 ]. Recent work further pushes video MLLMs toward more adaptive and reasoning-oriented behavior [ 9, 35 ], while effectively delivering relevant context to the LLM remains an open challenge across modalities [ 7 , 19 ]. However, these models are inherently designed for static and offline settings where the input is a pre-loaded full video rather than a continuous stream, and they fail to adapt to dynamic real-world scenarios where video frames are processed sequentially and require real-time, temporally coherent, or even proactive responses [10, 15, 22]. 
+
+Streaming Video Understanding. Understanding video streams in real time requires sequential processing of incoming frames [ 10 , 15 , 22 , 24 ], and existing approaches fall into two broad categories. One line of work manages KV caches during inference. ReKV [ 6] retrieves query-relevant entries from stored caches, LiveVLM [ 21 ] separates short- and long-term memory with online retrieval, and StreamMem [ 39 ] maintains bounded memory through continuous compression. Another line of work compresses visual tokens upstream of the LLM. ToMe [ 2] merges similar tokens, and FluxMem [ 37 ]introduces a hierarchical memory governed by adaptive thresholds [ 23 ]. Beyond streaming video, a parallel line of work in long-context language modeling explores gated and utility-aware memory consolidation, suggesting that selectively writing salient information into a bounded memory is more efficient than uniform updates [ 20 ]. Despite this progress, most streaming methods rely on visual similarity and fix compression prior to the query. Recent work begins to address this issue. WeaveTime [ 47 ] uses uncertainty to trigger coarse-to-fine recall, and SimpleStream [ 27 ] shows that using only the last 𝑁 frames can match many methods, which exposes a perception and memory trade-off that cannot adapt per query. These observations motivate SAVEMem, which injects semantic signals into query-agnostic compression and performs query-driven retrieval over compressed tokens with a training-free ColBERT-style mechanism [ 12 ], enabling per-query trade-off navigation. 
+
+## 3 Method 
+
+3.1 Problem Formulation 
+
+Task Definition. We study online streaming video question answering (StreamingVQA), where a model observes a continuous video stream V = {𝑣 𝑡 }∞ 
+
+> 𝑡 =1
+
+and must answer a natural-language query 𝑞 issued at timestamp 𝑇 using only the observed prefix: 
+
+𝑎 = 𝑓  𝑞, V[0,𝑇 ]
+
+ , V[0,𝑇 ] = {𝑣 𝑡 }𝑇 𝑡 =1. (1) Following standard practice [ 15 , 22 ], we adopt the pseudo-streaming protocol: the video is truncated at 𝑇 and 𝑞 is withheld until after memory construction, correctly enforcing causal access and query-agnostic encoding without imposing frame-by-frame latency constraints (see Appendix A). 
+
+Streaming Constraints. Three constraints jointly define the streaming regime. (C1) No future access : the model may not use any frame 𝑣 𝑡 with 𝑡 > 𝑇 . (C2) Query-agnostic encoding : all memory construction must proceed without conditioning on 𝑞 ; fixed surrogate signals such as chat template tokens [ 39 ] remain compliant as they carry no information about the actual query. (C3) Bounded memory : total memory is capped at a constant 𝐵 independent of video length. See Appendix A for more details. 
+
+Two-Phase Paradigm. Existing methods address C1–C3 via a two-phase design: encoding builds a compact visual memory as frames arrive in a query-agnostic manner; inference , triggered at 𝑇 , retrieves relevant entries conditioned on 
+
+𝑞 . This is the standard structure in Flash-VStream [ 43 ], ReKV [ 6], LiveVLM [ 21 ], StreamMem [ 39 ], StreamForest [ 41 ], and Fluxmem [37]. 3Stage 1: Streaming Memory Generation 
+
+Stage 2: Adaptive Memory Retrieval       
+
+> Recen cy Anchor
+> Selective
+> Forgetting
+> Query -aware
+> Query -aware L ate Interaction Candidate Memory Retrieval
+> Semantic Memory
+> Query -agnostic
+> User
+> Query
+> Pseudo
+> Question
+> Video
+> Frames
+> Tokenizer  Vision
+> Transformer
+> Spatial Semantic Selection Temporal Semantic Pruning
+> Token -level
+> Score
+
+What memory tokens are relevant to the query?                
+
+> Visual Memory Token
+> Text
+> Token
+> Short -term Mid -term Long -term
+> Frame -level
+> Score
+> MLLM
+> MaxSim
+> Tokenizer
+> Evicted Evicted
+> Drop Cross -Frame Redundancy Drop Intra -Frame Noise
+> Enforce
+> Memory
+> Budget
+> Dropped Memory Token
+> …
+> …
+> …
+> Sem antic
+> Score
+> Keep All Tokens
+> Anchor -guided Recency Gate
+> retrieve
+> Candidate frames
+> Short -term
+> …
+> Mid -term
+> …
+> Long -term
+> …
+> Query
+> …
+> Semantic  Memory
+> Memory
+> Token
+> Mean
+> Text Token
+
+What visual tokens should be kept in memory?   
+
+> Answer
+> late interaction
+> conditional late
+> interaction
+> late
+> interaction
+
+Figure 2 Framework of SAVEMem. Stage 1 builds a three-tier streaming memory query-agnostically through a Recency Anchor, Temporal Semantic Pruning, and Spatial Semantic Selection guided by a pseudo-question prior; Stage 2 retrieves query-relevant frames query-awarely via an anchor-conditioned recency gate and late interaction between query and memory tokens. 
+
+3.2 Overview 
+
+SAVEMem is a training-free dual-stage framework for online streaming video QA that brings semantic awareness into compression and adaptive scope into retrieval. As shown in Fig. 2, the pipeline is decoupled at query arrival time into a query-agnostic compression stage and a query-aware retrieval stage. Stage 1 builds a three-tier streaming memory online, where a fixed pseudo-question bank provides a lightweight semantic prior to guide cross-tier compression under a constant memory budget. Stage 2 then performs read-only retrieval over the aged tiers, where an anchor-conditioned recency gate adapts the scope to the query’s temporal target and late interaction scores candidate frames for answering. The overall algorithm pipeline is shown in Algorithm 1. 
+
+Query-agnostic Semantic Prior. Visual similarity identifies redundant tokens but does not reflect semantic importance, since two tokens with similar neighbours may differ substantially in informational value. To inject a coarse semantic signal without access to the user query, we score each visual token 𝑣 against a fixed pseudo-question bank 𝑄 via late-interaction MaxSim: 
+
+𝑠 (𝑣 ) = max  
+
+> 𝑞 ∈𝑄
+
+cos (𝑣, 𝑞 ). (2) The bank consists of a small set of generic probes covering visual semantics commonly queried in streaming video, including object presence, counting, action and event occurrence, scene change, and spatial layout. By taking the maximum similarity across probes, 𝑠 (𝑣 ) captures whether a token aligns with at least one of these semantic axes, providing a coarse but query-agnostic salience estimate that complements visual-similarity-based redundancy. The bank is instantiated once at model load, shared across all videos and queries, and each 𝑠 (𝑣 ) is computed once per token at encoding time and reused across every subsequent tier transition, so the prior adds only one MaxSim per frame to the streaming cost. Detailed pseudo questions are in Appendix B. 
+
+Three-tier Memory with Selective Forgetting. Newly encoded tokens enter Mshort as a first-in-first-out FIFO buffer and are preserved in full to anchor the most recent context. When the window fills, the oldest frame is evicted to Mmid 
+
+via Temporal Semantic Pruning, which removes tokens well-represented by their temporal neighbours [ 37 ] while sparing those with high 𝑠 (𝑣 ) or located at scene boundaries. The semantic prior thus serves as an additional retention criterion that augments the similarity-based baseline without overriding it. When Mmid overflows, frames pass to Mlong via 4Algorithm 1 SAVEMem: two-stage streaming visual memory. 
+
+Require: streaming frames { 𝑓 𝑡 }, user query 𝑞 at 𝑡 =𝑇 , pseudo-question 𝑄 , tier capacities 𝑆, 𝑀 , token budget 𝐵 , retrieval budget 𝐾 
+
+Stage 1 — Streaming Memory Generation (query-agnostic, online for 𝑡 ≤ 𝑇 ) 
+
+> 1:
+
+initialize Mshort , Mmid , Mlong ← ∅ 
+
+> 2:
+
+for each incoming frame 𝑓 𝑡 do  
+
+> 3:
+
+encode 𝑉 𝑡 , compute s𝑡 ← MaxSim (𝑉 𝑡 , 𝑄 ), and append (𝑉 𝑡 , s𝑡 ) to Mshort  
+
+> 4:
+
+if |M short | > 𝑆 then evict oldest to Mmid via Temporal Semantic Prune  
+
+> 5:
+
+if |M mid | > 𝑀 then evict oldest to Mlong via Spatial Semantic Select  
+
+> 6:
+
+while NumTokens (M short ∪ M mid ∪ M long ) > 𝐵 do  
+
+> 7:
+
+discard the lowest-s token in Mlong  
+
+> 8:
+
+end while  
+
+> 9:
+
+end for Stage 2 — Adaptive Memory Retrieval (query-aware, at 𝑡 =𝑇 ) 
+
+> 10:
+
+if MaxSim (M short , 𝑞 ) ≥ 𝜌 · 𝜎 ema short then return Mshort ⊲ recency gate  
+
+> 11:
+
+compute 𝜎 (𝑔 ) ← MaxSim (𝑔, 𝑞 ) pooled over tokens, ∀𝑔 ∈ M mid ∪ M long  
+
+> 12:
+
+R ← top-𝐾 frames of Mmid ∪ M long ranked by 𝜎 ; return Mshort ∪ R 
+
+Spatial Semantic Selection, which treats spatial coverage as a hard constraint and uses 𝑠 (𝑣 ) as the ranking criterion within it, so retained tokens remain spatially dispersed yet semantically ordered. All retained tokens carry their original hidden states throughout the hierarchy, and no synthetic or averaged representation is introduced. Beyond per-tier capacities, a Selective Forgetting step enforces the global budget 𝐵 . Once exceeded, the lowest-scoring tokens in Mlong are evicted until the budget is restored, yielding an O( 1) memory footprint independent of video length. 
+
+3.3 Stage 2: Adaptive Memory Retrieval 
+
+Upon query arrival at 𝑡 =𝑇 , Stage 2 takes the frozen Stage 1 memory together with the user query 𝑞 and returns a query-conditioned subset of frames for the downstream MLLM. The module is training-free and inherits the MaxSim primitive from Stage 1 for query-memory scoring. Two design choices, an asymmetric treatment of the recency anchor and an adaptive retrieval scope, enable Stage 2 to accommodate queries that vary in temporal target and evidence distribution. 
+
+Anchor-conditioned Recency Gate. Streaming queries differ in their temporal target. Some refer to the most recent context, while others probe events distributed over the long history. Motivated by the recency prior reported in prior streaming work [ 27 ], we first determine whether the aged tiers need to be consulted at all. Specifically, we measure the affinity between 𝑞 and the recency anchor Mshort , and compare it against a running statistic of past affinities accumulated during streaming. If the current affinity falls within this range, Mshort is returned directly and retrieval over the aged tiers is bypassed. Calibrating against the anchor’s own history removes the need for a query-independent threshold and induces a per-query gate that adapts to the affinity distribution of each video. 
+
+Query-aware Late Interaction. When the gate routes the query to the aged tiers, the query is encoded with the same tokenizer used for the pseudo-question bank in Stage 1, so query tokens and visual hidden states already lie in a shared representation space and can be compared directly without an additional projection or encoding pass. For each candidate frame 𝑔 ∈ M mid ∪ M long , we compute a ColBERT-style late-interaction [12] score 
+
+𝜎 (𝑔 ) = 1
+
+|𝑔 |
+
+> |𝑔 |
+
+∑︁ 
+
+> 𝑖 =1
+
+max   
+
+> 𝑞 𝑗 ∈𝑞
+
+cos  𝑔 𝑖 , 𝑞 𝑗 
+
+, (3) where each retained visual token contributes its maximum cosine similarity against the query and the frame relevance is the mean of these per-token maxima. The decision is thus made at frame level while the evidence is aggregated from token level, which matches the granularity at which Stage 1 operates on visual redundancy and at which queries typically refer to frame-spanning events. Reusing the MaxSim primitive across both stages also means that query-agnostic compression and query-aware retrieval share a single scoring mechanism. 5Method Size Frames Real-Time Visual Perception Backward Tracing Overall OCR ACR ATR STU FPD OJR Avg. EPM ASI HLD Avg.                                                                                                                                                                                                                                                         
+
+> Proprietary Models
+> Gemini 1.5 Pro [29] –1 fps 85.91 66.97 79.31 58.43 63.37 61.96 69.32 58.59 76.35 52.64 62.54 65.93 GPT-4o [11] –64 69.80 64.22 71.55 51.12 70.30 59.78 64.46 57.91 75.68 48.66 60.75 62.60
+> Open-source Offline MLLMs
+> LLaVA-Video [46] 7B 64 69.80 59.63 66.38 50.56 72.28 61.41 63.34 51.18 64.19 9.68 41.68 52.51 Qwen2-VL [33] 7B 64 69.13 53.21 63.79 50.56 66.34 60.87 60.65 44.44 66.89 34.41 48.58 54.61 InternVL2 [5] 8B 64 68.46 58.72 68.97 44.94 67.33 55.98 60.73 43.10 61.49 27.41 44.00 52.36 LongVU [26] 7B 1 fps 55.70 49.54 59.48 48.31 68.32 63.04 57.40 43.10 66.22 9.14 39.49 48.45
+> Open-source Online MLLMs (Training-Based)
+> VideoLLM-Online [3] [CVPR 2024] 8B 2 fps 8.05 23.85 12.07 14.04 45.54 21.20 20.79 22.22 18.80 12.18 17.73 19.26 Dispider [25] [CVPR 2025] 7B 1 fps 57.72 49.54 62.07 44.94 61.39 51.63 54.55 48.48 55.41 4.30 36.06 45.30 Flash-VStream [43] [ICCV 2025] 7B 1 fps 25.50 32.11 29.31 33.71 29.70 28.80 29.86 36.36 33.78 5.91 25.35 27.61 ViSpeak [8] [ICCV 2025] 7B 1 fps 75.20 58.72 71.55 51.12 74.26 66.85 66.30 59.93 48.65 63.98 57.52 61.91 ThinkStream [17] 3B 1 fps 85.23 64.22 69.83 49.44 69.31 64.13 67.03 53.87 59.46 43.55 52.30 59.66 TimeChat-Online [40] [ACM MM 2025] 7B 1 fps 75.20 46.80 70.70 47.80 69.30 61.40 61.90 55.90 59.50 9.70 41.70 51.80 StreamForest [41] [NeurIPS 2025] 7B 1 fps 68.46 53.21 71.55 47.75 65.35 60.87 61.20 58.92 64.86 32.26 52.02 56.61
+> Open-source Online MLLMs (Training-Free)
+> Qwen2.5-VL-3B †[1] 3B 1 fps 77.18 52.29 68.97 41.01 67.33 60.87 61.27 49.83 53.38 26.34 43.18 52.23
+> + SAVEMem (Ours) 3B 1 fps 89.26 68.81 73.28 55.62 64.36 69.57 70.15 47.81 56.76 29.03 44.53 57.34 (+5.12)
+> Qwen2.5-VL-7B †[1] 7B 1 fps 67.79 55.05 67.24 42.13 66.34 60.87 59.90 51.52 58.78 23.66 44.65 52.27
+> + SAVEMem (Ours) 7B 1 fps 91.95 68.81 81.03 65.73 70.30 71.74 74.93 50.84 62.84 37.63 50.44 62.69 (+10.41)
+
+Table 1 Comparison with state-of-the-art Methods on OVO-Bench. Bold indicates the best and underline indicates the second best among all open-source models. † indicates the reproduced results. 
+
+Adaptive Retrieval with Anchor Preservation. We rank Mmid ∪ M long by 𝜎 (·) and retain a query-conditioned subset 
+
+R whose size adapts to the dispersion of the relevance scores. Well-separated scores indicate that a small number of frames are clearly more relevant and trigger aggressive filtering, while tightly clustered scores indicate diffuse evidence and cause retrieval to keep more candidates, which is useful for counting or coverage-style queries where signal is spread across many frames. The recency anchor Mshort is appended unconditionally, yielding the final retrieved set 
+
+M★ = Mshort ∪ R that is forwarded to the MLLM. This asymmetry reflects the design split between the two stages. The anchor holds recent input at full fidelity and covers present-oriented queries, whereas the aged tiers span a long history where most frames are irrelevant to any given query and benefit from adaptive filtering conditioned on 𝑞 .
+
+## 4 Experiments 
+
+4.1 Experimental Setup 
+
+Benchmark We evaluate our method on three benchmarks for online streaming video understanding. From OVO-Bench [22 ], which emphasizes timestamp-aware reasoning along the video timeline, we use the Real-Time Visual Perception and Backward Tracing subsets as our primary evaluation. The Real-Time Visual Perception subset contains 837 QA pairs across 6 tasks, assessing a model’s ability to perceive and respond to events at the current timestamp, covering optical character recognition (OCR), action recognition (ACR), attribute recognition (ATR), spatial understanding (STU), future prediction (FPD), and object recognition (OJR). The Backward Tracing subset contains 631 QA pairs across 3 tasks, requiring the model to trace back to past events to answer the current query, covering episodic memory (EPM), action sequence identification (ASI), and hallucination detection (HLD). From StreamingBench [ 15 ], we adopt the Real-Time Visual Understanding subset with 2,500 QA pairs, which evaluates the perception of visual changes in streaming inputs. Finally, we use the Static and Dynamic subsets of ODV-Bench [41 ], a benchmark for online streaming video understanding in autonomous driving, covering fine-grained object and action recognition, spatial relation description, trajectory prediction, and risk event assessment. 6Method Frames Real-Time Visual Perception Backward Tracing Overall OCR ACR ATR STU FPD OJR Avg. EPM ASI HLD Avg.                                                                                                             
+
+> Backbone: Qwen2.5-VL-3B
+> Qwen2.5-VL-3B †[1] 1 fps 77.18 52.29 68.97 41.01 67.33 60.87 61.27 49.83 53.38 26.34 43.18 52.23 + FluxMem [37] [CVPR 2026] 1 fps 83.22 56.88 67.24 47.75 68.32 63.59 64.50 47.47 54.73 24.19 42.13 53.31
+> + SAVEMem (Ours) 1 fps 89.26 68.81 73.28 55.62 64.36 69.57 70.15 47.81 56.76 29.03 44.53 57.34
+> Backbone: Qwen2.5-VL-7B
+> Qwen2.5-VL-7B †[1] 1 fps 67.79 55.05 67.24 42.13 66.34 60.87 59.90 51.52 58.78 23.66 44.65 52.27 + HERMES (6K) [44] 0.5 fps 85.91 60.55 74.14 52.81 70.30 66.85 68.42 49.49 58.78 33.33 48.10 58.26 + HERMES (4K) [44] 0.5 fps 85.23 64.22 71.55 53.37 74.26 65.22 68.98 48.48 62.16 37.63 49.43 59.20 + FluxMem [37] [CVPR 2026] 1 fps 81.21 59.63 70.69 53.37 75.25 63.04 67.20 48.48 64.19 29.03 47.24 57.22
+> + SAVEMem (Ours) 1 fps 91.95 68.81 81.03 65.73 70.30 71.74 74.93 50.84 62.84 37.63 50.44 62.69
+
+Table 2 Comparison with Other Training-free Methods on OVO-Bench. Bold indicates the best and underline indicates the second best within each backbone group. † indicates the reproduced results. 
+
+Implementation Details We apply SAVEMem to the frozen Qwen2.5-VL-7B-Instruct backbone in a training-free manner. Videos are sampled at 1 FPS up to 256 frames with a 512 ×28 ×28 visual-token budget per frame. Stage 1 maintains a 4-frame recency anchor and a 16-frame mid-term tier under a global token budget of 𝐵 =2048 . Stage 2 returns the top-𝐾 non-anchor frames ranked by Eq. (3); the recency-gate ratio 𝜌 is the only task-dependent hyperparameter, set to 𝜌 =0.1 for real-time queries and 𝜌 =2.0 for backward queries that require historical retrieval. All experiments run on a single NVIDIA GPU. 
+
+OVO-Bench. Tables 1 and 2 report results on OVO-Bench. SAVEMem attains the highest overall scores on both backbones, 62.69 on Qwen2.5-VL-7B and 57.34 on Qwen2.5-VL-3B, comparing favorably with training-free competitors and with training-based approaches such as ViSpeak at 61.91 and StreamForest at 56.61. The improvements are most pronounced on real-time visual perception, where the average rises by 15.03 points on 7B and 8.88 points on 3B, with consistent gains across OCR, STU, ACR, ATR, and OJR. These subtasks rely on fine-grained visual details concentrated in a small number of frames, which aligns with the design of the pseudo-question semantic prior in Stage 1, intended to retain such tokens during compression rather than treating them as visually redundant. On backward tracing, SAVEMem also yields the best average on both backbones, 50.44 on 7B and 44.53 on 3B, with hallucination detection improving by 13.97 on 7B and 2.69 on 3B. This is consistent with the role of Stage 2, which forwards a query-conditioned subset of frames to the MLLM and thereby limits exposure to non-relevant visual evidence. Episodic memory shows a small decrease on both backbones, from 49.83 to 47.81 on 3B and from 51.52 to 50.84 on 7B, reflecting a trade-off inherent to bounded-memory retrieval, where target episodes that are visually dissimilar to the query may receive low relevance scores under late interaction and be filtered by adaptive top-K selection. The case study in Fig. 1 illustrates this behavior on a query asking what the person did before preparing meat. Stage 1 retains seasoning-preparation frames in the mid-term tier while pushing visually redundant frames into the long-term tier. Recency gate in Stage 2 then routes the query past the short-term anchor that holds the meat-preparation content, allowing late interaction over the mid-term and long-term tier to surface the seasoning step that directly supports the correct answer. 
+
+StreamingBench and ODV-Bench. On StreamingBench and ODV-Bench, SAVEMem delivers consistent improve-ments across both backbones. On the 7B backbone, the StreamingBench Real-time score rises from 73.9 to 76.0, the ODV-Bench Static score from 48.3 to 57.0, and the ODV-Bench Dynamic score from 57.5 to 60.7. On the 3B backbone, the corresponding improvements are 1.8, 1.9, and 0.7 points. The largest gain, 8.7 points on the 7B Static category, falls on a setting that depends on preserving fine-grained visual details under compression, which is consistent with the design of the semantic prior and Spatial Semantic Selection in Stage 1. 78 16 32 64 100 128               
+
+> Video length (number of frames)
+> 0
+> 1k
+> 2k
+> 3k
+> 4k
+> Token count
+> Tokens kept vs video length
+> final kept tokens peak kept tokens
+> 816 32 64 100 128
+> Video length (number of frames)
+> 0
+> 5
+> 10
+> 15
+> GPU memory (GB)
+> GPU memory vs video length
+> final allocated memory peak allocated memory
+> 020 40 60 80 100 120
+> Frame offset
+> 16.5
+> 17.0
+> 17.5
+> 18.0
+> 18.5
+> GPU memory (GB)
+> GPU memory vs frame_offset
+> allocated memory peak memory
+
+Figure 3 Efficiency Analysis of SAVEMem. The figure shows retained token counts and GPU memory across video lengths from 8 to 128 frames, as well as the memory trajectory along frame offsets within a single 128-frame run. Method StreamingBench ODV-Bench 
+
+Real-time Static Dynamic LongVA [45] 60.0 31.8 56.6 LLaVA-OV [14] 71.1 34.2 55.1 Flash-VStream [43] 23.2 24.8 40.2 Dispider [25] 67.6 32.5 52.7 Qwen2.5-VL-3B 68.9 46.0 55.9 
+
++ SAVEMem (Ours) 70.7 (+1.8) 47.9 (+1.9) 56.6 (+0.7) 
+
+Qwen2.5-VL-7B 73.9 48.3 57.5 
+
++ SAVEMem (Ours) 76.0 (+2.1) 57.0 (+8.7) 60.7 (+3.2) 
+
+Table 3 Evaluation on StreamingBench and ODV-Bench. 
+
+4.2 Analysis 
+
+Efficiency Analysis. Fig. 3 reports the token and memory footprint of SAVEMem as video length scales from 8 to 128 frames, providing direct empirical evidence for the design of Stage 1. As the input length grows by 16 × , the number of retained tokens increases only from roughly 1.8k to 3.7k, a sub-linear trend that reflects the joint effect of Temporal Semantic Pruning, Spatial Semantic Selection, and the global budget enforced by Selective Forgetting. Correspondingly, peak GPU memory rises mildly from 15.5 GB to 18.5 GB, in contrast to the 35.8 GB consumed by the Qwen2.5-VL-7B baseline at 128 frames, amounting to a 48% reduction at the longest setting. The peak and final allocations remain nearly indistinguishable across all lengths, indicating that incoming frames are compressed into the existing budget on the fly rather than buffered at full resolution before pruning. Within a single 128-frame run, the memory trajectory follows a concave, fast-saturating curve with a narrowing variance band, suggesting that the three-tier cascade quickly converges to a steady state regardless of input content. Taken together, these results show that Stage 1 transforms long-video processing from a length-bounded into a budget-bounded problem, which is what makes the query-aware retrieval in Stage 2 tractable on commodity GPUs. 
+
+Score Analysis. Fig. 4 visualizes the semantic score distribution produced by the pseudo-question bank during a representative inference step, offering a closer view of how the query-agnostic prior behaves in practice. At the frame level, scores across short-term and mid-term frames are tightly clustered within roughly 0.054 to 0.063, with no systematic gap between the two tiers. This narrow spread indicates that the prior provides only weak frame-wise discrimination, consistent with our choice of performing Temporal Semantic Pruning by relative ranking within a sliding window rather than by absolute thresholds, since neighboring frames in a continuous video are inherently similar in semantics. The token-level distribution within a single frame tells a different story: it is heavily right-skewed, with most tokens concentrated near 0.05 and a small high-score tail extending beyond 0.15 that pulls the mean above 8171 175 179 183 187 191 195 199 203 207 
+
+# frame id 
+
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> semantic score
+
+# frame-level score     
+
+> 0.050 0.075 0.100 0.125 0.150
+
+# token similarity score 
+
+> 0
+> 20
+> 40
+> 60
+> token count
+
+# token-level score 
+
+short-term 
+
+mid-term 
+
+heatmap frame 
+
+token-level score 
+
+mean 
+
+median Figure 4 Semantic score distributions from the pseudo-question bank at the frame level (left) and token level within a single frame (right).                                               
+
+> (a) Two-stage decomposition
+> Variant rt. bw. Avg. baseline 59.90 44.65 52.27 Stage 1 only 68.16 47.42 57.79 Stage 2 only 71.07 48.83 59.95 S1 + S2 (ours) 74.93 50.44 62.69
+> (b) Pseudo-question prior 𝑄
+> Variant rt. bw. Avg. baseline 59.90 44.65 52.27 Random vectors 65.78 46.32 56.05 Single prompt 70.51 48.95 59.73 Bank (ours) 74.93 50.44 62.69
+> (c) Recency gate
+> Variant rt. bw. Avg. baseline 59.90 44.65 52.27 No gate 69.84 48.27 59.06 Always gate 73.62 45.18 59.40 EMA (ours) 74.93 50.44 62.69
+
+Table 4 Component ablations on OVO-Bench with Qwen2.5-VL-7B. “rt.” / “bw.” denote the Real-Time Visual Perception and Backward Tracing subset averages; “Avg.” is the unweighted mean of rt. and bw. The first row in each panel is the raw backbone for reference. Default settings are highlighted; best results within each ablation group are in bold .
+
+the median. This long-tailed structure aligns with the rationale behind Spatial Semantic Selection, where retaining a small subset of high-scoring tokens preserves the informative content of a frame while discarding the low-score majority reduces intra-frame redundancy. The contrast between the two distributions further illustrates that temporal and spatial informativeness exhibit fundamentally different statistical structures, which motivates applying distinct selection operators at the two granularities within our cascade. 
+
+4.3 Ablation Study 
+
+We conduct three groups of ablations on OVO-Bench with Qwen2.5-VL-7B, where Avg. denotes the unweighted mean of the Real-Time Visual Perception and Backward Tracing subsets. Table 4(a) validates the two-stage decomposition. Stage 1 alone lifts Avg. from 52.27 to 57.79 by compressing redundant visual tokens through hierarchical forgetting, while Stage 2 alone reaches 59.95 via query-aware retrieval. Their combination further attains 62.69, indicating that query-agnostic memory construction and query-aware retrieval contribute complementary benefits. Table 4(b) verifies the pseudo-question prior. Random vectors yield only 56.05 as semantically unstructured priors degenerate into near-random dropping, and a single fixed prompt reaches 59.73 but suffers from single-view coverage bias. Our prompt bank instead achieves 62.69 by aggregating multi-view priors that better approximate the latent query distribution. Table 4(c) examines the recency gate. The No gate variant attains 59.06, while the Always gate variant peaks at 73.62 on rt. but collapses to 45.18 on bw., since over-emphasizing recency suppresses the long-range evidence required by backward tracing. Our EMA gate instead adaptively balances recency and long-range fidelity, reaching 74.93 on rt., 50.44 on bw., and 62.69 on Avg. Taken together, these results indicate that staged decomposition, multi-view priors, and adaptive gating each contribute to the performance gains of our framework. 95 Limitation 
+
+While SAVEMem delivers consistent improvements across benchmarks, several limitations remain. First, under a bounded memory budget, queries requiring exhaustive temporal coverage such as counting and causal reasoning are inherently sensitive to the trade-off between selective retrieval and full coverage, which is a property shared by bounded-memory streaming methods in general. Second, the pseudo-question bank consists of a fixed set of generic probes, and adapting it to specific video domains is left as future work. Third, SAVEMem is training-free by design, which precludes joint optimization across the two stages, and lightweight tuning of the shared scoring module is a natural extension. We view these as natural directions consistent with the overall design of SAVEMem rather than fundamental obstacles. 
+
+## 6 Conclusion 
+
+We presented SAVEMem, a training-free dual-stage framework for online streaming video understanding that brings semantic awareness into compression and adapts the retrieval scope per query. Stage 1 builds a three-tier streaming memory online under a constant budget, where a fixed pseudo-question bank shapes long-term retention by semantic salience rather than visual similarity alone. Stage 2 performs query-aware retrieval over this memory via an anchor-conditioned recency gate and late interaction, with the two stages sharing a single MaxSim primitive so that compression and retrieval are coordinated as one pipeline. Applied to Qwen2.5-VL without any training, SAVEMem improves the OVO-Bench overall score from 52.27 to 62.69, yields consistent gains on StreamingBench and ODV-Bench, and reduces peak GPU memory by 48% at 128 frames. These results suggest that decoupling query-agnostic semantic compression from query-aware adaptive retrieval is a practical direction for scaling streaming video understanding without training. 
+
+## Acknowledgement 
+
+The work is partially supported by the U.S. National Science Foundation (NSF) Grant CRII 2451683, a U.S. Bank Academic Research Award, the University of California, Merced, and a UC Merced Faculty Research Award. 10 References 
+
+[1] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, Humen Zhong, Yuanzhi Zhu, Mingkun Yang, Zhaohai Li, Jianqiang Wan, Pengfei Wang, Wei Ding, Zheren Fu, Yiheng Xu, Jiabo Ye, Xi Zhang, Tianbao Xie, Zesen Cheng, Hang Zhang, Zhibo Yang, Haiyang Xu, and Junyang Lin. Qwen2.5-vl technical report. arXiv preprint arXiv:2502.13923 , 2025. [2] Daniel Bolya, Cheng-Yang Fu, Xiaoliang Dai, Peizhao Zhang, Christoph Feichtenhofer, and Judy Hoffman. Token merging: Your ViT but faster. In ICLR , 2023. [3] Joya Chen, Zhaoyang Lv, Shiwei Wu, Kevin Qinghong Lin, Chenan Song, Difei Gao, Jia-Wei Liu, Ziteng Gao, Dongxing Mao, and Mike Zheng Shou. Videollm-online: Online video large language model for streaming video. In CVPR , 2024. [4] Li Chen, Penghao Wu, Kashyap Chitta, Bernhard Jaeger, Andreas Geiger, and Hongyang Li. End-to-end autonomous driving: Challenges and frontiers. IEEE Transactions on Pattern Analysis and Machine Intelligence , 2024. [5] Zhe Chen, Weiyun Wang, Hao Tian, Shenglong Ye, Zhangwei Gao, Erfei Cui, Wenwen Tong, Kongzhi Hu, Jiapeng Luo, Zheng Ma, et al. How far are we to gpt-4v? closing the gap to commercial multimodal models with open-source suites. Science China Information Sciences , 67(12):220101, 2024. [6] Shangzhe Di, Zhelun Yu, Guanghao Zhang, Haoyuan Li, Hao Cheng, Bolin Li, Wanggui He, Fangxun Shu, Hao Jiang, et al. Streaming video question-answering with in-context video kv-cache retrieval. In ICLR , 2025. [7] Honghao Fu, Yuan Ouyang, Kai-Wei Chang, Yiwei Wang, Zi Huang, and Yujun Cai. Contextnav: Towards agentic multimodal in-context learning. arXiv preprint arXiv:2510.04560 , 2025. [8] Shenghao Fu, Qize Yang, Yuan-Ming Li, Yi-Xing Peng, Kun-Yu Lin, Xihan Wei, Jian-Fang Hu, Xiaohua Xie, and Wei-Shi Zheng. Vispeak: Visual instruction feedback in streaming videos. ICCV , 2025. [9] Haonan Ge, Yiwei Wang, Kai-Wei Chang, Hang Wu, and Yujun Cai. Framemind: Frame-interleaved video reasoning via reinforcement learning. arXiv preprint arXiv:2509.24008 , 2025. [10] Zhenpeng Huang, Xinhao Li, Jiaqi Li, Jing Wang, Xiangyu Zeng, Cheng Liang, Tao Wu, Xi Chen, Liang Li, and Limin Wang. Online video understanding: Ovbench and videochat-online. In CVPR , pages 3328–3338, 2025. [11] Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al. Gpt-4o system card. arXiv:2410.21276 , 2024. [12] Omar Khattab and Matei Zaharia. Colbert: Efficient and effective passage search via contextualized late interaction over bert. In 
+
+Proceedings of the 43rd International ACM SIGIR conference on research and development in Information Retrieval , pages 39–48, 2020. [13] Lik-Hang Lee and Pan Hui. Interaction methods for smart glasses: A survey. IEEE access , 6:28712–28732, 2018. [14] Bo Li, Yuanhan Zhang, Dong Guo, Renrui Zhang, Feng Li, Hao Zhang, Kaichen Zhang, Peiyuan Zhang, Yanwei Li, Ziwei Liu, et al. Llava-onevision: Easy visual task transfer. arXiv preprint arXiv:2408.03326 , 2024. [15] Junming Lin, Zheng Fang, Chi Chen, Zihao Wan, Fuwen Luo, Peng Li, Yang Liu, and Maosong Sun. Streamingbench: Assessing the gap for mllms to achieve streaming video understanding. arXiv preprint arXiv:2411.03628 , 2024. [16] Yang Liu, Weixing Chen, Yongjie Bai, Xiaodan Liang, Guanbin Li, Wen Gao, and Liang Lin. Aligning cyber space with physical world: A comprehensive survey on embodied ai. IEEE/ASME Transactions on Mechatronics , 2025. [17] Zikang Liu, Longteng Guo, Handong Li, Ru Zhen, Xingjian He, Ruyi Ji, Xiaoming Ren, Yanhao Zhang, Haonan Lu, and Jing Liu. Thinking in streaming video. arXiv preprint arXiv:2603.12938 , 2026. [18] Muhammad Maaz, Hanoona Rasheed, Salman Khan, and Fahad Shahbaz Khan. Video-chatgpt: Towards detailed video understanding via large vision and language models. In ACL , 2024. [19] Lingrui Mei, Jiayu Yao, Yuyao Ge, Yiwei Wang, Baolong Bi, Yujun Cai, Jiazhi Liu, Mingyu Li, Zhong-Zhi Li, Duzhen Zhang, et al. A survey of context engineering for large language models. arXiv preprint arXiv:2507.13334 , 2025. [20] Lingrui Mei, Shenghua Liu, Yiwei Wang, Yuyao Ge, Baolong Bi, Jiayu Yao, Jun Wan, Ziling Yin, Jiafeng Guo, and Xueqi Cheng. Gated differentiable working memory for long-context language modeling. arXiv preprint arXiv:2601.12906 , 2026. [21] Zhenyu Ning, Guangda Liu, Qihao Jin, Wenchao Ding, Minyi Guo, and Jieru Zhao. Livevlm: Efficient online video understanding via streaming-oriented kv cache and retrieval. arXiv preprint arXiv:2505.15269 , 2025. 
+
+11 [22] Junbo Niu, Yifei Li, Ziyang Miao, Chunjiang Ge, Yuanhang Zhou, Qihao He, Xiaoyi Dong, Haodong Duan, Shuangrui Ding, Rui Qian, et al. Ovo-bench: How far is your video-llms from real-world online video understanding? In CVPR , pages 18902–18913, 2025. [23] Nobuyuki Otsu. A threshold selection method from gray-level histograms. IEEE Transactions on Systems, Man, and Cybernetics ,9(1):62–66, 1979. [24] Rui Qian, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Shuangrui Ding, Dahua Lin, and Jiaqi Wang. Streaming long video understanding with large language models. NeurIPS , 37:119336–119360, 2024. [25] Rui Qian, Shuangrui Ding, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Yuhang Cao, Dahua Lin, and Jiaqi Wang. Dispider: Enabling video llms with active real-time interaction via disentangled perception, decision, and reaction. In CVPR , 2025. [26] Xiaoqian Shen, Yunyang Xiong, Changsheng Zhao, Lemeng Wu, Jun Chen, Chenchen Zhu, Zechun Liu, Fanyi Xiao, Balakrishnan Varadarajan, Florian Bordes, et al. Longvu: Spatiotemporal adaptive compression for long video-language understanding. In 
+
+ICML , 2025. [27] Yujiao Shen, Shulin Tian, Jingkang Yang, and Ziwei Liu. A simple baseline for streaming video understanding. arXiv preprint arXiv:2604.02317 , 2026. [28] Yunlong Tang, Jing Bi, Siting Xu, Luchuan Song, Susan Liang, Teng Wang, Daoan Zhang, Jie An, Jingyang Lin, Rongyi Zhu, et al. Video understanding with large language models: A survey. IEEE Transactions on Circuits and Systems for Video Technology , 2025. [29] Gemini Team, Petko Georgiev, Ving Ian Lei, Ryan Burnell, Libin Bai, Anmol Gulati, Garrett Tanzer, Damien Vincent, Zhufeng Pan, Shibo Wang, et al. Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context. arXiv:2403.05530 ,2024. [30] Haibo Wang, Bo Feng, Zhengfeng Lai, Mingze Xu, Shiyu Li, Weifeng Ge, Afshin Dehghan, Meng Cao, and Ping Huang. Streambridge: Turning your offline video large language model into a proactive streaming assistant. NeurIPS , 2025. [31] Junke Wang, Dongdong Chen, Chong Luo, Xiyang Dai, Lu Yuan, Zuxuan Wu, and Yu-Gang Jiang. Chatvideo: A tracklet-centric multimodal and versatile video understanding system. arXiv preprint arXiv:2304.14407 , 2023. [32] Junke Wang, Lingchen Meng, Zejia Weng, Bo He, Zuxuan Wu, and Yu-Gang Jiang. To see is to believe: Prompting gpt-4v for better visual instruction tuning. arXiv preprint arXiv:2311.07574 , 2023. [33] Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, et al. Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution. arXiv preprint arXiv:2409.12191 ,2024. [34] Yi Wang, Xinhao Li, Ziang Yan, Yinan He, Jiashuo Yu, Xiangyu Zeng, Chenting Wang, Changlian Ma, Haian Huang, Jianfei Gao, Min Dou, Kai Chen, Wenhai Wang, Yu Qiao, Yali Wang, and Limin Wang. Internvideo2.5: Empowering video mllms with long and rich context modeling. arXiv preprint arXiv:2501.12386 , 2025. [35] Hang Wu, Yujun Cai, Zehao Li, Haonan Ge, Bowen Sun, Junsong Yuan, and Yiwei Wang. Camreasoner: Reinforcing camera movement understanding via structured spatial reasoning. arXiv preprint arXiv:2602.00181 , 2026. [36] Haoning Wu, Dongxu Li, Bei Chen, and Junnan Li. Longvideobench: A benchmark for long-context interleaved video-language understanding. NeurIPS , 2024. [37] Yiweng Xie, Bo He, Junke Wang, Xiangyu Zheng, Ziyi Ye, and Zuxuan Wu. Fluxmem: Adaptive hierarchical memory for streaming video understanding. arXiv preprint arXiv:2603.02096 , 2026. [38] Ruyi Xu, Guangxuan Xiao, Yukang Chen, Liuning He, Kelly Peng, Yao Lu, and Song Han. Streamingvlm: Real-time understanding for infinite video streams. arXiv preprint arXiv:2510.09608 , 2025. [39] Yanlai Yang, Zhuokai Zhao, Satya Narayan Shukla, Aashu Singh, Shlok Kumar Mishra, Lizhu Zhang, and Mengye Ren. Streammem: Query-agnostic kv cache memory for streaming video understanding. arXiv preprint arXiv:2508.15717 , 2025. [40] Linli Yao, Yicheng Li, Yuancheng Wei, Lei Li, Shuhuai Ren, Yuanxin Liu, Kun Ouyang, Lean Wang, Shicheng Li, Sida Li, et al. Timechat-online: 80% visual tokens are naturally redundant in streaming videos. In ACM MM , 2025. [41] Xiangyu Zeng, Kefan Qiu, Qingyu Zhang, Xinhao Li, Jing Wang, Jiaxin Li, Ziang Yan, Kun Tian, Meng Tian, Xinhai Zhao, et al. Streamforest: Efficient online video understanding with persistent event memory. NeurIPS , 2025. 
+
+12 [42] Hang Zhang, Xin Li, and Lidong Bing. Video-llama: An instruction-tuned audio-visual language model for video understanding. 
+
+EMNLP , 2023. URL https://arxiv.org/abs/2306.02858 .[43] Haoji Zhang, Yiqin Wang, Yansong Tang, Yong Liu, Jiashi Feng, Jifeng Dai, and Xiaojie Jin. Flash-vstream: Memory-based real-time understanding for long video streams. In ICCV , 2025. [44] Haowei Zhang, Shudong Yang, Jinlan Fu, See-Kiong Ng, and Xipeng Qiu. Hermes: Kv cache as hierarchical memory for efficient streaming video understanding. arXiv preprint arXiv:2601.14724 , 2026. [45] Peiyuan Zhang, Kaichen Zhang, Bo Li, Guangtao Zeng, Jingkang Yang, Yuanhan Zhang, Ziyue Wang, Haoran Tan, Chunyuan Li, and Ziwei Liu. Long context transfer from language to vision. arXiv preprint arXiv:2406.16852 , 2024. [46] Yuanhan Zhang, Jinming Wu, Wei Li, Bo Li, Zejun Ma, Ziwei Liu, and Chunyuan Li. Llava-video: Video instruction tuning with synthetic data. arXiv preprint arXiv:2410.02713 , 2024. [47] Yulin Zhang, Cheng Shi, and Sibei Yang. Weavetime: Stream from earlier frames into emergent memory in videollms. arXiv preprint arXiv:2602.22142 , 2026. 
+
+13 A Detailed Problem Formulation and Analysis 
+
+This section extends the streaming constraints introduced in the main paper, provides a taxonomy of visual memory representations, discusses the perception–memory trade-off, and clarifies evaluation protocols. 
+
+A.1 Streaming Constraints: Extended Discussion 
+
+C1 — No future frame access. The model may not access any frame 𝑣 𝑡 with 𝑡 > 𝑇 at any stage of processing, including visual encoding, memory construction, and token selection. 
+
+C2 — Query-agnostic encoding. Because 𝑞 is unknown during the encoding phase ( 𝑡 < 𝑇 ), all memory construction and token retention decisions must be made without conditioning on 𝑞 . This rules out query-aware compression strategies that use attention scores between visual tokens and the specific user query to guide token eviction. We distinguish three levels of query dependence: 1. Query-dependent. Compression is conditioned on the actual user query 𝑞 . This violates C2. 2. Proxy-query-guided. Compression uses a fixed set of generic pseudo-questions (e.g., “What objects are visible?”) that are determined at system initialization and remain constant across all videos and queries. These carry no information about 𝑞 and serve only as content-agnostic importance priors. This is compliant with C2. StreamMem [39] adopts this approach, using chat template tokens as a generic proxy and showing empirically that it achieves comparable performance to using an explicit generic question (e.g., “What is happening in the video?”). 3. Purely visual. Compression relies exclusively on visual-level signals such as inter-frame cosine similarity. This is the strictest form of query-agnostic operation. 
+
+C3 — Bounded memory. A compliant method must maintain a memory footprint bounded by a constant 𝐵 independent of video length. Boundedness must hold for every memory tier: if any tier grows without bound, the system cannot guarantee constant-memory operation. Methods that store complete KV caches for all observed frames, such as ReKV [ 6], grow linearly and are treated as an oracle upper bound rather than a deployable solution [ 39 ]. Among bounded-memory methods, LiveVLM [ 21 ] compresses KVs via attention-based pruning and frame-wise merging, but discards earlier tokens when the memory upper bound is reached, risking forgetting of early content [ 39 ]; StreamMem [ 39 ] jointly re-compresses all stored KVs together with newly arriving ones at each step, maintaining a fixed-size memory throughout the video stream. A well-designed system should make per-tier capacity explicit, so that the aggregate bound 𝐵 is a sum of known constants. 
+
+A.2 Visual Memory: Retrieval vs. Replay 
+
+Memory-based methods differ in the representation level at which visual information is stored. This determines whether inference constitutes memory retrieval (selecting pre-encoded representations) or video replay (re-processing visual content through the encoding pipeline). 
+
+(i) Raw frame retrieval and re-encoding. The most direct approach stores original frames and, at query time, retrieves relevant ones and passes them through the full vision encoder. Although a retrieval step selects a subset, the retrieved content requires a complete encoding forward pass — computationally identical to processing a shorter video from scratch. This is closer to selective replay .
+
+(ii) KV-cache storage and retrieval. The predominant paradigm stores LLM key-value cache entries produced during encoding. ReKV [ 6] offloads KV features to RAM/disk and retrieves relevant entries at query time without re-invoking the visual encoder. LiveVLM [ 21 ] and StreamMem [ 39 ] adopt similar strategies. Retrieval injects pre-encoded KV entries directly into decoding attention — constituting memory retrieval. 
+
+(iii) Hidden-state and compressed token memory. Flash-VStream [ 43 ] maintains a Flash Memory comprising a Context Synopsis Memory that aggregates temporal information via K-means clustering of encoded feature maps, and a Detail Augmentation Memory that stores high-resolution features from selected key frames. These methods apply additional lossy compression that further distances stored representations from the original input. 
+
+(iv) Text-level abstraction. Some methods generate captions and retrieve them via text similarity, discarding all sub-symbolic visual information. 14 We propose three criteria for retrieval (as opposed to replay): (a) One-pass encoding : the visual encoder is invoked exactly once, with no re-invocation at query time; (b) Irreversible transformation : stored representations preclude reconstruction of the original visual input; (c) Direct integration : retrieved representations are injected directly into the LLM’s decoding process without an additional encoding pass. Methods in categories (ii)–(iv) satisfy all three criteria and constitute retrieval; category (i) does not. 
+
+A.3 Query-Time Retrieval and Streaming Compliance 
+
+A natural question is whether using the query 𝑞 at inference time to select memory entries conflicts with the streaming constraints. We note that C1 and C2 govern the encoding phase (𝑡 < 𝑇 ): memory must be constructed causally and without knowledge of 𝑞 . The inference phase , triggered at 𝑡 = 𝑇 when 𝑞 arrives, operates over already-constructed memory and does not access any frame beyond 𝑇 . Since the memory content is entirely determined before 𝑞 is known, conditioning retrieval on 𝑞 at inference time does not introduce information leakage into the memory construction process. This two-phase structure, query-agnostic encoding followed by query-conditioned retrieval, is the standard design in existing streaming methods. ReKV [ 6] encodes video with sliding-window attention and stores all KV caches during encoding, then retrieves query-relevant entries upon receiving a question. LiveVLM [ 21 ] continuously generates and compresses video KVs during streaming, and selects query-relevant KVs when a new question arrives. StreamMem [ 39 ]compresses KV caches in a query-agnostic manner during encoding, and answers questions over the compressed memory at inference time. Flash-VStream [ 43 ] continuously updates its memory in a frame handler process, while a separate question handler reads from the memory to generate responses upon user queries. 
+
+A.4 Pseudo-Streaming vs. True Streaming 
+
+Pseudo-streaming is the dominant evaluation protocol [ 6, 21 , 39 , 43 ]: each QA pair is evaluated by truncating the video at query timestamp 𝑇 and feeding V[0,𝑇 ] to the model. This correctly enforces C1 and C2, and is the standard of StreamingBench [ 15 ] and OVO-Bench [ 22 ]. However, it does not enforce strictly causal frame-by-frame encoding: the model may process all frames in V[0,𝑇 ] jointly, which would be impossible when frames arrive one by one in real time. 
+
+True streaming requires strictly causal, frame-by-frame encoding with real-time latency constraints, as targeted by Dispider [25] and VideoLLM-online [3]. We follow pseudo-streaming, consistent with existing methods and benchmarks, enabling direct comparison under identical conditions. We acknowledge it does not penalize encoding latency, and extending to true streaming evaluation remains important future work. 
+
+## B Pseudo Question                                       
+
+> Listing 1 Pseudo-question bank
+> 1_PSEUDO_QUESTIONS =(
+> 2"What objects are visible in the scene?",
+> 3"How many items or people can be seen?",
+> 4"What actions or events are happening ?",
+> 5"What has changed in the scene?",
+> 6" Describe the spatial arrangement of objects .",
+> 7)
+
+## C Social Impact 
+
+Our method improves the efficiency of online streaming video understanding by reducing GPU memory usage in a training-free manner, which can lower the deployment cost of real-time video assistants and benefit applications such as live captioning and assistive perception. As with general-purpose video understanding models, potential misuse in surveillance scenarios exists, but our work does not introduce new capabilities beyond those of the backbone model and poses no additional societal risks. 15
