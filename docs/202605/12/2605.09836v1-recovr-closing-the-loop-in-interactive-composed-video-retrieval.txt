@@ -1,0 +1,1199 @@
+Title: ReCoVR: Closing the Loop in Interactive Composed Video Retrieval
+
+URL Source: https://arxiv.org/pdf/2605.09836v1
+
+Published Time: Tue, 12 May 2026 02:27:02 GMT
+
+Number of Pages: 32
+
+Markdown Content:
+# ReCoVR: Closing the Loop in Interactive Composed Video Retrieval 
+
+Bingqing Zhang, Yi Zhang, Zhuo Cao, Yang Li, Xue Li, Jiajun Liu, Sen Wang 
+
+The University of Queensland, CSIRO Data61, Australia 
+
+bingqing.zhang@uq.edu.au 
+
+Abstract 
+
+Composed video retrieval (CoVR) searches for target videos using a reference video and a modification text, but existing methods are restricted to a single interaction round and cannot support the progressive nature of real-world visual search. To bridge this gap, we first formalize interactive composed video retrieval , a multi-turn extension of CoVR, where users progressively refine their search intent through natural-language feedback across turns. Adapting existing interactive retrieval methods to this setting reveals two structural weaknesses: reliance on a single retrieval channel and an open-loop retrieval design that consumes user feedback but does not diagnose whether its own retrieval trajectory is drifting or stagnating. To address these limitations, we propose ReCoVR (Reflexive Composed Video Retrieval), a dual-pathway architecture built on reflexive perception , where the system treats its retrieval history as diagnostic evidence alongside user feedback. Specifically, an Intent Pathway routes heterogeneous feedback to complementary retrieval channels, while a Reflection Pathway performs trajectory-level reflection to monitor result evolution and correct retrieval errors across turns. Experiments on multiple benchmarks show that ReCoVR consistently outperforms interactive baselines, notably achieving 74.30% R@1 after just one interactive round on the WebVid-CoVR-Test dataset. 
+
+1 Introduction 
+
+Consider a user with a reference video of a city at night who asks the system to “ switch to daylight .” The system returns a daytime scene, but of a completely different city with dense skyscrapers instead of the low-rise layout in the reference. The user refines the query: “ keep a similar layout ,” yet the system now returns a matching layout at night, silently discarding the daylight constraint already achieved. This example illustrates a structural limitation of the single-turn paradigm (Fig. 1(a.1)): each query is treated in isolation, so prior progress can be undone without notice. Composed video retrieval (CoVR) [ 1, 2] has emerged as a powerful tool for searching with a reference video and a modification text, with progress in datasets [ 2– 4] and methods [ 4, 5]. However, existing approaches remain confined to a single query-response cycle. This assumption is especially restrictive for CoVR, where a reference video and a modification text can still leave multiple plausible targets: “ switch to daylight ” says nothing about city type, layout, or viewpoint. In realistic visual search, users refine such missing constraints progressively after observing imperfect results [ 6]. These observations motivate moving CoVR beyond single-turn retrieval toward multi-turn interaction. Interactive retrieval has been explored in neighboring domains. In interactive text-to-video retrieval (I-TVR), prior methods typically ask clarifying questions, collect user answers, and use them to refine the query [ 7 – 9]. Related ideas also appear in visual dialog [ 10 ] and interactive composed image retrieval [ 11 – 13 ]. However, these settings do not address the composed video case, where the system must jointly maintain a visual reference, an evolving modification intent, and the retrieval trajectory across turns. We therefore formulate Interactive Composed Video Retrieval (ICoVR) : starting 
+
+> Preprint.
+> arXiv:2605.09836v1 [cs.IR] 11 May 2026 satisfaction=neutral, +cstr=[similar
+> layout]
+> CoVR
+> Question Asking
+> Query
+> Reformer
+> Put a bee…
+
+෠𝐿 0 
+
+> Ref. + Edit (Turn 0)
+> CoVR
+
+෠𝐿 0
+
+𝑢 𝑡  
+
+> Question Asking
+> CoVR
+
+෠𝐿 𝑡   
+
+> Ref. + Edit (Turn 0) Question Asking
+> CoVR
+
+෠𝐿 0
+
+𝑢 𝑡 
+
+> Intent
+> Decomposer
+> CoVR
+> T2 V
+> Question Asking
+
+෠𝐿 𝑖             
+
+> TW -
+> RRF
+> one -turn
+> no refinement
+> (1) Single -Turn CoVR :No Refinement Ref. + Edit Results List
+> Turn t
+> Feedback (2) Multi -Turn: Single Channel & Open Loop
+> No feedback
+> Errors
+> Undetected
+> Turn t
+> Feedback
+> Intent Pathway
+> Reflection Pathway
+> Trajectory: ෠𝐿 𝑡 0,⋯,෠𝐿 𝑡 −1→Diagnose →Correct
+> State Reflector
+> (3) ReCoVR (Ours): Dual Channel & Closed Loop
+> Switch to daylight
+> Should the city layout match
+> the reference?
+> Yes Daytime view…
+> …similar layout
+> T2 V Query
+> CoVR Query
+> CoVR Rank:8
+> RRF
+> Rank:3
+> Reflection
+
+෠𝐿 𝑡 −1         
+
+> Are there notable landmarks?
+> No ,make it more
+> greenery and open space
+> …and greenery. T2 V Query
+> …more greenery CoVR Query
+> satisfaction= negative ,+cstr=[gree -
+> nery] Reflection
+> +Rank Cap  +Constraint
+> CoVR Rank: 5
+> T2 V Rank: 3
+> RRF
+> Rank:1
+> CoVR Rank: 1
+> T2 V Rank: 1
+> User
+> ReCoVR
+> ReCoVR Internal Process
+> Turn 0
+> Turn 1
+> Turn 2
+> (a) Evolution of Retrieval Paradigms towards ICoVR (b) Interactive Refinement Process using ReCoVR
+
+Figure 1: Overview of Interactive Composed Video Retrieval (ICoVR) and ReCoVR. (a) Paradigm Comparison: (1) Traditional CoVR is single-turn only. (2) Naive multi-turn methods use a single channel and an open loop (ignoring past results ˆLt0...t −1), causing error compounding. (3) ReCoVR features a dual-pathway architecture: an Intent Pathway routing to CoVR and T2V channels, and a closed-loop Reflection Pathway diagnosing historical trajectories. (b) Interaction Example: Across turns, ReCoVR dynamically extracts latent constraints from user feedback and collaboratively ranks videos to successfully retrieve the target. from a standard CoVR query at Turn 0, an unsatisfied user can provide natural-language feedback from Turn 1 onward to progressively disambiguate the target (Fig. 1 (b)). We evaluate this setting with a controlled simulated-user protocol and representative I-TVR baselines. Once transferred to ICoVR, these baselines reveal two structural weaknesses (Fig. 1(a.2)). First, they rely on a single retrieval channel . While composed retrieval is the natural starting point, user feedback across turns is heterogeneous: it may describe how the target differs from the current result, but it may also directly specify target attributes that text-to-video retrieval can exploit more effectively. Second, they operate as open-loop retrieval systems. Their updates are derived mainly from user feedback, while the system does not diagnose whether its own retrieval trajectory is drifting, stagnating, or repeatedly returning rejected candidates. As a result, query drift, silent error compounding, and result stagnation remain undetected and uncorrected. This leads to our key insight: retrieval history should not merely be stored, but treated as diagnostic evidence for correcting the system’s future behavior. Building on this insight, we propose ReCoVR (Re flexive Co mposed Video Retrieval), a training-free closed-loop framework for ICoVR (Fig. 1(a.3)). ReCoVR follows the principle of reflexive perception : the system interprets its own retrieval trajectory alongside user feedback. An Intent Pathway addresses the single-channel limitation by decomposing each feedback turn into a direct target description and a relative edit, routing them to complementary T2V and CoVR channels. A 
+
+Reflection Pathway addresses the open-loop limitation by monitoring how ranked results evolve across turns, diagnosing failure modes such as drift or stagnation, and triggering corrective actions. These pathways are supported by a dual memory bank that tracks semantic constraints and ranking history, and are unified by a time-weighted reciprocal rank fusion strategy that aggregates multi-turn evidence while emphasizing recent feedback. Since ReCoVR updates retrieval through query reformulation, memory, and rank fusion without parameter updates, it is backbone-agnostic and plugs into existing retrieval models. In summary, our contributions are three-fold: 1. We formulate Interactive Composed Video Retrieval (ICoVR) , a multi-turn extension of CoVR for progressive intent refinement through natural-language feedback. 2. We propose ReCoVR , a training-free closed-loop interactive retrieval framework that combines dual-channel intent execution with trajectory-level reflection and correction. 23. Extensive experiments demonstrate consistent gains over adapted interactive baselines across multiple benchmarks, supported by component ablations, feedback robustness analysis, cross-task and cross-backbone transfer, qualitative comparisons, and efficiency analysis. 
+
+2 Related Work 
+
+Composed Video Retrieval. Composed Video Retrieval (CoVR) extends Composed Image Re-trieval [ 14 – 18 ] to the video domain, where a target video is retrieved from a reference video and a modification text. Existing methods have advanced through large-scale caption-derived training data [ 1, 2], visual-bias mitigation by separating preserved content from text-driven changes [ 5, 19 – 21 ], and fine-grained temporal benchmarks or dense descriptions [ 3, 4, 22 – 24 ]. Recent reason-aware CoVR, represented by CoVR-R [ 25 ], improves single-turn query understanding by predicting edit after-effects such as state transitions, action phases, camera changes, and temporal dynamics. How-ever, it still retrieves from a fixed reference–edit pair in an open-loop manner. Since such a pair can remain underspecified and admit multiple plausible targets, practical search often requires users to refine constraints after observing intermediate results. We therefore formulate interactive composed video retrieval, where the central challenge is not only reasoning about the current edit, but also correcting drift, stagnation, and repeated feedback violations across turns. 
+
+Interactive Visual Retrieval. Interactive retrieval refines search through iterative user feedback. In the image domain, early low-level relevance feedback methods [ 26 , 27 ] evolved into models utilizing state aggregation and sequence modeling [ 10 , 11 , 28 – 30 ], while recent large multimodal models enable complex multi-stage reasoning across turns [ 12 , 31 –37 ]. For videos, interactive text-to-video retrieval (I-TVR) [ 38 ] refines queries by appending answers [ 7], interpolating embeddings [ 8], rewriting dialogue history [ 39 ] or quantifying uncertainties [ 9]. However, none of these methods address the composed video setting, which must jointly maintain a visual reference and evolve a modification text. Adapting existing I-TVR methods to this setting exposes structural limits: they rely on a single retrieval channel and operate in an open loop that ignores past retrieval trajectories. 
+
+3 Method 
+
+3.1 Problem Setup and ReCoVR Overview 
+
+We introduce Interactive Composed Video Retrieval (ICoVR) , a multi-turn extension of single-turn composed video retrieval [ 1, 2], as illustrated in Fig. 2(a). Given a reference video vref , an initial modification text u0, and a gallery G, the user first issues a standard CoVR query at Turn 0 and receives an initial ranked list ˆL0. When the target is not found, the user can continue the search from Turn 1 onward by providing natural-language feedback: 
+
+(qt, u t, ˆLt) Tt=1 , (1) where qt is an optional system-generated clarifying question, ut is the user’s feedback or refinement instruction, and ˆLt is the updated ranked list. The goal is to progressively align the ranked list with the user’s intent over turns. To address ICoVR, we propose ReCoVR (Re flexive Co mposed Video 
+
+Retrieval), a training-free framework that turns retrieval from an open-loop execution chain into a closed-loop process with self-diagnosis. As shown in Fig. 2, each turn consists of three stages. The Intent Pathway decomposes feedback ut into structured, channel-specific queries for two fixed retrieval engines: a text-to-video (T2V) channel and a composed video retrieval (CoVR) channel. The 
+
+Reflection Pathway diagnoses the retrieval trajectory by detecting user dissatisfaction, stagnation, and inconsistent results, and produces structured corrective signals for query refinement and rank adjustment. Finally, Time-Weighted Reciprocal Rank Fusion (TW-RRF) aggregates candidates from both channels over recent turns to produce the final ranked list ˆLt. Together, these components realize reflexive perception : ReCoVR not only retrieves candidates from user feedback, but also uses its own retrieval history to correct past failures. ReCoVR is supported by two memory banks: Progress Memory (PM) maintains semantic state, including candidate-level captions, metadata, and accumulated session constraints, while Result Memory (RM) stores the ranked lists from both channels across turns. The Intent and Reflection Pathways read from these memories to produce structured signals for query refinement, constraint 3Shared   
+
+> Context
+> Change it to
+> yellow -green
+> Standard CoVR
+> Query (𝑣 𝑟𝑒𝑓 ,𝑢 0)
+> Turn 0
+> Turn 1
+
+෠𝐿 1 
+
+> Aerial view
+> of a forest
+
+𝑢 1 
+
+> Turn 𝑡
+
+෠𝐿 𝑡  
+
+> Make it sunny
+
+𝑢 𝑡  
+
+> Target Not Found
+> Turn 𝑇
+
+෠𝐿 𝑇  
+
+> Remove farmland
+
+𝑢 𝑇 
+
+> Target Found
+
+(a)  A Sequence in the 
+
+Interactive CoVR 
+
+> Intent
+> Decomposer
+> Query
+> Reformer search 𝑡
+> edit 𝑡
+> CoVR
+> Channel
+> T2 V
+> Channel
+
+(b)  Intent Pathway  
+
+> Progress Memory PM
+
+𝑃𝑀 𝐿  Video Captions 
+
+𝑃𝑀 𝑆  Session State  
+
+> Result Memory RM
+> State
+> Reflector
+
+𝐿 𝑡  
+
+> 𝑇2𝑉
+
+𝐿 𝑡  
+
+> 𝐶𝑜𝑉𝑅
+
+෠𝐿 𝑡 
+
+> Retrieval Trajectory
+
+(c)  Memory Bank 
+
+> Question
+> Asking
+> Rank -Cap
+> Policy
+
+𝜎 𝑡 
+
+> ⋮
+
+𝜅 
+
+1
+
+> ⋮
+
+𝜅 
+
+1
+
+> Rank -Cap
+
+Δ𝑟 𝑡 
+
+(d)  Reflection Pathway 
+
+(e)  TW -RRF 
+
+𝐿 𝑡 
+
+> 𝑇2𝑉
+
+𝐿 𝑡 
+
+> 𝐶𝑜𝑉𝑅
+
+𝐿 𝑡 −1
+
+> 𝑇2𝑉
+
+𝐿 𝑡 −1
+
+> 𝐶𝑜𝑉𝑅
+
+෠𝐿 𝑡 
+
+> ⋯
+> ⋯
+
+𝑢 𝑡 
+
+𝑢 𝑡  
+
+> Read
+> PM Write PM
+
+∆𝑐 𝑡      
+
+> Read
+> RM
+> Write RM
+> 123
+> 123
+> Main
+> Workflow
+> Memory
+> Read/Write
+> Closed -loop
+> Feedback
+> Change
+> Position
+> Fusion
+> Weight
+> Final Rank
+> List at Turn 𝑡
+
+𝐿 𝑡 −1 
+
+> 𝐶𝑜𝑉𝑅
+
+𝐿 𝑡 −1
+
+> 𝑇2𝑉
+
+෠𝐿 𝑡 
+
+𝑞 𝑡 +1𝑞 1
+
+𝑞 𝑡 
+
+𝑞 𝑇  
+
+> Eq. (6)(7)
+> Read PM
+
+Figure 2: Pipeline of ReCoVR. When standard CoVR fails at Turn 0 (a) , the system enters an interactive loop. At each turn, the Intent Pathway (b) decomposes user feedback ut into dual-channel queries and generates a clarifying question qt+1 , while the Reflection Pathway (d) infers satisfaction 
+
+σt and constraints ∆ct from the session state, then consults the retrieval trajectory to apply rank penalties ∆rt. Both pathways read from and write to a shared Memory Bank (c) that tracks semantic state (PM) and ranked results (RM). Finally, TW-RRF (e) fuses candidates over a recency-weighted sliding window to produce the final rank list ˆLt.updating, and trajectory diagnosis, which are then consumed by the T2V/CoVR retrievers and TW-RRF. Thus, the final ranking is determined by retrieval scores, memory updates, and rank fusion, rather than by free-form VLM scoring. Since these operations act above the retrieval backbone, ReCoVR is backbone-agnostic and can use any pre-trained T2V or CoVR model as a drop-in channel without fine-tuning. Appendix E provides the complete turn-level algorithm, and Appendix F lists the prompts and output schemas for reproducibility. 
+
+3.2 Reflexive Retrieval Mechanism 
+
+We now detail the three-stage reflexive retrieval mechanism. At each turn t, the Intent Pathway first reads PM S and previous constraints ∆ct−1, with ∆c0 = ∅, to produce channel-specific candidate lists. The Reflection Pathway then diagnoses RM to infer corrective constraints ∆ct and rank adjustments ∆rt. Finally, TW-RRF fuses the adjusted results across channels and recent turns into the updated ranked list ˆLt for the current turn. 
+
+3.2.1 Intent Pathway 
+
+The Intent Pathway translates ambiguous user feedback into executable queries (Fig. 2(b)). In multi-turn retrieval, user feedback often conveys mixed instructions. For instance, “ Make the keyboard black, add backlighting ” mixes a relative edit with a target description; routing it to a single query type would discard part of the signal, so the Intent Decomposer maps ut into two queries: 
+
+(search t, edit t) = I(ut, PM St−1, PM L). (2) Here, search t is a target description synthesized from user feedback and accumulated context, while 
+
+edit t is a relative modification to the current result and may be empty for description-only feedback. The Query Reformer then integrates new intents with the running query in PM St−1 by first ap-pending the new intent to the running query and invoking LLM-based summarization only when the accumulated text exceeds a length threshold. Because PM St−1 already contains the corrective constraints ∆ct−1 from the previous turn’s Reflection Pathway, self-diagnosis is naturally coupled 4into query construction. Retrieval then proceeds through two channels: 
+
+LT 2Vt , L CoV R t = R(search t, edit t, G). (3) The T2V Channel encodes search t and retrieves by text-to-video similarity. The CoVR Channel 
+
+handles relative modifications: when edit t is non-empty, it anchors the edit to the previous fused top result ˆLt−1(1) and retrieves by composed similarity. This dynamic anchoring is stabilized by rank-cap (Sec. 3.2.2), which demotes unreliable top results before later turns reuse them as visual references. The two channels are complementary: T2V captures direct semantic alignment, while CoVR captures fine-grained relative changes. Finally, a Question Asking module identifies remaining ambiguities from PM St−1 and generates a clarifying question qt+1 . Unlike prior I-TVR methods [ 7– 9] where clarifying questions are the sole interaction channel, here, qt+1 is lightweight: the user may freely answer, ignore, or override. While the Intent Pathway produces candidate lists, it cannot judge whether results are improving, motivating the Reflection Pathway described next. 
+
+3.2.2 Reflection Pathway 
+
+The Reflection Pathway serves as a closed-loop diagnostic module (Fig. 2(d)). It monitors the trajectory in RM to detect unproductive patterns, such as repeatedly returning a rejected top result, and intervenes before the system remains trapped in the same semantic neighborhood. The core of this pathway is the State Reflector . It evaluates user feedback ut in the context of the session state stored in PM St−1, including accumulated queries, prior constraints, and gallery captions from PM L. This joint analysis generates two structured outputs: 
+
+(σt, ∆ct) = S(ut, PM St−1, PM L). (4) The satisfaction level σt ∈ { negative , neutral } indicates whether the user explicitly rejects the current result or is providing incremental guidance. The constraint delta ∆ct extracts semantic conditions based on the gap between user expectations and the current query state. It derives positive constraints that accumulate to guide ongoing searches, alongside negative constraints that act as semantic filters during query rewriting. Beyond semantic constraint updates, ReCoVR also needs an immediate mechanism to prevent clearly unhelpful results from dominating the next interaction. Inspired by negative-feedback reranking in interactive retrieval [40, 41], we instantiate a lightweight, failure-triggered Rank-Cap Policy :
+
+∆rt = P(σt, RM t−1). (5) Rather than globally re-ranking all candidates, rank-cap only constrains the rank of a candidate diagnosed as unreliable while preserving the relative order of the remaining list. It is triggered by two failure modes: explicit rejection and strategy stagnation. First, under explicit rejection 
+
+(σt = negative ), the current top candidate is directly contradicted by user feedback, so its rank is capped at κneg in both channels to prevent repeated reuse. Second, under strategy stagnation 
+
+(σt = neutral and the top candidate remains unchanged across turns), the stagnant candidate is capped at a milder position κneu to encourage exploration beyond the same semantic neighborhood. If neither failure mode is detected, the rankings are left unchanged. This intervention also stabilizes the Intent Pathway: by preventing unreliable top results from being reused as visual references, rank-cap provides a more reliable anchor for the CoVR channel in subsequent turns. Together, these mechanisms form a dual-layer correction strategy operating at two timescales. Constraint propagation ( ∆ct → PM S → next turn’s Intent Pathway) provides long-term semantic correction, shaping what to search for as constraints accumulate across turns. The rank-cap ( ∆rt →
+
+current turn’s TW-RRF) provides immediate intervention, suppressing what to avoid before the final fusion step. At each turn, the updated constraints are saved to PM S and the new candidate lists are appended to RM, completing the turn and preparing the state for the next iteration. 
+
+3.3 Time-Weighted Reciprocal Rank Fusion 
+
+As interaction progresses, ReCoVR collects ranked lists from both T2V and CoVR channels across turns. Standard Reciprocal Rank Fusion (RRF) [ 42 ] combines multiple ranked lists by rewarding 5candidates that appear consistently at high ranks. However, directly applying RRF to all historical turns ignores the temporal nature of ICoVR: later feedback usually reflects a more refined intent, while early turns may encode ambiguous or outdated constraints. We therefore extend RRF into a temporally aware fusion rule by adding recency weighting and a sliding temporal window, yielding 
+
+Time-Weighted Reciprocal Rank Fusion (TW-RRF) .Let t be the current turn and W the window size. TW-RRF aggregates recent turns from t0 =max(1 , t − W + 1) to t, with N = t − t0 + 1 effective turns. Each turn t′ receives a normalized linear recency weight: 
+
+wt′ = 2( t′ − t0 + 1) 
+
+N (N + 1) . (6) Thus, more recent turns contribute more strongly, while older turns within the window remain useful but have diminishing influence. The window prevents early ambiguous feedback from dominating after the user has refined or corrected the search intent. For a candidate video vi, let r(s) 
+
+> t′,i
+
+be its rank in channel s ∈ { T2V , CoVR } at turn t′, and let 1[vi ∈ L(s) 
+
+> t′
+
+] indicate whether it appears in the top-K
+
+list. The final list ˆLt is obtained by sorting candidates according to: 
+
+ˆLt = sort ↓
+
+> vi
+
+" X
+
+> s∈{ T2V ,CoVR }
+> t
+
+X
+
+> t′=t0
+
+wt′ · 1[vi ∈ L(s) 
+
+> t′
+
+]
+
+k + r(s)
+
+> t′,i
+
+#
+
+, (7) where k is the standard RRF smoothing constant. When all turns are assigned equal weights and the window covers the full history, TW-RRF reduces to conventional RRF over multi-turn channel outputs. The time-weighted form instead favors candidates that are consistently strong across channels and remain relevant under the user’s latest refinements. TW-RRF also incorporates rank-cap actions ∆rt from Eq. (5) . After the Reflection Pathway iden-tifies an unreliable candidate, its stored rank is capped before fusion, lowering its reciprocal-rank contribution while preserving the rest of the list. Since TW-RRF aggregates over a sliding window, this correction affects the current fusion and later windows that still contain the adjusted turn. 
+
+4 Experiments 
+
+4.1 Experimental Setup Datasets and Interactive Baselines. We evaluate on three composed video retrieval benchmarks: 
+
+WebVid-CoVR [ 1], the most widely used CoVR benchmark, from which we use 2,556 manually annotated triplets for evaluation; Dense-WebVid-CoVR [3], which shares the same video pairs but features richer modification texts (31.16 vs. 4.6 words on average); and FineCVR [ 4], which targets fine-grained temporal understanding with 10,043 evaluation queries over a larger and more diverse gallery. To further assess generalization, we evaluate on FashionIQ [ 18 ], a composed image retrieval dataset with three clothing categories, to test cross-domain transferability. We also adapt two text-to-video retrieval benchmarks for the interactive setting: MSRVTT-1kA [ 43 , 44 ] (1,000 test queries) and AVSD-1k-Test [ 45 ] (1,000 test queries following previous protocols [ 9, 46 , 47 ]). As ICoVR is a newly formulated task, we establish interactive baselines by adapting three representative I-TVR methods: IVR [ 7], Merlin [ 8], and UMIVR [9 ], all equipped with the same single-turn CoVR retriever used in ReCoVR. These baselines iteratively refine queries based on user feedback. 
+
+User Simulator. For scalable and reproducible evaluation, we use a VLM-based simulated user solely as an evaluation instrument , not as part of ReCoVR. Given the target video and the current top-ranked candidate, the simulator generates natural-language feedback describing their remaining discrepancy; ReCoVR never accesses the target and receives only this feedback and its own retrieval history, exactly as the adapted baselines do. Such simulated-user protocols have been increasingly adopted in interactive retrieval and search [ 7, 9, 48 – 51 ], where exhaustive human-in-the-loop evaluation is difficult to scale. To avoid simulator-specific advantages, all methods share the same simulator, prompts, targets, initial ranked lists, and stopping criteria. We further provide a human-feedback sanity check in Sec. 4.5 and detailed simulator design in Appendix C. 
+
+Evaluation Protocol. Each interaction starts from the standard CoVR query at Turn 0 and proceeds for at most T =5 feedback turns. At each turn, the system presents its top-ranked result, receives 6Table 1: Comparison with interactive baselines 
+
+on WebVid-CoVR-Test across multiple turns. Re-CoVR shows consistent advantages over all base-lines throughout the interaction process. Methods Turn 0 Turn 1 Turn 2 Turn 3 Turn 4 Turn 5                                                                                                 
+
+> R@1  ↑ IVR 54.30 66.55 70.11 71.95 73.00 73.51 Merlin 54.30 60.80 63.34 64.63 65.49 65.77 UMIVR 54.30 67.10 71.09 72.85 74.10 75.04 ReCoVR(ours) 54.30 74.30 80.32 84.39 87.72 90.22 R@5  ↑ IVR 77.00 85.45 87.68 88.93 89.75 90.10 Merlin 77.00 79.23 82.75 83.92 84.43 84.62 UMIVR 77.00 86.62 89.28 90.02 90.18 90.41 ReCoVR(ours) 77.00 87.28 89.28 91.28 93.04 94.13 R@10  ↑ IVR 84.35 91.08 93.78 94.44 94.84 95.03 Merlin 84.35 86.27 89.63 90.49 91.20 91.47 UMIVR 84.35 92.64 93.56 94.33 94.56 94.99 ReCoVR(ours) 84.35 93.08 93.81 94.56 95.27 96.24 BRI  ↓ IVR -0.7368 0.6187 0.5560 0.5161 0.4880 Merlin -0.8165 0.7399 0.6921 0.6603 0.6381 UMIVR -0.7285 0.6049 0.5394 0.4986 0.4700 ReCoVR(ours) -0.6737 0.5271 0.4538 0.4034 0.3643
+
+Table 2: Reference comparison with single-turn CoVR methods on WebVid-CoVR-Test. Interactive refinement in ReCoVR yields sub-stantial performance gains across turns. Methods Metrics R@1 ↑ R@5 ↑ R@10 ↑ R@50 ↑ Avg. ↑                                                                                                           
+
+> Single-Turn CoVR
+> CoVR [1] AAAI 24 53.13 79.93 86.85 97.69 79.40 ECDE [5] CV P R 24 60.12 84.32 91.27 98.72 83.61 CoVR-2 [2] T P AM I 24 59.82 83.84 91.28 98.24 83.30 TFR-CVR [22] ECCV 24 51.70 75.30 80.70 --FDCA [4] ICCV 25 54.80 82.27 89.84 97.70 81.15 HUD [19] M M 25 63.38 86.93 92.29 98.76 85.34 CADP [20] P R 25 63.62 87.36 93.19 99.30 85.87 REFINE [21] T OM M 26 62.48 86.82 92.41 98.87 85.15
+> ReCoVR (Our Interactive CoVR) Turn 0 54.30 77.00 84.35 95.77 77.86
+> Turn 1 74.30 87.28 93.08 98.75 88.35
+> Turn 2 80.32 89.28 93.81 98.90 90.45
+> Turn 3 84.39 91.28 94.56 99.18 92.35
+> Turn 4 87.72 93.04 95.27 99.30 93.83
+> Turn 5 90.22 94.13 96.24 99.57 95.04 012345
+> 65
+> 70
+> 75
+> 80
+> 85
+> 90
+> 95
+> Turn
+> (a) R@1 ↑on Dense-WebVid-CoVR
+> 12345
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> Turn
+> (b) BRI ↓on Dense-WebVid-CoVR
+> 012345
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> Turn
+> (c) R@1 ↑on FineCVR-Test
+> 12345
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> 1.1
+> Turn
+> (d) BRI ↓on FineCVR-Test
+> IVR Merlin UMIVR ReCoVR (Ours)
+
+Figure 3: ICoVR comparison on additional CoVR benchmarks. Under the same interactive protocol, ReCoVR shows stronger turn-wise improvement than adapted I-TVR baselines on Dense-WebVid-CoVR-Test (a,b) and FineCVR-Test (c,d). feedback, and updates the ranked list. We report Recall at K (R@ K) and Best log Rank Integral (BRI) [32], which measures cumulative ranking quality over turns, where lower is better. 
+
+Implementation Details. Unless otherwise specified, Qwen3-VL-4B [52] is used for ReCoVR and the user simulator, and BLIP-ViT-Large [ 53 ] is used for both CoVR and T2V retrieval channels. We set the TW-RRF window size to W =5 , RRF constant to k=60 , candidate pool to K=100 , and rank-cap positions to κneg =11 and κneu =4 . ReCoVR is training-free and uses frozen retrieval models and VLM inference throughout. 
+
+4.2 Main Comparison under the ICoVR Protocol 
+
+Table 1 reports the primary apples-to-apples comparison under the ICoVR protocol, where all methods start from the same Turn 0 ranked list and interact with the same user simulator under identical stopping criteria. ReCoVR consistently outperforms the adapted interactive baselines across turns and metrics, and the margin becomes larger as the interaction proceeds. This trend suggests that the gain is not merely from receiving additional feedback, but from how ReCoVR uses retrieval history to diagnose rejection, drift, and stagnation through its closed-loop reflection design. Table 2 further provides a reference comparison with recent single-turn CoVR methods. This comparison is not intended to replace standard single-turn benchmarking, since interactive methods receive extra feedback after Turn 0; instead, it shows that interactive refinement is complementary to stronger single-turn retrievers. Although ReCoVR uses only a mid-range single-turn backbone at Turn 0, one round of feedback already raises R@1 to 74.3%, surpassing the best single-turn result. As shown in Fig. 3, the same pattern holds on Dense-WebVid-CoVR and FineCVR: stronger or more detailed initial queries improve all methods, but ReCoVR benefits more consistently from additional turns, indicating that the proposed reflexive design generalizes across different CoVR benchmarks. 
+
+4.3 Ablation Study 
+
+Table 3 disentangles the effects of dual-channel retrieval and closed-loop correction. The CoVR-only and T2V-only variants perform similarly, while adding the Intent Pathway brings consistent gains 7Table 3: Component Ablation on WebVid-CoVR-Test and FineCVR-Test.                                                                                                                                                                                                                                                      
+
+> CoVR Channel T2V Channel Intent Pathway State Reflection Rank-cap
+> Dataset WebVid-CoVR-Test FineCVR-Test Metrics Turn 1 2345Turn 1 2345
+> ✓R@1 ↑68.15 71.64 72.73 73.40 74.52 44.54 51.92 56.28 59.60 61.34 BRI ↓0.6938 0.5699 0.5192 0.4890 0.4679 1.1249 0.9576 0.8607 0.7895 0.7487
+> ✓R@1 ↑66.76 71.67 72.42 73.08 73.59 43.39 49.70 54.21 58.56 60.55 BRI ↓0.7061 0.5724 0.5210 0.4906 0.4694 1.1865 0.9579 0.8569 0.7962 0.7507
+> ✓✓✓R@1 ↑69.29 72.69 74.61 76.17 77.46 45.56 52.17 58.85 61.22 63.69 BRI ↓0.6915 0.5619 0.5017 0.4733 0.4590 1.1151 0.9556 0.8518 0.7859 0.7310
+> ✓✓R@1 ↑68.94 73.63 75.36 76.28 78.60 45.42 52.71 57.94 62.23 65.38 BRI ↓0.6935 0.5608 0.5114 0.4860 0.4533 1.1243 0.9556 0.8584 0.7897 0.7486
+> ✓✓✓R@1 ↑71.61 78.11 81.46 83.65 85.17 46.85 56.13 62.34 69.97 73.89 BRI ↓0.6804 0.5445 0.4832 0.4330 0.4019 1.1204 0.9553 0.8544 0.7872 0.7380
+> ✓✓✓✓R@1 ↑70.42 75.51 78.44 80.13 83.26 46.84 53.24 61.14 64.95 69.40 BRI ↓0.6918 0.5491 0.4912 0.4691 0.4377 1.1143 0.9527 0.8486 0.7858 0.7284
+> ✓✓✓✓R@1 ↑72.41 79.39 83.94 86.70 87.52 47.48 55.66 64.17 71.85 76.87 BRI ↓0.6810 0.5355 0.4847 0.4241 0.3964 1.1140 0.9531 0.8453 0.7841 0.7171
+> ✓✓✓✓✓R@1 ↑74.30 80.32 84.39 87.72 90.22 47.78 58.04 67.11 73.42 78.65 BRI ↓0.6737 0.5271 0.4538 0.4034 0.3643 1.1087 0.9529 0.8430 0.7825 0.7157 86
+> 87
+> 88
+> 89
+> 90
+> (a) smoothing kin
+> WebVid-CoVR-Test
+> 30
+> 60
+> 90
+> 12345
+> 74
+> 78
+> 82
+> Turn
+> 86
+> 87
+> 88
+> 89
+> 90
+> (b) top-Kcutoff in
+> WebVid-CoVR-Test
+> 50
+> 100
+> 150
+> 12345
+> 74
+> 78
+> 82
+> Turn
+> 86
+> 87
+> 88
+> 89
+> 90
+> (c) rank-cap (neu ,neg )in
+> WebVid-CoVR-Test
+> (3,9)
+> (4,11)
+> (5,13)
+> 12345
+> 74
+> 78
+> 82
+> Turn
+> 86
+> 87
+> 88
+> 89
+> 90
+> (d) window size Win
+> WebVid-CoVR-Test
+> 1
+> 2
+> 3
+> 4
+> 5
+> 12345
+> 74
+> 78
+> 82
+> Turn
+> 71
+> 73
+> 75
+> 77
+> 79
+> (e) smoothing kin
+> FineCVR-Test
+> 30
+> 60
+> 90
+> 12345
+> 48
+> 54
+> 60
+> 66
+> Turn
+> 71
+> 73
+> 75
+> 77
+> 79
+> (f) top-Kcutoff in
+> FineCVR-Test
+> 50
+> 100
+> 150
+> 12345
+> 48
+> 54
+> 60
+> 66
+> Turn
+> 71
+> 73
+> 75
+> 77
+> 79
+> (g) rank-cap (neu ,neg )in
+> FineCVR-Test
+> (3,9)
+> (4,11)
+> (5,13)
+> 12345
+> 48
+> 54
+> 60
+> 66
+> Turn
+> 71
+> 73
+> 75
+> 77
+> 79
+> (h) window size Win
+> FineCVR-Test
+> 1
+> 2
+> 3
+> 4
+> 5
+> 12345
+> 48
+> 54
+> 60
+> 66
+> Turn
+
+Figure 4: Parameter sensitivity of TW-RRF on WebVid-CoVR-Test (top) and FineCVR-Test (bottom). ReCoVR remains stable across broad ranges of k, top-K cutoff, rank-cap positions, and window size W , suggesting that its gains are not tied to brittle heuristic choices. by routing descriptive and relative feedback to specialized channels. State Reflection and Rank-cap further improve later turns, where open-loop systems are more likely to drift or stagnate, indicating that they correct the retrieval trajectory rather than simply adding another retrieval signal. The full model achieves the best results on both benchmarks, showing that dual-channel execution and closed-loop correction are complementary. Fig. 4 shows that TW-RRF is not sensitive to a narrow range of hyperparameter choices. Performance remains stable across broad ranges of k, K, and 
+
+(κneu , κ neg ). Increasing the window size W helps until performance saturates, suggesting that recent history is useful but overly long histories may introduce outdated evidence. Appendix A provides additional fusion and rank-cap transfer analyses with consistent trends. 
+
+4.4 Generalization 
+
+We evaluate ReCoVR’s generality beyond the main ICoVR benchmarks from multiple perspectives, with the main paper focusing on cross-domain transfer and Appendix A covering task transfer, retrieval backbones, and reasoning VLMs. Table 4 evaluates cross-domain transfer on FashionIQ [ 18 ], a composed image retrieval benchmark with three fashion categories. Although ReCoVR starts from a weaker Turn 0 retriever than recent single-turn CIR methods, interactive feedback steadily improves performance and surpasses them after several turns. Compared with the adapted interactive baseline UMIVR, ReCoVR achieves larger and more sustained gains across all categories, while UMIVR tends to plateau after early turns. This suggests that closed-loop correction is not tied to video-specific cues, but can also support fine-grained composed image retrieval. 8Table 4: Generalization to composed image retrieval on FashionIQ. ReCoVR consistently outper-forms single-turn or interactive methods across all categories. Methods Dress Shirts Tops&Tees                                                                                                                                                                                                                 
+
+> R@1 ↑R@10 ↑R@50 ↑BRI ↓R@1 ↑R@10 ↑R@50 ↑BRI ↓R@1 ↑R@10 ↑R@50 ↑BRI ↓
+> Single-Turn Composed Image Retrieval
+> CoVR-2 [2] T P AM I 24 -46.53 69.60 --51.23 70.64 --52.14 73.27 -iSHARLE [54] T P AM I 25 -31.81 50.20 --24.19 45.12 --31.72 53.29 -XR[55] W W W 26 -38.91 56.82 --28.71 52.50 --43.91 62.57 -REFINE [21] T OM M 26 -50.32 72.98 --57.90 77.87 --59.82 80.83 -
+> Interactive Refinement (BLIP-ViT-Large)
+> UMIVR  Turn 0 8.73 26.18 45.46 -9.03 30.32 47.25 -11.22 31.36 52.83 -
+> Turn 1 15.32 38.47 60.59 3.535 16.39 41.51 60.94 3.530 18.05 44.01 64.71 3.290
+> Turn 2 18.59 40.80 62.92 3.228 18.55 42.89 62.81 3.229 20.40 45.49 66.96 2.998
+> Turn 3 20.92 41.45 63.46 3.045 20.07 42.93 62.90 3.063 22.44 45.84 67.77 2.831
+> Turn 4 22.76 40.70 62.92 2.926 20.76 42.69 63.35 2.954 23.41 46.46 68.28 2.717
+> Turn 5 24.00 42.64 64.55 2.830 21.59 43.47 63.84 2.871 24.48 47.83 68.79 2.631 ReCoVR(Ours)  Turn 0 8.73 26.18 45.46 -9.03 30.32 47.25 -11.22 31.36 52.83 -
+> Turn 1 23.30 49.23 71.54 3.257 26.74 49.56 71.15 3.268 26.77 53.54 74.55 3.035
+> Turn 2 29.25 51.81 73.83 2.815 31.50 51.13 72.77 2.834 33.86 55.12 76.64 2.616
+> Turn 3 35.75 56.52 77.14 2.580 37.54 56.82 76.79 2.603 40.13 60.17 80.01 2.393
+> Turn 4 41.99 60.14 79.67 2.407 43.72 59.72 79.20 2.434 46.20 63.13 81.95 2.230
+> Turn 5 47.89 62.62 81.41 2.268 47.60 61.92 80.57 2.301 50.99 66.34 82.66 2.101
+
+Table 5: Human-feedback sanity check on WebVid-CoVR-Test. ReCoVR maintains a comparable improvement trend under free-form human feedback on 100 ICoVR instances. Method User Type                                                     
+
+> R@1 ↑R@5 ↑BRI ↓Feedback Words(Avg.) Turn 0 1230123123
+> IVR Simulator 43.0 58.0 58.0 59.0 63.0 75.0 82.0 81.0 1.005 0.860 0.788 6.1 ReCoVR Simulator 43.0 63.0 73.0 79.0 63.0 83.0 83.0 85.0 0.943 0.751 0.650 6.3 ReCoVR Real Humans 43.0 62.0 70.0 76.0 63.0 77.0 80.0 84.0 0.977 0.800 0.700 13.7
+
+4.5 Human-Feedback Sanity Check 
+
+User simulators provide scalable and controlled evaluation for interactive retrieval, and have been widely adopted in recent interactive search and cross-modal retrieval studies [ 7, 9, 31 , 48 ]. However, they cannot fully capture the diversity of real interaction styles. We therefore conduct a human-feedback sanity check to examine whether the simulator-based trend persists when feedback is written freely by users, rather than to claim a full-scale deployment evaluation. Following prior interactive cross-modal retrieval studies, where human-in-the-loop checks are typically conducted at limited scale due to the cost of multi-turn annotation, we sample 100 ICoVR instances from WebVid-CoVR-Test and recruit five participants to interact with ReCoVR for up to three turns per instance. As shown in Table 5, ReCoVR maintains a comparable improvement trend under human feedback: real users provide longer and more descriptive feedback than the simulator (13.7 vs. 6.3 words on average), yet ReCoVR still improves steadily across turns and achieves final performance close to the simulator-based evaluation. This suggests that ReCoVR is not merely fitting a single simulated trajectory distribution. Appendix C provides further details of the simulator design, human-feedback interface, qualitative human-feedback trajectories, and robustness tests under degraded feedback. 
+
+Efficiency. Appendix B provides a detailed latency and memory analysis. Although ReCoVR is moderately heavier per turn due to closed-loop reasoning, it converges in fewer turns; retrieval/fusion takes only about 0.03s per turn, the memory bank is negligible (3.50MB), and the system accounts for only 14.76% of end-to-end time under realistic human-feedback latency. 
+
+5 Conclusion 
+
+We introduced Interactive Composed Video Retrieval (ICoVR), a multi-turn extension of composed video retrieval, together with a scalable simulated-user protocol complemented by a human-feedback sanity check. To overcome the single-channel and open-loop limitations of adapted retrieval systems, we proposed ReCoVR, a training-free dual-pathway framework for closed-loop interactive search. Its Intent Pathway routes descriptive and relative feedback to complementary retrieval channels, while its Reflection Pathway monitors ranked results over turns to diagnose drift, stagnation, and repeated feedback violations. Experiments across composed video retrieval, text-to-video retrieval, and composed image retrieval show that multi-turn interaction is complementary to single-turn query reasoning and enables progressive refinement of ambiguous user intent. 9References 
+
+[1] Lucas Ventura, Antoine Yang, Cordelia Schmid, and Gül Varol. Covr: Learning composed video retrieval from web video captions. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 38, pages 5270–5279, 2024. [2] Lucas Ventura, Antoine Yang, Cordelia Schmid, and Gül Varol. Covr-2: Automatic data construction for composed video retrieval. IEEE Transactions on Pattern Analysis and Machine Intelligence , 46(12):11409–11421, 2024. [3] Omkar Thawakar, Dmitry Demidov, Ritesh Thawkar, Rao Muhammad Anwer, Mubarak Shah, Fahad Shahbaz Khan, and Salman Khan. Beyond simple edits: Composed video retrieval with dense modifications. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 20435–20444, 2025. [4] WU Yue, Zhaobo Qi, Yiling Wu, Junshu Sun, Yaowei Wang, and Shuhui Wang. Learning fine-grained representations through textual token disentanglement in composed video retrieval. In The Thirteenth International Conference on Learning Representations , 2025. [5] Omkar Thawakar, Muzammal Naseer, Rao Muhammad Anwer, Salman Khan, Michael Felsberg, Mubarak Shah, and Fahad Shahbaz Khan. Composed video retrieval via enriched context and discriminative embeddings. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 26896–26906, 2024. [6] Gary Marchionini. Exploratory search: from finding to understanding. Communications of the ACM , 49(4):41–46, 2006. [7] Kaiqu Liang and Samuel Albanie. Simple baselines for interactive video retrieval with questions and answers. In Proceedings of the IEEE/CVF International Conference on Computer Vision ,pages 11091–11101, 2023. [8] Donghoon Han, Eunhwan Park, Gisang Lee, Adam Lee, and Nojun Kwak. Merlin: Multimodal embedding refinement via llm-based iterative navigation for text-video retrieval-rerank pipeline. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing: Industry Track , pages 547–562, 2024. [9] Bingqing Zhang, Zhuo Cao, Heming Du, Yang Li, Xue Li, Jiajun Liu, and Sen Wang. Quantify-ing and narrowing the unknown: Interactive text-to-video retrieval via uncertainty minimization. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 22120– 22130, 2025. [10] Xiaoxiao Guo, Hui Wu, Yu Cheng, Steven Rennie, Gerald Tesauro, and Rogerio Feris. Dialog-based interactive image retrieval. Advances in neural information processing systems , 31, 2018. [11] Anwesan Pal, Sahil Wadhwa, Ayush Jaiswal, Xu Zhang, Yue Wu, Rakesh Chada, Pradeep Natarajan, and Henrik I Christensen. Fashionntm: Multi-turn fashion image retrieval via cascaded memory. In Proceedings of the IEEE/CVF international conference on computer vision , pages 11323–11334, 2023. [12] Yanzhe Chen, Zhiwen Yang, Jinglin Xu, and Yuxin Peng. Mai: A multi-turn aggregation-iteration model for composed image retrieval. In The Thirteenth International Conference on Learning Representations , 2025. [13] Pengfei Luo, Jingbo Zhou, Tong Xu, Yuan Xia, Linli Xu, and Enhong Chen. Imagescope: Unifying language-guided image retrieval via large multimodal model collective reasoning. In 
+
+Proceedings of the ACM on Web Conference 2025 , pages 1666–1682, 2025. [14] Xintong Han, Zuxuan Wu, Phoenix X Huang, Xiao Zhang, Menglong Zhu, Yuan Li, Yang Zhao, and Larry S Davis. Automatic spatially-aware fashion concept discovery. In Proceedings of the IEEE international conference on computer vision , pages 1463–1471, 2017. 10 [15] Nam Vo, Lu Jiang, Chen Sun, Kevin Murphy, Li-Jia Li, Li Fei-Fei, and James Hays. Composing text and image for image retrieval-an empirical odyssey. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 6439–6448, 2019. [16] Yanbei Chen and Loris Bazzani. Learning joint visual semantic matching embeddings for language-guided retrieval. In European Conference on Computer Vision , pages 136–152. Springer, 2020. [17] Zheyuan Liu, Cristian Rodriguez-Opazo, Damien Teney, and Stephen Gould. Image retrieval on real-life images with pre-trained vision-and-language models. In Proceedings of the IEEE/CVF international conference on computer vision , pages 2125–2134, 2021. [18] Hui Wu, Yupeng Gao, Xiaoxiao Guo, Ziad Al-Halah, Steven Rennie, Kristen Grauman, and Rogerio Feris. Fashion iq: A new dataset towards retrieving images by natural language feedback. In Proceedings of the IEEE/CVF Conference on computer vision and pattern recognition , pages 11307–11317, 2021. [19] Zhiwei Chen, Yupeng Hu, Zixu Li, Zhiheng Fu, Haokun Wen, and Weili Guan. Hud: Hierarchi-cal uncertainty-aware disambiguation network for composed video retrieval. In Proceedings of the 33rd ACM International Conference on Multimedia , pages 6143–6152, 2025. [20] Hao Wang, Fang Liu, Licheng Jiao, Jiahao Wang, Shuo Li, Lingling Li, Puhua Chen, and Xu Liu. Vision-by-prompt: Context-aware dual prompts for composed video retrieval. Pattern Recognition , page 112378, 2025. [21] Yupeng Hu, Zixu Li, Zhiwei Chen, Qinlei Huang, Zhiheng Fu, Mingzhu Xu, and Liqiang Nie. Refine: Composed video retrieval via shared and differential semantics enhancement. 
+
+ACM Trans. Multimedia Comput. Commun. Appl. , February 2026. ISSN 1551-6857. doi: 10.1145/3796712. Just Accepted. [22] Thomas Hummel, Shyamgopal Karthik, Mariana-Iuliana Georgescu, and Zeynep Akata. Egocvr: An egocentric benchmark for fine-grained composed video retrieval. In European Conference on Computer Vision , pages 1–17. Springer, 2024. [23] Animesh Gupta, Jay Parmar, Ishan Rajendrakumar Dave, and Mubarak Shah. From play to replay: Composed video retrieval for temporally fine-grained videos. arXiv preprint arXiv:2506.05274 , 2025. [24] Junyang Ji, Shengjun Zhang, Da Li, Yuxiao Luo, Yan Wang, Di Xu, Biao Yang, Wei Yuan, Fan Yang, Zhihai He, and Wenming Yang. OmniCVR: A benchmark for omni-composed video retrieval with vision, audio, and text. In The Fourteenth International Conference on Learning Representations , 2026. URL https://openreview.net/forum?id=KxxR7emO5K .[25] Omkar Thawakar, Dmitry Demidov, Vaishnav Potlapalli, Sai Prasanna Teja Reddy Bogireddy, Viswanatha Reddy Gajjala, Alaa Mostafa Lasheen, Rao Muhammad Anwer, and Fahad Khan. Covr-r: Reason-aware composed video retrieval. arXiv preprint arXiv:2603.20190 , 2026. [26] Yong Rui, Thomas S Huang, Michael Ortega, and Sharad Mehrotra. Relevance feedback: a power tool for interactive content-based image retrieval. IEEE Transactions on circuits and systems for video technology , 8(5):644–655, 1998. [27] Hong Wu, Hanqing Lu, and Songde Ma. Willhunter: interactive image retrieval with multilevel relevance. In Proceedings of the 17th International Conference on Pattern Recognition, 2004. ICPR 2004. , volume 2, pages 1009–1012. IEEE, 2004. [28] Guanyu Cai, Jun Zhang, Xinyang Jiang, Yifei Gong, Lianghua He, Fufu Yu, Pai Peng, Xiaowei Guo, Feiyue Huang, and Xing Sun. Ask&confirm: active detail enriching for cross-modal retrieval with partial query. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 1835–1844, 2021. [29] Yifei Yuan and Wai Lam. Conversational fashion image retrieval via multiturn natural language feedback. In Proceedings of the 44th International ACM SIGIR conference on research and development in information retrieval , pages 839–848, 2021. 11 [30] Hao Wei, Shuhui Wang, Zhe Xue, Shengbo Chen, and Qingming Huang. Conversational com-posed retrieval with iterative sequence refinement. In Proceedings of the 31st ACM international conference on multimedia , pages 6390–6399, 2023. [31] Matan Levy, Rami Ben-Ari, Nir Darshan, and Dani Lischinski. Chatting makes perfect: Chat-based image retrieval. Advances in Neural Information Processing Systems , 36:61437–61449, 2023. [32] Saehyung Lee, Sangwon Yu, Junsung Park, Jihun Yi, and Sungroh Yoon. Interactive text-to-image retrieval with large language models: A plug-and-play approach. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 791–809, 2024. [33] Yanglin Feng, Yongxiang Li, Yuan Sun, Yang Qin, Dezhong Peng, and Peng Hu. Interactive cross-modal learning for text-3d scene retrieval. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [34] Yiding Lu, Mouxing Yang, Dezhong Peng, Peng Hu, Yijie Lin, and Xi Peng. Llava-reid: Selective multi-image questioner for interactive person re-identification. arXiv preprint arXiv:2504.10174 , 2025. [35] Yang Bai, Yucheng Ji, Min Cao, Jinqiao Wang, and Mang Ye. Chat-based person retrieval via dialogue-refined cross-modal alignment. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 3952–3962, 2025. [36] Chen He, Shenshen Li, Zheng Wang, Hua Chen, Fumin Shen, and Xing Xu. Chatting with interactive memory for text-based person retrieval. Multimedia Systems , 31(1):31, 2025. [37] Yang Qin, Chao Chen, Zhihang Fu, Dezhong Peng, Xi Peng, and Peng Hu. Human-centered interactive learning via mllms for text-to-image person re-identification. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 14390–14399, 2025. [38] Ning Han, Yawen Zeng, Shaohua Long, Chengqing Li, Sijie Yang, Dun Tan, Jianfeng Dong, and Jingjing Chen. Ivcr-200k: A large-scale multi-turn dialogue benchmark for interactive video corpus retrieval. In Proceedings of the 48th International ACM SIGIR Conference on Research and Development in Information Retrieval , pages 127–137, 2025. [39] Jiaxin Wu, Chong-Wah Ngo, Wing-Kwong Chan, Sheng-Hua Zhong, Xiong-Yong Wei, and Qing Li. Multimodal llm-based query paraphrasing for video search. arXiv preprint arXiv:2407.12341 , 2024. [40] Xuanhui Wang, Hui Fang, and ChengXiang Zhai. A study of methods for negative relevance feedback. In Proceedings of the 31st annual international ACM SIGIR conference on Research and development in information retrieval , pages 219–226, 2008. [41] Keping Bi, Qingyao Ai, Yongfeng Zhang, and W Bruce Croft. Conversational product search based on negative feedback. In Proceedings of the 28th acm international conference on information and knowledge management , pages 359–368, 2019. [42] Gordon V Cormack, Charles LA Clarke, and Stefan Buettcher. Reciprocal rank fusion outper-forms condorcet and individual rank learning methods. In Proceedings of the 32nd international ACM SIGIR conference on Research and development in information retrieval , pages 758–759, 2009. [43] Jun Xu, Tao Mei, Ting Yao, and Yong Rui. MSR-VTT: A large video description dataset for bridging video and language. In 2016 IEEE Conference on Computer Vision and Pattern Recognition, CVPR 2016, Las Vegas, NV, USA, June 27-30, 2016 , pages 5288–5296. IEEE Computer Society, 2016. doi: 10.1109/CVPR.2016.571. [44] Youngjae Yu, Jongseok Kim, and Gunhee Kim. A joint sequence fusion model for video question answering and retrieval. In Proceedings of the European conference on computer vision (ECCV) , pages 471–487, 2018. 12 [45] Huda Alamri, Vincent Cartillier, Abhishek Das, Jue Wang, Anoop Cherian, Irfan Essa, Dhruv Batra, Tim K Marks, Chiori Hori, Peter Anderson, et al. Audio visual scene-aware dialog. In 
+
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 7558–7567, 2019. [46] Chenyang Lyu, Manh-Duy Nguyen, Van-Tu Ninh, Liting Zhou, Cathal Gurrin, and Jennifer Foster. Dialogue-to-video retrieval. In Jaap Kamps, Lorraine Goeuriot, Fabio Crestani, Maria Maistro, Hideo Joho, Brian Davis, Cathal Gurrin, Udo Kruschwitz, and Annalina Caputo, editors, 
+
+Advances in Information Retrieval - 45th European Conference on Information Retrieval, ECIR 2023, Dublin, Ireland, April 2-6, 2023, Proceedings, Part II , volume 13981 of Lecture Notes in Computer Science , pages 493–501. Springer, 2023. doi: 10.1007/978-3-031-28238-6\_40. [47] Avinash Madasu, Junier Oliva, and Gedas Bertasius. Learning to retrieve videos by asking questions. In João Magalhães, Alberto Del Bimbo, Shin’ichi Satoh, Nicu Sebe, Xavier Alameda-Pineda, Qin Jin, Vincent Oria, and Laura Toni, editors, MM ’22: The 30th ACM International Conference on Multimedia, Lisboa, Portugal, October 10 - 14, 2022 , pages 356–365. ACM, 2022. doi: 10.1145/3503161.3548361. [48] Erhan Zhang, Xingzhu Wang, Peiyuan Gong, Yankai Lin, and Jiaxin Mao. Usimagent: Large language models for simulating search users. In Proceedings of the 47th International ACM SIGIR Conference on Research and Development in Information Retrieval , pages 2687–2692, 2024. [49] Krisztian Balog and ChengXiang Zhai. User simulation for evaluating information access systems. In Proceedings of the Annual International ACM SIGIR Conference on Research and Development in Information Retrieval in the Asia Pacific Region , pages 302–305, 2023. [50] Ke Chen, Shengyuan Han, Yongfeng Huang, Yujin Zhu, Jingwei Xiong, Liang Xu, and Jun-dong Liu. Adept: An entropy-driven dual-strategy agent for interactive video retrieval. In 
+
+ICASSP 2026-2026 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) , pages 9442–9446. IEEE, 2026. [51] Yao Dou, Michel Galley, Baolin Peng, Chris Kedzie, Weixin Cai, Alan Ritter, Chris Quirk, Wei Xu, and Jianfeng Gao. Simulatorarena: Are user simulators reliable proxies for multi-turn evaluation of ai assistants? In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 35200–35278, 2025. [52] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, Wenbin Ge, Zhifang Guo, Qidong Huang, Jie Huang, Fei Huang, Binyuan Hui, Shutong Jiang, Zhaohai Li, Mingsheng Li, Mei Li, Kaixin Li, Zicheng Lin, Junyang Lin, Xuejing Liu, Jiawei Liu, Chenglong Liu, Yang Liu, Dayiheng Liu, Shixuan Liu, Dunjie Lu, Ruilin Luo, Chenxu Lv, Rui Men, Lingchen Meng, Xuancheng Ren, Xingzhang Ren, Sibo Song, Yuchong Sun, Jun Tang, Jianhong Tu, Jianqiang Wan, Peng Wang, Pengfei Wang, Qiuyue Wang, Yuxuan Wang, Tianbao Xie, Yiheng Xu, Haiyang Xu, Jin Xu, Zhibo Yang, Mingkun Yang, Jianxin Yang, An Yang, Bowen Yu, Fei Zhang, Hang Zhang, Xi Zhang, Bo Zheng, Humen Zhong, Jingren Zhou, Fan Zhou, Jing Zhou, Yuanzhi Zhu, and Ke Zhu. Qwen3-vl technical report. arXiv preprint arXiv:2511.21631 , 2025. [53] Junnan Li, Dongxu Li, Caiming Xiong, and Steven Hoi. Blip: Bootstrapping language-image pre-training for unified vision-language understanding and generation. In International conference on machine learning , pages 12888–12900. PMLR, 2022. [54] Lorenzo Agnolucci, Alberto Baldrati, Alberto Del Bimbo, and Marco Bertini. isearle: Improving textual inversion for zero-shot composed image retrieval. IEEE Transactions on Pattern Analysis and Machine Intelligence , 2025. [55] Zhongyu Yang, Wei Pang, and Yingfang Yuan. Xr: Cross-modal agents for composed image retrieval. arXiv preprint arXiv:2601.14245 , 2026. [56] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al. Learning transferable visual models from natural language supervision. In International conference on machine learning ,pages 8748–8763. PMLR, 2021. 13 [57] Bin Zhu, Bin Lin, Munan Ning, Yang Yan, Jiaxi Cui, HongFa Wang, Yatian Pang, Wenhao Jiang, Junwu Zhang, Zongwei Li, et al. Languagebind: Extending video-language pretraining to n-modality by language-based semantic alignment. arXiv preprint arXiv:2310.01852 , 2023. [58] Mingxin Li, Yanzhao Zhang, Dingkun Long, Keqin Chen, Sibo Song, Shuai Bai, Zhibo Yang, Pengjun Xie, An Yang, Dayiheng Liu, Jingren Zhou, and Junyang Lin. Qwen3-vl-embedding and qwen3-vl-reranker: A unified framework for state-of-the-art multimodal retrieval and ranking. arXiv , 2026. [59] Jeffrey Dalton, Chenyan Xiong, and Jamie Callan. Trec cast 2019: The conversational assistance track overview. arXiv preprint arXiv:2003.13624 , 2020. [60] Leif Azzopardi, Maarten De Rijke, and Krisztian Balog. Building simulated queries for known-item topics: an analysis using six european languages. In Proceedings of the 30th annual international ACM SIGIR conference on Research and development in information retrieval ,pages 455–462, 2007. [61] Chadha Degachi, Ujjayan Dhar, Evangelos Niforatos, and Gerd Kortuem. Towards a domain expert evaluation framework for conversational search in healthcare. In Proceedings of the Extended Abstracts of the CHI Conference on Human Factors in Computing Systems , pages 1–9, 2025. [62] Mohammad Aliannejadi, Jacek Gwizdka, and Hamed Zamani. Interactions with generative information retrieval systems. In Information Access in the Era of Generative AI , pages 47–71. Springer, 2024. [63] Fengran Mo, Kelong Mao, Ziliang Zhao, Hongjin Qian, Haonan Chen, Yiruo Cheng, Xiaoxi Li, Yutao Zhu, Zhicheng Dou, and Jian-Yun Nie. A survey of conversational search. ACM Transactions on Information Systems , 43(6):1–50, 2025. [64] Zhenduo Wang, Zhichao Xu, Vivek Srikumar, and Qingyao Ai. An in-depth investigation of user response simulation for conversational search. In Proceedings of the ACM Web Conference 2024 , pages 1407–1418, 2024. [65] Pierre Erbacher, Ludovic Denoyer, and Laure Soulier. Interactive query clarification and refinement via user simulation. In Proceedings of the 45th International ACM SIGIR Conference on Research and Development in Information Retrieval , pages 2420–2425, 2022. [66] Jielin Qiu, Yi Zhu, Xingjian Shi, Florian Wenzel, Zhiqiang Tang, Ding Zhao, Bo Li, and Mu Li. Benchmarking robustness of multimodal image-text models under distribution shift. arXiv preprint arXiv:2212.08044 , 2022. [67] Diane Kelly. Methods for evaluating interactive information retrieval systems with users. 
+
+Foundations and Trends® in Information Retrieval , 3(1–2):1–224, 2009. [68] Jenny Preece, Yvonne Rogers, Helen Sharp, David Benyon, Simon Holland, and Tom Carey. 
+
+Human-computer interaction . Addison-Wesley Longman Ltd., 1994. [69] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R Narasimhan, and Yuan Cao. React: Synergizing reasoning and acting in language models. In The eleventh international conference on learning representations , 2022. [70] Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion: Language agents with verbal reinforcement learning. Advances in neural information processing systems , 36:8634–8652, 2023. 14 A More Ablation and Generalization Studies . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 A.1 Rank Fusion Strategy. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .15 A.2 Baseline Rank-cap Transfer . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 A.3 Generalization across Retrieval Backbones . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 A.4 Generalization to Interactive Text-to-Video Retrieval . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 A.5 Generalization across Reasoning VLMs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 
+
+B Efficiency Analysis . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 
+
+C User Simulation and Human-Feedback Sanity Check Details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 C.1 Motivation: Why Simulate Users? . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 C.2 User Simulator Design . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 C.3 Human-Feedback Interface. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .20 C.4 Robustness to Degraded Simulated Feedback . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 
+
+D Qualitative Case Studies . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 
+
+E Algorithmic Overview of ReCoVR . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 
+
+F Prompt Templates . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .22 
+
+G Limitations and Discussion . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 
+
+A More Ablation and Generalization Studies 
+
+A.1 Rank Fusion Strategy 
+
+The main paper adopts Time-Weighted Reciprocal Rank Fusion (TW-RRF) to aggregate candidate lists across channels and turns. Here we compare it against five alternatives on WebVid-CoVR-Test to justify this choice: (1) Static-RRF fuses only the current turn’s two channel lists using reciprocal rank with fixed channel weights, discarding all historical evidence; (2) Uniform-RRF aggregates across a sliding window like TW-RRF but assigns equal weight to every turn; (3) Penalty-RRF replaces the additive indicator with a penalty rank rpen for absent candidates, so that missing from a list incurs a small negative contribution rather than zero; (4) SimMax performs score-level fusion by taking the maximum raw similarity across channels and turns; (5) SimSum sums the raw similarity scores instead. As shown in Table 6, TW-RRF achieves the best R@1 and BRI at every turn. Static-RRF is competitive at Turn 1 but plateaus quickly because it cannot accumulate cross-turn evidence. Uniform-RRF performs close to TW-RRF in early turns but falls behind as the interaction progresses, confirming that recency weighting becomes increasingly important when later turns carry more refined intent. Penalty-RRF underperforms both Uniform-RRF and TW-RRF, indicating that penalizing absent candidates is overly conservative and suppresses useful partial evidence from individual channels. The two score-level baselines (SimMax, SimSum) are consistently weaker, which is expected because raw similarity scales differ across channels and turns, making direct score comparison unreliable. These results validate the three design choices behind TW-RRF: multi-turn aggregation, recency weighting, and rank-level (rather than score-level) fusion. 
+
+A.2 Baseline Rank-cap Transfer 
+
+To isolate the contribution of the Rank-cap policy, we transplant the same rule into two open-loop interactive baselines, IVR and UMIVR , while keeping their original single-channel query-update pipelines unchanged. We reuse the same cap positions as ReCoVR ( κneg =11 , κneu =4 ) and derive the satisfaction signal from the simulator’s action type, applying demotion as a lightweight post-processing step without introducing the Intent Pathway or State Reflection. 15 Table 6: Ablation on rank fusion strategies on WebVid-CoVR-Test. We compare TW-RRF against three rank-level variants (Static-RRF, Uniform-RRF, Penalty-RRF) and two score-level baselines (SimMax, SimSum). TW-RRF achieves the best performance across all turns and metrics. Rank Fusinon Strategy 
+
+R@1 ↑ R@5 ↑ BRI ↓
+
+Turn 1 2 3 4 5 Turn 1 2 3 4 5 Turn 1 2 3 4 5
+
+Penalty-RRF 70.11 75.77 80.13 84.59 87.79 86.66 88.54 89.63 90.88 92.94 0.6944 0.5614 0.4885 0.4321 0.3877 Static-RRF 74.36 78.33 80.95 83.76 86.03 87.25 86.93 87.56 88.81 90.10 0.6701 0.5557 0.4915 0.4490 0.4164 Uniform-RRF 73.63 79.81 83.57 86.79 89.03 88.38 88.71 90.69 91.98 93.19 0.6726 0.5250 0.4512 0.4106 0.3736 SimMax 68.58 69.76 75.63 80.16 82.75 85.52 84.47 85.84 87.28 88.58 0.7162 0.6052 0.5520 0.5092 0.4738 SimSum 69.64 73.32 75.35 76.96 83.29 87.56 89.98 90.65 91.28 92.61 0.6938 0.5583 0.4933 0.4526 0.4181 TW-RRF 74.30 80.32 84.39 87.72 90.22 87.28 89.28 91.28 93.04 94.13 0.6737 0.5271 0.4538 0.4034 0.3643 Table 7: Effect of transplanting Rank-cap into open-loop interactive baselines on WebVid-CoVR-Test. Turn 0 is omitted because all methods share the same initialization. While Rank-cap consistently improves both IVR and UMIVR , ReCoVR remains the best across all turns, indicating that rank-space intervention alone does not account for the full gains. Methods Turn 1 2 3 4 5
+
+> R@1 ↑
+
+IVR 66.55 70.11 71.95 73.00 73.51 IVR + Rank-cap 73.04 76.64 79.89 80.75 82.08 UMIVR 67.10 71.09 72.85 74.10 75.04 UMIVR + Rank-cap 72.81 77.03 80.63 81.77 83.18 ReCoVR (ours) 74.30 80.32 84.39 87.72 90.22 BRI ↓ IVR 0.7368 0.6187 0.5560 0.5161 0.4880 IVR + Rank-cap 0.7074 0.5715 0.4985 0.4516 0.4187 UMIVR 0.7285 0.6049 0.5394 0.4986 0.4700 UMIVR + Rank-cap 0.6967 0.5555 0.4798 0.4314 0.3982 ReCoVR (ours) 0.6737 0.5271 0.4538 0.4034 0.3643 
+
+As shown in Table 7, Rank-cap yields consistent gains for both baselines across all turns: at Turn 5, R@1 improves by 8.57 points for IVR and 8.14 points for UMIVR , with corresponding BRI improve-ments. This confirms that rank-space intervention is a useful correction mechanism that transfers readily to existing interactive pipelines. ReCoVR achieves the best performance at every turn, and the margin grows over successive rounds: at Turn 1, the gap over the strongest augmented baseline is 1.49 points, expanding to 7.04 points by Turn 5. This widening trend is consistent with the component ablation in Table 3 of the main paper: Rank-cap provides effective immediate intervention, while the dual-channel Intent Pathway and trajectory-aware State Reflection contribute cumulative gains that become increasingly important as interaction history grows. The full architecture combines these complementary mechanisms to sustain improvement across turns. 
+
+A.3 Generalization across Retrieval Backbones 
+
+We examine whether ReCoVR depends on a particular retrieval encoder. Table 8 evaluates nine CoVR/T2V channel configurations on WebVid-CoVR-Test, including seven homogeneous settings where both channels use the same encoder and two heterogeneous settings where the channels use different encoders. These configurations cover CLIP [ 56 ], BLIP [ 53 ], LanguageBind [ 57 ], and Qwen3-VL-Embedding [58] families. Table 8: ReCoVR with different retrieval backbones on WebVid-CoVR-Test. We evaluate seven homogeneous configurations (same encoder for both channels) spanning five model families, plus two heterogeneous configurations (different encoders across channels). All configurations show consistent multi-turn improvement, confirming that ReCoVR is retrieval-backbone-agnostic. CoVR Channel T2V Channel                                                                                                                                                                                     
+
+> R@1 ↑R@5 ↑BRI ↓
+> Turn 0 12345Turn 0 12345Turn 1 2345
+> CLIP-Base CLIP-Base 46.32 65.30 72.77 77.31 80.87 83.88 68.47 81.30 84.12 86.50 88.07 89.12 0.9293 0.7433 0.6791 0.5859 0.5379 CLIP-Large CLIP-Large 55.36 73.67 80.91 84.90 88.18 90.02 77.78 87.40 90.06 91.90 93.35 94.21 0.6328 0.4961 0.4246 0.3761 0.3394 BLIP-Base BLIP-Base 51.17 70.62 77.07 81.96 85.52 88.26 74.02 85.76 87.36 89.83 91.63 92.57 0.7598 0.6051 0.5263 0.4717 0.4291 BLIP-Large BLIP-Large 54.30 74.30 80.32 84.39 87.72 90.22 77.00 87.28 89.28 91.28 93.04 94.13 0.6737 0.5271 0.4538 0.4034 0.3643 LanguageBind LanguageBind 43.11 71.36 77.35 81.18 83.41 85.99 66.28 87.95 87.90 88.93 90.30 91.08 0.8897 0.6584 0.5585 0.4962 0.4504 Qwen3VL-Embed2B Qwen3VL-Embed2B 59.47 79.97 84.00 88.34 91.20 92.72 81.30 92.14 93.35 94.64 95.74 96.60 0.5194 0.3965 0.3353 0.2931 0.2615 Qwen3VL-Embed8B Qwen3VL-Embed8B 64.36 82.47 86.93 90.02 92.80 94.33 85.02 93.86 94.09 95.74 96.64 97.38 0.4262 0.3225 0.2711 0.2358 0.2091 BLIP-Large LanguageBind 54.30 76.41 82.55 87.36 90.30 92.33 77.00 91.08 91.86 93.27 94.68 95.81 0.6408 0.4780 0.3988 0.3461 0.3071 Qwen3VL-Embed2B BLIP-Base 59.47 75.74 82.75 86.62 89.32 91.74 81.30 89.16 91.71 93.43 94.76 95.70 0.5469 0.4317 0.3691 0.3256 0.2919
+
+16 Table 9: Generalization to I-TVR on MSRVTT-1kA and AVSD-1k-Test. The Reflection Path-way is integrated into UMIVR as a plug-in, out-performing all baselines across both datasets. Methods Turn 0 1 2 3 4 5MSRVTT-1kA Dataset                                                                                                 
+
+> R@1 ↑ IVR 43.1 61.4 65.8 68.2 69.3 69.9 Merlin 43.1 50.3 54.9 56.3 57.9 59.6 UMIVR 43.1 65.0 74.3 81.3 84.9 87.3 Ours 43.1 70.2 83.7 89.8 92.4 93.5 BRI ↓ IVR -1.050 0.876 0.793 0.742 0.707 Merlin -1.230 1.127 1.054 0.999 0.953 UMIVR -0.985 0.751 0.614 0.519 0.451 Ours -0.946 0.675 0.524 0.429 0.365
+> AVSD-1k-Test Dataset
+> R@1 ↑ IVR 30.3 36.0 38.8 40.6 41.3 41.5 Merlin 30.3 34.9 37.5 38.9 40.3 41.3 UMIVR 30.3 43.2 50.4 56.0 59.9 63.2 Ours 30.3 47.6 64.2 71.3 74.8 76.6 BRI ↓ IVR -1.802 1.698 1.638 1.599 1.570 Merlin -1.838 1.743 1.670 1.613 1.566 UMIVR -1.665 1.438 1.272 1.146 1.050 Ours -1.580 1.265 1.049 0.912 0.819
+
+Table 10: Effect of backbone VLMs on WebVid-CoVR-Test. ReCoVR shows consistent multi-turn improvement across different model families (Qwen3-VL, InternVL3.5) and scales (4B, 8B), confirming its backbone-agnostic design.                                                                                       
+
+> •BaseVLMs Turn 1 2345
+> R@1 ↑ Qwen3-VL-4B 74.30 80.32 84.39 87.72 90.22 Qwen3-VL-8B 74.84 81.69 85.80 89.12 91.88 InternVL3.5-4B 75.59 82.94 87.6 90.61 92.64 InternVL3.5-8B 77.74 84.31 88.30 91.00 93.00
+> R@5 ↑ Qwen3-VL-4B 87.28 89.28 91.28 93.04 94.13 Qwen3-VL-8B 89.48 90.45 92.10 93.43 94.60 InternVL3.5-4B 87.91 91.71 93.86 94.99 96.09 InternVL3.5-8B 88.15 92.06 94.09 95.42 96.21
+> R@10 ↑ Qwen3-VL-4B 93.08 93.81 94.56 95.27 96.24 Qwen3-VL-8B 93.43 94.01 95.11 96.40 96.91 InternVL3.5-4B 91.55 95.19 96.32 96.87 97.57 InternVL3.5-8B 91.74 95.15 96.40 97.26 97.77
+> BRI ↓ Qwen3-VL-4B 0.6737 0.5271 0.4538 0.4034 0.3643 Qwen3-VL-8B 0.6483 0.4884 0.4111 0.3601 0.3224 InternVL3.5-4B 0.6365 0.4653 0.3803 0.3260 0.2868 InternVL3.5-8B 0.6271 0.4543 0.3708 0.3172 0.2784
+
+All configurations show consistent improvement over turns, indicating that ReCoVR’s gains are not tied to a specific retrieval backbone. Stronger encoders provide better starting points and higher final accuracy, while weaker encoders also benefit substantially from feedback, suggesting that closed-loop correction can compensate for limited initial retrieval capacity. Importantly, even when the Turn 0 retriever is already competitive with recent single-turn CoVR methods, ReCoVR still provides substantial additional gains, showing that interactive refinement is complementary to advances in single-turn retrieval . The heterogeneous settings further show that the dual-channel design does not require matched encoders and can also operate with encoder diversity. 
+
+A.4 Generalization to Interactive Text-to-Video Retrieval 
+
+We evaluate whether the closed-loop Reflection Pathway transfers beyond ICoVR to standard in-teractive text-to-video retrieval (I-TVR). To isolate this effect, we integrate the Reflection Pathway into UMIVR as a plug-in module, while keeping the original I-TVR setting and feedback proto-col. The interaction terminates once the target is found; otherwise, the simulated user follows the VideoQA-based feedback protocol used in prior I-TVR methods [7–9]. As shown in Table 9, adding the Reflection Pathway consistently improves the open-loop UMIVR pipeline on both MSRVTT-1kA and AVSD-1k-Test. The gains are especially large on AVSD-1k-Test, where the lower Turn 0 accuracy leaves more room for trajectory-level correction. These results suggest that the closed-loop diagnosis mechanism is not specific to composed retrieval, but can also strengthen existing interactive retrieval pipelines. 
+
+A.5 Generalization across Reasoning VLMs 
+
+We evaluate whether ReCoVR depends on a particular reasoning VLM. In this experiment, the user simulator is fixed to Qwen3-VL-4B, while ReCoVR uses different reasoning VLMs from two families and two scales: Qwen3-VL-4B/8B and InternVL3.5-4B/8B. This setting separates the simulator from the retrieval agent and tests whether the observed gains require using the same VLM family as the simulator. Table 10 shows that all reasoning VLMs produce steady multi-turn improvements. Larger models generally achieve higher final performance, but switching to a different model family also preserves the gain pattern. This suggests that ReCoVR’s improvement comes from the closed-loop reasoning structure rather than simulator-agent model sharing. The results further indicate that the framework is robust to the choice and scale of the reasoning VLM. 
+
+B Efficiency Analysis 
+
+All efficiency experiments in this section are conducted on a single NVIDIA RTX A6000 GPU . We evaluate on 100 instances sampled from WebVid-CoVR-Test (the same set used in the Sec. 4.5) under 17 Table 11: Method-level interactive cost on 100 instances. We report total interactive time, the number of executed turns, the average number of executed turns per active query, and the average end-to-end time per executed turn. Method Total Time (s, 100q) Executed Turns Avg Turns / Active Query Avg Time / Executed Turn (s) IVR 482.06 223 3.91 2.16 UMIVR 637.15 231 4.05 2.76     
+
+> ReCoVR (ours) 908.04 208 3.65 4.37
+
+Table 12: Per-turn latency breakdown of ReCoVR. Time is averaged over all executed interactive turns ( N =208 ). Percentages are computed against the measured end-to-end turn cost in the automatic pipeline. Individual module percentages may not sum exactly to the subtotal due to rounding. Module Avg Time / Turn (s) Ratio in Measured Pipeline (%) Question Generation 0.158 3.62 Intent Decomposer 0.950 21.76 Query Reformer 0.619 14.17 T2V Retrieval 0.017 0.39 CoVR Retrieval 0.011 0.25 TW-RRF 0.001 0.02 Reflection 0.847 19.41 Simulated User Feedback 1.767 40.48 System Total (ReCoVR only) 2.598 59.52 Measured Total / Turn 4.365 100.00 Estimated Total / Turn with Real Human Feedback (15s) 17.598 -the same setup as the main experiments (up to five interactive turns). Among them, 57 instances fail at Turn 0 and thus enter the interactive stage. The interaction terminates early once the target video is ranked first, so fewer executed turns directly indicate faster convergence. Unless otherwise specified, all reported timings are measured from the interactive pipeline used in automatic evaluation. For ReCoVR, the full first-turn query reform cost is included in the reported Turn 1 latency, matching the definition used throughout the paper. Table 11 provides a view of end-to-end efficiency beyond a simple average with 100 instances, since the number of executed turns varies under early stopping. ReCoVR has the largest total runtime, but executes the fewest interactive turns overall: 208 turns, compared with more than 220 turns for both adapted baselines. Thus, its larger total runtime is not due to longer interaction trajectories, but to higher per-turn computation. This is expected because each ReCoVR turn performs dual-channel retrieval and closed-loop reasoning, whereas the baselines use lighter open-loop query updates. Overall, ReCoVR trades higher per-turn cost for faster convergence in terms of executed turns. Table 12 explains where the per-turn latency of ReCoVR comes from. In the automatic pipeline, the largest single component is the simulated user, which takes 1.77s per turn and accounts for 40.48% of the total latency. On the model side, the main cost comes from language-driven reasoning modules rather than retrieval itself: Intent Decomposer takes 0.95s, Reflection takes 0.85s, and Query Reformer 
+
+takes 0.62s per turn, whereas the combined cost of T2V retrieval, CoVR retrieval, and TW-RRF is only about 0.03s. This confirms that the computational overhead of ReCoVR is dominated by its reasoning and diagnosis stages, not by nearest-neighbor retrieval. More importantly, Table 12 shows why raw simulator timing should not be over-interpreted for realistic deployments. If the simulated user is replaced by a conservative estimate of 15 seconds of real human feedback per turn, the end-to-end turn cost becomes 17.60s. Under this setting, the user contributes about 85.24% of the latency budget, while the entire ReCoVR system contributes only 14.76%. Therefore, although ReCoVR is computationally heavier than the baselines, practical interaction time is overwhelmingly dominated by the human side. Table 13 shows that the memory bank adds only a small footprint relative to model residency. For all methods, the bank primarily stores the long-term Progress Memory PM L, which caches pre-computed video captions for the gallery. ReCoVR’s bank is slightly larger (3.50MB in RAM, 2.01MB on disk) because PM L additionally stores richer metadata used by the Reflection Pathway, compared with the caption-only banks of IVR and UMIVR (0.98MB). In both cases, the bank is negligible relative to the ∼1.86GB base model footprint, occupying less than 0.19% of model memory. The 18 Table 13: Memory-bank footprint and offline bank-construction latency. We report Resident Set Size (RSS) after model loading, after bank loading, and at peak during execution, along with the bank size in RAM and on disk, and the mean cost of constructing one bank entry on a cache miss. Method RSS After Model (MB) RSS After Bank (MB) RSS Peak (MB) Bank RAM (MB) Bank Disk (MB) Build Mean (s) IVR 1857.95 1940.98 2281.07 0.98 0.54 0.908 UMIVR 1857.91 1943.28 2274.54 0.98 0.54 0.908       
+
+> ReCoVR (ours) 1857.81 1944.11 2157.97 3.50 2.01 1.658
+
+short-term Progress Memory PM S and the Result Memory RM are session-level structures that are created and discarded per query, contributing no persistent storage cost. The table also reports the offline cost of bank construction on cache misses. ReCoVR requires 1.658s on average to build one PM L entry, while IVR and UMIVR require 0.908s. Importantly, these are offline amortized costs: once built, the cached entries are reused across all sessions and queries, so they do not affect the online per-turn latency reported in Tables 11 and 12. Overall, ReCoVR is not the fastest method in raw system time, which is the expected cost of dual-channel retrieval and closed-loop reasoning. However, it converges in fewer turns, its retrieval operations are extremely lightweight, and its bank footprint is negligible. Most importantly, in realistic use the dominant latency comes from human feedback rather than model computation, making ReCoVR’s efficiency trade-off well justified by its retrieval gains. 
+
+C User Simulation and Human-Feedback Sanity Check Details 
+
+C.1 Motivation: Why Simulate Users? 
+
+Evaluating interactive retrieval systems faces a well-known tension between reproducibility and realism [ 48 , 51 ]. Offline evaluation on static benchmarks (e.g., measuring Recall or NDCG per turn) assumes that all preceding turns have been perfectly resolved, ignoring the cascading effects of errors across turns [ 59 ]. Online user studies, on the other hand, capture realistic interaction dynamics but are expensive, difficult to scale, and hard to reproduce. This gap has motivated the development of 
+
+user simulators that can interact with retrieval systems in a controlled, automated loop [48, 60–62]. In the information retrieval community, user simulation has evolved from early rule-based or prob-abilistic models that estimate click and query reformulation behaviors [ 63 ] from search logs [ 60 ], to recent LLM-based approaches that leverage instruction following and reasoning capabilities to role-play as users with specific information needs [ 48 , 49 , 64 , 65 ]. USimAgent [ 48 ], for instance, employs an LLM to generate queries, predict clicks, and decide when to stop searching, demonstrating that LLM-based simulators can produce coherent multi-round search sessions that approximate real user behavior. These advances have established simulated-user evaluation as a mainstream paradigm for interactive systems where large-scale human studies are impractical. 
+
+In interactive text-to-video retrieval (I-TVR), existing methods adopt a question-answering interaction protocol: the system generates a clarifying question at each turn, and a user simulator provides an answer based on the ground-truth target [ 7– 9]. This protocol has enabled reproducible multi-turn evaluation across I-TVR benchmarks. However, composed video retrieval presents a fundamentally different challenge . Unlike text-only retrieval where user intent is expressed through text alone, ICoVR requires the user to coordinate feedback across two modalities, referencing both visual content and textual modifications simultane-ously. The user must observe a video result, compare it against a mental model of the target, and articulate the remaining visual and semantic gap, which demands a vision-language understanding capability that text-only simulators cannot provide. Furthermore, user feedback in ICoVR is not limited to answering predefined questions; it may take the form of relative modifications (e.g., “ make the scene brighter ”), direct descriptions (e.g., “ I want a beach at sunset ”), or answers to system-generated questions, requiring a flexible simulation framework. No prior work has addressed user simulation for the composed video retrieval setting. These considerations motivate us to design a user simulator tailored for ICoVR, which we describe next. 19 Make them yellow . Maybe it should be a wide meadow         
+
+> view filled with many flowers
+> I looking for the video with lots of
+> blossoms under bright daytime light Target Found!
+> Turn 1 Turn 2Turn 3
+> GT Rank 11 GT Rank 3 GT Rank 1
+
+Figure 5: Qualitative trajectory with human feedback. A real user progressively refines the search intent across three turns, improving the ground-truth rank from 11 to 3 and finally to 1. 
+
+C.2 User Simulator Design 
+
+Our simulator is built on a vision-language model that acts as a surrogate user throughout the interactive session. The overall procedure is summarized in Algorithm 1. At the start of each evaluation query, the simulator receives the ground-truth target video vgt and generates an internal caption to establish a persistent visual memory of the target (Line 1). This caption, together with the target video representation, is cached and reused across all subsequent turns, ensuring that the simulator maintains a consistent understanding of the search goal. At each interaction turn t, the simulator receives the system’s top-ranked candidate ˆLt(1) and optionally a clarifying question qt. If the candidate matches the ground truth, the session terminates (Line 4). Otherwise, the simulator enters a two-stage process. In the analysis stage (Line 7), the VLM jointly observes both the target and the candidate video and produces a structured comparison, classifying the discrepancy as either MINOR (the candidate is semantically related but differs in specific attributes) or MAJOR (the candidate is largely irrelevant to the target). In the feedback generation stage (Lines 8–13), the simulator selects an action type based on the analysis outcome and generates natural-language feedback ut accordingly. This follows recent user simulation protocols that separate target understanding from feedback generation [ 48 ], while adapting the action space to ICoVR’s dual retrieval channels: • Modify : When the discrepancy is minor, the simulator suggests a targeted modification to the current result (e.g., “ change the background to outdoor ”), producing feedback that aligns with the CoVR channel. • Rewrite : When the discrepancy is major, the simulator generates a fresh description of the target video, providing a direct search cue that aligns with the T2V channel. • Answer : When a system question qt is available and the discrepancy is major, the simulator may choose to answer the question based on its knowledge of the target. This action selection naturally produces a mix of feedback types that exercises both retrieval channels of ReCoVR, mirroring the diverse interaction patterns observed in real users. All methods in our experiments interact with the same simulator under identical prompting configurations, ensuring a fair comparison. 
+
+C.3 Human-Feedback Interface 
+
+To support the human-feedback sanity check in Sec. 4.5 of the main paper, we develop a web-based interaction interface (Fig. 6). The sanity check was conducted under a low-risk/exempt human-subject review process; participants were informed of the task procedure and minimal risks, and no demographic attributes or sensitive personal information were collected. The interface keeps the interaction setting close to the simulator-based evaluation protocol while allowing participants to provide free-form natural language feedback. At each turn, the participant views: (1) the reference video from the original CoVR instance, (2) the current top-ranked candidate returned by ReCoVR, (3) the initial modification text, and (4) an optional clarifying question generated by the system. A text box allows the participant to write natural-language feedback describing how the current result should be modified. The participant can also click a “ Found It ” button to indicate that the target has been located, which terminates the session early. An interaction history panel records the previous turns, including the system question, the participant’s feedback, and the resulting top-ranked candidate. This allows the participant to track how the search evolves over the session. For this controlled sanity check, the ground-truth target video is displayed in a separate section at the bottom as the intended search goal. Each participant is assigned a unique 20 Algorithm 1 User Simulator for ICoVR 
+
+Require: Ground-truth target video vgt ; VLM V; max turns T
+
+1: caption ← V .describe( vgt ) {Cache target representation} 
+
+2: for t = 1 to T do 
+
+3: Receive candidate ˆLt(1) and optional question qt from system 
+
+4: if ˆLt(1) = vgt then 
+
+5: return STOP 
+
+6: end if 
+
+7: (status , analysis) ← V .compare( vgt , ˆLt(1)) {status ∈ { MINOR , MAJOR }}
+
+8: if status = MINOR then 
+
+9: ut ← V .modify(analysis , v gt )
+
+10: else if qt̸ = ∅ and rand() < 0.5 then 
+
+11: ut ← V .answer( qt, v gt )
+
+12: else 
+
+13: ut ← V .rewrite( vgt )
+
+14: end if 
+
+15: Send feedback ut to the retrieval system 
+
+16: end for 
+
+Table 14: Robustness to degraded simulated feedback on WebVid-CoVR-Test. We report Turn 1 R@1, Turn 5 R@1, the interactive gain from Turn 0 to Turn 5, and BRI at Turn 5. Among the genuinely degraded settings ( surface noise , constraint dropping , and modify-only ), ReCoVR remains consistently stronger than UMIVR and preserves large multi-turn gains. The rewrite-only setting is included as a strategy-shift control. Category Setting UMIVR ReCoVR (ours)                                                                    
+
+> Turn 1 Turn 5 Gain@5 BRI@5 Turn 1 Turn 5 Gain@5 BRI@5
+> Clean Default simulator 67.10 75.04 20.74 0.4700 74.30 90.22 35.92 0.3643 Surface Noise Light: word swap + synonym replacement 66.98 74.65 20.35 0.4745 73.90 89.01 34.71 0.3757 Heavy: word deletion + character swap 64.91 74.06 19.76 0.4978 71.40 88.73 34.43 0.3942 Constraint Dropping Mild drop ( p=0 .3)66.71 74.77 20.47 0.4818 72.50 89.28 34.98 0.3781 Severe drop ( p=0 .5)66.35 73.83 19.53 0.4876 72.30 89.08 34.78 0.3805 Behavioral Policy Shift Modify-only 60.02 64.05 9.75 0.6726 69.48 86.15 31.85 0.4405 Rewrite-only (control) 71.40 78.21 23.91 0.4023 76.72 92.14 37.84 0.2975
+
+user ID and completes up to 20 instances, with a maximum of 3 interaction turns per instance. Fig. 5 further illustrates a real interaction where the user progressively refines the search intent and guides ReCoVR to the target in three turns. 
+
+C.4 Robustness to Degraded Simulated Feedback 
+
+The main experiments use a target-conditioned simulator to provide scalable and repeatable feedback during offline evaluation. While this controlled protocol enables fair comparison across methods, real users may provide noisy, incomplete, sparse, or strategy-dependent feedback. We therefore stress-test ReCoVR by systematically degrading the simulated feedback on WebVid-CoVR-Test along three axes: surface noise , which corrupts wording via character- and word-level perturbations [ 66 ]; 
+
+constraint dropping , which randomly removes partial semantic constraints from the feedback; and 
+
+behavioral policy shifts , which replace the default mixed strategy with a single fixed interaction mode. These settings cover common non-ideal feedback conditions such as noisy wording, missing constraints, and sparse local edits. Across all genuinely degraded conditions, ReCoVR’s interactive gain remains within the narrow band of 31.85–34.98 points, compared with only 9.75–20.47 for UMIVR. Under surface-level perturbations and partial constraint omission, ReCoVR’s Turn 5 R@1 stays within 1.49 points of its clean performance, with BRI degradation contained to at most 0.03. This tolerance can be attributed to the Reflection Pathway, which re-derives missing or corrupted constraints from the retrieval trajectory itself rather than relying solely on the literal content of user feedback. The most revealing test is the modify-only policy, which forces the simulator to provide only local edits while suppressing any direct description of the target video. This severely limits the information available per turn. Under this condition, UMIVR’s interactive gain collapses to just 9.75 points, whereas ReCoVR still achieves a gain of 31.85 points, reaching 86.15% R@1 at Turn 5. This gap directly reflects the value of the dual-channel Intent Pathway: even when user feedback contains 21 only relative modifications, the T2V channel can still construct effective standalone queries from the accumulated semantic context in Progress Memory, compensating for the absence of explicit target descriptions. The rewrite-only policy, by contrast, improves both methods beyond their clean performance. On WebVid-CoVR, where initial modification texts average only 4.6 words, providing a complete target description each turn gives the retriever strictly more information than a partial edit. We include this condition as a strategy-shift control rather than a degradation case. The default simulator uses a mixed strategy to model the diversity of real user behavior rather than to maximize retrieval performance under any single mode. These stress tests complement the human-feedback sanity check in Table 5 of the main paper. Human participants provide free-form and less template-like feedback, while the degraded simulator tests systematically noisy, incomplete, and sparse feedback conditions. Together, they indicate that ReCoVR’s advantage does not depend on perfectly informative feedback. 
+
+D Qualitative Case Studies 
+
+We present two successful examples and one same-instance baseline comparison to illustrate Re-CoVR’s behavior in practice. Fig. 7 shows a WebVid-CoVR query where the user starts with “ make it sunrise ” (GT rank 42) and progressively specifies the scene across two turns. The Reflection Pathway first extracts a negative constraint to suppress irrelevant cloud types ( σ1=neutral ), then accumulates positive constraints [ airplane wing ,...] after an explicit rejection ( σ2=negative ), driving TW-RRF to rank 1. In contrast, Fig. 8 shows the same target instance under UMIVR, which remains stuck at rank 5 despite explicit scene, airplane-wing, and viewpoint feedback. Fig. 9 illustrates a FineCVR case with a complex initial modification text (GT rank 7). Here the CoVR channel plays the dominant role: fine-grained appearance and action cues (“ red cap ,” “ door opening ”) are best expressed relative to the visual reference, allowing the CoVR channel to reach rank 1 at Turn 2. Together, these cases demonstrate the complementarity of the dual channels and the role of reflection: T2V excels with holistic scene descriptions, CoVR is more effective for fine-grained reference-anchored refinements, and trajectory-level reflection helps correct stalled retrieval. Fig. 10 presents a case where the reference video (indoor, male subject) differs drastically from the target (outdoor, blonde female near a green sign). Despite multiple turns of user feedback, the CoVR channel remains trapped at rank 168 because composed retrieval anchors to a visual reference that shares almost no similarity with the target. Although the T2V channel reaches rank 1 by the final turn, the fixed fusion strategy cannot suppress the CoVR channel’s noisy contribution, yielding a final TW-RRF rank of only 22. This exposes a limitation of the current design: when the reference-target gap is large, adaptive channel weighting that down-weights the less reliable channel could improve fusion quality, which we leave for future work. 
+
+E Algorithmic Overview of ReCoVR 
+
+The method description in the main paper is organized by pathway. To clarify the end-to-end execution flow—in particular the data dependencies among modules and the read/write timing of the two memory components—we provide a unified algorithmic summary in Algorithm 2. At each interactive turn, the Intent Pathway (Lines 14–16) and the Reflection Pathway (Lines 17–20) read the same snapshot PM St−1 and can therefore execute independently. Their outputs converge at the retrieval stage: Intent determines what to search for via the dual channels (Lines 21–23), while Reflection determines what to suppress via the rank-cap (Line 24). TW-RRF (Line 26) then fuses the full trajectory stored in RM into the final ranking, after which both memory components are updated to prepare the state for the next turn. 
+
+F Prompt Templates 
+
+To improve reproducibility, we provide the prompt templates used by the main reasoning modules of ReCoVR, together with the prompt template used by the simulated user. Tables 15–18 correspond to the four reasoning modules of ReCoVR (Intent Decomposer, Query Reformer, State Reflector, and 22 Algorithm 2 ReCoVR: Interactive Composed Video Retrieval 
+
+Require: Reference video vref , modification text u0, gallery G, max turns T
+
+Ensure: Final ranked list ˆL 
+
+> 1:
+
+{— Initialization — } 
+
+> 2:
+
+PM L ← CacheGalleryCaptions( G) 
+
+> 3:
+
+PM S ← { vref , u 0, +cstr= ∅, −cstr= ∅} 
+
+> 4:
+
+RM ← ∅ 
+
+> 5:
+
+{— Turn 0: standard single-turn CoVR — } 
+
+> 6:
+
+ˆL0 ← CoVR( vref , u 0, G); RM ← RM ∪ { (0 , ˆL0)} 
+
+> 7:
+
+for t = 1 to T do  
+
+> 8:
+
+{— User interaction — } 
+
+> 9:
+
+qt ← AskQuestion( PM S ) 
+
+> 10:
+
+Present ˆLt−1(1) and qt to the user; receive feedback ut 
+
+> 11:
+
+if the user accepts ˆLt−1(1) then  
+
+> 12:
+
+return ˆLt−1 
+
+> 13:
+
+end if  
+
+> 14:
+
+{— Intent Pathway (uses PM St−1 which includes ∆ct−1) — } 
+
+> 15:
+
+(search t, edit t) ← IntentDecomposer( ut, PM S , PM L) 
+
+> 16:
+
+(search t, edit t) ← QueryReformer(search t, edit t, PM S ) 
+
+> 17:
+
+{— Reflection Pathway (independent of current Intent) — } 
+
+> 18:
+
+(σt, ∆ct) ← StateReflector( ut, PM S , PM L) 
+
+> 19:
+
+∆rt ← RankCapPolicy( σt, RM ) {demote rejected/stagnant candidates}  
+
+> 20:
+
+PM S ← UpdateConstraints( PM S , ∆ct) 
+
+> 21:
+
+{— Dual-channel retrieval — } 
+
+> 22:
+
+LT2V  
+
+> t
+
+← T2V(search t, G) 
+
+> 23:
+
+LCoVR  
+
+> t
+
+← CoVR   ˆLt−1(1) , edit t, G {dynamic anchoring}  
+
+> 24:
+
+(LT2V  
+
+> t
+
+, L CoVR  
+
+> t
+
+) ← ApplyRankCap( LT2V  
+
+> t
+
+, L CoVR  
+
+> t
+
+, ∆rt) 
+
+> 25:
+
+{— Fusion and memory update — } 
+
+> 26:
+
+RM ← RM ∪ { (t, L T2V  
+
+> t
+
+, L CoVR  
+
+> t
+
+)} 
+
+> 27:
+
+ˆLt ← TW -RRF( RM ) 
+
+> 28:
+
+PM S ← UpdateProgress( PM S , search t, edit t, ˆLt(1))  
+
+> 29:
+
+end for  
+
+> 30:
+
+return ˆLT
+
+Question Asking, respectively), following the execution order described in Algorithm 2. Table 19 lists the prompts used by the simulated user (Sec. C.2); all methods in our experiments share this same simulator configuration. Two design principles run through all templates. First, each prompt enforces a strict role boundary :modules are instructed to decompose, compress, or analyze without hallucinating details absent from the input, preventing error amplification across turns. Second, the Reflection prompt explicitly requests incremental constraints, avoiding redundancy with the accumulated session state in PM S .
+
+G Limitations and Discussion 
+
+Evaluation Scope and Interaction Variability. This work focuses on the algorithmic side of interactive retrieval: how feedback, retrieval history, and intermediate results should be used to update rankings across turns. Modeling the full diversity of real user behavior, including search strategies, patience, expertise, and interface effects, is a broader HCI-oriented research direction [ 6, 49 , 67 , 68 ]. We therefore use a controlled interactive setting to isolate algorithmic differences under shared targets, initial rankings, feedback sources, and stopping criteria, and further complement it with a human-feedback sanity check and degraded-feedback analysis. Larger-scale user studies with diverse behavioral profiles [ 48 , 49 , 63 ] remain an important direction for future work. More broadly, ICoVR inherits the open-ended nature of composed retrieval, where interaction progressively reduces ambiguity among plausible targets rather than eliminating it entirely. 23 Table 15: Prompt template for the Intent Decomposer (Sec. 3.2 of the main paper). Given user feedback ut, the module decomposes it into a target-descriptive search query and an optional edit instruction, corresponding to the T2V and CoVR channels respectively.                    
+
+> Field Content
+> System prompt null
+> Template Task: Decompose user feedback into search and edit components for interactive video retrieval. Context: - Previous question asked to user: {prev_question} - Previous top-1 retrieved video description: {prev_top1_caption} - User feedback: {user_query} Role boundary: - Only decompose intent. - Do NOT rewrite, enrich, or add details not present in feedback. Steps: 1. Determine whether the feedback mainly answers the previous question. 2. Determine whether the feedback contains explicit edit intent (change/remove/replace/add/make/swap/turn/switch/modify, etc.). 3. Extract search_query_info as target-descriptive information (objects/actions/scenes) when available. 4. Extract edit_query_info only when edit intent exists. 5. If feedback is purely an answer and no clear standalone target description is provided, search_query_info can be empty. 6. If no edit intent, set edit_query_info to an empty string. Return JSON only: {output_schema}
+> Output schema {"reasoning": "string (1-2 sentences)", "is_answer_to_prev_question": "boolean", "has_edit_intent": "boolean", "search_query_info": "string", "edit_query_info": "string"}
+
+Design Trade-offs and Deployment. ReCoVR uses simple, training-free, rank-level operations to remain backbone-agnostic and easy to plug into existing retrievers, and our ablations and sensitivity analyses suggest that the gains are not tied to narrow hyperparameter choices. Future work could make fusion more adaptive by estimating per-turn channel reliability from cross-channel agreement, query–reference consistency, or uncertainty signals. ReCoVR also introduces additional per-turn reasoning cost for intent decomposition and trajectory reflection; although this is partly offset by fewer executed turns, real-time deployment could benefit from caching, smaller VLMs, distillation, or lightweight structured parsers. 
+
+Relation to LLM Agent Frameworks. ReCoVR shares structural similarities with agent frameworks such as ReAct [ 69 ] and Reflexion [ 70 ], but is purpose-built for interactive retrieval. Its action space is constrained to query reformulation, dual-channel retrieval, rank-level intervention, and rank fusion, while its reflection is grounded in ranked-list trajectories rather than free-form critique. Reasoning traces may help single-turn edit understanding, but do not directly specify how to monitor drift, suppress repeated failures, or fuse evolving evidence across turns. 
+
+Broader Impacts. This work may improve interactive access to large-scale video collections in applications such as media search, education, and assistive information retrieval. However, stronger video retrieval systems should be deployed carefully when applied to sensitive or personal video collections, where unauthorized search or unintended exposure may raise privacy concerns. Responsible deployment should consider data consent, access control, and dataset/model biases. 24 Table 16: Prompt templates for the Query Reformer (Sec. 3.2 of the main paper). Two sub-modules serve different purposes: t2v_initialize generates the initial T2V search query at Turn 0 by applying u0 to the reference video, while rewrite_queries compresses the accumulated running query when it exceeds the length threshold at Turn t ≥ 1.
+
+Field Content 
+
+Module t2v_initialize (Turn 0 only) System prompt null 
+
+Template Task: Generate a text-to-video search query from a reference video and an edit instruction. You see a reference video. The user wants the target video after applying the edit instruction. Edit instruction: {edit_query} Requirements: 1. Use only visible video content plus the given edit instruction. 2. Produce one concise target description for retrieval. 3. Keep key visual details (objects, actions, scene, attributes) while avoiding unnecessary verbosity. Return JSON only: {output_schema} 
+
+Output schema {"reasoning": "string (1 sentence)", "search_query": "string"} 
+
+Module rewrite_queries (Turn t ≥ 1, triggered when query exceeds length threshold) System prompt null 
+
+Template Task: Compress a long retrieval query while preserving all critical visual information. Query to compress: {query_to_rewrite} Requirements: 1. Preserve key objects, actions, scenes, attributes, and constraints. 2. Remove redundancy and keep retrieval semantics intact. 3. Return one concise rewritten query. Return JSON only: {output_schema} 
+
+Output schema {"reasoning": "string (1 sentence)", "rewritten_query": "string"} 
+
+25 Figure 6: Human-feedback interface. Participants view the reference video, current top-ranked candidate, initial modification text, and an optional system question. They provide free-form feedback in the text box or click “Found It” to terminate the session. The interaction history panel tracks the search progression, and the ground-truth target video is shown at the bottom as the intended search goal. 26 make it sunris eUser 
+
+What specific type of clouds or cloud 
+
+formations are you envisioning  ReCoVR 
+
+GT Rank 42 
+
+No specific cloud types in the video  
+
+> cloud drifting in the blue sky
+
+T2V Intent  no specific cloud types  CoVR Intent 
+
+T2V GT Rank 3 
+
+CoVR GT Rank 26 
+
+TW -RRF GT Rank 11 
+
+What specific shape or type of fluffy 
+
+Airplane wing over clouds at sunrise        
+
+> satisfaction =neutral ,+cstr =[ ]–cstr =['no specific cloud types' ]
+
+Reflection  
+
+> Airplane wing over clouds at sunrise
+
+T2V Intent  add airplane wing  CoVR Intent    
+
+> satisfaction=negative, +cstr=['airplane wing', 'over clouds', 'sunrise' ] –cstr=[]
+
+Reflection 
+
+T2V GT Rank 1 
+
+CoVR GT Rank 2 
+
+TW -RRF GT Rank 1 Figure 7: Successful case on WebVid-CoVR. The user progressively specifies scene details across two turns, improving the target from rank 42 to rank 1. The T2V channel drives convergence after the user provides a holistic scene description in Turn 2. 27 make it sunrise User 
+
+What scene setting should the 
+
+target preserve?  UMIVR 
+
+GT Rank 42 
+
+The view is above the clouds 
+
+What key visual detail is missing? 
+
+An airplane wing over clouds 
+
+GT Rank 35 
+
+GT Rank 5
+
+GT Rank 5
+
+What viewpoint should the target have? 
+
+A sunrise view from an airplane window. 
+
+# ⋯Figure 8: Comparison on the same WebVid-CoVR case. While ReCoVR improves the target from rank 42 to rank 1 in Fig. 7, UMIVR remains stuck at rank 5 under the same target instance and interaction budget, despite receiving explicit scene, airplane-wing, and viewpoint feedback. This comparison highlights the importance of trajectory-level reflection for correcting stalled retrieval. 28 the person also opens a door, but brings in a vacuum, 
+
+throws some clothes into a bin, and runs out 
+
+User 
+
+What does the man look like ? ReCoVR 
+
+GT Rank 7
+
+Wearing a red cap in the laundry room  
+
+> man in red cap laundry room
+
+T2V Intent  add a red ca p CoVR Intent 
+
+T2V GT Rank 9 
+
+CoVR GT Rank 3 
+
+TW -RRF GT Rank 2 
+
+What specific details can you provide 
+
+about the man’s appearance 
+
+Keep the door openin g   
+
+> satisfaction =neutral ,+cstr =[ 'man in red cap' ]–cstr =[]
+
+Reflection  
+
+> the door is opening
+
+T2V Intent  keep the door opening  CoVR Intent       
+
+> satisfaction =neutral ,+cstr=[' opening door' ,'vacuum cleaner'] –cstr=[]
+
+Reflection 
+
+T2V GT Rank 9 
+
+CoVR GT Rank 1 
+
+TW -RRF GT Rank 1 Figure 9: Successful case on FineCVR. Fine-grained appearance and action cues are anchored to the visual reference via the CoVR channel, improving the target from rank 7 to rank 1 over two interaction turns. 29 Change the young man to a young female User 
+
+What does the young woman look like ? ReCoVR 
+
+GT Rank 18 5
+
+She has blonde hair 
+
+T2V GT Rank 16 
+
+CoVR GT Rank 168 
+
+TW -RRF GT Rank 49 
+
+What specific style or outfit the woman is with? 
+
+Fix the background to match the outdoor setting 
+
+T2V GT Rank 9 
+
+CoVR GT Rank 103 
+
+TW -RRF GT Rank 26 
+
+What are other specific details defining the scene? 
+
+Blonde woman texting outdoors near green sign 
+
+T2V GT Rank 1 
+
+CoVR GT Rank 168 
+
+TW -RRF GT Rank 22 
+
+GT Video 
+
+# ⋯Figure 10: Failure case. A large visual gap between the reference (indoor, male) and target (outdoor, female) causes the CoVR channel to remain at rank 168. Despite the T2V channel reaching rank 1, fixed fusion yields a final rank of only 22. 30 Table 17: Prompt template for the State Reflector (Sec. 3.2 of the main paper). The 
+
+reflection_context variable is populated from PM St−1 (accumulated queries, prior posi-tive/negative constraints) and relevant gallery captions from PM L, corresponding to the inputs 
+
+(ut, PM St−1, PM L) in Eq. 6. 
+
+Field Content 
+
+System prompt null 
+
+Template Task: Analyze user feedback on retrieval results to assess satisfaction and extract incremental constraints. Input feedback: {user_feedback} Context: {reflection_context} Instructions: 1. Decide satisfaction_level in {negative, neutral}. 2. Use "negative" only for explicit rejection (e.g., wrong/not this/not desired). 3. Extract NEW positive constraints (what user wants) as short phrases. 4. Extract NEW negative constraints (what user wants to avoid) as short phrases. 5. Keep outputs incremental: do not repeat constraints already implied by context unless the user explicitly strengthens them. 6. Do not hallucinate unstated details. Return JSON only: {output_schema} 
+
+Output schema {"reasoning": "string (1-2 sentences)", "satisfaction_level": "negative | neutral", "positive_constraints": ["string"], "negative_constraints": ["string"]} 
+
+Table 18: Prompt template for Question Asking (Sec. 3.2 of the main paper). The module identifies remaining ambiguities from the current session state and generates one clarifying question per turn. 
+
+Field Content 
+
+System prompt You generate one concise clarifying question for interactive video retrieval. 
+
+Template Current search query: "{current_search_query}" Current edit query: "{current_edit_query}" Current constraints: - positive: {constraints_positive} - negative: {constraints_negative} Ask one short open-ended question that helps disambiguate remaining uncertainty in target appearance, actions, or scene. Return ONLY the question. 
+
+Output schema {"reasoning_brief": "string (1 sentence: what ambiguity you identified)", "question": "string (one short question)"} 
+
+31 Table 19: Prompt templates for the simulated user (Sec. C.2). The simulator follows a two-stage protocol: Stage 1 classifies the discrepancy between the target and the candidate ( MINOR_DIFF and 
+
+MAJOR_DIFF correspond to the MINOR and MAJOR status in Algorithm 1, respectively); Stage 2 selects one of three feedback policies accordingly. All methods in our experiments share this identical simulator. 
+
+Field Content 
+
+System persona You are a casual user searching for a video. You give short, direct feedback. Do not explain your reasoning. Keep responses under 10 words. 
+
+Target caption prompt 
+
+Describe this target video in one short sentence. This is the video you should remember. 
+
+Stage 1: analysis Compare two DIFFERENT videos step by step. Video 1 = TARGET (what I want) Video 2 = CANDIDATE (what was found) Step 1: What is the KEY DIFFERENCE between the two videos? Step 2: Do they share the SAME CATEGORY? (same animal type, same object type, same scene type) Step 3: Decide status based on Step 2: - If same category (e.g. goat vs goat, nuts vs nuts, river vs river) → MINOR_DIFF - If different categories (e.g. dog vs car) → MAJOR_DIFF Output JSON with fields in this order: {"diff_analysis": "...", "same_category": true/false, "status": "MINOR_DIFF" or "MAJOR_DIFF"} 
+
+Stage 2: modify Video 2 is close but has specific errors (e.g., wrong color, wrong object). Give a short command to fix it. Example: "Change the red car to a blue one" or "Make it sunny". 
+
+Stage 2: rewrite The candidate video is completely unrelated to the target. Ignore the candidate. Write a new, stand-alone search query that describes Video 1 (Target). Be descriptive but natural. Example: "A dog running on the beach under the sun". 
+
+Stage 2: answer The search system asked: "{question}". Answer based on Video 1 (Target). Answer directly and briefly. Example: "It is red", "He is running". Do not speak in full paragraphs. 
+
+32

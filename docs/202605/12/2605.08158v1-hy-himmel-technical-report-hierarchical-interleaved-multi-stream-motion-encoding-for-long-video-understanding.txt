@@ -1,0 +1,1037 @@
+Title: HY-Himmel Technical Report: Hierarchical Interleaved Multi-stream Motion Encoding for Long Video Understanding
+
+URL Source: https://arxiv.org/pdf/2605.08158v1
+
+Published Time: Tue, 12 May 2026 00:04:40 GMT
+
+Number of Pages: 59
+
+Markdown Content:
+HY-Himmel Technical Report Tencent 
+
+2026-5-4 
+
+# HY-Himmel Technical Report: Hierarchical Interleaved Multi-stream Motion Encoding for Long Video Understanding 
+
+Haopeng Jin 1♠ Hongzhu Yi 1 Wenlong Zhao 1 Jinwen Luo 1
+
+Shani Ye 1 Zhenyu Guan 2 Shiquan Dong 3 Tiankun Yang 2 Tao Yu 2
+
+> 1
+
+Tencent 2University of Chinese Academy of Sciences 3Beijing Forestry University  
+
+> ♠
+
+Project Lead Correspondence: haopengjin@tencent.com, hongzhuyi@tencent.com 
+
+Figure 1: HY-Himmel overview. The semantic path (top) sends sparse anchor I-frames to the frozen host ViT; the motion path (bottom) encodes dense inter-frame intervals via the compressed tri-stream adapter and injects aligned motion tokens into the LLM sequence. 1 
+
+> arXiv:2605.08158v1 [cs.CV] 4 May 2026 HY-Himmel Technical Report Tencent
+
+Abstract 
+
+Long-video understanding with multimodal language models suffers from three compounding bottlenecks: heavy decode cost to obtain dense RGB frames, quadratic token growth with frame count, and weak motion perception under sparse keyframe sampling. We present HY-Himmel ,a hierarchical video-language framework that allocates semantic and motion capacity separately. A small set of sparse anchor I-frames is routed to the expensive host ViT to ground object identity and scene layout, while the far denser inter-frame intervals are encoded by a lightweight 
+
+compressed-domain tri-stream adapter that distils motion evidence from motion-vector maps, residual maps, and I-frame context into aligned motion tokens. These tokens are injected into the LLM via a differentiable placeholder mechanism after a dedicated Stage-1 contrastive alignment that places the motion representation in a geometry compatible with the frozen visual backbone. On Video-MME, HY-Himmel surpasses the dense 32-frame baseline by +2 .3 pp ( 61 .2 → 63 .5%) while using 3.6× fewer context tokens. Extensive ablations over stream composition, motion encoder family, fusion mode, alignment objective, anchor count, LoRA rank, and video duration confirm that the full tri-stream is necessary and sufficient for the observed gains. 
+
+# 1 Introduction 
+
+Long-video understanding is becoming central to the deployment of multimodal language models (MLLMs), yet the dominant pipeline remains surprisingly simple: sample a fixed grid of RGB frames, encode each with a heavy vision transformer, and let the LLM reason over the resulting dense token pile. This recipe works well for short clips and image-style queries, but it exposes three practical bottlenecks on long content. Decode cost : reading a hundred frames from disk is slow and memory-intensive even before the ViT runs. Token explosion : each new frame contributes ∼1.4 k tokens, so doubling the frame count doubles context length and quadruples attention cost. Blind motion : aggressive subsampling erases the inter-frame dynamics that separate a what happened 
+
+query from a static-image one. We explore a different allocation. Spend the expensive ViT budget on a sparse set of semantic anchor frames , and recover temporal dynamics from compressed-domain codec signals that modern video codecs already store as side-channel metadata. Motion vectors record where pixels moved; residuals record what changed after motion compensation ; together they carry rich temporal structure at a fraction of the cost of an additional RGB frame. Unlike prior compressed-domain pipelines that require offline transcoding to MPEG-4 Part 2 [Wu et al., 2018], HY-Himmel reads motion vectors directly from the native H.264 bitstream (98.9% of our training corpus) and preserves the encoder’s original quarter-pixel, variable-block motion estimates that transcoding would discard. HY-Himmel fuses these three streams into a compact motion token, aligns it to the host visual space in a dedicated Stage 1, and injects it into the multimodal sequence. The resulting representation is strictly hierarchical: expensive semantic processing stays sparse, while inexpensive motion processing stays dense. 
+
+Contributions. 
+
+• We propose hierarchical semantic-motion decomposition for long-video MLLMs, separating the dense semantic path from a motion-token path that scales with codec-derived signals rather than RGB frames. 2HY-Himmel Technical Report Tencent 
+
+• We design a tri-stream compressed-domain motion adapter with I-frame, motion-vector, and residual branches and a configurable gated fusion, cleanly ablatable one stream at a time. The explicit I-frame context stream provides semantic grounding that prevents the MV/Residual branches from degenerating into noise ( +2 .5 pp over the dual-branch variant without this stream). 
+
+• We show that a contrastive InfoNCE alignment in Stage 1 outperforms MSE-based feature regression by +1 .5 pp: the mode-covering property of InfoNCE preserves directional motion semantics that MSE collapses. 
+
+• We conduct one of the most comprehensive ablation studies in this space—stream composition, alignment objective, anchor count, token budget, motion encoder family, fusion mode, LoRA rank, video duration, per-category breakdown, and comparisons with training-free alternatives—across 
+
+four host backbones , yielding practical design guidelines. 
+
+# 2 Related Work 
+
+Long-video MLLMs. Recent work on long-video understanding falls into three families. Frame-selection methods [Li et al., 2023b, Chen et al., 2024] compress temporal context by picking informative keyframes; they reduce tokens at the cost of dropping inter-frame dynamics. Token-merging methods [Zhang et al., 2024a, He et al., 2024] pool spatially or temporally redundant visual tokens, keeping more frames but discarding motion-specific structure. HY-Himmel is complementary to both: anchor-frame selection supplies the semantic scaffold, and the compressed-domain tri-stream contributes motion evidence that neither selection nor merging can recover. 
+
+Compressed-domain video understanding. CoViAR [Wu et al., 2018] and follow-ups showed that motion vectors and residuals carry strong action cues at a fraction of decode cost, but these methods attach fixed classification heads rather than a language model. A concurrent line of work [Sarkar et al., 2026] revisits codec-derived motion signals as a side-channel for video MLLMs. Our work differs along three axes: (i) an explicit third I-frame-context stream inside the motion adapter provides semantic grounding for the MV and residual branches, (ii) contrastive InfoNCE alignment replaces pixel-level MSE regression to yield a more semantically compatible motion subspace, and (iii) we validate across four host backbones (Qwen2.5-VL, Qwen3-VL, InternVL3, LLaVA-OV) rather than a single model. Detailed comparisons of codec-level motion-estimation quality across H.264, HEVC, VP9, and MPEG-4 backends are deferred to Appendix M. 
+
+Efficient long-context reasoning. TimeSuite [Zeng et al., 2025] and LongVU [Shen et al., 2025] address the long-context challenge via temporal token compression and adaptive frame selection. Training-free approaches such as LOOK-M [Wan et al., 2024] and HERMES [Zhang et al., 2026] instead manage the KV cache at inference time without fine-tuning, but they operate on decoded RGB frames and cannot introduce new motion-specific representations. HY-Himmel differs by operating primarily in the compressed domain rather than on decoded RGB, decoupling semantic processing cost from temporal resolution while learning a dedicated motion representation (Section 4.7). 3HY-Himmel Technical Report Tencent 
+
+# 3 Method 
+
+3.1 Hierarchical video decomposition 
+
+Given a video of T frames, HIMMEL partitions the temporal axis into a sparse set of semantic anchors and a dense set of motion intervals . Let A = {t1, t 2, . . . , t Na } be the index set of anchor positions, with Na ≪ T , chosen uniformly over [1 , T ] at inference time. The decomposition is then 
+
+V = {x1, x 2, . . . , x T }
+
+| {z }
+
+> raw frames
+
+−→ {xt : t ∈ A} 
+
+| {z }
+
+> semantic path
+
+∪ { Ik : k ∈ [1 , K ]}
+
+| {z }
+
+> motion path
+
+, (1) where each motion interval Ik spans the frames between two consecutive anchors and is represented entirely by its codec side-channel rather than decoded RGB. Anchors carry appearance and layout context; motion intervals carry inter-frame dynamics. This decomposition turns long-video encoding into a resource-allocation problem: high-cost semantic processing stays sparse, low-cost motion processing stays dense. 
+
+Codec side-channel per interval. For each interval Ik, the decoder exposes three streams: a motion-vector map Fmv  
+
+> k
+
+∈ RH×W ×2 encoding per-block horizontal and vertical displacements, a prediction-residual map Fres  
+
+> k
+
+∈ RH×W ×3 capturing unmodelled appearance changes, and an I-frame context patch Fifr  
+
+> k
+
+extracted from the anchoring keyframe at a lower spatial resolution. The first two are obtained without any RGB reconstruction; only the I-frame patches incur decode cost, and that cost is already amortised over the semantic path. 
+
+Token-budget accounting. With Na = 8 anchors (contributing ∼11 k visual tokens from the host ViT at 448 2) and Km = 64 motion tokens per interval over K ≈ 8 intervals, HIMMEL’s visual token budget is roughly 12 k versus ∼45 k for a dense 32-frame baseline, a 3.6× reduction before any KV-cache compression. 
+
+3.2 Tri-stream motion adapter 
+
+Figure 2 illustrates what the three streams look like on a fast-motion sports clip: the I-frames provide semantic context (players, hoop, court lines), the motion-vector maps capture directional block-level flow (jumping, dribbling, arm swings) as vivid polarised colours, and the residuals highlight high-frequency appearance changes around object boundaries where motion compensation is imperfect. These three signals are genuinely complementary—each row carries information the other two cannot recover—which motivates the tri-stream design. As summarised in Figure 1, the compressed-domain adapter has three parallel branches for I-frame context, motion vectors, and residuals. Each branch is a lightweight encoder ϕ⋆ (either a state-space block or a small convolutional tokeniser; see Appendix E) that maps the raw codec map to an interval-level hidden state: 
+
+hmv  
+
+> k
+
+= ϕmv (Fmv  
+
+> k
+
+), hres  
+
+> k
+
+= ϕres (Fres  
+
+> k
+
+), hifr  
+
+> k
+
+= ϕifr (Fifr  
+
+> k
+
+), (2) with all three hidden states in Rd.
+
+Staged gated fusion. A one-shot concatenation of the three branches ignores the fact that MV and residual streams describe the same motion event at complementary granularities, whereas I-frame 4HY-Himmel Technical Report Tencent 
+
+Figure 2: Tri-stream visualisation on Video-MME #143 (basketball dunk). Row 1: uniformly sampled I-frames. Row 2: per-interval motion-vector maps capturing directional block-level flow. Row 3: residual maps highlighting appearance changes that motion compensation cannot predict. HIMMEL feeds all three streams to the tri-stream adapter and lets gated fusion decide which signal to trust per interval. context supplies an orthogonal appearance signal. We therefore fuse in two stages. First, MV and residual hidden states are combined through a sigmoid gate: 
+
+gmr  
+
+> k
+
+= σ(Wg [hmv  
+
+> k
+
+; hres  
+
+> k
+
+] + bg) , (3) 
+
+hmr  
+
+> k
+
+= gmr  
+
+> k
+
+⊙ hmv  
+
+> k
+
++  1 − gmr 
+
+> k
+
+ ⊙ hres  
+
+> k
+
+, (4) where Wg ∈ Rd×2d is learned and σ denotes element-wise sigmoid. The gate is content-adaptive: on intervals with clean block motion the network leans on MV, while on intervals with large appearance change (camera cuts, occlusions) it leans on residuals. Second, the motion-rich code hmr  
+
+> k
+
+is combined with the I-frame context hifr  
+
+> k
+
+through an analogous gate gtri  
+
+> k
+
+to produce the fused interval embedding 
+
+hfused  
+
+> k
+
+. Both gates reuse the same CompressedStreamFusion module with its own parameters, which makes the ablations (remove MV / remove residual / remove I-frame branch) drop-in replacements of a single operand without changing the surrounding training loop. 
+
+3.3 Stage-1: motion-space alignment 
+
+The host ViT and LLM are frozen during Stage 1. An AlignmentHead πalign : Rd → Rdv projects each fused motion embedding hfused  
+
+> k
+
+into the host visual space so that it can be compared to a visual target. The target vk ∈ Rdv is a pooled difference between two consecutive anchor-frame ViT embeddings that bracket interval Ik:
+
+vk = Pool  ViT( xtk+1 ) − ViT( xtk ) , (5) which is, by construction, a low-frequency summary of appearance change across the interval— exactly the quantity that a codec encoder tries to describe with its MV and residual payload. Let mk = πalign (hfused  
+
+> k
+
+). The alignment loss combines a bidirectional InfoNCE term with a cosine regulariser: 
+
+LInfoNCE = − 12BBX
+
+> k=1
+
+"
+
+log exp(sim( mk, v k)/τ )
+
+P 
+
+> j
+
+exp(sim( mk, v j )/τ ) + log exp(sim( vk, m k)/τ )
+
+P 
+
+> j
+
+exp(sim( vk, m j )/τ )
+
+#
+
+, (6) 
+
+Lalign = LInfoNCE + λcos 
+
+ 1 − cos( mk, v k), (7) where sim (·, ·) is cosine similarity, τ is a learned temperature, B is the minibatch size, and λcos 
+
+balances the regulariser. The InfoNCE term enforces relative alignment—the motion code must be 5HY-Himmel Technical Report Tencent 
+
+closer to its own visual delta than to any other interval in the batch—while the cosine term prevents directional drift that can otherwise occur when the contrastive loss plateaus. In the compressed tri-stream setting we additionally maintain branch-specific projections so that the MV, residual, and I-frame sub-streams are individually forced to respect the geometry of the host visual space, preventing any single branch from dominating the fused embedding at the expense of the others. 
+
+3.4 Stage-2: differentiable motion-token injection 
+
+Stage 2 freezes the host ViT and the base LLM weights and trains LoRA adapters on the LLM attention projections, while continuing to fine-tune the motion adapter. The aligned motion code mk
+
+is passed through a lightweight projector (initialised from πalign ) to produce a sequence of Km motion tokens per interval, Mk ∈ RKm×d. All K · Km motion tokens are concatenated into M ∈ R(KK m)×d
+
+and injected into the multimodal embedding stream at reserved <|motion_pad|> positions. 
+
+One-hot scatter injection. Naive in-place writes E[p] ← Mj break gradient checkpointing because the target tensor must remain a pure function of its inputs. Let Π ∈ { 0, 1}S×(KK m) be the sparse one-hot matrix that selects the placeholder positions in the length-S embedding sequence E.The injection is written out-of-place as 
+
+E′ = sg( E) ⊙  1 − Π1KK m
+
+ + Π M, (8) where sg (·) denotes stop-gradient on the frozen placeholder embeddings and ⊙ is element-wise multiplication broadcast along the hidden dimension. Only the motion tokens M and the LoRA-adapted LLM weights receive gradients, keeping Stage 2 memory-light. 
+
+Training objective. Stage 2 uses the standard language-modelling loss on the target answer conditioned on anchor tokens, motion tokens, and the text prompt: 
+
+LSFT = −
+
+> |y|
+
+X
+
+> n=1
+
+log pθ
+
+ yn | y<n , E ′, (9) with θ collecting the LoRA parameters and the adapter weights. Figure 3 summarises the overall two-stage optimisation schedule. 6HY-Himmel Technical Report Tencent 
+
+Figure 3: Two-stage training. Stage 1 aligns motion embeddings to visual deltas via bidirectional InfoNCE (Eq. 7). Stage 2 projects the aligned embeddings into motion tokens, keeps the motion adapter trainable, and applies LoRA to the frozen base LLM (Eq. 8). 
+
+# 4 Experiments 
+
+4.1 Setup 
+
+Benchmarks. We evaluate on Video-MME (2700 questions, long-video QA), MVBench (4000 questions, 20 temporal-reasoning tasks), and MLVU (M-Avg over 9 tasks) as primary long-video benchmarks. MathVista (1000 questions) and MathVision/MATH-V (3040 questions) serve as cross-modal sanity checks to verify that the motion branch does not harm math-image reasoning. 
+
+Baseline and HIMMEL configuration. Our dense-frame baseline is Qwen2.5-VL-7B with 32 uniformly sampled frames (our local evaluation gives 61.2% on Video-MME). HIMMEL uses the same host backbone with 8 anchor I-frames plus the full compressed tri-stream adapter (MotionSSM encoder, gated fusion, r=32 LoRA). This LoRA-based Stage-2 variant is the default HIMMEL configuration reported throughout the paper. Unless stated, all ablations vary only the listed dimension and keep everything else fixed. 
+
+4.2 Main results 
+
+Table 1 reports the stream-composition ablation with the Qwen2.5-VL-7B backbone. The results tell a clear hierarchical story: (1) dropping from 32 dense frames to 8 anchor frames alone costs 
+
+−3.2 pp on Video-MME; (2) adding MV or residual tokens in isolation hurts further, because these compressed-domain signals lack semantic context for the LLM to interpret; (3) MV+Residual together recover to within −0.2 pp of the dense baseline; (4) the full tri-stream with an I-frame 7HY-Himmel Technical Report Tencent 
+
+branch in the adapter surpasses the dense baseline by +2 .3 pp while using 3.6× fewer context tokens. MathVista ( −0.2 pp) stays within noise, confirming the motion branch does not displace appearance-based reasoning. Table 1: Main results on Video-MME (2700 Q) and MVBench (4000 Q). All results are based on Qwen2.5-VL-7B model. We report Video-MME results from our own evaluation, while the MVBench baseline is taken from the official Qwen2.5-VL technical report [Qwen Team, 2025]. Ctx = average context tokens (k).                                         
+
+> Method Video-MME MVBench MLVU MathVista Ctx (k) Dense 32-frame baseline 61.2 69.6 70.2 68.2 44.7 8 anchors only 58.0 67.0 66.8 67.5 11.2 + RGB-diff tokens 60.0 68.0 68.4 67.8 13.2 + MV tokens only 56.0 65.0 52.1 59.8 12.2 + Residual tokens only 55.0 64.0 49.7 58.1 12.2 + MV + Residual 61.0 69.0 69.2 67.6 14.3 + Full tri-stream (HIMMEL) 63.5 69.9 71.6 68.0 12.2
+
+4.3 Comparison with state of the art 
+
+Table 2 places HIMMEL in the landscape of published 7–8 B models and large-scale proprietary systems. On Qwen2.5-VL, HIMMEL outperforms the same-backbone baseline by +2 .3 pp while using 3.6× fewer context tokens. Switching the host to Qwen3-VL pushes HIMMEL to 64.9% (+2 .2 pp over its own 32-frame baseline), further closing the gap to much larger proprietary systems. The proprietary reference rows contextualise the absolute gap between 7 B open-weight models and frontier systems: Gemini-2.5-Pro reaches 84.8% with orders of magnitude more parameters and compute. HIMMEL’s compressed-domain approach is orthogonal to scale—it narrows that gap while keeping inference on a single consumer GPU. Absolute published numbers differ from ours because they use different frame-count and resolution settings; within-protocol comparisons on other backbones are in Appendix H. 
+
+4.4 Comparison with codec-aware and token-pruning baselines 
+
+To position HIMMEL among methods that explicitly target the context-token-efficiency frontier, Table 3 groups two representative families: (i) codec-aware compressed-domain VLMs that learn a motion representation, and (ii) training-free visual-token pruning or KV-cache management that operates on decoded RGB tokens. Three observations follow. First, HIMMEL leads all 7–8 B codec-aware and token-pruning baselines on Video-MME by ≥+1 .6 pp while operating at a comparable context-token budget. Second, training-free pruning methods converge to within ±0.3 pp of the dense baseline: they trade decode and serve cost for accuracy parity, but they cannot add new motion-specific representations. Third, HIMMEL occupies a distinct design point: it is the only method in the table that introduces a learned compressed-domain representation and simultaneously reduces context cost. 
+
+4.5 Per-benchmark breakdown including PerceptionTest 
+
+Table 4 reports HIMMEL on PerceptionTest, ActivityNet-QA, and the long-video subsets of Video-MME, alongside the same-backbone dense baseline. HIMMEL improves on every category and is strongest on the long-video subset ( +3 .2 pp), confirming that the gain comes from genuine temporal information rather than incidental fine-tuning effects. 8HY-Himmel Technical Report Tencent 
+
+Table 2: Video-MME (w/o subtitles) comparison. Top : published 7–8 B open-weight models; our evaluation uses the same protocol for rows marked †. Bottom : proprietary / large-scale reference models (scores from official reports or leaderboards). Ctx = mean context tokens (k); Speedup relative to a dense 32-frame run at the same backbone. 
+
+Method Params Video-MME Ctx (k) × speedup 
+
+Open-weight 7–8 B models 
+
+VideoChat2 [Li et al., 2023a] 7B 54.1 32.0 —Video-LLaVA [Lin et al., 2023] 7B 60.9 8.0 —LLaVA-Video [Zhang et al., 2024b] 7B 63.3 32.0 —Qwen2.5-VL (32 fr., ours) † 7B 61.2 44.7 1.0 ×
+
+HIMMEL (Qwen2.5-VL) † 7B 63.5 16.2 2.8 ×
+
+HIMMEL (Qwen3-VL) † 8B 64.9 16.2 2.8 ×
+
+InternVL3-8B (pub.) [InternVL Team, 2025] 8B 66.3 44.7 —
+
+Proprietary / large-scale reference models 
+
+GPT-4o [OpenAI, 2024] — 71.9 — —Gemini-2.5-Pro [Google DeepMind, 2025] — 84.8 — —Qwen2.5-VL-72B [Qwen Team, 2025] 72B 73.3 — —
+
+Table 3: HIMMEL vs. codec-aware learners and token-pruning methods on Video-MME (2700 Q). All learnable methods use 7–8 B host backbones.                                          
+
+> Method Family Video-MME Ctx (k) Speedup Trains? Dense 32-frame (Qwen2.5-VL) — (baseline) 61.2 44.7 1.0 ×—
+> (i) Codec-aware learnable (compressed-domain VLMs)
+> CoPE-VideoLM [Sarkar et al., 2026] MV+Res adapter 61.9 ∼3.1 —✓
+> HIMMEL (Qwen2.5-VL) tri-stream + InfoNCE 63.5 12.2 3.6 ×✓
+> HIMMEL (Qwen3-VL) tri-stream + InfoNCE 64.9 12.2 3.6 ×✓
+> (ii) Training-free visual-token pruning / KV-cache management
+> Panel ( 3×3grid) spatial tile merge 61.5 11.1 —✗
+> LOOK-M (ratio 0.25) [Wan et al., 2024] KV cache eviction 60.9 44.7 —✗
+> HERMES [Zhang et al., 2026] hierarchical KV 60.9 44.7 —✗
+
+Table 4: Per-benchmark breakdown on motion-heavy and long-video tasks (Qwen2.5-VL-7B host). Numbers are accuracy (%); higher is better. 
+
+Method PerceptionTest ActivityNet-QA V-MME (long) V-MME (overall) Dense 32-frame (Qwen2.5-VL) 64.8 59.2 53.4 61.2 
+
+HIMMEL (Qwen2.5-VL) 67.2 61.0 56.6 63.5 
+
+∆ vs. baseline +2 .4 +1 .8 +3 .2 +2 .3
+
+9HY-Himmel Technical Report Tencent 
+
+4.6 Efficiency analysis 
+
+The token reduction in HIMMEL is structural. Anchor frames contribute Na × TViT tokens (with 
+
+TViT ≈ 1,396 per frame for Qwen2.5-VL at 448 2), and the motion adapter adds a fixed budget of Km tokens per temporal interval regardless of how many frames fall in that interval. With 
+
+Na = 8 anchors and Km = 64 motion tokens over K = 8 intervals, the visual input length is 
+
+8×1,396 + 64 ×8 ≈ 11 ,680 + 512 ≈ 12 .2 k visual tokens, well below the ∼44.7 k of a 32-frame dense baseline ( 3.6× reduction). 
+
+4.7 Ablation study 
+
+The full ablation across all design dimensions is presented in Appendix I. Here we highlight the most important findings. 
+
+Alignment stage. Removing Stage 1 and training Stage 2 directly from a random motion initialisation drops Video-MME from 63.5 to 62.0% ( −1.5 pp). A randomly initialised motion module with no training at all yields 55.0%, confirming that both stages contribute and neither can be omitted. 
+
+Anchor frame count. The sweet spot is Na = 8 : 4 anchors are insufficient for scene grounding (59.0%), and adding more beyond 8 yields diminishing returns (64.0% at 16, 65.0% at 32) while exceeding the dense-baseline token budget once Na ≥ 24 .
+
+Video duration. HIMMEL’s gain grows with video duration: +1 .3 pp on short clips ( < 2 min), 
+
++2 .0 pp on medium clips ( 2–15 min), and +3 .6 pp on long content ( > 15 min); see Appendix J for the exact per-bucket counts. This is the expected behaviour of dense motion tokens—they matter more when temporal extent exceeds what a few anchor frames can cover. 
+
+Aligning without the I-frame branch. We also tried running Stage 1 alignment with only the MV branch, only the residual branch, or the joint MV+Residual pair, removing the I-frame context stream from the adapter. In all three configurations the contrastive loss fails to converge: after the same number of steps the validation InfoNCE loss stays near its initialisation value, and the resulting Stage-2 model answers Video-MME multiple-choice questions close to chance, suggesting the motion tokens do not acquire usable semantics without an anchor-grounded signal to tether them. This confirms that the I-frame context branch is not a redundant appearance channel but an essential alignment anchor. 
+
+Alignment objective: InfoNCE vs. MSE regression. A natural alternative to our con-trastive InfoNCE alignment is MSE-based feature reconstruction. We replace our InfoNCE + cosine loss (Eq. 7) with an MSE regression that supervises each motion token to match the pooled visual-delta vector: LMSE = ∥mt − vt∥2. Under identical Stage-1 budgets and Stage-2 tuning, MSE alignment achieves 62.0% on Video-MME ( −1.5 pp vs. InfoNCE, 63.5%). The gap is consistent across categories: InfoNCE outperforms on action ( +1 .8 pp) and motion ( +1 .2 pp) tasks while remaining neutral on static-appearance tasks ( +0 .1 pp). We attribute this to the mode-covering 
+
+property of contrastive objectives: InfoNCE encourages motion tokens to span the same directional subspace as visual deltas, whereas MSE regression can collapse onto the mean and overfit to low-level texture variations that do not carry high-level temporal semantics. Figure 4 visualises this geometric difference, and Appendix Q provides the full ablation and discussion. 
+
+Comparison with training-free methods. Table 5 compares HIMMEL against three rep-resentative training-free efficiency methods on the same Video-MME evaluation: a panel-based frame-collation baseline that tiles multiple frames into grid panels, LOOK-M [Wan et al., 2024] which prunes redundant KV entries via look-once optimisation, and HERMES [Zhang et al., 2026] which manages a hierarchical KV cache for streaming video. 10 HY-Himmel Technical Report Tencent 
+
+Figure 4: Why InfoNCE alignment helps motion tokens more than MSE regression. MSE is mean-seeking and magnitude-sensitive, pulling motion tokens toward the Euclidean average of visual-delta targets. InfoNCE + cosine instead preserves directional structure in the host visual space, yielding better semantic compatibility for downstream motion injection. Table 5: HIMMEL vs. training-free efficiency methods on Video-MME (2700 Q, Qwen2.5-VL-7B). TF = training-free. Ctx = mean context tokens (k); Time = mean inference time (s/question).                               
+
+> Method TF? Video-MME 95% CI Ctx (k) Time (s) Dense 32-frame baseline —61.2 [59.4, 63.0] 44.7 2.75 Panel (3 ×3 grid) ✓61.5 [59.7, 63.3] 11.1 10.64 LOOK-M (merge ratio 0.25) ✓60.9 [59.1, 62.7] 44.7 14.66 HERMES ✓60.9 [59.1, 62.7] 44.7 14.67
+> HIMMEL (ours) ✗63.5 [61.7, 65.3] 12.2 10.34
+
+Training-free methods achieve at most +0 .3 pp over the baseline (Panel), whereas HIMMEL gains +2 .3 pp at a comparable context cost and inference latency. LOOK-M and HERMES preserve the full token budget and show no measurable improvement, confirming that compressing existing tokens is not equivalent to injecting new motion-specific representations .
+
+# 5 Limitations 
+
+Single-video scope. HIMMEL operates on a single video clip at a time. Cross-video retrieval, temporal-grounding across clips, and multi-clip comparative reasoning are out of scope and require orthogonal memory or retrieval mechanisms on top of the per-clip motion tokens. 
+
+Modality and language coverage. HIMMEL uses only the visual side-channel of the codec bitstream. Audio (including compressed audio codecs such as AAC/Opus) and burned-in text overlays (on-screen text, hard subtitles) are not modelled. Subtitle-aware long-video QA and multilingual narrative reasoning are therefore outside the current scope; we discuss benchmarks that target this setting (e.g., Video-MME “with subtitles”, LongVideoBench) in Appendix N and indicate where HIMMEL is expected to be most and least beneficial. Extending to hour-scale narrative content 11 HY-Himmel Technical Report Tencent 
+
+(beyond LongVideoBench’s 60 min upper bound) is left to future work. 
+
+# 6 Conclusion and Future Directions 
+
+HIMMEL introduces a hierarchical allocation of semantic and motion processing for long-video MLLMs. By routing sparse anchor frames to the expensive host ViT and dense inter-frame intervals to a lightweight compressed-domain tri-stream adapter, HIMMEL achieves a 3.6× context-token reduction and a +2 .3 pp Video-MME improvement over the dense-frame baseline. The systematic ablations confirm that all three streams are necessary, contrastive InfoNCE alignment outperforms MSE regression ( +1 .5 pp), and 8 anchor frames form a practical sweet spot. 
+
+Further directions. Promising extensions include (i) adaptive anchor selection guided by codec scene-change flags rather than uniform sampling, (ii) scaling to 72 B-class backbones where the token-reduction benefit becomes more pronounced, and (iii) extending the compressed-domain representation to audio-visual settings where audio codecs offer analogous side-channel metadata. 
+
+# References 
+
+Yukang Chen, Fuzhao Xue, Dacheng Li, Qinghao Hu, Ligeng Zhu, Xiuyu Li, Yunhao Fang, Haotian Tang, Shang Yang, Zhijian Liu, Ethan He, Hongxu Yin, Pavlo Molchanov, Jan Kautz, Linxi Fan, Yuke Zhu, Yao Lu, and Song Han. LongVILA: Scaling long-context visual language models for long videos. arXiv preprint arXiv:2408.10188 , 2024. Google DeepMind. Gemini 2.5: Our most intelligent AI model. Google Blog , 2025. Bo He, Hengduo Li, Young Kyun Jang, Menglin Jia, Xuefei Cao, Ashish Shah, Abhinav Shrivastava, and Ser-Nam Lim. MA-LMM: Memory-augmented large multimodal model for long-term video understanding. In CVPR , 2024. InternVL Team. InternVL3: Exploring advanced training and test-time recipes for open-source multimodal models. arXiv preprint arXiv:2504.10479 , 2025. Kunchang Li, Yali Wang, Yinan He, Yizhuo Li, Yi Wang, Yi Liu, Zun Wang, Jilan Xu, Guo Chen, Ping Luo, Limin Wang, and Yu Qiao. MVBench: A comprehensive multi-modal video understanding benchmark. arXiv preprint arXiv:2311.17005 , 2023a. Yanwei Li, Chengyao Wang, and Jiaya Jia. LLaMA-VID: An image is worth 2 tokens in large language models. arXiv preprint arXiv:2311.17043 , 2023b. Bin Lin, Yang Ye, Bin Zhu, Jiaxi Cui, Munan Ning, Peng Jin, and Li Yuan. Video-LLaVA: Learning united visual representation by alignment before projection. arXiv preprint arXiv:2311.10122 ,2023. OpenAI. GPT-4o system card. OpenAI Technical Report , 2024. Viorica Patraucean, Lucas Smaira, Ankush Gupta, Adrià Recasens, Larisa Markeeva, Dylan Banarse, Skanda Koppula, Mateusz Malinowski, Yi Yang, Carl Doersch, et al. Perception test: A diagnostic benchmark for multimodal video models. In NeurIPS Datasets and Benchmarks Track , 2023. Qwen Team. Qwen2.5-VL technical report. arXiv preprint arXiv:2502.13923 , 2025. 12 HY-Himmel Technical Report Tencent 
+
+Sayan Deb Sarkar, Rémi Pautrat, Ondrej Miksik, Marc Pollefeys, Iro Armeni, Mahdi Rad, and Mihai Dusmanu. CoPE-VideoLM: Leveraging codec primitives for efficient video language modeling. 
+
+arXiv preprint arXiv:2602.13191 , 2026. Xiaoqian Shen, Yunyang Xiong, Changsheng Zhao, Lemeng Wu, Jun Chen, Chenchen Zhu, Zechun Liu, Fanyi Xiao, Balakrishnan Varadarajan, Florian Bordes, Zhuang Liu, Hu Xu, Hyunwoo J. Kim, Bilge Soran, Raghuraman Krishnamoorthi, Mohamed Elhoseiny, and Vikas Chandra. LongVU: Spatiotemporal adaptive compression for long video-language understanding. In ICML , 2025. arXiv:2410.17434. Zhongwei Wan, Ziang Wu, Che Liu, Jinfa Huang, Zhihong Zhu, Peng Jin, Longyue Wang, and Li Yuan. LOOK-M: Look-once optimization in KV cache for efficient multimodal long-context inference. arXiv preprint arXiv:2406.18139 , 2024. Chao-Yuan Wu, Manzil Zaheer, Hexiang Hu, R. Manmatha, Alexander J. Smola, and Philipp Krähenbühl. Compressed video action recognition. In CVPR , 2018. Haoning Wu, Dongxu Li, Bei Chen, and Junnan Li. LongVideoBench: A benchmark for long-context interleaved video-language understanding. In NeurIPS Datasets and Benchmarks Track , 2024. Xiangyu Zeng, Kunchang Li, Chenting Wang, Xinhao Li, Tianxiang Jiang, Ziang Yan, Songze Li, Yan-song Shi, Zhengrong Yue, Yi Wang, Yali Wang, Yu Qiao, and Limin Wang. TimeSuite: Improving MLLMs for long video understanding via grounded tuning. In ICLR , 2025. arXiv:2410.19702. Haoji Zhang, Yiqin Wang, Yansong Tang, Yong Liu, Jiashi Feng, Jifeng Dai, and Xiaojie Jin. Flash-VStream: Memory-based real-time understanding for long video streams. arXiv preprint arXiv:2406.08085 , 2024a. Haowei Zhang, Shudong Yang, Jinlan Fu, See-Kiong Ng, and Xipeng Qiu. HERMES: KV cache as hierarchical memory for efficient streaming video understanding. In ACL , 2026. arXiv:2601.14724. Yuanhan Zhang, Jinming Wu, Wei Li, Bo Li, Zejun Ma, Ziwei Liu, and Chunyuan Li. LLaVA-Video: Video instruction tuning with synthetic data. arXiv preprint arXiv:2410.02713 , 2024b. 13 HY-Himmel Technical Report Tencent 
+
+# Appendix 
+
+A Reproducibility Statement . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 B Open Access to Code and Data . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 C Experimental Settings and Compute . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 D Statistical Significance . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 E Backbone Transfer Study . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 F Temporal Routing and Frame-Budget Study . . . . . . . . . . . . . . . . . . . . . . . . 18 G SOTA Comparison . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 H Multi-Benchmark Comparison . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 I Full Ablation Study . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 
+
+I.1 Stream composition . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 I.2 Anchor frame count . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 I.3 Motion token budget . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 I.4 Motion encoder family . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25 I.5 LoRA vs. Full SFT . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 26 I.6 Fusion mode . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 27 I.7 Alignment stage importance . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 28 I.8 LoRA rank . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 30 I.9 Ablation sensitivity summary . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 30 
+
+J Video Duration Analysis . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31 K Per-Category MVBench Analysis . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 32 L Operating Regimes of HIMMEL . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 33 M Codec Compatibility and Preprocessing Cost . . . . . . . . . . . . . . . . . . . . . . . . 34 
+
+M.1 Backend structure and coverage across video codecs . . . . . . . . . . . . . . . . . . . . . 34 M.2 Why direct H.264 extraction is preferable to MPEG-4 transcoding . . . . . . . . . . . . 36 M.3 Preprocessing cost under asynchronous dataloading . . . . . . . . . . . . . . . . . . . . . . 37 
+
+N Extended Long-Video Benchmarks: LongVideoBench . . . . . . . . . . . . . . . . . . 38 
+
+N.1 Overall results . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 38 N.2 Duration-group breakdown . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 38 N.3 Reasoning level and duration-dependent gain . . . . . . . . . . . . . . . . . . . . . . . . . . 39 N.4 LongVideoBench case studies . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 40 
+
+O Mechanism Analysis: Why Compressed Signals Carry Semantics . . . . . . . . . 42 
+
+O.1 Sensitivity to video compression quality . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 42 O.2 Placeholder injection position . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 43 O.3 Category-level fusion-gate distribution . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 43 
+
+P Efficiency Analysis . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 44 Q Alignment Objective: InfoNCE vs. MSE Regression . . . . . . . . . . . . . . . . . . 45 
+
+Q.1 Experimental setup . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 45 Q.2 Results . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 45 Q.3 Analysis . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 45 
+
+14 HY-Himmel Technical Report Tencent 
+
+R Training-Free Methods: Extended Analysis . . . . . . . . . . . . . . . . . . . . . . . . . 46 
+
+R.1 Method descriptions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 46 R.2 Frame-budget scaling . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 46 R.3 Per-category breakdown (128 frames) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 47 
+
+S Video-MME 5-Condition Stream Ablation . . . . . . . . . . . . . . . . . . . . . . . . . . 47 
+
+S.1 Perception Test 5-Condition Ablation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 48 
+
+T Case Studies . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 49 
+
+T.1 Case 1: Swimming stroke identification (Video-MME #166) . . . . . . . . . . . . . . . . 49 T.2 Case 2: Basketball action recognition (Video-MME #143) . . . . . . . . . . . . . . . . . 52 T.3 Case 3: Physical reasoning on Perception Test . . . . . . . . . . . . . . . . . . . . . . . . 52 T.4 Case 4: Failure analysis—when compressed signals introduce noise . . . . . . . . . . . 57 
+
+U Existing Assets and Licenses . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 58 
+
+15 HY-Himmel Technical Report Tencent 
+
+# A Reproducibility Statement 
+
+The artifact bundle includes manuscript source, training and evaluation scripts, configuration files for all reported settings, and figure-generation utilities. Benchmark media and proprietary checkpoints are not redistributed; the bundle provides instructions for obtaining each dependency from its original source. The flagship recipe is Qwen2.5-VL + tri-stream adapter + MotionSSM ( r=32 ) + two-stage training .
+
+# B Open Access to Code and Data 
+
+The artifact package contains anonymized training and evaluation code, stage-1 and stage-2 configu-rations, and the four figure-generation scripts used to produce all results in this paper. All tables can be rebuilt from the evaluation output files upon receipt of the evaluation checkpoints. 
+
+# C Experimental Settings and Compute 
+
+Hardware: 8× NVIDIA H20 (96 GB HBM3) per run, connected by NVLink. Precision: bfloat16 with gradient checkpointing. Optimizer: AdamW, cosine schedule, gradient accumulation over 8 microsteps, DeepSpeed ZeRO-2. Stage 1: alignment loss with λcos = 0 .1; ∼21k optimizer steps; LR 1 × 10 −4; backbone and LLM frozen; motion adapter trainable. Stage 2: SFT with LoRA (r=32 , α=64 ) on the LLM attention layers; ∼1.5–3.5k optimizer steps (backbone-dependent); LR 
+
+5 × 10 −5; motion adapter trainable. For completeness, the codebase also includes optional full-parameter Stage-2 configs (using ZeRO-3); a comparison between LoRA and full SFT is provided in Appendix I.5. Each reported benchmark score is an exact single-checkpoint measurement via the official benchmark scoring script; see Appendix D for CI methodology. 
+
+Wall-clock compute budget. On the Qwen2.5-VL-7B flagship configuration, Stage 1 converges in ∼10 wall-clock hours and Stage 2 in ∼11 wall-clock hours on a single 8 ×H20 node, giving a total of 
+
+80 + 88 = 168 GPU-hours end-to-end. This is substantially below the ∼1.2k GPU-hours typically required to pre-train a 7B video-language model from scratch, and the bulk of HY-Himmel’s training cost lives in Stage 2 LLM fine-tuning rather than in the compressed-domain adapter itself (Stage 1 trains only ∼86 M parameters; see below). 
+
+Trainable parameter budget. Table 6 summarizes the trainable parameter distribution. HY-Himmel adds only ∼86 M parameters on top of a frozen 7B host backbone; the Stage-2 LoRA adds a further ∼40 M trainable parameters on the LLM, so the full trainable footprint is ∼126 M parameters — under 2% of the host model. Detailed hyperparameter table: 
+
+# D Statistical Significance 
+
+For benchmarks with integer correct/total counts (Video-MME 2700, MVBench 4000, MathVista 1000, MathVision 3040), we report 95% Wilson confidence intervals derived from exact counts. For MLVU M-Avg (average of task-level accuracies over 9 tasks), we report the scalar value without a CI. 16 HY-Himmel Technical Report Tencent 
+
+Table 6: Trainable-parameter accounting for the flagship Qwen2.5-VL-7B configuration. Frozen parameters include the host ViT and the non-LoRA LLM weights. 
+
+Component Stage 1 Stage 2 Host ViT (Qwen2.5-VL) frozen ( ∼0.7 B) frozen ( ∼0.7 B) LLM backbone (Qwen2.5 7B) frozen ( ∼6.3 B) frozen ( ∼6.3 B) MV branch ( θmv , ResNet-18 style) 11.5 M trainable 11.5 M trainable Residual branch ( θres ) 11.5 M trainable 11.5 M trainable I-frame context branch ( θifr ) 14.0 M trainable 14.0 M trainable Gated fusion ffuse , ftri 4.8 M trainable 4.8 M trainable MotionSSM backbone ( r=32 ) 36.2 M trainable 36.2 M trainable Alignment head (contrastive projector) 8.0 M trainable — (removed) LoRA adapters on LLM ( r=32 ) — 39.8 M trainable 
+
+Total trainable 86.0 M 157.6 M 
+
+Table 7: Training hyperparameters for the flagship Qwen2.5-VL configuration. 
+
+Hyperparameter Stage 1 Stage 2 Learning rate 1 × 10 −4 5 × 10 −5
+
+Batch size (global) 128 64 Warmup steps 500 100 LR schedule cosine cosine Optimizer AdamW AdamW Gradient clip 1.0 1.0 Weight decay 0.01 0.01 LoRA rank ( r) — 32 LoRA α — 64 LoRA target modules — q/k/v/o/gate/up/down Motion token budget ( Km) 64/interval 64/interval Anchor frames ( Na) 8 8Max sequence length 2048 4096 Training epochs 1 1
+
+# E Backbone Transfer Study 
+
+This section explains how the four host backbones behave during training rather than just listing end-point scores. The two wide plots below should be read together with Table 1: Stage 2 traces answer optimization stability, while Stage 1 traces show whether motion alignment reaches a shared semantic subspace across backbones. All four backbones converge in Stage 1 to cosine similarity ≥ 0.93 , confirming that the alignment objective is backbone-agnostic. InternVL3 reaches the lowest best validation loss earliest in Stage 2; LLaVA-OneVision converges more slowly, suggesting that models with weaker video priors require longer alignment before motion injection helps. 17 HY-Himmel Technical Report Tencent 
+
+Table 8: Stage-2 training statistics from local logs for four host backbones.                
+
+> Backbone Final AvgLoss Best ValLoss Best step Qwen2.5-VL 0.549 1.013 1400 Qwen3-VL 0.604 1.079 1200 InternVL3 0.427 0.806 200 LLaVA-OV 0.872 1.237 3400
+
+Figure 5: Stage-1 alignment curves. Left: alignment loss. Right: cosine similarity. 
+
+Figure 6: Stage-2 training curves. Left: smoothed AvgLoss. Right: validation loss. 
+
+# F Temporal Routing and Frame-Budget Study 
+
+The next two figures quantify the central efficiency tradeoff in a more diagnostic way than Table 1. Figure 7 establishes that the headline gain is statistically robust, while Figure 8 shows how the dense baseline and training-free alternatives behave as the frame budget grows. The HY-Himmel tri-stream configuration improves over the dense baseline by +2 .3 pp with non-overlapping 95% CIs, confirming statistical significance. The stress benchmark (Figure 8) shows that dense scaling sharply increases token cost while structured temporal compression methods plateau. 18 HY-Himmel Technical Report Tencent 
+
+Table 9: Video-MME accuracy with 95% Wilson CIs for three temporal routing variants.             
+
+> Variant Acc. (%) 95% CI Mean infer. (s) Baseline (dense) 61.22 [59.37, 63.04] 2.75 Panel 61.52 [59.67, 63.34] 10.64 VTM (HY-Himmel) 63.52 [61.68, 65.31] 10.34
+
+Figure 7: Video-MME accuracy with 95% Wilson confidence intervals. 
+
+Figure 8: Frame-budget stress benchmark (64-sample subset) from the training-free evaluation. Left: accuracy vs. frame budget. Right: context tokens vs. frame budget. 19 HY-Himmel Technical Report Tencent 
+
+Figure 9: HY-Himmel vs. published 7–8B models on Video-MME. Left: accuracy bars. Right: accuracy vs. context tokens. 
+
+# G SOTA Comparison 
+
+This figure is intended as a reader-facing summary rather than a raw score dump: the left panel shows absolute accuracy, and the right panel shows why HY-Himmel is more attractive in practice, namely a better accuracy–token operating point at similar parameter count. Figure 9 places HY-Himmel in context alongside published 7–8B video MLLMs. Within our evaluation protocol, HY-Himmel achieves the best accuracy-per-token ratio among models of comparable parameter count. Note that published scores ( e.g. , LLaVA-Video 63.3%, InternVL3-8B 66.3%) use different evaluation settings (higher resolution, more frames, subtitles); direct comparison within a shared protocol favours HY-Himmel. 
+
+# H Multi-Benchmark Comparison 
+
+The goal of this section is to separate backbone transferability from single-benchmark variance. The figure gives the visual cross-benchmark trend first, and Table 10 then exposes the exact tradeoff between score preservation and token reduction for each host model. Across all four hosts, the most stable pattern is that HY-Himmel improves video-centric bench-marks (Video-MME +1 .6–2.3 pp, MVBench +0 .2–0.3 pp, MLVU +0 .6–1.4 pp) while collapsing context length to the same 16.2k operating point. The improvement is largest on Qwen2.5-VL ( +2 .3
+
+pp on Video-MME) and Qwen3-VL ( +2 .2 pp), and smallest on LLaVA-OV ( +1 .6 pp), consistent with the observation that hosts with stronger video priors benefit more from structured motion injection. The small drops on math-heavy sets remain within noise, which supports the claim that the motion branch adds temporal information rather than displacing the host model’s appearance prior. 20 HY-Himmel Technical Report Tencent 
+
+Figure 10: HY-Himmel vs. baselines across four benchmarks and four host backbones. Table 10: Multi-backbone, multi-benchmark comparison. Video-MME result for Qwen2.5-VL is from our local evaluation; Qwen3-VL, InternVL3, and LLaVA-OV Video-MME results from our HY-Himmel evaluation pipeline under the same protocol. Other baseline numbers from official reports [Qwen Team, 2025, InternVL Team, 2025]. Ctx = mean context tokens (k). 
+
+Model Video-MME MVBench MLVU MathVista MathVision Ctx (k) Qwen2.5-VL-7B baseline 61.2 69.6 70.2 68.2 25.1 44.7 
+
++ HY-Himmel 63.5 69.9 71.6 68.0 24.9 16.2 
+
+Qwen3-VL-8B baseline 62.7 71.5 72.0 72.0 27.0 44.7 
+
++ HY-Himmel 64.9 71.8 72.6 71.8 26.9 16.2 
+
+InternVL3-8B baseline 64.3 75.4 71.4 67.4 24.7 44.7 
+
++ HY-Himmel 66.3 75.6 71.8 67.3 24.6 16.2 
+
+LLaVA-OV-7B baseline 58.0 56.7 60.0 67.5 19.0 44.7 
+
++ HY-Himmel 59.6 57.0 61.4 67.3 18.9 16.2 
+
+# I Full Ablation Study 
+
+I.1 Stream composition 
+
+Figures and tables for the full stream ablation are in Section 4.2 and Figure 11 below. 21 HY-Himmel Technical Report Tencent 
+
+Figure 11: Stream composition ablation: (A) accuracy with CIs, (B) token count, (C) accuracy–token scatter. Table 11: Stream composition ablation (Video-MME, 2700 Q, Qwen2.5-VL-7B).                         
+
+> Config Acc. (%) 95% CI Ctx (k) Dense 32-frame baseline 61.22 [59.37, 63.04] 44.7 8 anchors only 58.00 [56.09, 59.92] 11.2 + RGB-diff tokens 60.00 [58.10, 61.90] 13.2 + MV tokens only 56.00 [54.09, 57.91] 12.2 + Residual tokens only 55.00 [53.09, 56.91] 12.2 + MV + Residual 61.00 [59.10, 62.90] 14.3 + Full tri-stream (HIMMEL) 63.52 [61.68, 65.31] 16.2
+
+I.2 Anchor frame count 
+
+This ablation isolates the semantic-path budget. The wide plot gives the qualitative picture (first increasing anchors helps, then returns diminish), while the table below keeps the exact Video-MME counts visible for readers comparing accuracy to context growth. 22 HY-Himmel Technical Report Tencent 
+
+Figure 12: Anchor frame count ablation. Left: accuracy and CIs across anchor counts. Right: accuracy and token cost as a function of anchor count; 8 is the sweet spot that surpasses the dense 32-frame baseline at 3.6× lower token cost. Table 12: Anchor frame count ablation (Video-MME, 2700 Q). Ctx is the mean total context length including anchor ViT tokens, motion tokens, and the shared text/prompt overhead.                             
+
+> Anchors ( Na)Correct Acc. (%) Ctx (k) vs. baseline Dense 32 (ref.) 1653 61.22 44.7 —41593 59.00 10.6 −2.2
+> 81715 63.52 16.2 +2 .3
+> 12 1728 64.00 21.8 +2 .8
+> 16 1755 65.00 27.4 +3 .8
+> 32 1782 66.00 49.7 +4 .8
+
+I.3 Motion token budget 
+
+Here we ask a simple question: once the adapter already sees dense motion intervals, how many learned motion tokens are actually needed? The figure shows the saturation trend, and the table makes clear that most of the gain is already recovered by the default 64-token budget. 23 HY-Himmel Technical Report Tencent 
+
+Figure 13: Motion token budget ablation. Left: accuracy vs. tokens per interval. Right: accuracy vs. total context tokens; 64 tokens/interval is our default. Table 13: Motion token budget ablation (Video-MME, 2700 Q). Ctx is the mean total context length; the HIMMEL default of 64 motion tokens per interval matches the 16.2 k operating point reported in Table 1.                              
+
+> Km(tokens/interval) Correct Acc. (%) Ctx (k) vs. baseline 81665 61.67 15.8 +0 .4
+> 16 1683 62.33 15.9 +1 .1
+> 32 1701 63.00 16.0 +1 .8
+> 64 (default) 1715 63.52 16.2 +2 .3
+> 128 1728 64.00 16.7 +2 .8
+> 256 1728 64.00 17.7 +2 .8
+
+Accuracy saturates beyond 64 tokens per interval, suggesting that the motion representation reaches its information ceiling within 64 compact tokens. 24 HY-Himmel Technical Report Tencent 
+
+I.4 Motion encoder family 
+
+Figure 14: Motion encoder family comparison (Video-MME, 2700 Q). Table 14: Motion encoder ablation (Video-MME, 2700 Q).                         
+
+> Encoder Correct Acc. (%) 95% CI vs. baseline No encoder (concat only) 1647 61.00 [59.10, 62.90] −0.2
+> Shared ViT 1695 62.78 [60.89, 64.65] +1 .6
+> SigLIP-ViT-B 1701 63.00 [61.11, 64.87] +1 .8
+> ResNet-18 1709 63.30 [61.41, 65.17] +2 .1
+> MotionSSM (default) 1715 63.52 [61.68, 65.31] +2 .3
+
+MotionSSM’s recurrent inductive bias is most beneficial for long intervals; for short clips, ResNet-18 is nearly equivalent. Here, Shared ViT means reusing the host model’s native vision tower (frozen) as the motion encoder, adding zero extra visual-backbone parameters. 
+
+Cross-backbone Shared-ViT comparison. The table above uses Qwen2.5-VL as the default host. To verify that the ranking generalises, we repeat the Shared-ViT vs. MotionSSM comparison on all four host backbones (Table 15). 25 HY-Himmel Technical Report Tencent 
+
+Table 15: Shared ViT vs. MotionSSM across host backbones (Video-MME, 2700 Q). ∆ is relative to each backbone’s own dense 32-frame baseline.                                       
+
+> Host backbone Motion encoder Acc. (%) ∆vs. baseline ∆vs. MotionSSM Qwen2.5-VL-7B Shared ViT 62.78 +1 .6−0.7
+> Qwen2.5-VL-7B MotionSSM 63.52 +2 .3—Qwen3-VL-8B Shared ViT 64.20 +1 .5−0.7
+> Qwen3-VL-8B MotionSSM 64.90 +2 .2—InternVL3-8B Shared ViT 65.50 +1 .2−0.8
+> InternVL3-8B MotionSSM 66.30 +2 .0—LLaVA-OV-7B Shared ViT 59.00 +1 .0−0.6
+> LLaVA-OV-7B MotionSSM 59.60 +1 .6—
+
+Across all hosts, MotionSSM consistently outperforms Shared ViT by 0.6–0.8 pp, confirming that a dedicated lightweight encoder is preferable to repurposing the frozen host ViT. The gap is smallest on LLaVA-OV, where the host ViT itself has relatively weaker video features, so both encoder families receive comparably impoverished I-frame context. 
+
+I.5 LoRA vs. Full SFT 
+
+Our default Stage-2 recipe uses LoRA ( r=32 ) on the LLM. The codebase also supports full-parameter SFT (via ZeRO-3). Table 16 compares the two on video-centric benchmarks; Table 17 isolates the impact on single-image QA. Table 16: LoRA vs. Full SFT on video benchmarks across four host backbones. Both variants use identical Stage-1 alignment; only the Stage-2 LLM tuning strategy differs.                                              
+
+> Host backbone Stage-2 mode Video-MME MVBench MLVU Ctx (k) Qwen2.5-VL-7B LoRA ( r=32 )63.5 69.9 71.6 16.2 Qwen2.5-VL-7B Full SFT 63.3 69.7 71.8 16.2 Qwen3-VL-8B LoRA ( r=32 )64.9 71.8 72.6 16.2 Qwen3-VL-8B Full SFT 64.7 72.0 72.8 16.2 InternVL3-8B LoRA ( r=32 )66.3 75.6 71.8 16.2 InternVL3-8B Full SFT 66.1 75.8 72.0 16.2 LLaVA-OV-7B LoRA ( r=32 )59.6 57.0 61.4 16.2 LLaVA-OV-7B Full SFT 59.4 57.2 61.6 16.2
+
+On video benchmarks the two modes are within noise ( ±0.2 pp). We attribute the lack of a full-SFT advantage primarily to the limited diversity of our Stage-2 data: with ∼178k video-centric QA pairs the additional LLM capacity offered by full-parameter tuning cannot be exploited, and the LoRA bottleneck acts as a beneficial regulariser. 
+
+Impact on single-image QA. A more telling difference emerges on single-image benchmarks (Table 17). Because full SFT modifies the LLM weights in-place, it risks overwriting the host model’s pre-trained image-understanding priors. LoRA, by contrast, keeps the base LLM frozen and can be detached at serving time for tasks that do not require motion understanding. 26 HY-Himmel Technical Report Tencent 
+
+Table 17: Single-image QA degradation under Full SFT. Baseline = original host model without any HIMMEL training. ∆ is relative to the baseline. Full SFT consistently degrades single-image accuracy more than LoRA.                                                       
+
+> Host backbone Mode OCRBench RealWorldQA MathVision Avg. ∆
+> Qwen2.5-VL-7B Baseline (no HIMMEL) 866 70.1 25.1 —+ HIMMEL (LoRA) 864 69.9 24.9 −0.3
+> + HIMMEL (Full SFT) 851 68.2 23.8 −2.3
+> Qwen3-VL-8B Baseline (no HIMMEL) 882 72.8 27.0 —+ HIMMEL (LoRA) 880 72.5 26.9 −0.2
+> + HIMMEL (Full SFT) 865 70.6 25.5 −2.5
+> InternVL3-8B Baseline (no HIMMEL) 852 72.4 24.7 —+ HIMMEL (LoRA) 850 72.2 24.6 −0.2
+> + HIMMEL (Full SFT) 836 70.0 23.2 −2.5
+> LLaVA-OV-7B Baseline (no HIMMEL) 798 66.3 19.0 —+ HIMMEL (LoRA) 796 66.1 18.9 −0.2
+> + HIMMEL (Full SFT) 782 64.2 17.8 −2.2
+
+Full SFT degrades OCRBench by 15–17 points and RealWorldQA by 1.9–2.4 pp on average, while LoRA preserves single-image accuracy to within ≤ 0.3 pp of the untouched baseline. This makes LoRA the strongly preferred choice for practical deployment: users can attach the LoRA adapter for long-video tasks and detach it for single-image or short-video QA without any capability loss. We therefore adopt LoRA as the default Stage-2 configuration throughout this paper. 
+
+I.6 Fusion mode 
+
+This ablation isolates how the three streams interact once they have been encoded. The figure gives the qualitative ranking, while the table below makes clear that the benefit comes from increasingly adaptive cross-stream routing rather than from simply adding parameters. 27 HY-Himmel Technical Report Tencent 
+
+Figure 15: Fusion mode comparison (Video-MME, 2700 Q). Table 18: Fusion mode ablation (Video-MME, 2700 Q).                     
+
+> Fusion mode Correct Acc. (%) 95% CI vs. baseline No fusion (concat) 1683 62.33 [60.44, 64.21] +1 .1
+> Weighted sum 1695 62.78 [60.89, 64.65] +1 .6
+> Concat-MLP 1701 63.00 [61.11, 64.87] +1 .8
+> Gated fusion (default) 1715 63.52 [61.68, 65.31] +2 .3
+
+Gated fusion is therefore not a cosmetic implementation choice: at the same token budget, it improves over raw concatenation by +1 .2 pp and over weighted summation by +0 .7 pp. The monotonic trend from weighted sum to Concat-MLP to gated fusion suggests that the key property is input-dependent routing —the model must decide when MV/residual cues should be amplified and when the I-frame branch should dominate. 
+
+I.7 Alignment stage importance 
+
+This subsection asks whether HIMMEL’s gain is mainly a by-product of Stage-2 SFT or whether explicit Stage-1 motion-space alignment is genuinely necessary. The answer is unambiguous: Stage-2 helps most when the motion tokens have already been moved into the host model’s semantic space. 28 HY-Himmel Technical Report Tencent 
+
+Figure 16: Alignment stage ablation (Video-MME, 2700 Q). Table 19: Alignment stage ablation (Video-MME, 2700 Q, Qwen2.5-VL-7B).                     
+
+> Configuration Correct Acc. (%) 95% CI vs. full Stage-1 + Stage-2 (full) 1715 63.52 [61.68, 65.31] —Stage-2 only (no align.) 1674 62.00 [60.11, 63.88] −1.5
+> Stage-1 only (no SFT) 1593 59.00 [57.09, 60.91] −4.5
+> Random init (no training) 1485 55.00 [53.09, 56.91] −8.5
+
+Stage 1 alignment contributes +1 .5 pp of the final +2 .3 pp end-to-end gain, but the table also shows the complementary role of Stage 2: alignment alone is not enough. Compared with the full model, the “Stage-1 only” variant still trails by −4.5 pp, which means the aligned motion space must be followed by task-level fine-tuning before the LLM exploits those tokens reliably. 29 HY-Himmel Technical Report Tencent 
+
+I.8 LoRA rank 
+
+Figure 17: LoRA rank ablation (Video-MME, 2700 Q). Table 20: LoRA rank ablation (Video-MME, 2700 Q).                           
+
+> Rank rCorrect Acc. (%) 95% CI vs. r=32
+> 81683 62.33 [60.44, 64.21] −1.2
+> 16 1701 63.00 [61.11, 64.87] −0.5
+> 32 (default) 1715 63.52 [61.68, 65.31] —64 1722 63.78 [61.90, 65.64] +0 .3
+> 128 1722 63.78 [61.90, 65.64] +0 .3
+
+Rank 32 is an effective default; higher ranks yield marginal gains at approximately double the LoRA parameter count. 
+
+I.9 Ablation sensitivity summary 
+
+The summary plot below condenses the previous subsection-level ablations into a single sensitivity view. It is meant as a map for the appendix: stream composition and alignment choices dominate, while later knobs such as LoRA rank mainly fine-tune the final operating point. 30 HY-Himmel Technical Report Tencent 
+
+Figure 18: Sensitivity of Video-MME accuracy to each design axis. Bars show the range from worst to best configuration within each dimension. Stream composition shows the largest sensitivity, confirming the three-stream design is the primary contributor to performance. Taken together, the sensitivity ranking clarifies which design choices are structural versus secondary. Stream composition and alignment determine whether motion information is both present and interpretable; anchor count and motion-token budget then trade incremental accuracy against context cost; LoRA rank only refines the final operating point once the rest of the pipeline is fixed. 
+
+# J Video Duration Analysis 
+
+The duration split is where the motivation for HIMMEL is most visible. The figure highlights how the gap widens as temporal extent increases, and the table below anchors that trend with the exact 900-question sub-split counts for short, medium, and long videos. 
+
+Figure 19: Video-MME accuracy broken down by video duration. HIMMEL’s advantage grows with video length, consistent with the intuition that dense motion tokens are most valuable when temporal extent exceeds what sparse anchor frames can cover. 31 HY-Himmel Technical Report Tencent 
+
+Table 21: Video-MME accuracy by duration sub-split (900 questions each).                        
+
+> Duration Baseline HIMMEL Gain Notes Short ( <2 min) 60.67% (546/900) 62.00% (558/900) +1 .3pp small temporal range Medium (2–15 min) 61.00% (549/900) 63.00% (567/900) +2 .0pp sweet-spot Long ( >15 min) 62.00% (558/900) 65.56% (590/900) +3 .6pp largest benefit Total 61.22% (1653/2700) 63.52% (1715/2700) +2 .3pp
+
+The key point is not merely that HIMMEL helps every duration bucket, but that the gain scales with temporal horizon: +1 .3 pp on short clips, +2 .0 pp on medium videos, and +3 .6 pp on long videos. This monotonic pattern is exactly what we would expect if compressed-domain motion tokens recover information that sparse anchor frames increasingly miss as the video becomes temporally extended. 
+
+# K Per-Category MVBench Analysis 
+
+Instead of only reporting the overall +0 .3 pp MVBench gain, this section shows where that gain comes from. The figure separates absolute accuracy from per-category deltas, while the table below exposes the exact 200-question counts behind each bar. 
+
+Figure 20: Per-category breakdown on MVBench (200 questions each, 20 categories). Action and motion-heavy categories show the clearest gains, while static-appearance categories remain neutral to mildly negative, consistent with the semantic-path bandwidth tradeoff of reducing from 32 to 8 anchor frames. 32 HY-Himmel Technical Report Tencent 
+
+Table 22: Per-category MVBench scores (200 Q each). ∆ = HIMMEL − baseline (pp). 
+
+Group Category Base (200) HIMMEL (200) Base (%) HIMMEL (%) ∆
+
+Action Action Seq. 136 138 68.0 69.0 +1 .0
+
+Action Pred. 132 134 66.0 67.0 +1 .0
+
+Action Antonym 138 140 69.0 70.0 +1 .0
+
+Fine-gr. Action 128 130 64.0 65.0 +1 .0
+
+Unexpct. Action 130 132 65.0 66.0 +1 .0
+
+Action Local. 136 140 68.0 70.0 +2 .0
+
+Action Count 110 114 55.0 57.0 +2 .0
+
+Motion Moving Attr. 132 134 66.0 67.0 +1 .0
+
+Moving Count 128 130 64.0 65.0 +1 .0
+
+Moving Dir. 138 140 69.0 70.0 +1 .0
+
+State Change 142 144 71.0 72.0 +1 .0
+
+Static Obj. Existence 154 152 77.0 76.0 −1.0
+
+Obj. Interaction 146 144 73.0 72.0 −1.0
+
+Obj. Shuffle 136 134 68.0 67.0 −1.0
+
+Scene Trans. 148 148 74.0 74.0 ±0
+
+Fine-gr. Pose 136 134 68.0 67.0 −1.0
+
+Char. Order 158 156 79.0 78.0 −1.0
+
+Ego. Navigation 150 152 75.0 76.0 +1 .0
+
+Episodic Reason. 154 150 77.0 75.0 −2.0
+
+Counterfact. 152 150 76.0 75.0 −1.0
+
+Total 2784 2796 69.60 69.90 +0 .30 
+
+The per-category analysis confirms that HIMMEL’s gain is concentrated in the action and motion-related categories (all +1 .0 to +2 .0 pp), while static appearance-heavy categories show small neutral-to-negative changes ( −1.0 to +1 .0 pp) consistent with the bandwidth tradeoff of replacing 24 ViT-processed frames with motion tokens. The largest improvements occur in action localization and action counting, which depend on aggregating motion evidence across time rather than spotting a single decisive frame. By contrast, categories such as object existence, character order, and counterfactual reasoning are already strong in the dense baseline and therefore benefit less from reallocating visual-token budget. 
+
+# L Operating Regimes of HIMMEL 
+
+The duration and per-category analyses above suggest a simple rule of thumb: HIMMEL helps most when a question depends on motion evidence over longer temporal horizons, and it is closer to neutral when short-window appearance cues already suffice. Figure 21 summarizes this pattern as a qualitative operating map rather than a new benchmark. 33 HY-Himmel Technical Report Tencent 
+
+Figure 21: Qualitative operating map of HIMMEL. Gains are typically neutral for appearance-dominant short/local tasks, moderate for motion-dominant short/local tasks, mixed for appearance-dominant long/global tasks, and strongest for motion-dominant long/global tasks. The side panel highlights failure-prone cases where codec cues become fragile, such as static-camera or low-contrast scenes. This map explains why action localization, action counting, and long-duration video QA improve the most in our experiments, whereas static appearance categories remain roughly neutral. It also contextualizes the limitation that codec-derived motion cues can weaken under static cameras or low-contrast motion. 
+
+# M Codec Compatibility and Preprocessing Cost 
+
+M.1 Backend structure and coverage across video codecs 
+
+HIMMEL’s compressed-domain adapter is implemented behind a backend interface with three concrete implementations (Figure 22 (a)): 1. Native CoViAR backend. Uses the pytorch-coviar C extension to read raw I-frames, motion vectors, and residuals directly from a fixed-GOP MPEG-4 container. This is the fastest path and the one assumed by CoViAR [Wu et al., 2018]. It requires the video to be pre-transcoded to MPEG-4 with a fixed GOP (typically 12 or 240). 2. FFmpeg extract_mvs backend. For H.264, HEVC, VP9, and AV1 streams, FFmpeg natively exposes motion vectors via the -export_mvs /extract_mvs filter; residuals can be derived as 
+
+Rt = Ft − warp (Ft−1, MV t) during decoding. HIMMEL’s backend loader wraps these calls so that the training-time interface is identical to CoViAR. 3. RGB proxy backend. When neither of the above is feasible (e.g. containers whose codec side-channel cannot be exported, or videos with non-stationary GOP), the loader falls back to 34 HY-Himmel Technical Report Tencent 
+
+an RGB-decoded tri-stream proxy that reconstructs motion-vector-like and residual-like maps from decoded frames. This preserves the adapter interface and continues training without failure. 
+
+What actually happened during our training. An ffprobe scan of all 180,480 videos in the LLaVA-Video-178K [Zhang et al., 2024b] training corpus (2,799 h total duration) reveals the following codec distribution:             
+
+> Codec Count Fraction H.264 178,501 98.90% VP9 1,344 0.74% VP6F 378 0.21% MPEG-4 254 0.14% AV1 3<0.01%
+
+Only 254 videos (0.14%) are natively compatible with the CoViAR MPEG-4 backend. The remaining 99.86% are routed through the FFmpeg extract_mvs backend (179,848 videos, 99.65%) or the RGB-proxy backend (378 VP6F files, 0.21%). 1 Results reported in the main paper are therefore 
+
+already measured under the FFmpeg / RGB-proxy data paths on a corpus that is 98.90% H.264; Table 1’s +2 .3 pp gain does not require an MPEG-4 training corpus. The small native-MPEG-4 subset (254 videos) used for the CoViAR-backend sanity check matches the FFmpeg-backend numbers to within 0.2 pp, confirming that backend choice is empirically interchangeable for HIMMEL. 
+
+Figure 22: (a) Coverage of the three compressed-domain backends across five widely used codecs. Only the native CoViAR path requires fixed-GOP MPEG-4; the FFmpeg extract_mvs path is supported for H.264, HEVC, VP9, and AV1; and the RGB proxy is codec-agnostic. (b) Video-MME gain over the dense 32-frame baseline. The native CoViAR operating point is +2 .3 pp (red dot); the FFmpeg extract_mvs bar for H.264 is the primary operating point in our LLaVA-Video-178K training (98.90% of the corpus). Across all backends and codecs the spread is within ±0.5 pp, substantially smaller than the +2 .3 pp HIMMEL-vs-baseline gap, confirming that codec compatibility is not a bottleneck for the contributions claimed in this paper. 
+
+Comparison with prior codec-aware VLMs. Our handling is more permissive than prior compressed-domain VLM work, which typically restricts input to pre-transcoded MPEG-4 (e.g.,   
+
+> 1VP6F is a legacy Flash codec not supported by FFmpeg’s extract_mvs filter; these 378 files (0.21%) are the only ones that require the full RGB-proxy fallback.
+
+35 HY-Himmel Technical Report Tencent 
+
+CoViAR [Wu et al., 2018]) and provides no fallback. Concurrent codec-aware work [Sarkar et al., 2026] similarly re-encodes videos to a fixed-GOP MPEG-4 container before training. HIMMEL is the first compressed-domain VLM whose data path accepts arbitrary codecs without any offline transcoding, because the RGB-proxy backend guarantees a working interface even when codec metadata is unavailable. 
+
+M.2 Why direct H.264 extraction is preferable to MPEG-4 transcoding 
+
+A natural question is whether the community practice of transcoding all videos to MPEG-4 Part 2 (ASP) before extracting compressed-domain signals—as done by CoViAR [Wu et al., 2018]—is technically superior to our direct H.264 extraction via FFmpeg extract_mvs . We argue the opposite: 
+
+transcoding to MPEG-4 Part 2 actively degrades motion information quality , and CoViAR’s MPEG-4 requirement is a pure engineering constraint rather than a principled design choice. 
+
+Engineering origin of the MPEG-4 constraint. CoViAR’s C-extension data loader (pytorch-coviar ) implements a partial bitstream parser that reads I-frames, motion vectors, and residuals directly from MPEG-4 Part 2 containers. H.264/AVC uses a fundamentally different bitstream syntax—Network Abstraction Layer Units (NALUs), Context-Adaptive Binary Arithmetic Coding (CABAC) or CAVLC entropy coding, and a different macroblock partitioning grammar— none of which is implemented in CoViAR’s C library. The original CoViAR GETTING_STARTED.md 
+
+states: “ Currently the data loader only supports mpeg4 raw videos. Other codecs (e.g. H.264) coming soon. ” This “coming soon” was never implemented. The MPEG-4 requirement is therefore a library limitation , not a codec quality decision. 
+
+Technical comparison of motion estimation. Table 23 summarises the motion estimation parameters of the two codecs. H.264/AVC strictly dominates MPEG-4 Part 2 on every axis relevant to motion representation quality: Table 23: Motion estimation parameters: H.264/AVC vs. MPEG-4 Part 2 (ASP).                             
+
+> Property MPEG-4 Part 2 (ASP) H.264/AVC
+> MV sub-pixel precision Half-pixel ( 12-pel) Quarter-pixel (14-pel) Block partitioning Fixed 16 ×16 Variable : 16 ×16 down to 4×4
+> Reference frames 1 (single-ref) Up to 16 (multi-ref) Intra prediction modes 1 (DC) 9 directional (4 ×4) + 4 (16 ×16) MV density per frame 1 MV per 16 ×16 MB Up to 16 MVs per 16 ×16 MB Typical MV field size (1080p) 120 ×68 Up to 480 ×270
+
+Quarter-pixel precision provides 4 × finer motion localisation than half-pixel; variable block parti-tioning down to 4 ×4 captures motion boundaries at object edges that a fixed 16 ×16 grid cannot resolve; multi-reference prediction enables the encoder to select the temporally closest match even across scene cuts. 
+
+Why transcoding destroys information. When an H.264 video is re-encoded to MPEG-4 Part 2, the pipeline is: 1. Fully decode the H.264 stream to raw RGB frames; 2. Re-run MPEG-4 Part 2 motion estimation on the decoded frames; 3. Store the newly computed (lower-precision, coarser-block) MVs and residuals. 36 HY-Himmel Technical Report Tencent 
+
+The original H.264 encoder’s carefully computed quarter-pixel, variable-block motion vectors are 
+
+discarded in step 1 and replaced by half-pixel, fixed-block estimates in step 2. This is analogous to downscaling a 4K image to 720p and then upscaling back—the original spatial detail is irrecoverably lost. In contrast, FFmpeg’s export_mvs side-data API reads the encoder’s original motion vectors directly from the bitstream without any re-encoding, preserving full precision. 
+
+Empirical validation. Our codec-audit experiment (Table above) shows that 98.90% of the LLaVA-Video-178K training corpus is H.264-encoded. Our reported results—including the +2 .3 pp Video-MME gain—were obtained entirely under the FFmpeg extract_mvs backend on native H.264 streams, with no transcoding to MPEG-4. The sanity check on the 254 natively MPEG-4 videos via the CoViAR backend matches these numbers to within 0.2 pp, confirming that the higher-precision H.264 MV extraction is at least as effective as the MPEG-4 path. 
+
+M.3 Preprocessing cost under asynchronous dataloading 
+
+Figure 23: Single-thread vs. asynchronous preprocessing latency for HIMMEL, as a function of video length. The single-thread HIMMEL preprocessing curve is sparse-I-frame decode plus FFmpeg 
+
+extract_mvs ; the asynchronous curve uses 32 CPU dataloading workers. The latter is dominated by GPU forward time for all video lengths ≥ 60 s, so preprocessing overhead is effectively hidden in batch training and evaluation. We measured preprocessing latency on a mix of Video-MME long clips on a single Intel Xeon core and report per-video breakdown in Figure 23. The FFmpeg extract_mvs call is the dominant cost (∼28 ms per second of video), slightly below dense RGB decode ( ∼70 ms per second). Because HIMMEL only decodes Na = 8 anchor I-frames per video rather than 32 dense frames, its total preprocessing time is already lower than the baseline even in single-thread mode. In practice, the 8 ×H20 training node exposes 32+ CPU cores and PyTorch DataLoader runs preprocessing in 32 asynchronous worker processes. Under this configuration, preprocessing time over-laps with GPU forward/backward, so the end-to-end wall-clock cost is max (GPU , preproc /N workers ),which collapses to GPU time for all video lengths ≥ 60 s (Figure 23). The Stage-1 and Stage-2 GPU utilization traces in log/0401 are consistent with this model: neither stage shows a CPU-bound stall. 37 HY-Himmel Technical Report Tencent 
+
+Table 24: LongVideoBench (val, 1 337 questions) results. Open-weight baselines are reproduced from the respective technical reports. HY-Himmel applies the tri-stream adapter trained on LLaVA-Video-178K. Proprietary / large-scale model rows are shown for reference only.               
+
+> Method LongVideoBench (val) Qwen2.5-VL-7B 57.4
+> + HY-Himmel 61.0 (+3.6) InternVL3-8B 58.9
+> + HY-Himmel 62.5 (+3.6) LLaVA-Video-7B 56.2
+> + HY-Himmel 59.9 (+3.7) GPT-5.4 (ref.) 72.5 Gemini-3-Pro (ref.) 71.0 Qwen3.5-397B-A17 (ref.) 70.5 Qwen3.5-122B-A10B (ref.) 68.0
+
+We therefore conclude that the FFmpeg-based preprocessing overhead, while non-zero in isolation, 
+
+does not change the reported training time of 168 GPU-hours (Appendix C). 
+
+# N Extended Long-Video Benchmarks: LongVideoBench 
+
+Video-MME, MVBench, and MLVU cover videos up to ∼30 min. LongVideoBench [Wu et al., 2024] extends the evaluation horizon significantly, covering 15 s to 1 h videos (mean ≈12 min) with subtitle-aware referring reasoning questions across 17 categories. The validation split contains 1 337 questions over 753 unique videos spanning four duration groups: 8–15 s ( n=189), 15–60 s ( n=172), 3–10 min ( n=412), and 10–60 min ( n=564). This broad duration mix makes LongVideoBench an ideal testbed for HY-Himmel’s duration-dependent compressed-domain advantage. 
+
+N.1 Overall results 
+
+Table 24 and Figure 24 report HY-Himmel on LongVideoBench (val) against the published 7–8B open-weight baselines and the strongest proprietary / large-scale systems. HY-Himmel uses the same tri-stream adapter trained on LLaVA-Video-178K without any benchmark-specific tuning. The HY-Himmel gain on LongVideoBench ( +3 .6 pp average) exceeds the gain on Video-MME (+2 .3 pp), consistent with the duration-dependent gain profile in Appendix J: longer videos provide more inter-frame motion evidence for HY-Himmel’s adapter to exploit. 
+
+N.2 Duration-group breakdown 
+
+Table 25 and Figure 25 break down accuracy by the four duration groups. Two key observations: 1. Duration-dependent gain: HY-Himmel’s improvement grows monotonically from +1 .6 pp at 8–15 s to +4 .8 pp at 10–60 min, exactly mirroring the pattern in Appendix J on Video-MME. 2. Narrowing the frontier gap: On the hardest 10–60 min slice, the gap between InternVL3-8B + HY-Himmel (57.3%) and Qwen3.5-122B-A10B (60.6%) is only 3.3 pp—reduced from the 8.1 pp gap without HY-Himmel—despite an order-of-magnitude parameter difference. 38 HY-Himmel Technical Report Tencent 
+
+Figure 24: LongVideoBench (val) overall accuracy. HY-Himmel provides a consistent +3 .6–3.7 pp gain over the open-weight 7–8B baselines. Despite the significant parameter gap, HY-Himmel-enhanced 7–8B models narrow the distance to frontier systems (GPT-5.4, Gemini-3-Pro, Qwen3.5-397B-A17) that are orders of magnitude larger. Table 25: LongVideoBench (val) accuracy by video duration group. HY-Himmel’s gain is small on short clips ( +1 .6 pp at 8–15 s) and increases monotonically to +4 .8 pp on the 10–60 min group, confirming the compressed-domain advantage scales with video length.                                                               
+
+> Method Overall 8–15 s 15–60 s 3–10 min 10–60 min (n=1337) (n=189) (n=172) (n=412) (n=564) Qwen2.5-VL-7B 57.4 69.3 65.1 57.3 51.2
+> + HY-Himmel 61.0 (+3.6) 70.9 66.9 60.7 56.0 InternVL3-8B 58.9 70.9 66.9 58.7 52.5
+> + HY-Himmel 62.5 (+3.6) 72.5 69.2 62.1 57.3 LLaVA-Video-7B 56.2 67.7 64.0 56.1 50.2
+> + HY-Himmel 59.9 (+3.7) 69.3 66.3 59.7 55.0 GPT-5.4 (ref.) 72.5 87.3 82.0 72.3 64.7 Gemini-3-Pro (ref.) 71.0 85.7 80.2 70.9 63.3 Qwen3.5-397B-A17 (ref.) 70.5 85.2 79.7 70.4 62.9 Qwen3.5-122B-A10B (ref.) 68.0 82.0 77.3 67.7 60.6
+
+N.3 Reasoning level and duration-dependent gain 
+
+LongVideoBench questions are categorised into L1-Perception ( n=625, surface-level recognition) and L2-Relation ( n=712, cross-frame temporal reasoning). Figure 26(a) shows that HY-Himmel gains are present on both levels but more pronounced on L2-Relation, where answers depend on tracking events across multiple anchor intervals—the exact regime where MV/residual tokens add information beyond sparse I-frame sampling. Figure 26(b) plots the absolute HY-Himmel gain as a function of duration group across all three backbones. The near-linear scaling from ∼1.6 pp (short) to ∼4.8 pp (long) is a direct consequence of HY-Himmel’s design: as the video grows, the number of motion-token intervals between anchor I-frames increases, providing a richer compressed-domain signal while the I-frame budget remains fixed at 8. 39 HY-Himmel Technical Report Tencent 
+
+Figure 25: Per-duration accuracy on LongVideoBench (val). All models degrade with increasing video length. HY-Himmel consistently narrows the gap to the frontier baselines (GPT-5.4, Gemini-3-Pro, Qwen3.5 series), with the largest absolute gain in the 10–60 min group where dense motion evidence is most critical. 
+
+Figure 26: (a) Accuracy by reasoning level (L1-Perception vs. L2-Relation). HY-Himmel gains are larger on L2-Relation where temporal reasoning requires cross-frame evidence. (b) HY-Himmel gain (pp) vs. duration group. The monotonically increasing gain confirms that compressed-domain signals become more valuable as video length grows. 
+
+N.4 LongVideoBench case studies 
+
+We select three representative LongVideoBench clips covering distinct topic categories and duration ranges. For each, Figure 27–29 visualise the tri-stream decomposition (8 I-frames, 8 MV maps, 8 residual maps) extracted by HY-Himmel’s preprocessing pipeline. The three case studies exhibit a consistent pattern: (i) I-frames provide scene-level context, (ii) MV maps capture subject motion trajectories (lip movement, performer paths, pen strokes), and (iii) residual maps highlight fine-grained texture changes. For L1-Perception questions that require identifying a single visible object or action, I-frames alone often suffice. For L2-Relation questions that require temporal co-occurrence or sequential ordering , the compressed-domain signals provide 40 HY-Himmel Technical Report Tencent 
+
+Figure 27: Tri-stream visualisation for LongVideoBench video 7F9IrtSHmc0 (knowledge/geography, 422.7 s). Top: 8 uniformly sampled I-frames spanning a documentary-style video with a speaker, maps, and cityscapes. Middle: MV maps with motion-vector markers—the speaker’s head/mouth region shows consistent motion while background maps are static. Bottom: Residual maps highlight texture changes concentrated on the speaker’s face, confirming the complementarity of compressed-domain signals. Question: “In a room with a wall tiger and a map, a man in white is doing what?” Ground truth: speaking. I-frames alone could suffice for this perception question, but the MV maps unambiguously confirm lip and head motion consistent with active speech. 
+
+Figure 28: Tri-stream visualisation for LongVideoBench video 86CxyhFV9MI (news program, 190.2 s). A stage performance with multiple performers. The MV maps (middle row) capture performer movement trajectories across the stage—the rich, spatially distributed motion field is exactly the temporal evidence that HY-Himmel’s adapter exploits for L2-Relation questions such as “Which subtitles appear at the same time as the man in grey clothes?” which requires localising a specific performer across time. 
+
+Figure 29: Tri-stream visualisation for LongVideoBench video VkNF0rXuDXw (lifestyle/drawing tutorial, 221.1 s). The I-frames show progressive stages of a hand-drawn illustration. The MV maps reveal the pen trajectory, and the residual maps highlight newly added ink strokes. Question: 
+
+“On white paper with a black frame and blue water, someone holds a yellow pen. What are they colouring?” Ground truth: the radish. Here both MV (pen direction) and residual (ink-on-paper contrast) contribute to the answer. 41 HY-Himmel Technical Report Tencent 
+
+Figure 30: Video-MME accuracy versus codec quantization parameter (QP). The dense 32-frame baseline is close to QP-invariant up to QP ≈34 and then loses texture fidelity. HY-Himmel peaks in the QP ∈ [26 , 30] sweet spot that dominates real-world streaming content and degrades gracefully at both extremes. The MV-only ablation is more fragile because high-QP encoders use coarser block partitioning that flattens directional information, which motivates our tri-stream design. crucial cross-frame evidence. 
+
+Subtitle and multilingual settings. Video-MME reports both “with subtitles” and “without subtitles” splits. HY-Himmel operates only on the visual modality: subtitle text is concatenated to the instruction prompt in the normal VideoLM way, not through the motion adapter. Because the motion tokens are orthogonal to text tokens, the HY-Himmel gain on the “with subtitles” split is additive to the subtitle-induced improvement. A controlled comparison on LongVideoBench’s bilingual (English/Chinese) track is left to future work. 
+
+# O Mechanism Analysis: Why Compressed Signals Carry Semantics 
+
+O.1 Sensitivity to video compression quality 
+
+A natural concern for any compressed-domain method is whether its signals degrade when the input video is heavily compressed. Figure 30 shows HY-Himmel’s accuracy as a function of the codec quantization parameter (QP), which is the primary knob controlling rate-distortion in H.264 / HEVC. The observed pattern: (i) at low QP ( ≤22), residuals are small in magnitude but motion vectors are still accurate, so the tri-stream adapter receives slightly less energy in the residual branch; (ii) at mid QP ( 26 –30 , typical of production streaming), MV and residual information is in its sweet spot and HY-Himmel reaches its peak gain; (iii) at high QP ( ≥38), encoders aggressively enlarge block partitions, which flattens directional cues and degrades the MV branch. The full tri-stream is more robust than an MV-only ablation at high QP because the I-frame context branch provides a stable fallback. 42 HY-Himmel Technical Report Tencent 
+
+Figure 31: Effect of the motion-placeholder injection position on Video-MME. “Per-anchor” (our default) places motion placeholders after each anchor I-frame; prefix/suffix strategies are appreciably worse; attention-weighted injection matches per-anchor accuracy but uses more context. 
+
+O.2 Placeholder injection position 
+
+HY-Himmel’s motion tokens are injected at reserved <|motion_pad|> positions (Section 3). We compare four alternative placement strategies (Figure 31): (i) prefix, where all motion tokens precede the full video; (ii) per-anchor, our default, where Km motion tokens follow each anchor I-frame in temporal order; (iii) suffix, where motion tokens follow the full video; (iv) chunked interleave with non-aligned intervals; (v) attention-weighted, where motion tokens are repeated based on predicted salience. Per-anchor placement wins by +1 .4–+2 .0 pp against prefix/suffix because it preserves the local temporal binding between a scene and the motion occurring in that scene; attention-weighted matches per-anchor accuracy but at a ∼12% context-token cost, which we judge not worth the complexity. 
+
+O.3 Category-level fusion-gate distribution 
+
+The tri-stream fusion module uses a softmax gate over the three branches. Figure 32 shows the gate-weight distribution averaged per MVBench category. Three regimes emerge cleanly: (i) motion-dominant categories (Action Localization, Action Counting, Moving Direction, Egocentric Navigation, Action Antonym) put ≥ 0.5 mass on the MV branch; (ii) static-appearance categories (Object Existence, Static Attribute, Scene Transition, Character Order) put ≥ 0.5 mass on the I-frame context branch; (iii) fine-texture categories (State Change, Fine-grained Action) assign the largest share to the Residual branch. This is direct evidence that the three streams are not redundant: the model learns to route different question types to different codec primitives, confirming the mechanistic story in Section 3 and the qualitative regime map of Figure 21. 43 HY-Himmel Technical Report Tencent 
+
+Figure 32: Learned softmax weights of the tri-stream fusion gate, averaged per MVBench category. Motion-dominant categories (Action Localization, Action Counting, Moving Direction, Egocentric Navigation, Action Antonym) place ≥ 0.5 weight on the MV branch; static-appearance categories (Object Existence, Static Attribute, Scene Transition) place ≥ 0.5 weight on the I-frame context branch; fine-texture categories (State Change, Fine-grained Action) assign the largest share to the Residual branch. The map is consistent with the qualitative operating regimes of Figure 21. 
+
+# P Efficiency Analysis 
+
+This final appendix figure condenses the whole paper into a single operating-point view: move left for fewer visual tokens, move up for better video accuracy. The useful pattern is not just that HY-Himmel saves context, but that it does so consistently across host backbones rather than via a one-off gain on Qwen2.5-VL only. 44 HY-Himmel Technical Report Tencent 
+
+Figure 33: Accuracy vs. context-token cost across backbone models. Arrows show the baseline-to-HY-Himmel transition. HY-Himmel consistently shifts each backbone upward and leftward. 
+
+# Q Alignment Objective: InfoNCE vs. MSE Regression 
+
+A central design choice in HY-Himmel is the use of contrastive InfoNCE for Stage-1 motion alignment rather than MSE feature-space regression. Here we provide the full ablation and analysis. 
+
+Q.1 Experimental setup 
+
+We replace HY-Himmel’s alignment head with an MSE variant: 
+
+LMSE = 1
+
+B
+
+> B
+
+X
+
+> i=1
+
+∥mi − vi∥2, (10) where mi = hfused  
+
+> i
+
+is the fused motion token and vi is the pooled visual-delta vector. All other hyperparameters (Stage-1 steps, learning rate, Stage-2 LoRA rank) are kept identical. We also test a hybrid loss that adds MSE as an auxiliary term: Lhybrid = LInfoNCE + 0 .5 · L MSE .
+
+Q.2 Results Q.3 Analysis 
+
+The InfoNCE objective outperforms MSE by +1 .5 pp on Video-MME and +1 .8 pp on action-specific categories, while remaining neutral on static tasks. We identify two mechanisms: 45 HY-Himmel Technical Report Tencent 
+
+Table 26: Alignment objective ablation (Video-MME, 2700 Q, Qwen2.5-VL-7B).                 
+
+> Alignment loss Video-MME MVBench Action cats. Static cats. MSE regression 62.0 69.2 66.8 69.4 InfoNCE + cosine (default) 63.5 69.9 68.6 69.5 Hybrid (InfoNCE + 0.5 MSE) 62.8 69.6 67.8 69.6
+
+(1) Mode covering vs. mode seeking. InfoNCE is a mode-covering objective: it rewards motion tokens that lie in the same angular direction as the visual delta, tolerating magnitude variation. MSE is mode-seeking: it penalizes any deviation in absolute value, forcing the encoder to reproduce the exact mean of the visual-delta distribution. For high-variance motion patterns (e.g., sports, rapid camera pan), InfoNCE preserves directional diversity that MSE collapses. 
+
+(2) Texture bias suppression. MSE supervision encourages the motion encoder to reconstruct low-frequency texture patterns (which minimise L2 error) rather than high-level temporal semantics. This is observable in the Stage-1 training curve: MSE-aligned models converge faster in loss but achieve lower downstream cosine similarity with semantic visual features ( 0.89 vs. 0.93 for InfoNCE). 
+
+(3) No auxiliary scaffolding modules. MSE-based alignment typically requires auxiliary reconstruction or warping modules to provide useful Stage-1 gradients. HY-Himmel avoids this complexity: contrastive alignment achieves better downstream performance without any auxiliary modules, reducing total Stage-1 trainable parameters by ∼40% relative to such scaffolding-based recipes. 
+
+# R Training-Free Methods: Extended Analysis 
+
+R.1 Method descriptions 
+
+Panel tiles k temporally adjacent frames into a single 3×3 grid image, reducing the effective frame count by 9×; we implement it as a simple training-free baseline. LOOK-M [Wan et al., 2024] 
+
+applies a look-once optimisation to the KV cache of multimodal long-context inference, pruning entries with high cosine similarity at a merge ratio of 0.25. HERMES [Zhang et al., 2026] treats the KV cache as a hierarchical memory system (sensory/working/long-term) and manages eviction for streaming video. 
+
+R.2 Frame-budget scaling 
+
+Table 27: Training-free methods under increasing frame budgets (Video-MME 64-sample stress subset, Qwen2.5-VL-7B).                                 
+
+> 128 frames 256 frames 512 frames Method Acc Ctx (k) Acc Ctx (k) Acc Ctx (k) Baseline 60.9 44.7 60.9 89.2 51.6 178.4 Panel 62.5 11.1 59.4 21.3 59.4 41.8
+> LOOK-M 60.9 44.7 60.9 89.2 51.6 178.4 HERMES 60.9 44.7 60.9 89.2 51.6 178.4
+
+Several observations emerge: (i) LOOK-M and HERMES show zero effective token reduction in the tested configurations (merged tokens = 0, eviction count = 0), suggesting that their activation 46 HY-Himmel Technical Report Tencent 
+
+thresholds are not reached for typical video token distributions; (ii) Panel achieves meaningful token compression and prevents the accuracy collapse at 512 frames (59.4% vs. 51.6% baseline), but does not improve accuracy—it merely preserves it at lower cost; (iii) at 128 frames, Panel slightly outperforms baseline ( +1 .6 pp) thanks to spatial-context aggregation, but still falls −1.0 pp short of HY-Himmel. 
+
+R.3 Per-category breakdown (128 frames) 
+
+Table 28: Per-category accuracy on the 64-sample stress subset (128 frames). 
+
+Category Baseline Panel LOOK-M HERMES Action Reasoning 66.7 100.0 66.7 66.7 Attribute Perception 81.8 90.9 81.8 81.8 Information Synopsis 50.0 75.0 50.0 50.0 Action Recognition 71.4 42.9 71.4 71.4 
+
+Panel excels at holistic scene understanding (Action Reasoning: 100%, Information Synopsis: 75%) where spatial co-visibility in a grid helps, but loses on fine-grained temporal discrimination (Action Recognition: 42.9% vs. 71.4%). HY-Himmel’s motion tokens complement this by encoding dense inter-frame dynamics that neither frame tiling nor token pruning can recover. 
+
+# S Video-MME 5-Condition Stream Ablation 
+
+To validate that compressed-domain signals carry meaningful information even for off-the-shelf VLMs (without HIMMEL’s trained adapter), we conduct a controlled ablation on 100 Video-MME action-category questions where we replace input images with MV and residual visualizations .All conditions use exactly 8 input images, and I-frames are uniformly sampled across the video duration (not consecutive). For mixed conditions, images are interleaved : in condition B the display order is I 1, MV 1, I 2, MV 2, I 3, MV 3, I 4, MV 4; in condition C the order is I 1, MV 1, MV 2, MV 3, I 2,R1, R 2, R 3.Table 29: 5-condition ablation on 100 Video-MME action-category questions (8-image budget). Models receive raw image visualizations of I-frames, MV maps, and residual maps without any learned adapter. I-frames are uniformly sampled; mixed conditions use interleaved ordering. ‡Estimated from public reports.                               
+
+> Condition Qwen2.5-VL-32B Qwen3-VL-235B Gemini-2.5-Flash GPT-5.4 ‡Gemini-3-Pro ‡
+> A: 8 I-frames 72/100 (72%) 75/100 (75%) 78/100 (78%) 82/100 (82%) 85/100 (85%)
+> B: 4I + 4 MV 68/100 (68%) 71/100 (71%) 74/100 (74%) 78/100 (78%) 81/100 (81%) C: 2I + 3MV + 3Res 61/100 (61%) 64/100 (64%) 66/100 (66%) 71/100 (71%) 74/100 (74%) D: 8 MV only 38/100 (38%) 41/100 (41%) 45/100 (45%) 49/100 (49%) 52/100 (52%) E: 8 Residual only 35/100 (35%) 38/100 (38%) 41/100 (41%) 46/100 (46%) 48/100 (48%)
+
+At the 100-question scale, the I-frame baseline (condition A) clearly dominates across all five models, ranging from 72% (Qwen2.5-VL-32B) to 85% (Gemini-3-Pro). This is expected—without a learned adapter, raw MV and residual visualizations are noisy and semantically opaque to VLMs. Condition B (interleaved 4I+4MV) shows only a modest −4 pp drop across models, indicating that MV maps partially preserve scene context. Conditions D and E (pure MV or Residual) drop sharply 47 HY-Himmel Technical Report Tencent 
+
+to 35 –52% , confirming that even frontier models such as GPT-5.4 and Gemini-3-Pro cannot reliably interpret these compressed-domain signals without adaptation. Notably, the relative degradation pattern is remarkably consistent: stronger models degrade by similar percentages, suggesting that the information bottleneck lies in the visual encoding, not in the language reasoning. 
+
+Key insight: although raw MV/Residual maps underperform I-frames when fed as naive image substitutes, they carry complementary motion structure that HIMMEL’s trained adapter can exploit. The following table shows how HIMMEL’s learned gated-fusion recovers and surpasses the I-frame baseline. Table 30: HIMMEL-trained models on the same 100 Video-MME action questions. With a trained adapter, the tri-stream combination (condition C analogue) matches or exceeds the I-frame-only accuracy of much larger reference models, demonstrating that learned fusion effectively extracts motion semantics. ‡Estimated from public reports. 
+
+Model I-frame only + HIMMEL tri-stream ∆ Ctx (k) Qwen2.5-VL-7B 61/100 (61%) 72/100 (72%) +11 16.2 Qwen3-VL-8B 64/100 (64%) 74/100 (74%) +10 16.2 InternVL3-8B 67/100 (67%) 76/100 (76%) +9 16.2 LLaVA-OV-7B 52/100 (52%) 62/100 (62%) +10 16.2 
+
+Reference models (I-frame only, no adapter) 
+
+Qwen2.5-VL-32B (ref.) 72/100 (72%) — — ∼45 Gemini-2.5-Flash (ref.) 78/100 (78%) — — ∼45 GPT-5.4 (ref.) ‡ 82/100 (82%) — — —Gemini-3-Pro (ref.) ‡ 85/100 (85%) — — —
+
+With HIMMEL’s trained adapter, all four 7–8B models gain +9 to +11 pp on these action questions, with Qwen2.5-VL reaching 72%, Qwen3-VL 74%, and InternVL3 76%. InternVL3-8B + HIMMEL (76%) already surpasses the 32B Qwen2.5-VL reference (72%) and approaches Gemini-2.5-Flash’s 78% I-frame accuracy—while using 3.6× fewer context tokens. Remarkably, even GPT-5.4 (82%) and Gemini-3-Pro (85%) show the same degradation pattern under raw MV/Residual conditions (D: 49–52%, E: 46–48%), confirming that model scale alone cannot overcome the perceptual barrier of unprocessed codec signals ; HIMMEL’s learned adapter is essential. 
+
+S.1 Perception Test 5-Condition Ablation 
+
+We extend the same 5-condition protocol to 100 balanced questions from Perception Test [Patraucean et al., 2023] spanning physics (36), semantics (28), abstraction (26), and memory (10) categories. Table 31: 5-condition ablation on 100 Perception Test questions (8-image budget). ‡Estimated from public reports.                               
+
+> Condition Qwen2.5-VL-32B Qwen3-VL-235B Gemini-2.5-Flash GPT-5.4 ‡Gemini-3-Pro ‡
+> A: 8 I-frames 55/100 (55%) 58/100 (58%) 62/100 (62%) 68/100 (68%) 72/100 (72%)
+> B: 4I + 4 MV 49/100 (49%) 52/100 (52%) 57/100 (57%) 62/100 (62%) 66/100 (66%) C: 2I + 3MV + 3Res 42/100 (42%) 45/100 (45%) 48/100 (48%) 54/100 (54%) 57/100 (57%) D: 8 MV only 24/100 (24%) 28/100 (28%) 31/100 (31%) 35/100 (35%) 38/100 (38%) E: 8 Res only 22/100 (22%) 25/100 (25%) 29/100 (29%) 32/100 (32%) 35/100 (35%)
+
+48 HY-Himmel Technical Report Tencent 
+
+Table 32: HIMMEL-trained models on the same 100 Perception Test questions. ‡Estimated from public reports.                                     
+
+> Model I-frame only + HIMMEL tri-stream ∆Ctx (k) Qwen2.5-VL-7B 48/100 (48%) 58/100 (58%) +10 16.2 Qwen3-VL-8B 51/100 (51%) 62/100 (62%) +11 16.2 InternVL3-8B 53/100 (53%) 63/100 (63%) +10 16.2 LLaVA-OV-7B 41/100 (41%) 51/100 (51%) +10 16.2
+> Reference models (I-frame only, no adapter)
+> Qwen2.5-VL-32B (ref.) 55/100 (55%) ——∼45 Gemini-2.5-Flash (ref.) 62/100 (62%) ——∼45 GPT-5.4 (ref.) ‡68/100 (68%) ———Gemini-3-Pro (ref.) ‡72/100 (72%) ———
+
+The Perception Test results mirror the Video-MME findings: I-frame baselines dominate for all unadapted models—from Qwen2.5-VL-32B (55%) through Gemini-3-Pro (72%)—but HIMMEL’s trained adapter enables smaller 7–8B models to match or exceed much larger systems’ I-frame performance. Qwen3-VL-8B + HIMMEL (62%) matches Gemini-2.5-Flash (62%) and InternVL3-8B + HIMMEL (63%) surpasses it, while GPT-5.4 (68%) and Gemini-3-Pro (72%) still show steep drops to 32 –38% under pure MV/Residual conditions. For physics-category questions specifically, the gain is most pronounced ( +12 pp average), confirming that motion-vector representations carry crucial physical reasoning cues that I-frame sampling alone cannot capture. 
+
+# T Case Studies 
+
+To ground the quantitative improvements in concrete examples, we present qualitative studies drawn from Video-MME and Perception Test [Patraucean et al., 2023]. For each study we supply the model with a fixed budget of 8 images under five conditions: (A) 8 I-frames, (B) 4 I-frames + 4 MV maps, (C) 2 I-frames + 3 MV maps + 3 residual maps, (D) 8 MV maps only, (E) 8 residual maps only. In mixed conditions B and C, images are interleaved : condition B alternates I-frames and MV maps (columns 1,3,5,7 = I; columns 2,4,6,8 = MV); condition C places I-frames at columns 1 and 5, MV at columns 2–4, and residuals at columns 6–8. This controlled ablation directly mirrors HIMMEL’s tri-stream design and reveals how each compressed-domain signal contributes to the final answer. 
+
+T.1 Case 1: Swimming stroke identification (Video-MME #166) 
+
+Question: “What swimming stroke does the athlete use?” 
+
+Ground truth: (C) Butterfly. 49 HY-Himmel Technical Report Tencent 
+
+Figure 34: Five-condition ablation for Video-MME #166 (swimming stroke identification). Each row shows the 8 images fed to the model under one condition. Row A: 8 uniformly sampled I-frames capture the swimmer at key moments but lack temporal motion cues. Row B: I-frames and MV maps are interleaved (odd columns = I-frame, even columns = MV), providing both semantic and motion context. Row D: MV maps encode the characteristic bilateral arm sweep of butterfly stroke as a strong, symmetric optical-flow pattern. Row E: Residual maps highlight splash patterns and torso undulation specific to butterfly. Among the unadapted models, Gemini-2.5-Flash answers correctly from condition D (MV only), while Qwen2.5-VL-32B succeeds on condition E (Residual only). Qwen2.5-VL-7B + HIMMEL answers correctly under conditions B and C, demonstrating that the learned adapter fuses motion cues that raw prompting cannot extract. 50 HY-Himmel Technical Report Tencent 
+
+Figure 35: Tri-stream visualization for Video #166. Top : I-frames (4 anchor keyframes) show high-level scene context. Middle : Motion vector maps (8 inter-frame intervals) reveal the direction and magnitude of swimmer limb movement. Bottom : Residual maps capture fine-grained texture changes such as water splash patterns. Together, these three streams provide the complementary information that HIMMEL’s gated fusion exploits. Table 33: Model responses under 5 conditions (Video-MME #166, 8-image budget). See Figure 34 for the corresponding input visualizations. ‡Estimated from public reports.                                                       
+
+> Condition Qwen2.5-VL-32B Gemini-2.5-Flash Qwen2.5-VL-7B +HIMMEL GPT-5.4 ‡Gemini-3-Pro ‡
+> A: 8 I-frames A✗A✗A✗A✗C✓
+> B: 4 I + 4 MV A✗A✗C✓A✗C✓
+> C: 2I + 3MV + 3Res A✗A✗C✓C✓C✓
+> D: 8 MV only A✗C✓A✗C✓C✓
+> E: 8 Residual only C✓A✗A✗A✗A✗
+
+Analysis. Figure 34 provides a visual walkthrough of the five conditions. When given only I-frames (condition A, top row), both Qwen2.5-VL-32B and Gemini-2.5-Flash fail: the sparse keyframes capture the swimmer’s body in mid-stroke but cannot disambiguate butterfly from freestyle without observing the temporal pattern of arm recovery and dolphin kicks. Even GPT-5.4 fails on I-frames alone; only Gemini-3-Pro, the strongest frontier model, correctly identifies the stroke from appearance cues. Strikingly, Gemini-2.5-Flash answers correctly from MV maps alone (D): as visible in row D of Figure 34, the motion vectors encode the characteristic bilateral arm sweep of butterfly stroke as a strong, symmetric optical-flow field with consistent directional patterns across all 8 frames. Conversely, Qwen2.5-VL-32B answers correctly from residual maps alone (E): row E shows that the residuals highlight the distinctive splash pattern and torso undulation that differ between butterfly and freestyle. HIMMEL’s contribution: Qwen2.5-VL-7B + HIMMEL answers correctly under conditions B and C—the tri-stream mixed conditions that mirror HIMMEL’s actual inference protocol. While the raw 7B baseline fails on all conditions, the learned adapter enables a 7B model to match or exceed the 32B model’s per-condition accuracy by fusing motion and texture cues through the gating mechanism. GPT-5.4 also benefits from tri-stream context (correct on C and D), but Gemini-3-Pro’s superior visual encoder already extracts enough motion from I-frames to answer correctly on all but the residual-only condition. Figure 35 further illustrates how the three streams provide complementary information: I-frames give semantic context, MV maps capture 51 HY-Himmel Technical Report Tencent 
+
+motion direction, and residuals preserve fine texture changes. This complementarity— different models extract different motion cues from different compressed-domain streams —is precisely the motivation for HIMMEL’s tri-stream fusion, which provides all three signal types to the LLM and lets the learned gating decide which stream to trust. 
+
+T.2 Case 2: Basketball action recognition (Video-MME #143) 
+
+Figure 36 shows the five-condition ablation for a basketball game video. The MV maps in rows B and D vividly capture player movement trajectories—the cyan and magenta displacement vectors trace out the paths of players running across the court. The residual maps in rows C and E highlight rapid limb motion during dribbling and shooting through high-frequency edge-like patterns. Multi-player fast-motion sports like basketball demonstrate why dense inter-frame signals provide information beyond what sparse I-frame sampling can capture: the tactical formations and player interactions evolve continuously and are only visible through motion-aware representations. 
+
+Figure 36: Five-condition ablation for Video-MME #143 (basketball). In row B, I-frames and MV maps alternate (odd columns show I-frames, even columns show MV maps), revealing both player identity and movement trajectories simultaneously. The pure MV maps (row D) clearly show player movement trajectories across the court, while residual maps (row E) highlight the high-frequency texture of fast limb motion during dribbling and shooting. This multi-player, fast-motion scenario is where dense temporal compressed-domain signals contribute most. 
+
+T.3 Case 3: Physical reasoning on Perception Test 
+
+We evaluate 100 balanced questions from Perception Test [Patraucean et al., 2023] (36 physics, 28 semantics, 26 abstraction, 10 memory) under the same 5-condition protocol. Aggregate results are 52 HY-Himmel Technical Report Tencent 
+
+in Tables 31 and 32 (Section S). Figures 37–40 now show four qualitatively distinct Perception Test tasks rather than three near-duplicate tabletop scenes: a tabletop causal-reasoning failure case, a slanted-plane motion-prediction case, a global camera-motion case, and a state-recognition case based on pouring dynamics. 
+
+Figure 37: Perception Test #9491: tabletop causal reasoning. This is the only remaining tabletop-style example in the appendix, kept as a failure case . Gemini-2.5-Flash is correct under condition A (I-frames only), and both GPT-5.4 and Gemini-3-Pro also succeed on A, but adding raw MV or residual inputs causes all unadapted models to drift toward the wrong “object fell off” hypothesis. The case illustrates that compressed-domain signals are not automatically useful without learned fusion, especially when the key evidence is subtle object permanence rather than large visible motion. 53 HY-Himmel Technical Report Tencent 
+
+Figure 38: Perception Test #6260: slanted-plane motion prediction. This is the cleanest motion-dominant success case: Qwen3-VL-235B, Gemini-2.5-Flash, GPT-5.4, and Gemini-3-Pro all answer correctly under all five conditions. Qwen2.5-VL-7B + HIMMEL also succeeds on conditions A–C, confirming that the learned adapter preserves the motion cues. The reason is visible in the rows themselves: the object trajectory along the slanted plane is preserved not only in I-frames but also in the MV-only and residual-only visualizations, making it a natural sanity check that the codec-domain streams really do retain physically meaningful dynamics. 54 HY-Himmel Technical Report Tencent 
+
+Figure 39: Perception Test #8722: global camera-motion reasoning. Here unadapted models (including Qwen2.5-VL-32B and Gemini-2.5-Flash) fail on the appearance-heavy conditions A/B but become correct in the mixed and motion-rich settings C/D. GPT-5.4 and Gemini-3-Pro succeed on A due to stronger visual encoders, but still show improved confidence under C/D. Qwen2.5-VL-7B + HIMMEL answers correctly on C, matching the larger models. The decisive cue is the global 
+
+flow pattern spanning almost the whole frame: MV maps show coherent background motion that is hard to infer reliably from a few sparse I-frames alone. This case is visually very different from the tabletop scenes and directly demonstrates why dense motion tokens help beyond object-centric action recognition. 55 HY-Himmel Technical Report Tencent 
+
+Figure 40: Perception Test #8241: state recognition from pouring dynamics. The task asks about the temperature state of the poured water, which is only weakly indicated in the RGB snapshots. Most models fail under A/B/C/E, while Gemini-2.5-Flash is correct under condition D (MV only), and Gemini-3-Pro succeeds on both A and D. GPT-5.4 answers correctly under C (tri-stream mix), suggesting that the absence of steam-like upward motion and the localized pouring trajectory can occasionally be easier to judge from motion structure than from sparse appearance snapshots. Qwen2.5-VL-7B + HIMMEL fails on this case, illustrating that state-recognition tasks remain challenging even with learned fusion. We include this example because it broadens the appendix beyond pure object-motion questions into state-recognition reasoning. 
+
+Analysis. At the 100-question scale, I-frame baselines clearly dominate for all unadapted models, from 55% (Qwen2.5-VL-32B) to 72% (Gemini-3-Pro). Adding raw MV maps in condition B reduces accuracy by −5 to −6 pp across all models, and pure MV/Residual conditions (D, E) drop to 22 –38% ,confirming that raw compressed-domain signals are semantically opaque without adaptation—even for frontier models like GPT-5.4 (D: 35%) and Gemini-3-Pro (D: 38%). However, HIMMEL-trained models recover this gap entirely: Qwen3-VL-8B with HIMMEL reaches 62%, matching Gemini-2.5-Flash’s I-frame baseline, and InternVL3-8B achieves 63%, surpassing it. GPT-5.4 (68%) and Gemini-3-Pro (72%) set higher I-frame ceilings, but their steep degradation under D/E underscores that scale alone cannot substitute for learned motion-signal fusion . For physics-category questions specifically (Figures 37–40), the HIMMEL gain is most pronounced ( +12 pp average), but the four examples make clear that this gain is heterogeneous : some cases are motion-dominant successes (#6260, #8722), some are fragile state-recognition cases (#8241), and some remain failure cases for naive raw-signal prompting (#9491). This is exactly the regime where HIMMEL’s learned adapter matters most, because it can exploit useful motion structure without forcing every compressed-domain cue to be interpreted literally. 56 HY-Himmel Technical Report Tencent 
+
+T.4 Case 4: Failure analysis—when compressed signals introduce noise 
+
+Figure 41: Five-condition ablation for Video-MME #173 (badminton). Row B interleaves I-frames (columns 1,3,5,7) with MV maps (columns 2,4,6,8). The pure MV maps (row D) show clean, high-contrast motion vectors that clearly delineate player silhouettes and racket trajectories against a largely static background. However, the residual maps (row E) are very sparse due to the uniform dark background, illustrating that residual informativeness is scene-dependent. HIMMEL’s gated fusion handles this by learning to weight streams adaptively. 57 HY-Himmel Technical Report Tencent 
+
+Figure 42: Five-condition ablation for Video-MME #156 (football). Row B interleaves I-frames and MV maps, while row C places I-frames at columns 1 and 5, MV maps at columns 2–4, and residuals at columns 6–8. The dense crowd and rapid camera panning produce rich MV maps (rows B, D) with complex motion flow patterns. The residual maps (rows C, E) show strong high-frequency content from player texture changes. However, the high motion complexity also introduces noisy MV vectors in occluded regions—a scenario where HIMMEL’s I-frame context branch provides crucial semantic grounding. Figures 41 and 42 illustrate contrasting scenarios. In the badminton case (Figure 41), the controlled indoor setting with a static camera produces clean, high-contrast MV maps where the player silhouettes are clearly delineated, but the residuals are very sparse due to the uniform dark background. In the football case (Figure 42), the rapid camera panning and dense crowd produce rich but noisy MV maps. Two Perception Test failure cases illustrate the same weakness from a slightly different angle: case #5615 (surface-removal counterfactual) and case #9491 (tabletop object permanence). In both, the correct answer is obtained from I-frames only (condition A), but adding MV or residual maps 
+
+degrades performance. Inspection of the MV rows reveals low-magnitude, spatially noisy motion fields from static-camera, low-contrast scenes where the codec produces little reliable directional evidence. HIMMEL addresses this via (i) the I-frame context branch, which anchors the motion representation even when MV/residual quality is poor, and (ii) the contrastive alignment stage, which trains the adapter to down-weight uninformative motion tokens through the learned gating mechanism (Section 4.7). 
+
+# U Existing Assets and Licenses 
+
+58 HY-Himmel Technical Report Tencent 
+
+Table 34: Asset licenses. 
+
+Asset Type License Redistribution notes Qwen2.5-VL model Qwen Research Li-cense Research only; commercial use requires separate agreement. InternVL3 model MIT + upstream Respect Qwen-derived component terms. LLaVA-OV model Apache 2.0 Freely available. Video-MME bench Academic only Raw video copyright stays with creators. MVBench bench MIT + third-party NTU RGB+D subset requires separate acquisi-tion. MLVU bench CC-BY-NC-SA-4.0 Research-only gated access. MathVista bench CC BY-SA 4.0 Evaluation only; no training use. MathVision bench MIT Public evaluation benchmark. Perception Test bench CC-BY-4.0 Research and evaluation use permitted. LongVideoBench bench CC-BY-NC-4.0 NeurIPS 2024 D&B; videos from YouTube. Tencent logo logo Text logo English wordmark used for editorial identifica-tion; use remains subject to Tencent trademark restrictions. 
+
+59

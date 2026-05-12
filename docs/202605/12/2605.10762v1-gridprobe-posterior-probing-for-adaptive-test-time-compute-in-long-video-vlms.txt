@@ -1,0 +1,340 @@
+Title: GridProbe: Posterior-Probing for Adaptive Test-Time Compute in Long-Video VLMs
+
+URL Source: https://arxiv.org/pdf/2605.10762v1
+
+Published Time: Tue, 12 May 2026 03:16:27 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# GridProbe: Posterior-Probing for Adaptive Test-Time Compute in Long-Video VLMs 
+
+Mohamed Eltahir 1 Lama Ayash 1 Ali Habibullah 1 Tanveer Hussain 2∗ Naeemullah Khan 1‡ 
+
+> 1
+
+King Abdullah University of Science and Technology (KAUST), Thuwal, Saudi Arabia  
+
+> 2
+
+Department of Computer Science, Edge Hill University, Ormskirk, England 
+
+{mohamed.hamid, lama.ayash, ali.habibullah}@kaust.edu.sa hussaint@edgehill.ac.uk, naeemullah.khan@kaust.edu.sa 
+
+Figure 1: (a) VMME-V2 Pareto across QA model sizes. GridProbe variants in the green region Pareto-dominate the 2B baseline. (b) Compute reduction across K at fixed 2B QA. 
+
+# Abstract 
+
+Long-video understanding in VLMs is bottlenecked by a single monolithic forward pass over thousands of frames at quadratic attention cost. A common mitigation is to first select a small subset of informative frames before the forward pass; common for training-free selectors via auxiliary 
+
+encoder-space similarities. Such signals are capped by contrastive pretraining, which usually fails on reasoning-heavy queries (negation, cross-frame counting, holistic summarization). We propose 
+
+GridProbe , an efficient training-free posterior-probing inference paradigm that scores evidence in answer space using a frozen VLM’s own reasoning and then selects question-relevant frames adaptively, resulting in sub-quadratic attention cost with little to no accuracy loss. We arrange frames on a K×K grid and run lightweight row R and column C probes, where each probe reads its peak posterior as a query-conditioned confidence. The outer product of R and C yields an interpretable 
+
+importance map whose skewness and kurtosis drive Shape-Adaptive Selection , a closed-form rule that reliably replaces the fixed frame budget M with a per-question Meff . We show empirically that Meff ,surprisingly, tracks intrinsic question difficulty without ever seeing the answer, a sign of test-time adaptive compute. On Video-MME-v2, GridProbe matches the monolithic baseline within 1.6 pp Avg Acc at 3.36 × TFLOPs reduction, while on LongVideoBench it Pareto-dominates the baseline (+0 .9 pp at 0.35 × compute). Because the selector and QA models can be decoupled, pairing a small 2B selector with a stronger 4B or 8B QA is strictly Pareto-dominant over the 2B monolithic baseline (up to +4 .0 pp at 0.52 × compute, on average), with no retraining. Finally, the interpretability of the importance maps opens future avenues for behavioral diagnostics, grounding, and frame-selection distillation.  
+
+> *Corresponding Author
+> ‡Principal Investigator (PI) Code: https://www.github.com/mohammad2012191/GridProbe
+> arXiv:2605.10762v1 [cs.CV] 11 May 2026
+
+# 1 Introduction 
+
+Modern video VLMs process long videos by compressing many frames into one forward pass. Qwen3-VL-2B [ 1], for example, uses an adaptive per-frame resolution that crushes individual frames to ≈ 240 visual tokens when 2048 frames are passed, an order of magnitude below the ≈ 2960 tokens per frame at the 64-frame setting. This trade-off exchanges per-frame fidelity for temporal coverage and reflects a structural limit: per-token cost is dominated by the (linear-in-tokens) FFN at current scales while attention adds asymptotically quadratic-in-sequence-length growth on top, so reducing the number of input tokens delivers the strongest compute savings, and even models trained with 256K-token contexts cannot afford dense sampling and dense attention at scale. An orthogonal response is frame selection : pick the M ≪ N most informative frames and run the VLM on only those. Recent training-free selectors (MDP3 [ 2 ], CLIP-matching, SigLIP-based scoring) and learned variants (Frame-Voyager [ 3 ], Focus [ 4], HFS [ 5]) share a common structure: frames and the query are embedded by separate vision and text encoders, and a similarity function in that shared space scores each frame. We call this paradigm encoder-space selection . Its weakness is documented: MDP3’s own qualitative analysis shows SigLIP-matching failing on negation, cross-frame counting, and summarization queries, because these queries typically require reasoning outside the encoder’s representational capacity. We argue for a stronger move than swapping in a better selector. The VLM already knows which frames matter, it just needs to be asked. If we feed the VLM a subset of frames with the query, its posterior over the answer space encodes how confidently it can answer given that subset (Figure 3). High confidence on a small subset implies those frames carry the answer. This observation motivates a different inference paradigm rather than a different selector. To this end, we introduce GridProbe (Figure 2), a training-free posterior-probing inference paradigm that replaces the standard one-shot forward pass with a self-probing recipe. We factorize the candidate frame pool into a K × K grid and run lightweight, axis-aligned probe passes over the rows and columns through a frozen VLM. The outer product of the row and column peak-posterior confidences yields a question-conditioned importance map. By default, the same frozen VLM serves as both the selector and the answerer. We further show that the two roles can be decoupled for a strict Pareto improvement. This single design shift has three structural consequences. First, the selection signal is reasoning-grounded , it inherits the VLM’s full reasoning capacity, so negation, cross-frame counting, and compositional queries are handled natively rather than being lost in contrastive embedding. Second, the signal scales with backbone capability without retraining, a stronger VLM automatically yields a sharper importance map. Third, the maps are mechanically interpretable, rendering the model’s evidence-gathering legible at the frame level. Notably, the current formulation reads a peak posterior over a finite answer space. Once frames are scored, selectors must determine how many to pass to the final model. Existing methods enforce a static budget M , creating an unavoidable trade-off: they waste compute on highly localized questions and bottleneck accuracy on holistic ones by discarding necessary context. Crucially, the GridProbe importance map resolves this natively. We demonstrate empirically that the shape of this importance distribution strongly correlates with question difficulty (Figure 5, right). Rather than using a static frame budget, we utilize this insight to introduce shape-driven adaptive test-time compute , which sets the per-question size Meff via a closed-form rule on the map’s skewness and kurtosis. Coupling answer-space probing with shape-driven adaptive selection yields GridProbe , a training-free posterior-probing inference paradigm for long-video VLMs. Three findings anchor our empirical claims: (a) Pareto-dominant cross-model composition without retraining, (b) Pareto-efficient single-model operation, and (c) Adaptive test-time compute mirrors intrinsic difficulty. 
+
+Contributions: Posterior-probing inference paradigm. We formalize GridProbe , a sub-quadratic training-free inference method for long-video VLMs that operates in answer space rather than encoder space, replacing the standard one-shot forward pass. 
+
+Question-conditioned importance map. A per-question, frame-level importance map exposes the VLM’s evidence-gathering for each query, making long-video understanding interpretable. 2Figure 2: GridProbe pipeline. Stage 1: 2K row/column probes on K2 candidate frames yield an importance map. Stage 2: one focused pass on the top-Meff cells, sized adaptively from the map’s distribution shape. 
+
+Shape-driven adaptive test-time compute. A closed-form statistic on the importance map dis-tribution replaces the fixed frame budget M with a per-question Meff that adapts to the question difficulty. 
+
+The Redundancy Principle. Positive-skew (sparse peaks) and negative-skew (redundant high-importance) maps are different distribution shapes that share the same selection answer. 
+
+# 2 Related Work 
+
+Long-video VLMs and the cost of monolithic inference. Recent video VLMs such as Qwen3-VL [ 1], InternVL3.5 [ 6], and LLaVA-Video [ 7] scale to thousands of frames via extended context windows combined with adaptive per-frame visual-token budgets. Despite design differences, all share a structural commitment to a single monolithic forward pass with quadratic attention in input length O(N 2). Even 256K-token contexts cannot afford dense attention over dense sampling, so reducing the cost of this single forward at inference time, without retraining the backbone or compromising visual fidelity, has become a practical priority. 
+
+Encoder-space frame selection. A dominant mitigation is to score and select a subset of informative frames before the forward pass. Training-free methods rely on similarities in vision-language encoder space (CLIP [ 8], SigLIP [ 9 ]). FOCUS [ 4] adds adaptive exploration over this signal, while MDP3 [ 2]generalizes ranking into a list-wise subset optimization that captures query relevance, diversity, and sequential structure. Learned variants (Frame-Voyager [ 3 ], HFS [ 5 ]) train auxiliary scoring heads or fine-tune the backbone to emit selection signals, trading training complexity for accuracy. We collectively call this family encoder-space selection : the selection signal is computed in a representation space structurally separate from the QA model’s reasoning, and its quality is therefore bounded by what that space was trained to encode. Reasoning-heavy queries (negation, cross-frame counting, holistic summarization) routinely defeat encoder-space signals that the QA model itself could resolve natively. 
+
+Multimodal frame scoring and the static-budget assumption. Recent work pushes scoring closer to the QA model. FRAG [ 10 ] evaluates each frame with a multimodal model and selects the top-M ,which moves the signal from encoder space to model space but remains frame-wise (no temporal context, no reasoning about evidence sufficiency). Independently of the scoring axis, prior frame-selection methods share a second assumption: the selection size M is fixed a priori, wasting compute on localized queries (where M ≪K2 suffices) and starving holistic queries (where the answer is genuinely dispersed). A scoring signal that captures sub-frame reasoning and a per-question budget that adapts to the shape of the evidence both remain open. 3Figure 3: Encoder-space (top) vs answer-space (bottom) selection signals. Encoder-space scoring computes scalar similarity from independent vision and text encoders, while answer-space scoring reads the probe confidence directly from the QA VLM’s posterior over answer candidates. 
+
+Test-time compute and agentic video inference. A growing body of work allocates test-time compute adaptively to improve answer quality. Text-domain efforts include longer chain-of-thought, self-consistency, and search-based decoding [ 11 ]. In the video domain, the closest prior work uses LLM-based agents to route compute per question. VideoAtlas [ 12 ] represents a video as a hierarchical grid explored by a Master-Worker agent loop, achieving logarithmic compute growth with video duration. VideoAgent [ 13 ] and AVUA [ 14 ] similarly use LLM agents that recursively re-sample frames based on their own intermediate reasoning. These systems achieve adaptive per-question compute by orchestrating multi-step agent loops. They inherit the orchestration overhead, control-flow complexity, and per-question planning costs of multi-step inference. A non-iterative, fixed-schedule mechanism that delivers comparable adaptive-compute behavior without agent orchestration is absent from this line of work. Three threads converge on the same problem from different angles, each leaving a complementary gap. Encoder-space frame selection decreases input volume but operates in a representation space disconnected from the QA model’s reasoning. Multimodal frame scoring bridges to model space but stays frame-wise and locks M a priori. Agentic adaptive inference routes per-question compute through multi-step agent orchestration. What is missing across all three threads is a fixed-schedule training-free mechanism that scores in the QA model’s own answer space, captures cross-frame reasoning rather than per-frame similarity, and sizes the per-question budget in closed form. We describe how GridProbe fills all these gaps in the next section. 
+
+# 3 Methodology: GridProbe 
+
+3.1 Setup and Notation 
+
+Let V = {f0, . . . , f n−1} be an ordered sequence of video frames and q a natural-language query. The answer space Y depends on the task (for multiple-choice, |Y| = 4 ). A frozen VLM θ defines a conditional probability distribution pθ (· | S, q ) over Y for any frame subset S ⊆ V paired with q.We define the probe confidence (c) as the peak of this posterior: 
+
+c(S, q ) = max  
+
+> y∈Y
+
+pθ (y | S, q ). (1) Intuitively, c(S, q ) measures how confidently the model can commit to a single answer given S. We use this as a proxy for relevance: high confidence implies S contains frames needed to answer q,while a flat posterior signals that the subset lacks the evidence to discriminate among the candidates. Figure 3 contrasts this answer-space signal with encoder-space selection, where the score is a similarity computed by independent vision and text encoders. 43.2 Grid Formulation and Importance Map 
+
+We sample K2 frames uniformly from V and index them as a conceptual K × K grid. For each row 
+
+r ∈ { 0, . . . , K − 1} and column c ∈ { 0, . . . , K − 1}, we define 
+
+Srow  
+
+> r
+
+= { frK +j }K−1 
+
+> j=0
+
+, Scol  
+
+> c
+
+= { fc+jK }K−1 
+
+> j=0
+
+. (2) giving K row subsets (local temporal coverage) and K column subsets (strided, periodic coverage). In total, 2K probe passes are required, each seeing only K frames. The K row subsets provide local temporal coverage : each row groups K contiguous frames from a localized segment of the video timeline, exposing fine-grained event-local evidence. The K column subsets provide strided periodic coverage : each column groups K frames at stride K, sampling the full timeline at uniform intervals and exposing distributed or recurring evidence. The two axes are complementary: any grid cell (r, c ) is uniquely indexed by the intersection of one local row and one global column, so the same frame is scored once from a local-context view and once from a global-context view. Prior multimodal frame scoring [ 10 ] computes per-frame evidence one frame at a time, requiring K2 forward passes to score all K2 candidates. Our row +column factorization recovers a cell-level importance map at only 2K axis-level forward passes, each seeing only K
+
+frames. For each axis subset we compute the probe confidence via Eq. 1: crow  
+
+> r
+
+= c(Srow  
+
+> r
+
+, q ) and ccol  
+
+> c
+
+=
+
+c(Scol  
+
+> c
+
+, q ). The joint importance ( M ) of the grid cell (r, c ), corresponding to frame frK +c, is the product 
+
+M [r, c ] = crow  
+
+> r
+
+· ccol  
+
+> c
+
+. (3) Intuitively, a cell is important only if both the row and the column containing it produce confident answers (regardless of whether they are correct or not, as high confidence indicates relevance, not correctness). If only one marginal is confident, the cell is assigned moderate weight (partial evidence) and downweighted if neither. In summary, the grid factorization combines local and strided periodic coverage in a single O(K)-pass scoring stage and produces a cell-level question-conditioned importance map without the per-frame scoring overhead of prior multimodal-scoring approaches. 
+
+3.3 Adaptive Selection Size via Distribution-Shape Statistics 
+
+Given the K × K importance map M , we need to pick how many cells to keep. A static Meff is suboptimal: holistic questions benefit from many frames while localization queries need only a few. Our central observation is that these question types leave distinct fingerprints on M itself. A localization query concentrates evidence in a few cells, producing a sharply peaked, right-skewed map. A redundancy-heavy query spreads high importance across many overlapping cells, producing a left-skewed map. A holistic query distributes evidence broadly but sparsely, producing a near-uniform map. Across question types the shape of M co-varies with how hard the question is to answer from few frames, so we hypothesize that distribution shape itself is an indirect signal for the optimal selection size Meff .To act on this hypothesis we capture shape with two complementary moments combined into a single statistic σ(M ) that drives the adaptive size: 
+
+σ(M ) = skew( M ) + 0 .5 · max  0, kurt ex (M ), Meff =
+
+ K2
+
+1 + γ0 · K · σ(M )
+
+
+
+. (4) Here skew( ·) is the third standardized moment (asymmetric concentration of evidence) and kurt ex (·)
+
+is the excess fourth standardized moment (peakedness). Each captures a complementary departure from uniformity. Skewness detects evidence biased toward a small subset of cells. Excess kurtosis detects sharp peaks even in symmetric distributions. On a perfectly uniform map the sample variance is zero and the standardized moments are formally undefined; we set σ=0 in this degenerate case (implemented numerically via a variance threshold), so Meff = K2 and the method falls back to the full pool, equivalent to the monolithic baseline. On a one-hot map ( σ → ∞ formally), Meff → 1.In practice Meff varies smoothly between these extremes per question. The half-weight on kurtosis downweights its larger absolute scale relative to skewness. The factor of K in the denominator (rather than just γ0σ) keeps Meff growing linearly with K on peaked maps instead of quadratically. Without 5Figure 4: GridProbe ’s adaptive Meff (blue) and the 2B baseline accuracy (red), smoothed across signed skew( M ) on V2 ( K=12 , n=3 ,200 ). The two curves mirror each other: both signed extremes route to small Meff on intrinsically easier questions, while the near-uniform middle gets near-K2
+
+coverage on intrinsically harder ones, an empirical realization of the redundancy principle (§3.3). it, doubling K to gain finer probe resolution would also quadruple Meff on the same map, undoing the focused-pass savings. §4.3 validates this distribution shape hypothesis empirically and shows how σ(M ) helps to allocate more compute exactly to the questions the QA model finds intrinsically hardest. 
+
+Why |skew |? The redundancy principle. The absolute value collapses two regimes that have opposite distribution geometries but identical selection requirements. A right-skewed map (positive skew, mass at low importance) is the sparse-peak regime, where a few decisive frames carry the answer and the rest can be discarded. A left-skewed map (negative skew, mass at high importance) is the redundancy regime, where most frames are individually informative for the query but show overlapping content, so a small representative subset suffices. The truly compute-hungry case is the low |skew | near-uniform map, where evidence is sparse-and-dispersed across the timeline and full coverage is warranted. Figure 4 makes the inverted-U pattern in Meff explicit: both signed extremes of skew( M ) route to small Meff while only the near-uniform middle draws near K2 coverage, confirming that |skew | cor-rectly groups the two “few-needed” regimes together. Figure 5 realizes the three regimes qualitatively on Video-MME-v2 clips, where questions produce Meff from 140 (holistic) to 5 (specific). 
+
+3.4 Two-Stage Inference Pipeline GridProbe (Figure 2) combines the probe and a focused pass: 1. Stage 1 (probe): run K row-passes and K column-passes on K-frame subsets through the frozen VLM. Record 2K probe confidences and build M via Eq. 3. 2. Compute Meff from the shape statistic in Eq. 4. 3. Stage 2 (focused pass): select the Meff frames corresponding to the top entries of M ,denoted S⋆. Run the VLM once on S⋆ at full resolution and read off the final answer as 
+
+arg max y pθ (y | S⋆, q ).6Figure 5: Three Video-MME-v2 queries exercise three distribution-shape regimes ( K=12 ). The σ
+
+statistic adapts Meff from 140 (holistic) to 5 (specific). On the specific query, GridProbe answers correctly with 5 frames while the K2=144 baseline fails. Notably, MDP3 (a powerful encoder-space selector with its paper-default fixed budget of M =8 ) misses both the holistic and specific cases. 
+
+3.5 Complexity 
+
+A monolithic pass on N =K2 frames has attention cost O(N 2) in the attention-dominated regime. 
+
+GridProbe runs 2K probe passes of K frames each (cost O(K · K2) = O(N 1.5)) plus one focused pass of Meff frames. For non-uniform importance maps Meff ≪ N and the total attention cost is 
+
+O(N 1.5 + M 2eff ), sub-quadratic. In the worst case (perfectly uniform maps) Meff →N and the focused pass falls back to the monolithic baseline. Empirically, FFN cost (linear in tokens) dominates at current model scales. The probe stage runs at reduced spatial resolution ( 224 ×224 in our experiments), making each probe forward markedly cheaper than a full-resolution pass. So the 2K probe passes plus a focused pass on Meff full-resolution frames remain net-cheaper than a single full-resolution pass on all N frames (Fig. 1). 
+
+# 4 Experiments 
+
+4.1 Experimental Setup 
+
+We evaluated on Video-MME-v2 [ 15 ] (8-option MCQ, 3,200 questions across 800 videos with three-level cognitive hierarchy and grouped non-linear scoring, reported visual-only with no subtitles) and LongVideoBench [16 ] (with subtitles). All backbones are Qwen3-VL-Instruct [ 1] (2B, 4B, 8B), frozen at inference. Unless stated otherwise, K=12 (a 12 ×12 grid yielding a 144 -frame candidate pool), γ0=0 .25 in Eq. 4, probe resolution 224 ×224 pixels, and uncapped focused-pass resolution. Frame sampling draws K2 frames uniformly from the video timeline. We reported Average Accuracy, the official Non-Linear grouped score (VMME-V2 only), and per-question TFLOPs. 7Table 1: Main results on Video-MME-v2 (no subtitles) and LongVideoBench at K=12 . GP-X denotes single-model GridProbe (selector = QA = Qwen3-VL-X). GP-X →Y denotes cross-model pipelines. Non-Lin is V2’s official grouped score. Long is LVB’s 3600-second bin. The Qwen3-VL-2B baseline is the comparison anchor for the lower blocks. numbers in gray are for reference. Bold marks the best GridProbe operating point per block.                                                                      
+
+> Video-MME-v2 LongVideoBench
+> Pipeline Non-Lin Avg Acc TFLOPs Long Acc Overall TFLOPs
+> Monolithic Baselines (full K2=144 pool). 2B is the comparison anchor.
+> Qwen3-VL-2B 9.45 23.16 820 49.8 56.4 868 Qwen3-VL-4B 14.11 30.06 1415 57.3 64.1 1493 Qwen3-VL-8B 14.91 30.94 2441 55.1 62.7 2574
+> Single-Model GridProbe : efficient trade-off at fixed model size (vs same-size baseline).
+> GP-2B 8.39 21.53 245 51.4 57.3 301
+> GP-4B 12.86 28.28 440 55.9 62.4 575
+> GP-8B 12.60 28.06 842 53.4 60.7 1068
+> Cross-Model GridProbe : Pareto-dominance over the 2B baseline (2B probe →larger QA).
+> Uniform-Meff →8B 10.83 26.22 677 49.8 58.5 735 GP-2B →4B 10.76 25.22 399 54.3 60.4 452
+> GP-2B →8B 11.70 26.72 677 52.0 59.7 735
+
+Table 2: Selector quality at fixed M =8 , 2B QA. Both use the exact same per-question frame bud-get. Only the scoring selector differs.               
+
+> 2B QA, M=8 V2 NL / Acc LVB Long / Ov
+> +MDP3 7.38 / 20.09 44.9 / 51.0
+> +GridProbe 7.49 / 20.12 47.3 / 54.6
+> ∆+0.11 / +0.03 +2.4 / +3.6
+
+Table 3: Adaptive M vs fixed M =8 within Grid-Probe , 2B QA. Both variants have comparable compute ( ∼240T V2. ∼300T LVB).             
+
+> 2B QA, GP V2 NL / Acc LVB Long / Ov
+> M=8 7.49 / 20.12 47.3 / 54.6
+> M=AUTO 8.39 / 21.53 51.4 / 57.3
+> ∆+0.90 / +1.41 +4.1 / +2.7
+
+4.2 Main Results: Video-MME-v2 and LongVideoBench Same-model results. On Qwen3-VL-2B at K=12 (Block 2 of Table 1), GridProbe (M =AUTO )trades 1.63 pp Avg Acc on V2 for a 3.36 × TFLOPs reduction, and reaches a Pareto-dominant point on LVB ( +0 .9 pp at 0.35 × compute). The trade-off is broadly invariant across QA size: comparing each GP-X to its same-size monolithic baseline, the accuracy cost is −1.63 /−1.78 /−2.88 pp on V2 at 2B/4B/8B and −1.7/−2.0 pp on LVB at 4B/8B, shifting modestly toward higher accuracy cost at larger backbones because stronger QAs extract more from the full-frame baseline. As a side benefit, GP-8B reaches 28 .06% Avg Acc on V2 at 842 TFLOPs, matching the 2B baseline’s compute (820 TFLOPs) within 3% at +4 .9 pp accuracy, a near-matched-compute upgrade for users willing to deploy the 8B answerer. 
+
+Cross-model: a free Pareto move. Pairing the 2B selector with a stronger QA (Block 3 of Table 1, visualized in Fig. 1(a)) Pareto-dominates the 2B-monolithic baseline on both benchmarks: +3 .56 pp Avg Acc at 0.83 × compute on V2 and +3 .30 pp at 0.85 × on LVB for GP-2B →8B, with GP-2B →4B delivering an even larger LVB gain ( +4 .0 pp at 0.52 ×, widening to +4 .5 pp on the 3600-sec bin). The mechanism is straightforward: attention on Meff frames at 8B is cheaper than on K2 frames at 2B because sequence length dominates parameter count in the multi-frame regime, and the larger QA produces sharper answer posteriors on the focused subset. Most of the cross-model win comes from the adaptive sizing decision and the larger QA. The Uniform-Meff →8B control (gray row in Table 1) uses GridProbe’s per-question Meff but draws those frames uniformly from the K2 pool (no importance ranking). Against this matched-compute baseline, the importance ranking adds a smaller residual: +0 .50 pp on V2 and +1 .20 pp on LVB. 
+
+Decomposing the same-model gap. Tables 2 and 3 factor the gap into selector quality (vs MDP3 at matched M =8 ) and adaptive sizing (within GridProbe ). At fixed M =8 , the two selectors are matched on V2 but diverge sharply on LVB, where GridProbe wins by +3 .6/ + 2 .4 pp Overall / 8Table 4: Selector-size ablation. VMME-V2 strat-ified n=400 . ¯Meff is the per-question average.                 
+
+> Selector QA Avg Acc ¯Meff TFLOPs 2B 2B 26.25 %52.9 233.3
+> 4B 2B 26.00% 56.2 302.0 8B 2B 24.75% 58.5 415.1
+
+Table 5: Frame-order ablation. V2 stratified 
+
+n=400 . Same frames, different input order.         
+
+> Frame order Avg Acc ∆
+> Temporal (default) 26.25% (ref.) Importance (descending) 25.00% −1.25 pp
+
+Table 6: Collated single-image variant vs the standard Meff -frame two-stage, V2 n=1 ,800 .            
+
+> Method Avg Acc TFLOPs Baseline (no selection) 23.10 819.6 Two-stage ( Meff frames as video) 21.27 232.2 Collated (one √Meff ×√Meff image) 20.11 66.6
+
+3600s while MDP3 lands −4.9 pp below the no-selection baseline. Encoder-space scoring is not just suboptimal there but actively harmful. Figure 5 illustrates the failure mode qualitatively: MDP3 misses both the holistic and specific cases that GridProbe answers correctly. Since MDP3 itself dominates a broad suite of training-free selectors (CLIP-based scoring, scene-change detection, optical flow, Frame-Voyager [ 3 ], and others) [ 2 ], the gap extends transitively over that family. Switching from fixed M =8 to M =AUTO adds +0 .90 / + 4 .1 Non-Lin / Long-bin pp at near-matched compute, isolating the contribution of σ-driven per-question allocation on top of the selector. The two effects together account for the gaps in Table 1. 
+
+4.3 Adaptive Compute Mirrors Intrinsic Question Difficulty 
+
+Figure 4 provides direct empirical evidence that GridProbe ’s adaptive selection responds to question content. Firstly , the Meff curve is symmetric in skew sign: both extremes of the importance-map skewness axis route to small Meff , while the near-uniform middle gets near-full coverage. This is the redundancy principle of §3.3 made empirical: positive-skew (sparse peaks) and negative-skew (redundant high-importance frames) are different distribution shapes with the same selection answer. 
+
+Secondly , baseline accuracy mirrors the Meff curve: questions in the near-uniform regime are intrinsically harder ( ∼ 21% baseline accuracy) while questions at either tail are easier ( ∼ 28 to 32% ), so the two curves visibly mirror each other across skew( M ). The selector’s compute allocation tracks intrinsic difficulty without ever observing the answer. Thirdly , the adaptive variability is quantitatively large: the cross-question coefficient of variation (CV, standard deviation over mean) in compute is 0.78 for GridProbe versus 0.018 for the fixed-input baseline ( 44 × higher), at 0.30 × the per-question average compute. This level of input-dependent compute variability is a signature of adaptive test-time compute that no fixed-input baseline can produce. 
+
+# 5 Ablation Study 
+
+We run three ablations: selector size in cross-model pairings, the temporal vs. importance order of the focused pass, and an image-collation efficiency variant. All ablations use Qwen3-VL-2B at K=12 
+
+on Video-MME-v2 with M =AUTO unless stated. 
+
+Selector size. Holding the QA fixed at 2B, scaling the selector from 2B to 8B decreases Avg Acc while increasing TFLOPs (Table 4), the opposite of the naive capability-scaling expectation.The per-question average ¯Meff is roughly stable across selector sizes ( 52 .9 → 56 .2 → 58 .5 for 2B/4B/8B), which suggests that the accuracy degradation is not driven by more aggressive selection. Instead, a stronger selector likely identifies frames informative for its own reasoning capacity, which need not align with what the smaller QA needs to answer. The cross-model amortization (§4.2) is therefore one-directional: a small probe paired with a more capable answerer, not the reverse. 
+
+Frame ordering. The focused pass receives the top-Meff frames in temporal order. Passing them in descending-importance order (same frames, different positional encoding) costs −1.25 pp Avg Acc (Table 5). The effect is small but consistent: temporal ordering preserves the positional encoding the VLM was trained to read. 9Image collation. As an efficiency variant, the focused pass can composite the top-Meff frames into a single ⌈√Meff ⌉×⌈ √Meff ⌉ tiled image at 2048 ×2048 (with empty cells when Meff is not a perfect square), reducing compute to one image’s worth of tokens at the cost of temporal positional encoding and per-frame pixel budget. Collation reaches 0.29 × the standard two-stage’s compute at a −1.16 pp Avg Acc cost (Table 6), making it a credible operating point when extreme compute is the constraint. 
+
+# 6 Conclusion and Limitations 
+
+We introduced GridProbe , a training-free posterior-probing paradigm in which row and column probes over a K×K grid produce a question-conditioned importance map, and a closed-form shape statistic sets the per-question budget Meff . GridProbe delivers Pareto-efficient single-model operation on Video-MME-v2 and Pareto-dominant operation on LongVideoBench, the cross-model variant (2B selector with a stronger QA) Pareto-dominates the 2B-monolithic baseline on both benchmarks without retraining, and the per-question Meff tracks intrinsic question difficulty without ever observing the answer. A few caveats and natural refinements remain. The TFLOPs reduction is most pronounced when the focused pass dominates inference, and more modest with large prompts (e.g., LVB’s ∼700–1,000 subtitle tokens that every probe re-processes) or small grid sizes ( K< 10 , where the 2K probe passes themselves become a non-trivial fraction of total cost). The cross-model pipeline shifts cost from compute toward host memory, since both selector and QA are loaded simultaneously. Two refinements are natural follow-ups: allowing γ0 to adapt to video length or pool density, and extending the shape statistic to other per-cell importance signals such as attention magnitudes or retrieval scores. Finally, our probe confidence max y pθ (y | S, q ) is defined for the finite answer space of multiple-choice benchmarks. Generalization to open-ended QA is non-trivial and left to future work. 
+
+# 7 Acknowledgment 
+
+We are grateful to the KAUST Academy for its generous support, and especially to Prof. Sultan Albarakati who made this work possible. For computer time, this research used Ibex managed by the Supercomputing Core Laboratory at King Abdullah University of Science & Technology (KAUST) in Thuwal, Saudi Arabia. 
+
+# References 
+
+[1] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, et al. Qwen3-vl technical report. arXiv preprint arXiv:2511.21631 , 2025. [2] Hui Sun, Shiyin Lu, Huanyu Wang, Qing-Guo Chen, Zhao Xu, Weihua Luo, Kaifu Zhang, and Ming Li. Mdp3: A training-free approach for list-wise frame selection in video-llms. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 24090–24101, 2025. [3] Sicheng Yu, Chengkai Jin, Huanyu Wang, Zhenghao Chen, Sheng Jin, Zhongrong Zuo, Xiaolei Xu, Zhenbang Sun, Bingni Zhang, Jiawei Wu, et al. Frame-voyager: Learning to query frames for video large language models. arXiv preprint arXiv:2410.03226 , 2024. [4] Zirui Zhu, Hailun Xu, Yang Luo, Yong Liu, Kanchan Sarkar, Zhenheng Yang, and Yang You. Focus: Efficient keyframe selection for long video understanding. arXiv preprint arXiv:2510.27280 , 2025. [5] Yiqing Yang and Kin-Man Lam. Hfs: Holistic query-aware frame selection for efficient video reasoning. 
+
+arXiv preprint arXiv:2512.11534 , 2025. [6] Weiyun Wang, Zhangwei Gao, Lixin Gu, Hengjun Pu, Long Cui, Xingguang Wei, Zhaoyang Liu, Linglin Jing, Shenglong Ye, Jie Shao, et al. Internvl3. 5: Advancing open-source multimodal models in versatility, reasoning, and efficiency. arXiv preprint arXiv:2508.18265 , 2025. [7] Hongyu Li, Jinyu Chen, Ziyu Wei, Shaofei Huang, Tianrui Hui, Jialin Gao, Xiaoming Wei, and Si Liu. Llava-st: A multimodal large language model for fine-grained spatial-temporal understanding. In Pro-ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 8592–8603, 2025. 
+
+10 [8] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al. Learning transferable visual models from natural language supervision. In International conference on machine learning , pages 8748–8763. PmLR, 2021. [9] Xiaohua Zhai, Basil Mustafa, Alexander Kolesnikov, and Lucas Beyer. Sigmoid loss for language image pre-training. In Proceedings of the IEEE/CVF international conference on computer vision , pages 11975–11986, 2023. [10] De-An Huang, Subhashree Radhakrishnan, Zhiding Yu, and Jan Kautz. Frag: Frame selection augmented generation for long video and long document understanding. arXiv preprint arXiv:2504.17447 , 2025. [11] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, et al. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 , 2025. [12] Mohamed Eltahir, Ali Habibullah, Yazan Alshoibi, Lama Ayash, Tanveer Hussain, and Naeemullah Khan. Videoatlas: Navigating long-form video in logarithmic compute. arXiv preprint arXiv:2603.17948 , 2026. [13] Xiaohan Wang, Yuhui Zhang, Orr Zohar, and Serena Yeung-Levy. Videoagent: Long-form video under-standing with large language model as agent. In European Conference on Computer Vision , pages 58–76. Springer, 2024. [14] Sullam Jeoung, Goeric Huybrechts, Bhavana Ganesh, Aram Galstyan, and Sravan Bodapati. Adaptive video understanding agent: Enhancing efficiency with dynamic frame sampling and feedback-driven reasoning. arXiv preprint arXiv:2410.20252 , 2024. [15] Chaoyou Fu, Haozhi Yuan, Yuhao Dong, Yi-Fan Zhang, Yunhang Shen, Xiaoxing Hu, Xueying Li, Jinsen Su, Chengwu Long, Xiaoyao Xie, et al. Video-mme-v2: Towards the next stage in benchmarks for comprehensive video understanding. arXiv preprint arXiv:2604.05015 , 2026. [16] Haoning Wu, Dongxu Li, Bei Chen, and Junnan Li. Longvideobench: A benchmark for long-context interleaved video-language understanding. Advances in Neural Information Processing Systems , 37:28828– 28857, 2024. 
+
+11 A Implementation Details 
+
+Models. All experiments use Qwen3-VL-Instruct backbones at three sizes (2B, 4B, 8B parameters) loaded from HuggingFace Transformers. We perform zero-shot inference: no fine-tuning, no chain-of-thought prompting, no tool-use. Final answers are read off via letter-token scoring, taking arg max y pθ (y | · ) over 
+
+y ∈ { A, B, C, D, E, F, G, H } (or the letter set for LongVideoBench’s 5-way questions). 
+
+Hyperparameters. The defaults used throughout the paper are K=12 (so K2=144 frames in the pool), 
+
+γ0=0 .25 for the Meff closed-form rule, and a small variance threshold to set σ=0 in the degenerate near-uniform case (§3.3). The probe stage runs at reduced spatial resolution 224 ×224 . the focused stage runs at the model’s native resolution with Qwen3-VL’s adaptive per-frame token allocation. 
+
+Pipeline. For each (video, question) pair, we extract K2=144 frames uniformly from the video duration. Stage 1 runs 2K=24 probe passes through the frozen VLM ( K row passes and K column passes), where each pass collates K=12 frames into a single ⌈√K2⌉×⌈ √K2⌉ tiled image at 2048 ×2048 . Each pass produces a softmax confidence over the answer letters; we take the top-1 confidence as the probe score per row/column. The importance map is M [r, c ] = cr · cc (Eq. 3). We then compute the shape statistic σ = |skew( M )| + 
+
+> 12
+
+max(0 , kurt ex (M )) and the per-question budget Meff = K2/(1 + γ0Kσ ). Stage 2 runs a single forward pass on the top-Meff frames (by M score) at the model’s native resolution. 
+
+Benchmarks. Video-MME-v2 (visual-only): n=3 ,200 questions across 800 videos in 4 duration bins (15s, 60s, 600s, 3600s). We report Non-Lin (V2’s official grouped score) and Avg Acc. LongVideoBench validation set (with subtitles): subtitles are concatenated to the prompt as text in both the probe and focused stages. We report Long (3600-second bin) and Overall accuracy. 
+
+Hardware. All experiments ran on a single node with 8× NVIDIA A100 GPUs. We shard each evaluation across the 8 GPUs by sample id (interleaved partitioning to balance the duration-bin distribution across shards) and merge per-shard JSON outputs. Source code will be released publicly upon publication. 
+
+# B Detailed Breakdown Tables 
+
+This section provides the per-bin breakdown referenced from Table 1. 
+
+B.1 Video-MME-v2: Per-Level and per-Group-Type 
+
+Video-MME-v2 organizes questions into three cognitive levels (L1: Information Aggregation, L2: Temporal Understanding, L3: Complex Reasoning) and two group types ( Consistency for capability-consistency groups, 
+
+Coherence for reasoning-coherence groups). The Consistency block contains 519 of 800 groups and the Coherence block contains 281 of 800 groups. Table 7 reports Non-Lin score for each method at each breakdown axis. Against the same-model 2B baseline, GridProbe (M =AUTO ) wins on Level 2 temporal understanding (∆=+0 .37 Non-Lin), where evidence is concentrated at a transition-bearing event, and loses most on Level 1 multi-point aggregation ( ∆= −1.92 Non-Lin), where evidence is genuinely distributed across many timestamps and no small subset suffices. The σ-driven adaptive M degrades gracefully toward K2 on near-uniform maps, so the method does not overcommit to selection when evidence is dispersed but has nothing to gain when it is already fully covered. 
+
+B.2 LongVideoBench: Full Per-Duration Breakdown 
+
+The main table reports only LongVideoBench’s Long bin and Overall . Table 8 adds the four duration buckets. 
+
+GridProbe (M =AUTO ) wins on the 600-sec ( +2 .2 pp) and 3600-sec ( +1 .6 pp) bins, where uniform K2
+
+undersamples the timeline and question-conditioned selection picks the relevant moments, and loses on the 15-sec and 60-sec bins ( −3.1 pp each), where 144 uniform frames already saturate the timeline and selection is unnecessary. The same pattern appears on V2’s cognitive levels (§B.1): the method earns its keep where evidence is sparse and degrades gracefully when it is already fully covered. 
+
+12 Table 7: V2 Non-Lin breakdown by cognitive level (L1/L2/L3) and group type (Consis-tency/Coherence). Visual-only, K=12 , n=3 ,200 .
+
+Method Level 1 Level 2 Level 3 Consistency Coherence Overall 
+
+Single-model: Qwen3-VL-2B-Instruct 
+
+Baseline (no selection) 13.83 7.50 8.30 10.18 8.12 9.45 + GridProbe (M =AUTO ) 11.91 7.87 6.72 9.13 7.03 8.39 
+
+Same-model: Qwen3-VL-4B-Instruct 
+
+Baseline (no selection) 19.43 12.56 12.12 15.04 12.40 14.11 + GridProbe (M =AUTO ) 18.98 10.73 10.82 14.20 10.40 12.86 
+
+Same-model: Qwen3-VL-8B-Instruct 
+
+Baseline (no selection) 18.98 15.19 12.32 15.53 13.75 14.91 + GridProbe (M =AUTO ) 16.18 11.78 11.11 12.95 11.97 12.60 
+
+Cross-model: 2B selector → 4B QA 
+
+4B baseline (no selection) 19.43 12.56 12.12 15.04 12.40 14.11 + GridProbe (2B selector, ours) 14.42 9.30 9.68 11.37 9.64 10.76 
+
+Cross-model: 2B selector → 8B QA 
+
+8B baseline (no selection) 18.98 15.19 12.32 15.53 13.75 14.91 + GridProbe (2B selector, ours) 15.28 11.26 9.93 12.02 11.12 11.70 
+
+Table 8: LongVideoBench Avg Acc % by source-video duration (15s / 60s / 600s / 3600s / Overall), 
+
+K=12 , with subtitles. ∆ rows: GridProbe ’s gain over the corresponding no-selection baseline. 
+
+Method 15-sec 60-sec 600-sec 3600-sec Overall 
+
+Single-model: Qwen3-VL-2B-Instruct 
+
+2B baseline (no selection) 72.9 77.3 55.3 49.8 56.4 + GridProbe (M =8 , fixed) 66.7 69.1 57.3 47.3 54.6 + GridProbe (M =AUTO ) 69.8 74.2 57.5 51.4 57.3 
+
+∆ GridProbe (auto) vs. 2B base. −3.1 −3.1 +2.2 +1.6 +0.9
+
+Same-model: Qwen3-VL-4B-Instruct (selector = QA) 
+
+4B baseline (no selection) 81.4 79.4 64.6 57.3 64.1 + GridProbe (M =AUTO , same-model) 79.8 80.4 61.7 55.9 62.4 
+
+Same-model: Qwen3-VL-8B-Instruct (selector = QA) 
+
+8B baseline (no selection) 80.6 74.2 64.8 55.1 62.7 + Uniform sampling 77.5 76.3 60.9 51.1 59.3 + GridProbe (M =AUTO , same-model) 76.7 74.2 62.6 53.4 60.7 
+
+Cross-model: 2B selector → 4B QA 
+
++ Uniform sampling 77.5 78.4 60.0 50.4 58.8 + GridProbe (2B selector, ours) 76.7 75.3 60.2 54.3 60.4 
+
+∆ GridProbe (2B →4B) vs. 2B base. +3.8 −2.0 +4.9 +4.5 +4.0
+
+Cross-model: 2B selector → 8B QA 
+
++ Uniform sampling 79.8 75.3 59.7 49.8 58.5 + GridProbe (2B selector, ours) 76.0 74.2 61.7 52.0 59.7 
+
+∆ GridProbe (2B →8B) vs. 2B base. +3.1 −3.1 +6.4 +2.2 +3.3
+
+13
