@@ -1,0 +1,530 @@
+Title: TCP-SSM: Efficient Vision State Space Models with Token-Conditioned Poles
+
+URL Source: https://arxiv.org/pdf/2605.11563v1
+
+Published Time: Wed, 13 May 2026 00:42:05 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# TCP-SSM: Efficient Vision State Space Models with Token-Conditioned Poles 
+
+Sara Shoouri Morteza Tavakoli Taba Hun-Seok Kim 
+
+University of Michigan 
+
+{sshoouri, tmorteza, hunseok}@umich.edu 
+
+## Abstract 
+
+State Space Models (SSMs) have emerged as a compelling alternative to attention models for long-range vision tasks, offering input-dependent recurrence with linear complexity. However, most efficient SSM variants reduce computation cost by modifying scan routes, resolutions, or traversal patterns, while largely leaving the recurrent dynamics implicit. Consequently, the model’s state-dependent memory behavior is difficult to control, particularly in compact backbones where long scan paths can exceed the effective memory horizon. We propose Token-Conditioned Poles SSM (TCP-SSM), a structured selective SSM framework that improves effi-ciency while making recurrence dynamics explicit and interpretable through stable poles. TCP-SSM builds each scan operator with 1) real poles that model monotone or sign-alternating decay, and 2) complex-conjugate poles that capture damped oscillatory responses. Using bounded radius and angle modulation, TCP-SSM converts shared base poles into token-dependent poles, allowing each scan step to adapt its memory behavior to the current visual token while preserving pole stabil-ity. For practical scalability, we integrate grouped pole sharing with a lightweight low-rank input pathway, yielding an efficient scan operator that preserves linear-time scan complexity. Across image classification, semantic segmentation, and object detection, TCP-SSM reduces SSM computation complexity up to 44% in Vision Mamba-style models while maintaining or surpassing baseline accuracy. 
+
+## 1 Introduction 
+
+Efficient long-range modeling remains a central challenge in modern computer vision. Convolutional Neural Networks [ 22 , 50 , 18 , 19 , 33 , 6, 52 ] remain appealing due to their structured inductive biases and efficiency, but their localized kernels require long-range dependencies to be accumulated progressively through depth. Vision Transformers [ 32 , 1, 69 , 10 , 61 , 55 , 49 , 48 ] address this limitation with self-attention, enabling direct global token interactions and strong long-range modeling, although their quadratic complexity scales poorly at high spatial resolutions. More recently, State Space Models (SSMs) [ 13 , 51 , 11 , 12 , 14 , 15 , 31 , 74 ], especially Mamba-style selective scans, have emerged as compelling alternatives by combining linear-time sequence modeling with input-dependent selective dynamics. This balance between global context modeling and efficiency makes them well-suited for large-receptive-field vision tasks, including image classification, object detection, and segmentation. Despite this promise, designing efficient visual SSMs remains challenging since visual data are inher-ently two-dimensional, whereas recurrence operates over a one-dimensional token ordering. Current Vision Mamba architectures address this mismatch with multi-directional cross-scanning strategies [ 31 , 74 ] that better preserve spatial structure after flattening. However, in compact backbones with limited hidden-state capacity, these trajectories can exceed the layer’s effective memory horizon, causing distant information to attenuate before contributing meaningfully to the representation. Prior work addresses this through scan engineering, including skip sampling and multi-scale traversal schemes that reduce long-range forgetting [ 40 , 68 , 20 , 46 ]. Although effective, these methods modify how spatial tokens are visited rather than how the recurrent dynamics store, retain, or propagate 
+
+> Preprint.
+> arXiv:2605.11563v1 [cs.CV] 12 May 2026
+
+Figure 1: Illustration of the dominant pole-derived memory horizon at layers 13, 20, and 22 (of 24) for an example image. Brighter regions denote larger τ (slower decay, longer memory). T1, T2, and T3 highlight the longest memory, fastest decay, and strongest radius-weighted oscillation (ρmax θ/π ). Across depth, the pole-conditioned recurrence evolves from coarse object-level memory toward discriminative regions such as the face and eyes. information. As a result, the scan’s memory behavior remains largely implicit, making it difficult to characterize the learned timescales, signal decay rates, and adaptation to local image content. We take a different perspective and argue that efficient visual SSMs should be improved not only through scan design, but also through the recurrence structure itself. From a control theory perspective, the memory and frequency response of recurrent systems are governed by poles in the complex plane, where the pole radius controls information decay and the pole angle determines localized oscillatory behavior [ 35 , 2 ]. Rather than relying on an unconstrained selective recurrence to implicitly discover suitable timescales, we introduce efficient SSMs with Token-Conditioned Poles (TCP-SSM) with an explicit and stable parameterization that adapts in a controlled manner. TCP-SSM equips the scan operator with a stable base denominator built from real and complex pole components, where real poles capture monotone memory decay and complex poles model oscillatory and frequency-selective behavior. The pole parameters vary with the input within bounded ranges, enabling spatially adaptive decay and oscillatory modes while preserving a compact and interpretable dynamical structure. To ensure efficiency, we pair the structured pole parameterization with a lightweight low-rank input pathway, preserving SSM content selectivity without substantial hidden-state overhead. We further reduce computation through grouped pole sharing, allowing different channel groups to learn distinct dynamical profiles while avoiding fully independent poles for every feature dimension. This design retains the linear-time complexity of selective scanning while enhancing long-range expressiveness. In addition to improving efficiency, the pole-based formulation provides a direct view of the learned memory dynamics, which are often entangled within opaque state updates in conventional selective scans. Pole radii reveal how quickly past information is forgotten, pole angles characterize oscillatory modes and frequency preferences, and token-conditioned modulation shows how these behaviors vary across spatial contexts, offering a concrete interpretation of when the model preserves or suppresses information, as shown in Figure 1. We evaluate the proposed framework on Vision Mamba (Vim) backbones and EfficientVMamba (EVM) [ 40 ]. Across image classification, segmentation and object detection, our method improves the accuracy-efficiency trade-off, reducing SSM computation by up to roughly 44% in Vim and 70% in EVM-Base while maintaining comparable/better accuracy. Our contributions can be summarized as follows: • We introduce a new structured selective SSM formulation with token-conditioned poles in which stable real and complex poles define the base recurrence dynamics, while token-conditioned modulation adapts memory and frequency response to the input. • We combine grouped pole sharing with a lightweight low-rank input pathway, preserving linear-time scanning while reducing long-range modeling complexity in visual SSMs. • Across classification, segmentation, and object detection, explicit TCP-SSM improves the accuracy-efficiency trade-off of visual SSMs, reducing SSM computation by 44% in Vim and 70% in EVM-Base while maintaining comparable/improved accuracy. 
+
+## 2 Related work 
+
+2.1 Efficient Vision Backbones 
+
+Computationally efficient vision backbones have evolved from lightweight convolutional networks to mobile-oriented transformers and hybrid architectures. Early designs such as ShuffleNetV2 [ 34 ]improve practical efficiency by optimizing memory access costs, while MobileNetV3 [ 21 ] advances 2Overview of TCP -SSM in Vision Mamba                       
+
+> Norm
+> Projection
+> Forward
+> Conv1D
+> Forward
+> TCP -SSM
+> SiLU
+> Backward
+> Conv1D
+> Backward
+> TCP -SSM
+> Projection & Merge
+> Flatten & Projection
+> Angle Modulation
+> Prediction
+> Radius Modulation
+> Prediction
+> Shared Grouped
+> Base Denominator
+> Time -varying
+> Denominator
+> Token -Conditioned Modulation
+> Direct Path
+> Grouped Base Token -Conditioned Denominator 𝑄 𝑔 𝑍 −1𝑊 𝜃 𝑊 𝜌 𝑥 𝑡 𝑦 𝑡 𝐷𝑥 𝑡 𝑄 𝑡 ,𝑔 𝑍 −1𝑠 𝑡 ,𝑔
+> (𝜃 )𝑠 𝑡 ,𝑔
+> (𝜌 )
+> Token -Conditioned Pole -Structured Selective SSM (TCP -SSM) 𝑜 𝑡 =𝑦 𝑡 +𝐷𝑥 𝑡
+> Group Recurrent Branch
+> (per group g) 𝑦 𝑡
+> (𝑔 )=𝜂 𝑡
+> (𝑔 )−𝑞 𝑡 ,𝑔 ,𝑖 𝑦 𝑡 −𝑖
+> (𝑔 )
+> 𝑟
+> 𝑖 =1
+> Group Recurrent Branch
+> (per group g) 𝑦 𝑡
+> (𝑔 )=𝜂 𝑡
+> (𝑔 )−𝑞 𝑡 ,𝑔 ,𝑖 𝑦 𝑡 −𝑖
+> (𝑔 )
+> 𝑟
+> 𝑖 =1
+> Im
+> Re
+> radius+angle
+> radius only radius only
+> radius+angle
+> Im
+> Re
+> radius+angle
+> radius only radius only
+> radius+angle 𝑥 ×𝟐𝟒 𝑜 𝑓𝑤𝑑 𝑜 𝑏𝑤𝑑
+> Projection 𝐷 Projection 𝐷
+> Latent Causal Window
+> Projection
+> Low -Rank Numerator 𝛾 𝑡 𝛼 𝑡 𝜙 𝑡 𝑉 𝑇
+> Latent Projection
+> Mixing Coeffs
+> Gate Control 𝑊 𝛼 𝑊 𝛾 𝜙 𝑡−𝑟 𝜓 𝑡 =ɸ𝑡 𝛼 𝑡 𝑈 𝜂 𝑡 ɸ𝒕
+> : Window size r
+> Base Pole Bank 𝑥
+> Elementwise
+> Multiplication
+> Multiplication
+> Base Poles
+> Addition
+> TCP Poles 𝜙 𝑡− 1𝜙 𝑡
+
+Figure 2: Overview of TCP-SSM Model. Left: TCP-SSM is inserted into the Vision Mamba model. Right: For token xt, a shared grouped pole bank defines a stable base denominator Qg (z−1),while token-conditioned radius and angle modulation produce the local denominator Qt,g (z−1). A lightweight low-rank numerator forms the driving signal ηt, and the grouped recurrent branch outputs 
+
+yt. The final output ot combines recurrent memory with a learned diagonal direct path. accuracy-latency trade-offs through hardware-aware neural architecture search and platform-specific refinement. GhostNetV2 [ 53 ] further improves inexpensive convolutional feature generation with hardware-friendly long-range spatial interaction. Hardware-aware search frameworks such as Once-for-All [ 4] and FBNetV3 [ 7] extend this direction by learning adaptable model families or jointly optimizing architectures and training recipes under deployment constraints. These ideas have also shaped transformer and hybrid backbones, where MobileViT [ 37 ] introduces global token mixing into mobile models, MobileViTv2 [ 38 ] reduces latency with separable linear-complexity attention, and AutoFormer [ 62 ], EfficientFormerV2 [ 26 ], EfficientViT [ 30 ], and FasterViT [ 17 ] improve mobile transformer efficiency through search, memory-efficient attention, or hierarchical design. Recent hybrids such as SwiftFormer [ 44 ], RepViT [ 57 ], and MobileNetV4 [ 41 ] further explore additive attention, transformer-inspired convolutions, and unified search spaces. Our work is complementary to this line of research, but instead of introducing another lightweight backbone or attention mechanism, we improve the recurrence dynamics of compact vision state space models. 
+
+2.2 State Space Models for Visual Representation 
+
+State space models have become competitive alternatives to attention for visual representation learning, with S4 [ 13 ], S5 [ 51 ], Mamba [ 12 ], and Mamba-2 [ 8 ] establishing efficient long-range modeling through structured state space parameterizations, input-dependent selective dynamics, and state space duality. In vision, S4ND [39] extends SSMs to images and videos, while Vision Mamba [74 ] and VMamba [ 31 ] demonstrate strong generic backbones through bidirectional modeling and 2D cross-scan operators. This paradigm has expanded through Mamba-ND [ 24 ] for multidimensional data, MambaVision [ 16 ] for hybrid Mamba-Transformer backbones, Mamba-R [ 60 ] for register-token scaling, and V2M [ 59 ] and 2DMamba [ 71 ] for native two-dimensional state updates. VM-UNet [ 43 ], SegMamba [ 67 ], and PointMamba [ 27 ] further show their versatility across visual domains. To improve 2D efficiency, LocalMamba [ 20 ], PlainMamba [ 68 ], and EfficientVMamba [ 40 ] optimize spatial token serialization through windowed, continuous, or atrous scanning, while DefMamba [ 29 ]and Multi-Scale VMamba [ 46 ] introduce adaptive and multi-scale traversals. Other works redesign the state space block itself, including VSSD [ 47 ] with non-causal state space duality, EfficientViM [ 23 ]with compressed hidden states, and GroupMamba [ 45 ] with grouped visual state space modeling. Our work shares the goal of efficient visual SSM design but directly structures recurrence through stable poles and token-conditioned modulation, enabling efficient and interpretable long-range modeling. 
+
+## 3 Method 
+
+This section introduces the proposed TCP-SSM: Efficient State Space Model with Token-Conditioned Poles . The overview of TCP-SSM is demonstrated in Figure 2. We first establish notation, review state space and control theory preliminaries, and then present our algorithm. 
+
+Notation: Let F ∈ RB×H×W ×E be the input feature map with batch size B, spatial dimensions of H × W , and E channels. A scan rule flattens F into a token sequence X ∈ RB×M ×E , where 3M = HW . For clarity, we describe the method for a single scan route. In practice, it is applied independently along each scan direction of a Vision Mamba-style backbone, with outputs fused exactly as in the original architecture. We partition the E channels into G equal groups of size Eg = E/G . For a token xt ∈ RE at position 
+
+t, its g-th group is x(g) 
+
+> t
+
+∈ REg . The recurrent output prior to the direct path is yt ∈ RE , with its group block denoted y(g) 
+
+> t
+
+∈ REg . The final processed output is ot ∈ RE . We define r as the denominator polynomial order and rf as the low-rank numerator dimension. We reserve the scalar variables ut and 
+
+vt for classical dynamical systems and use xt, yt, and ot for multidimensional feature representations in our model. 
+
+3.1 Preliminaries State Space Models: Classical continuous-time SSMs map a scalar input u(τ ) ∈ R to an output 
+
+v(τ ) ∈ R via a latent state h(τ ) ∈ RN :
+
+˙h(τ ) = Ach(τ ) + bcu(τ ), v(τ ) = c⊤h(τ ) + d u (τ ), (1) where Ac ∈ RN ×N is the continuous transition matrix, bc ∈ RN injects the input into the latent state, 
+
+c ∈ RN maps the state to the output, and d ∈ R is a direct feedthrough term. Here N denotes the latent dynamical system size. Discretizing this system with a step size ∆ > 0 under a zero-order hold (ZOH) [ 58 ] assumption yields the discrete-time update: 
+
+ht = Ah t−1 + b u t, vt = c⊤ht + d u t. (2) When Ac is invertible, then A = exp(∆ Ac) and b = A−1
+
+> c
+
+ exp(∆ Ac) − Ibc, where I is the identity matrix. In visual backbones, the input at position t is a feature token xt ∈ RE . Thus, the scalar state space model is replicated across all E channels. For a given channel e, the scalar input xt,e drives a distinct latent state ht,e ∈ RN according to ht,e = Aeht−1,e + bext,e and vt,e = c⊤ 
+
+> e
+
+ht,e + dext,e . Selective SSMs enhance this baseline by making the discretization and state interactions token-dependent, dynamically adapting memory at each spatial position. 
+
+Control-Theoretic View: A control-theoretic perspective in the z-domain reveals the memory mechanism more explicitly. Consider the discrete-time linear time-invariant system (LTI) from Eq. 2. Assuming a zero initial state, the transfer function relating the input U (z) and output V (z) after the 
+
+z-domain transform [42] is defined as 
+
+H(z) ≜ V (z)
+
+U (z) = d + c⊤(I − Az −1)−1b. (3) This function can equivalently be expressed in rational form as H(z) = P (z−1) 
+
+> Q(z−1)
+
+, where P and Q
+
+are the numerator and denominator polynomials. A denominator of order r expands to Q(z−1) = 1 + Pri=1 qiz−i. Assuming a unit numerator, the corresponding difference equation vt = ut −Pri=1 qi vt−i demonstrates that the denominator uniquely dictates how past information persists or decays. These dynamics are governed strictly by the polynomial roots (i.e., the system poles), which equal the eigenvalues of A (see Section ?? ). System stability requires all poles to reside strictly inside the unit disk [56]. Translating these insights into a practical architecture relies on two elementary stable factors in 
+
+Q(z−1). A first-order real factor Qr (z−1) = 1 − az −1 (where |a| < 1) enforces monotone ( a > 0)or alternating ( a < 0) exponential decay proportional to ak, where k is the discrete lag index. A second-order complex factor is defined as 
+
+Qc(z−1) = 1 − 2ρ cos( θ) z−1 + ρ2z−2, (4) where 0 < ρ < 1 and 0 < θ < π . The corresponding conjugate poles ρe ±jθ generate a decaying oscillation. The radius ρ sets the exponential envelope and the angle θ determines the angular frequency, providing an interpretable basis for parameterizing recurrence denominators. 
+
+3.2 TCP-SSM: Token-Conditioned Pole-Structured Selective SSM 
+
+The proposed formulation relies on three foundational components: 1) a structured denominator of stable real and complex-conjugate poles shared across channel groups, 2) data-dependent modulation of these poles, and 3) a lightweight low-rank numerator for the driving signal. This design preserves 4the linear-time efficiency of selective scanning while rendering the dynamics more interpretable, structured, and analytically tractable. All proofs are deferred to the supplementary material. 
+
+Stable Grouped Base Denominator: Each of G channel groups shares a base denominator polynomial , defining its pole bank prior to token-conditioned modulation. Given L real and K
+
+complex pole families (yielding a total order of r = L + 2 K), the base denominator for group g is: 
+
+Qg (z−1) = 
+
+> L
+
+Y
+
+> ℓ=1
+
+ 1 − ag,ℓ z−1 KY
+
+> k=1
+
+ 1 − 2ρg,k cos( θg,k )z−1 + ρ2
+
+> g,k
+
+z−2 . (5) To guarantee stability, all poles must strictly reside inside the unit disk ( ag,ℓ ∈ (−1, 1) , ρg,k ∈ (0 , 1) ,and θg,k ∈ (0 , π )). We enforce this by mapping unconstrained learned variables into valid ranges using a constant boundary margin 0 < ε < 1. Complex poles are bounded via sigmoid function ( σ)applied to trainable pole parameters ˆρg,k and ˆθg,k such that: 
+
+ρg,k = (1 − ε)σ(ˆ ρg,k ), θg,k = πσ (ˆθg,k ). (6) For real poles, we use a decoupled signed-magnitude parameterization that separates the response sign ¯sg,ℓ from the magnitude ¯ρRg,ℓ , enabling the subsequent selective construction. Given trainable parameters ˆρRg,ℓ and ˆsg,ℓ , we define the real pole in a way that guarantees |ag,ℓ | < 1:
+
+ag,ℓ = ¯ sg,ℓ ¯ρRg,ℓ , ¯ρRg,ℓ = (1 − ε)σ(ˆ ρRg,ℓ ) ∈ (0 , 1) , ¯sg,ℓ = tanh(ˆ sg,ℓ ) ∈ (−1, 1) . (7) 
+
+Proposition 1. If |ag,ℓ | < 1 for all real factors and 0 < ρ g,k < 1, 0 < θ g,k < π for all complex factors, then all poles associated with Qg lie strictly inside the unit disk. Hence, each grouped base denominator is Schur stable [3] (see Section ?? ). 
+
+Token-conditioned Grouped Denominator: We introduce time-varying dynamics by replacing the base grouped denominator Qg with a token-dependent Qt,g . The current token xt modulates the shared base poles to achieve input-dependent selectivity. For each group g, we obtain a strictly positive radius scale s(ρ) 
+
+> t,g
+
+and a bounded angle scale s(θ) 
+
+> t,g
+
+via: 
+
+s(ρ) 
+
+> t,g
+
+= δmin + softplus  [Wρxt + bρ]κ(g)
+
+
+
+δ0
+
+, s(θ) 
+
+> t,g
+
+= 1 + λθ tanh  [Wθ xt + bθ ]κ(g)
+
+ . (8) Here δmin ≥ 0, δ0 > 0, and λθ ∈ [0 , 1) are fixed hyperparameters, where δmin and δ0 set the offset and normalization of the radius scale and λθ bounds the angle modulation around one. The trainable parameters are Wρ, W θ ∈ RC×E and bρ, b θ ∈ RC , where C = G gives group-specific modulation and C = 1 gives shared modulation. The index map satisfies κ(g) = g in the group-specific case and κ(g) = 1 in the shared case, so the obtained scales are broadcast across all groups. We adopt the shared configuration to improve the trade-off between performance and efficiency (see Table 5). The 
+
+s(ρ) 
+
+> t,g
+
+> 0 modulates the effective memory timescale by contracting or stretching pole magnitudes. The 
+
+s(θ) 
+
+> t,g
+
+, centered at 1, governs oscillatory behavior and its bounded tanh formulation prevents abrupt frequency shifts. These scales dynamically update the pole families as follows: 
+
+1. Real Poles: We update the signed-magnitude form as at,g,ℓ = ¯ sg,ℓ exp( s(ρ) 
+
+> t,g
+
+log ¯ ρRg,ℓ ). This scales the magnitude while preserving the sign ¯sg,ℓ , ensuring the response type (monotone vs. sign-alternating) remains fixed. Since s(ρ) 
+
+> t,g
+
+> 0 and ¯ρRg,ℓ ∈ (0 , 1) , the modulated magnitude strictly remains in (0 , 1) , ensuring the pole stays safely inside the unit disk. 
+
+2. Complex Poles: We similarly adjust the decay envelope and oscillation frequency via: 
+
+ρt,g,k = exp 
+
+
+
+s(ρ) 
+
+> t,g
+
+log ρg,k 
+
+
+
+, θt,g,k = clip 
+
+
+
+s(θ) 
+
+> t,g
+
+θg,k , 0, π 
+
+
+
+. (9) This construction natively preserves ρt,g,k ∈ (0 , 1) and enforces valid angular intervals, ensuring the poles remain in unit disk. Together with the real-pole update above, these modulations convert the stable base pole bank defined by Qg into a token-conditioned pole bank for scan step t. Specifically, the base poles ag,ℓ and ρg,k e±jθ g,k are transformed into token-conditioned poles as at,g,ℓ and 
+
+ρt,g,k e±jθ t,g,k using the modulation scales ( s(ρ/ θ ) 
+
+> t,g
+
+) predicted from xt. These modulated poles define the denominator Qt,g used by the recurrent scan. When the modulation is identity, with s(ρ/ θ ) 
+
+> t,g
+
+= 1 ,the construction recovers the base denominator Qg .5Substituting these modulated poles back into the grouped base form yields the fully expanded token-conditioned denominator: 
+
+Qt,g (z−1) = 
+
+> L
+
+Y
+
+> ℓ=1
+
+ 1 − at,g,ℓ z−1 KY
+
+> k=1
+
+ 1 − 2ρt,g,k cos( θt,g,k )z−1 + ρ2
+
+> t,g,k
+
+z−2 . (10) 
+
+Proposition 2. Assume that for all t, g, ℓ, k , we have |at,g,ℓ | ≤ 1 − ερ, 0 < ρ t,g,k ≤ 1 − ερ, and 
+
+θt,g,k ∈ [0 , π ]. Then every frozen local denominator Qt,g has all poles strictly inside the unit disk. Hence, each local grouped denominator is Schur stable (see Section ?? ). 
+
+Low-rank Numerator: While the denominator defines the system’s poles, a complete transfer function requires a numerator to dictate how past inputs excite these dynamics. Freezing the time-varying coefficients at step t yields a local transfer function Ht(z) = D + Pt,sc (z−1) 
+
+> Qt(z−1)
+
+, which explicitly isolates the zero-lag direct path D from the strictly causal numerator Pt,sc . We preserve D and construct the causal branch using our token-conditioned denominator alongside a lightweight low-rank numerator. For a multidimensional feature, a general strictly causal numerator at step t takes the form 
+
+Pt,sc (z−1) = Pri=1 Bt,i z−i with Bt,i ∈ RE×E , inducing a time-domain driving signal ηt =Pri=1 Bt,i xt−i. Since constructing the driving signal with dense matrices Bt,i is computationally expensive, we approximate this numerator via a low-rank factorization. Tokens are first projected into a compact latent space ϕt = V ⊤xt ∈ Rrf (V ∈ RE×rf , rf < E ), and the past r steps are assembled into a zero-padded causal window Φt = [ ϕt−1, . . . , ϕ t−r ] ∈ Rrf ×r .From the current token xt, we then predict token-dependent numerator coefficients and gating weights: 
+
+αt = Wαxt ∈ Rr , γt = σ(Wγ xt) ∈ Rrf , (11) where trainable parameters Wα ∈ Rr×E and Wγ ∈ Rrf ×E .The mixing coefficients αt blend the causal window into a low-rank latent mixture using ψt = Φ tαt =Pri=1 αt,i ϕt−i ∈ Rrf . Gating and up-projecting this mixture forms the final multidimensional driving signal such that: 
+
+ηt = U (γt ⊙ ψt) ∈ RE , U ∈ RE×rf , (12) where ⊙ denotes elementwise multiplication. Equivalently, the induced low-rank numerator can be written as 
+
+P LR 
+
+> t, sc
+
+(z−1) = U Diag( γt)
+
+> r
+
+X
+
+> i=1
+
+αt,i z−i
+
+!
+
+V ⊤ =
+
+> r
+
+X
+
+> i=1
+
+αt,i U Diag( γt)V ⊤z−i. (13) Hence, the dense matrices Bt,i are represented implicitly through the rank-rf factorization such that Bt,i = αt,i U Diag( γt)V ⊤. Finally, we partition the driving signal into G groups, ηt =[η(1)  
+
+> t
+
+; . . . ; η(G) 
+
+> t
+
+], ensuring each group receives the portion corresponding to its denominator Qt,g .Given the expanded token-conditioned denominator Qt,g (z−1) = 1 + Pri=1 qt,g,i z−i, the grouped recurrent branch is computed directly as: 
+
+y(g) 
+
+> t
+
+= η(g) 
+
+> t
+
+−
+
+> r
+
+X
+
+> i=1
+
+qt,g,i y(g)
+
+> t−i
+
+. (14) Concatenating these groups yields the full recurrent state yt ∈ RE . Lastly, incorporating a learned diagonal direct path D ∈ RE×E (as in Vision Mamba), yields the output as ot = yt + Dx t.This preserves local token information and stabilizes optimization when long-range recurrence is unnecessary. Ultimately, this explicitly isolates architectural roles: the denominator governs memory via stable poles, the low-rank numerator dictates state excitation, and the direct path preserves instantaneous context. 
+
+Computational efficiency: Given a single scan route, our proposed method has a dominant per-token-channel inference cost of O(2 r + 3 rf ). In contrast, a standard selective SSM incurs an O(7 N )
+
+cost in addition to the step-size projection. Thus, by keeping r and rf small, the proposed operator achieves computational efficiency while maintaining linear scaling with respect to sequence length 
+
+M and channel dimension E (see Section ?? ). 
+
+TCP-SSM Model Training: We train our token-conditioned pole model via feature-level distilla-tion using the pre-trained original SSM model as a teacher. Both share identical backbones, differing 6Table 1: Comparison on ImageNet-1K. SSM FLOPs are reported for models with an SSM branch.                                                                                                                                
+
+> Method Token mixing Input #Param. ↓SSM FLOPs ↓Top-1 (%) ↑Top-5 (%) ↑
+> ViT-B/16 [10] Attention 384 286M –77.9 95.3 Swin-T [32] Attention 224 229M –81.3 95.6 QuadMamba-Li [66] SSM 224 26.5M 318M 74.2 92.1 Vim-Ti-F [72] SSM 224 27.1M 497M 76.7 93.6 LocalViM-T [20] SSM 224 28M 825M 76.3 93.1 LocalViM-S [20] SSM 224 227.8M 1938.8 81.8 95.6 S4ND-ViT-B [39] SSM + Attention 224 289M 414M 80.4 –PlainMamba-L2 [68] SSM 224 225.7M 1459M 81.6 95.6 Mamba-ND [24] SSM 224 224M 1308M 81.7 –VMamba-T [31] SSM 224 230.2M 253M 82.5 95.9 Vim-T [74] SSM 224 27.1M 497.5M 76.1 93.0
+> TCP-Vim-T1 SSM 224 27.5M 295.3M (↓40 .6% )76.0 93.1 TCP-Vim-T2 SSM 224 28.1M 459.5M (↓7.6% )76.6 93.3
+> EVM-T [23] SSM 224 26.5M 109.3M 76.3 93.1 EVM-B [23] SSM 224 233.7M 233M 81.8 95.6
+> TCP-EVM-T1 SSM 224 26.4M 62.9M (↓42 .5% )76.3 93.0
+> TCP-EVM-B3 SSM 224 233.5M 129.9M (↓44 .2% )82.0 95.8 TCP-EVM-B5 SSM 224 233.5M 231.4M (↓0.7% )82.6 96.0
+
+only where the student introduces our proposed recurrent operator. The trainable parameters of the TCP-SSM operator include the base denominator pole parameters ˆρg,k , ˆθg,k , ˆρRg,ℓ , and ˆsg,ℓ , the token-modulation heads Wρ, bρ, Wθ , and bθ , the low-rank numerator parameters U , V , Wα, and Wγ ,and the diagonal direct path D. The denominator coefficients qt,g,i , numerator coefficients αt, and gates γt are generated from these learned parameters and the current token xt. Letting o(ℓ) 
+
+> b,t
+
+and ˜o(ℓ)
+
+> b,t
+
+denote the student and teacher outputs at layer ℓ, batch b, and token t, we compute an L1 loss across all intermediate feature maps: 
+
+Ldistill = 1
+
+Lblk 
+
+> Lblk
+
+X
+
+> ℓ=1
+
+1
+
+BM ℓEℓBX
+
+> b=1
+> Mℓ
+
+X
+
+> t=1
+
+o(ℓ) 
+
+> b,t
+
+− sg 
+
+
+
+˜o(ℓ)
+
+> b,t
+
+
+
+> 1
+
+. (15) Here Lblk is the number of distilled layers, Mℓ the token count, Eℓ the channel dimension, and sg( ·)
+
+the stop-gradient. The total loss L = Ltask + λdistill Ldistill leverages this intermediate guidance to encourage our efficient operator to emulate the teacher’s representations while jointly optimizing the final downstream task objective Ltask .
+
+## 4 Experiments 
+
+4.1 Image Classification Settings: We evaluate on the ImageNet-1K dataset [ 9] and report single-crop top-1 and top-5 validation accuracies. For fair comparison, we follow the DeiT [ 54 ] training recipe with AdamW optimization, cosine learning-rate decay, and standard augmentations including random resized cropping, horizontal flipping, label smoothing, and MixUp [ 70 ]. All experiments are performed on six RTX PRO 6000 Blackwell GPUs. Detailed training hyperparameters are provided in Table ?? ,and TCP-SSM configurations are summarized in Table ?? .To study the efficiency trade-off, we replace all 24 SSM layers in Vision Mamba-Tiny [ 74 ] with TCP-SSM and train two variants, TCP-Vim-T1 and TCP-Vim-T2, with TCP-Vim-T2 using a higher SSM FLOP budget. Both models are trained for 600 epochs with a learning rate of 1 × 10 −4. To evaluate generality, we apply TCP-SSM to EfficientVMamba [ 40 ], an ideal testbed since it modifies the scan pattern rather than the recurrence. We replace the SSM modules in the first two stages and keep the remaining architecture unchanged. We explore three variants. TCP-EVM-T1 trains for 700 epochs, while TCP-EVM-B1 and TCP-EVM-B2 train for 250 epochs. All use a batch size of 256 and a 1 × 10 −4 base learning rate. 
+
+Results: Table 1 evaluates the proposed TCP design on Vision Mamba and EfficientVMamba, demonstrating its generality across distinct visual SSM backbones. On the Vim backbone, TCP-Vim-T1 reduces SSM FLOPs by 40.6% (497.5M to 295.3M) while maintaining comparable Top-1 (76.0%) and Top-5 (93.1%) accuracy. TCP-Vim-T2 lowers the SSM cost to 459.5M and improves baseline accuracy to 76.6% Top-1 and 93.3% Top-5. EfficientVMamba shows a similar trend. TCP-EVM-T1 7Table 2: Comparison on ADE20K semantic segmentation. * denotes our produced results.                                                         
+
+> Method Token mixing Input #Param. ↓SSM FLOPs ↓mIoU (%) ↑
+> SegFormer-B0 [65] Attention 512 23.7M –37.4 DeiT-T [55] Attention 512 211M –39.2 Octopus-T [36] SSM 512 263.3M 0.5G 37.9 Octopus-B [36] SSM 512 285.8M 1.5G 39.0 EfficientVMamba-T [ 23 ]SSM 512 214M 0.6G 38.9 Vim-T + DyVM [63] SSM 512 212.5M 1.8G 40.1 Vim-Ti-F [72] SSM 512 234M 2.58G 40.4 Vim-T ∗[74] SSM 512 212.3M 2.58G 40.6
+> TCP-Vim-T1 SSM 512 212.7M 1.53G (↓40 .6% )41.1
+
+Table 3: Object detection and instance segmentation on COCO dataset. 
+
+Method #Param. SSM FLOPs ↓ AP box AP box  
+
+> 50
+
+AP box  
+
+> 75
+
+AP mask AP mask  
+
+> 50
+
+AP mask 
+
+> 75
+
+Vim-T [74] 60.0M 10.34G 45.7 63.9 49.6 39.2 60.9 41.7 
+
+TCP-Vim-T1 60.4M 6.14G (↓ 40 .6% ) 47.8 64.2 52.6 39.3 60.6 43.1 
+
+cuts SSM FLOPs by 42.5% (109.3M to 62.9M) while preserving the 76.3% baseline Top-1 accuracy. For EfficientVMamba-Base, TCP-EVM-B3 achieves a 44.2% FLOP reduction (233.0M to 129.9M) and improves accuracy to 82.0% Top-1 and 95.8% Top-5. When matched to the original compute budget, TCP-EVM-B5 reaches 82.6% Top-1 and 96.0% Top-5 accuracy using 231.4M SSM FLOPs. Ultimately, these results confirm that TCP’s benefits are architectural rather than backbone-specific, consistently maintaining strong performance with a graceful accuracy - FLOPs trade-off. 
+
+4.2 Semantic Segmentation Settings: To evaluate semantic segmentation performance, we conduct experiments on the ADE20K dataset [ 73 ] using UPerNet [ 64 ]. The backbone is initialized with ImageNet-pretrained weights and followed by a UPerHead for dense prediction. We optimize the model using AdamW with a learning rate of 1 × 10 −4 and a weight decay of 0.01, training for 180 K iterations with total batch size of 24. 
+
+Results: Table 2 presents semantic segmentation results on the ADE20K validation set, demon-strating the transferability of our proposed TCP design. Since a pretrained Vim-T segmentation checkpoint is publicly unavailable, we train this baseline under our experimental setup to ensure a fair comparison. Building upon this, TCP-Vim-T1 improves the baseline mIoU from 40.6% to 41.1% while simultaneously reducing SSM FLOPs by 40.6% (from 2.58G to 1.53G). This achievement is especially significant as dense prediction dictates much stricter demands on spatial granularity than standard image classification. The concurrent improvement in performance and reduction in computational overhead confirm that our token-conditioned pole mechanism does not compromise representational capacity for efficiency. 
+
+4.3 Object Detection and Instance Segmentation Settings: We evaluate TCP-SSM on COCO 2017 [ 28 ] for object detection and instance segmenta-tion within a ViTDet-style framework using Simple Feature Pyramid [ 25 ] and Cascade Mask R-CNN [5] heads. We replace only the Vim backbone with TCP-SSM and report box AP and mask AP. We provide detailed settings in Section ?? .
+
+Results: Table 3 presents object detection and instance segmentation results on COCO, demon-strating that the proposed TCP design transfers effectively to detection-based dense prediction tasks. TCP-Vim-T1 maintains enhanced downstream performance to the Vim-T baseline while reducing SSM FLOPs by 40.6% (10.34G to 6.14G). 
+
+4.4 Ablation Study Performance vs. Efficiency: Figure 3 illustrates the accuracy-computation trade-off for EfficientVMamba-Base when the original SSM modules are replaced by our proposed TCP de-sign across various configurations. This comparison evaluates how recognition performance scales as recurrent computation is progressively reduced while the backbone architecture remains fixed. While the baseline yields 81.8% Top-1 and 95.6% Top-5 accuracy (233M SSM FLOPs), our TCP-EVM-B5 variant elevates this performance to 82.6% Top-1 and 96.0% Top-5 at a slightly reduced computational cost of 0.7%. The efficiency gains become even more pronounced at higher reduction levels. TCP-EVM-B4 delivers 82.4% Top-1 with an 18.5% FLOP reduction, and TCP-EVM-B3 retains 82.0% Top-1 with a 44.2% drop in FLOPs. Most notably, TCP-EVM-B2 and TCP-EVM-B1 aggressively reduce SSM computation by 62.3% and 70.6%, yet still defend a strong 81.9% Top-1 8Table 4: Ablation Study on Ldistill .                        
+
+> Method Distill. λdistill Top-1 Top-5
+> Vim-T ––76.1 93.0 TCP-Vim-T1 ×–75.3 92.7 TCP-Vim-T1 ✓10 −175.8 92.9 TCP-Vim-T1 ✓2×10 −275.6 92.8
+> TCP-Vim-T1 ✓6×10 −276.0 93.0
+
+Table 5: Ablation study on pole selectivity.                        
+
+> Method TCP #Param. SSM FLOPs Top-1 Top-5
+> Vim-T –7.1M 497.5M 76.1 93.0 TCP-Vim-T1 ×7.4M 280.6M 75.4 92.7 TCP-Vim-T1 ✓
+> G-spec. 7.9M 375.3M 76.1 93.1
+> TCP-Vim-T1 ✓
+> Shared 7.5M 295.3M 76.0 93.0
+
+accuracy. Overall, these results demonstrate a highly favorable efficiency trend across a broad range of operating points, confirming that our model successfully preserves strong accuracy despite substantial reductions in recurrent cost. (Detailed configurations in Table ?? ). 
+
+Figure 3: Accuracy-computation trade-off on EVM-B. 
+
+Impact of Distillation Loss: Ta-ble 4 investigates the impact of dis-tillation loss in TCP-Vim-T1. In the absence of distillation, performance degrades (75.3% Top-1, 92.7% Top-5), indicating that TCP replacement alone struggles to recover the full accuracy of the Vim-T baseline. Adding distillation consistently im-proves performance across the tested weights, demonstrating that teacher guidance effectively helps the pro-posed recurrent module preserve the original backbone behavior. Specif-ically, λdistill = 6 × 10 −2 yields the strongest results (76.0% Top-1, 93.0% Top-5). This closes the performance gap while retaining the reduced SSM computation of TCP-Vim-T1. 
+
+Effect of Token-Conditioned Pole Modulation: Table 5 evaluates token-conditioned poles ( G =12 ), which enable recurrent dynamics to adapt to local image content. With a fixed pole structure, TCP-Vim-T1 reaches 75.4% Top-1 accuracy, suggesting that static poles limit the flexibility of the recurrent module. Introducing token-conditioning improves performance, though the group-specific variant increases SSM FLOPs to 375.3M (76.1% Top-1, 93.1% Top-5). The shared-selectivity design provides a better balance, achieving comparable accuracy of 76.0% Top-1 and 93.0% Top-5 with a lower cost of 295.3M SSM FLOPs. This shows that sharing the modulation across groups preserves most of the benefit of token-conditioned poles while reducing the recurrent computation (Ablation study of G in Table ?? ). 
+
+## 5 Conclusion 
+
+We present an efficient visual state space modeling framework that uses token-conditioned poles to explicitly parameterize the recurrence dynamics of Vision Mamba-style models through stable real and complex pole components. By separating monotone memory decay from oscillatory frequency responses, our formulation provides a more interpretable and controllable alternative to conventional selective scans. Token-conditioned modulation enables stable, content-adaptive spatial memory, while grouped pole sharing and a lightweight low-rank input pathway preserve linear-time scan complexity. Across classification, segmentation, and object detection, the proposed approach improves the accuracy-efficiency trade-off of compact visual SSMs, reducing SSM computation by up to 44% in Vision Mamba and 70% in EfficientVMamba-Base while maintaining or improving accuracy. 
+
+Limitations and Future Work: Our method introduces additional parameters, such as pole order, group size, and low-rank dimension, which may require deployment-specific tuning. While the pole parameterization ensures stable local recurrence dynamics, it does not directly address other sources of inefficiency, such as scan ordering and memory access patterns. Future work can explore native two-dimensional pole-structured recurrences, adaptive scan, and hardware-aware implementations. 9References 
+
+[1] Hangbo Bao, Li Dong, Songhao Piao, and Furu Wei. Beit: Bert pre-training of image trans-formers. arXiv preprint arXiv:2106.08254 , 2021. [2] Amanda M Beck, Mingjian He, Rodrigo G Gutierrez, Gladia C Hotan, and Patrick L Purdon. An iterative search algorithm to identify oscillatory dynamics in neurophysiological time series. 
+
+bioRxiv , pages 2022–10, 2022. [3] Julius Borcea and Petter Brändén. The lee-yang and pólya-schur programs. ii. theory of stable polynomials and applications. Communications on Pure and Applied Mathematics: A Journal Issued by the Courant Institute of Mathematical Sciences , 62(12):1595–1631, 2009. [4] Han Cai, Chuang Gan, Tianzhe Wang, Zhekai Zhang, and Song Han. Once-for-all: Train one network and specialize it for efficient deployment. arXiv preprint arXiv:1908.09791 , 2019. [5] Zhaowei Cai and Nuno Vasconcelos. Cascade r-cnn: High quality object detection and instance segmentation. IEEE transactions on pattern analysis and machine intelligence , 43(5):1483– 1498, 2019. [6] François Chollet. Xception: Deep learning with depthwise separable convolutions. In Proceed-ings of the IEEE conference on computer vision and pattern recognition , pages 1251–1258, 2017. [7] Xiaoliang Dai, Alvin Wan, Peizhao Zhang, Bichen Wu, Zijian He, Zhen Wei, Kan Chen, Yuandong Tian, Matthew Yu, Peter Vajda, et al. Fbnetv3: Joint architecture-recipe search using predictor pretraining. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 16276–16285, 2021. [8] Tri Dao and Albert Gu. Transformers are ssms: Generalized models and efficient algorithms through structured state space duality. arXiv preprint arXiv:2405.21060 , 2024. [9] Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei. Imagenet: A large-scale hierarchical image database. In 2009 IEEE conference on computer vision and pattern recognition , pages 248–255. Ieee, 2009. [10] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et al. An image is worth 16x16 words: Transformers for image recognition at scale. arXiv preprint arXiv:2010.11929 , 2020. [11] Daniel Y Fu, Tri Dao, Khaled K Saab, Armin W Thomas, Atri Rudra, and Christopher Ré. Hungry hungry hippos: Towards language modeling with state space models. arXiv preprint arXiv:2212.14052 , 2022. [12] Albert Gu and Tri Dao. Mamba: Linear-time sequence modeling with selective state spaces. 
+
+arXiv preprint arXiv:2312.00752 , 2023. [13] Albert Gu, Karan Goel, and Christopher Ré. Efficiently modeling long sequences with structured state spaces. arXiv preprint arXiv:2111.00396 , 2021. [14] Albert Gu, Isys Johnson, Karan Goel, Khaled Saab, Tri Dao, Atri Rudra, and Christopher Ré. Combining recurrent, convolutional, and continuous-time models with linear state space layers. 
+
+Advances in neural information processing systems , 34:572–585, 2021. [15] Ankit Gupta, Albert Gu, and Jonathan Berant. Diagonal state spaces are as effective as structured state spaces. Advances in neural information processing systems , 35:22982–22994, 2022. [16] Ali Hatamizadeh and Jan Kautz. Mambavision: A hybrid mamba-transformer vision backbone. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 25261– 25270, 2025. [17] Ali Hatamizadeh, Greg Heinrich, Hongxu Yin, Andrew Tao, Jose M Alvarez, Jan Kautz, and Pavlo Molchanov. Fastervit: Fast vision transformers with hierarchical attention. arXiv preprint arXiv:2306.06189 , 2023. 10 [18] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition. In Proceedings of the IEEE conference on computer vision and pattern recognition ,pages 770–778, 2016. [19] Gao Huang, Zhuang Liu, Geoff Pleiss, Laurens Van Der Maaten, and Kilian Q Weinberger. Convolutional networks with dense connectivity. IEEE transactions on pattern analysis and machine intelligence , 44(12):8704–8716, 2019. [20] Tao Huang, Xiaohuan Pei, Shan You, Fei Wang, Chen Qian, and Chang Xu. Localmamba: Visual state space model with windowed selective scan. In European conference on computer vision , pages 12–22. Springer, 2024. [21] Brett Koonce. Mobilenetv3. In Convolutional neural networks with swift for tensorflow: image recognition and dataset categorization , pages 125–144. Springer, 2021. [22] Alex Krizhevsky, Ilya Sutskever, and Geoffrey E Hinton. Imagenet classification with deep convolutional neural networks. Advances in neural information processing systems , 25, 2012. [23] Sanghyeok Lee, Joonmyung Choi, and Hyunwoo J Kim. Efficientvim: Efficient vision mamba with hidden state mixer based state space duality. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 14923–14933, 2025. [24] Shufan Li, Harkanwar Singh, and Aditya Grover. Mamba-nd: Selective state space modeling for multi-dimensional data. In European Conference on Computer Vision , pages 75–92. Springer, 2024. [25] Yanghao Li, Hanzi Mao, Ross Girshick, and Kaiming He. Exploring plain vision transformer backbones for object detection. In European conference on computer vision , pages 280–296. Springer, 2022. [26] Yanyu Li, Ju Hu, Yang Wen, Georgios Evangelidis, Kamyar Salahi, Yanzhi Wang, Sergey Tulyakov, and Jian Ren. Rethinking vision transformers for mobilenet size and speed. In 
+
+Proceedings of the IEEE/CVF international conference on computer vision , pages 16889– 16900, 2023. [27] Dingkang Liang, Xin Zhou, Wei Xu, Xingkui Zhu, Zhikang Zou, Xiaoqing Ye, Xiao Tan, and Xiang Bai. Pointmamba: A simple state space model for point cloud analysis. Advances in neural information processing systems , 37:32653–32677, 2024. [28] Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr Dollár, and C Lawrence Zitnick. Microsoft coco: Common objects in context. In European conference on computer vision , pages 740–755. Springer, 2014. [29] Leiye Liu, Miao Zhang, Jihao Yin, Tingwei Liu, Wei Ji, Yongri Piao, and Huchuan Lu. Def-mamba: Deformable visual state space model. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 8838–8847, 2025. [30] Xinyu Liu, Houwen Peng, Ningxin Zheng, Yuqing Yang, Han Hu, and Yixuan Yuan. Efficientvit: Memory efficient vision transformer with cascaded group attention. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 14420–14430, 2023. [31] Yue Liu, Yunjie Tian, Yuzhong Zhao, Hongtian Yu, Lingxi Xie, Yaowei Wang, Qixiang Ye, Jianbin Jiao, and Yunfan Liu. Vmamba: Visual state space model. Advances in neural information processing systems , 37:103031–103063, 2024. [32] Ze Liu, Yutong Lin, Yue Cao, Han Hu, Yixuan Wei, Zheng Zhang, Stephen Lin, and Baining Guo. Swin transformer: Hierarchical vision transformer using shifted windows. In Proceedings of the IEEE/CVF international conference on computer vision , pages 10012–10022, 2021. [33] Zhuang Liu, Hanzi Mao, Chao-Yuan Wu, Christoph Feichtenhofer, Trevor Darrell, and Saining Xie. A convnet for the 2020s. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 11976–11986, 2022. 11 [34] Ningning Ma, Xiangyu Zhang, Hai-Tao Zheng, and Jian Sun. Shufflenet v2: Practical guidelines for efficient cnn architecture design. In Proceedings of the European conference on computer vision (ECCV) , pages 116–131, 2018. [35] Esteban Maestre, Jonathan S Abel, Julius O Smith, and Gary P Scavone. Constrained pole optimization for modal reverberation. In Proc. of the 5th International Conference on Digital Audio Effects (DAFx) , page 155, 2017. [36] Kunal Mahatha, Ali Bahri, Pierre Marza, Sahar Dastani, Maria Vakalopoulou, Stergios Christodoulidis, Jose Dolz, and Christian Desrosiers. Octopus: Enhancing the spatial-awareness of vision ssms with multi-dimensional scans and traversal selection. arXiv preprint arXiv:2602.00904 , 2026. [37] Sachin Mehta and Mohammad Rastegari. Mobilevit: light-weight, general-purpose, and mobile-friendly vision transformer. arXiv preprint arXiv:2110.02178 , 2021. [38] Sachin Mehta and Mohammad Rastegari. Separable self-attention for mobile vision transformers. 
+
+arXiv preprint arXiv:2206.02680 , 2022. [39] Eric Nguyen, Karan Goel, Albert Gu, Gordon Downs, Preey Shah, Tri Dao, Stephen Baccus, and Christopher Ré. S4nd: Modeling images and videos as multidimensional signals with state spaces. Advances in neural information processing systems , 35:2846–2861, 2022. [40] Xiaohuan Pei, Tao Huang, and Chang Xu. Efficientvmamba: Atrous selective scan for light weight visual mamba. In Proceedings of the AAAI conference on artificial intelligence , vol-ume 39, pages 6443–6451, 2025. [41] Danfeng Qin, Chas Leichner, Manolis Delakis, Marco Fornoni, Shixin Luo, Fan Yang, Weijun Wang, Colby Banbury, Chengxi Ye, Berkin Akin, et al. Mobilenetv4: Universal models for the mobile ecosystem. In European conference on computer vision , pages 78–96. Springer, 2024. [42] Anders Rantzer. Distributed control of positive systems. In 2011 50th IEEE conference on decision and control and European control conference , pages 6608–6611. IEEE, 2011. [43] Jiacheng Ruan, Jincheng Li, and Suncheng Xiang. Vm-unet: Vision mamba unet for medical image segmentation. ACM Transactions on Multimedia Computing, Communications and Applications , 2024. [44] Abdelrahman Shaker, Muhammad Maaz, Hanoona Rasheed, Salman Khan, Ming-Hsuan Yang, and Fahad Shahbaz Khan. Swiftformer: Efficient additive attention for transformer-based real-time mobile vision applications. In Proceedings of the IEEE/CVF international conference on computer vision , pages 17425–17436, 2023. [45] Abdelrahman Shaker, Syed Talal Wasim, Salman Khan, Juergen Gall, and Fahad Shahbaz Khan. Groupmamba: Efficient group-based visual state space model. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 14912–14922, 2025. [46] Yuheng Shi, Minjing Dong, and Chang Xu. Multi-scale vmamba: Hierarchy in hierarchy visual state space model. Advances in Neural Information Processing Systems , 37:25687–25708, 2024. [47] Yuheng Shi, Mingjia Li, Minjing Dong, and Chang Xu. Vssd: Vision mamba with non-causal state space duality. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 10819–10829, 2025. [48] Sara Shoouri, Mingyu Yang, Zichen Fan, and Hun-Seok Kim. Efficient computation sharing for multi-task visual scene understanding. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 17130–17141, 2023. [49] Sara Shoouri, Morteza Tavakoli Taba, and Hun-Seok Kim. Adaptive lidar scanning: Harnessing temporal cues for efficient 3d object detection via multi-modal fusion. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, pages 25410–25418, 2026. 12 [50] Karen Simonyan and Andrew Zisserman. Very deep convolutional networks for large-scale image recognition. arXiv preprint arXiv:1409.1556 , 2014. [51] Jimmy TH Smith, Andrew Warrington, and Scott W Linderman. Simplified state space layers for sequence modeling. arXiv preprint arXiv:2208.04933 , 2022. [52] Christian Szegedy, Vincent Vanhoucke, Sergey Ioffe, Jon Shlens, and Zbigniew Wojna. Re-thinking the inception architecture for computer vision. In Proceedings of the IEEE conference on computer vision and pattern recognition , pages 2818–2826, 2016. [53] Yehui Tang, Kai Han, Jianyuan Guo, Chang Xu, Chao Xu, and Yunhe Wang. Ghostnetv2: Enhance cheap operation with long-range attention. Advances in Neural Information Processing Systems , 35:9969–9982, 2022. [54] Hugo Touvron, Matthieu Cord, Matthijs Douze, Francisco Massa, Alexandre Sablayrolles, and Herve Jegou. Training data-efficient image transformers &amp; distillation through attention. In International Conference on Machine Learning , volume 139, pages 10347–10357, July 2021. [55] Hugo Touvron, Matthieu Cord, Matthijs Douze, Francisco Massa, Alexandre Sablayrolles, and Hervé Jégou. Training data-efficient image transformers & distillation through attention. In 
+
+International conference on machine learning , pages 10347–10357. PMLR, 2021. [56] Tony Van Gestel, Johan AK Suykens, Paul Van Dooren, and Bart De Moor. Identification of stable models in subspace identification by using regularization. IEEE Transactions on Automatic control , 46(9):1416–1420, 2002. [57] Ao Wang, Hui Chen, Zijia Lin, Jungong Han, and Guiguang Ding. Repvit: Revisiting mobile cnn from vit perspective. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 15909–15920, 2024. [58] Bin Wang, Xinghuo Yu, and Xiangjun Li. Zoh discretization effect on higher-order sliding-mode control systems. IEEE Transactions on industrial electronics , 55(11):4055–4064, 2008. [59] Chengkun Wang, Wenzhao Zheng, Yuanhui Huang, Jie Zhou, and Jiwen Lu. V2m: visual 2-dimensional mamba for image representation learning. arXiv preprint arXiv:2410.10382 ,2024. [60] Feng Wang, Jiahao Wang, Sucheng Ren, Guoyizhe Wei, Jieru Mei, Wei Shao, Yuyin Zhou, Alan Yuille, and Cihang Xie. Mamba-reg: Vision mamba also needs registers. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 14944–14953, 2025. [61] Wenhai Wang, Enze Xie, Xiang Li, Deng-Ping Fan, Kaitao Song, Ding Liang, Tong Lu, Ping Luo, and Ling Shao. Pyramid vision transformer: A versatile backbone for dense prediction without convolutions. In Proceedings of the IEEE/CVF international conference on computer vision , pages 568–578, 2021. [62] Haixu Wu, Jiehui Xu, Jianmin Wang, and Mingsheng Long. Autoformer: Decomposition trans-formers with auto-correlation for long-term series forecasting. Advances in neural information processing systems , 34:22419–22430, 2021. [63] Mengxuan Wu, Zekai Li, Zhiyuan Liang, Moyang Li, Xuanlei Zhao, Samir Khaki, Zheng Zhu, Xiaojiang Peng, Konstantinos N Plataniotis, Kai Wang, et al. Dynamic vision mamba. arXiv preprint arXiv:2504.04787 , 2025. [64] Tete Xiao, Yingcheng Liu, Bolei Zhou, Yuning Jiang, and Jian Sun. Unified perceptual parsing for scene understanding. In Proceedings of the European conference on computer vision (ECCV) , pages 418–434, 2018. [65] Enze Xie, Wenhai Wang, Zhiding Yu, Anima Anandkumar, Jose M Alvarez, and Ping Luo. Segformer: Simple and efficient design for semantic segmentation with transformers. Advances in neural information processing systems , 34:12077–12090, 2021. [66] Fei Xie, Weijia Zhang, Zhongdao Wang, and Chao Ma. Quadmamba: Learning quadtree-based selective scan for visual state space model. Advances in Neural Information Processing Systems ,37:117682–117707, 2024. 13 [67] Zhaohu Xing, Tian Ye, Yijun Yang, Du Cai, Baowen Gai, Xiao-Jian Wu, Feng Gao, and Lei Zhu. Segmamba-v2: Long-range sequential modeling mamba for general 3d medical image segmentation. IEEE Transactions on Medical Imaging , 2025. [68] Chenhongyi Yang, Zehui Chen, Miguel Espinosa Minano, Linus Ericsson, Zhenyu Wang, Jiaming Liu, and Elliot J Crowley. Plainmamba: Improving non-hierarchical mamba in visual recognition. In 35th British Machine Vision Conference . British Machine Vision Conference, 2024. [69] Syed Waqas Zamir, Aditya Arora, Salman Khan, Munawar Hayat, Fahad Shahbaz Khan, and Ming-Hsuan Yang. Restormer: Efficient transformer for high-resolution image restoration. In 
+
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 5728–5739, 2022. [70] Hongyi Zhang, Moustapha Cisse, Yann N Dauphin, and David Lopez-Paz. mixup: Beyond empirical risk minimization. arXiv preprint arXiv:1710.09412 , 2017. [71] Jingwei Zhang, Anh Tien Nguyen, Xi Han, Vincent Quoc-Huy Trinh, Hong Qin, Dimitris Samaras, and Mahdi S Hosseini. 2dmamba: Efficient state space model for image representation with applications on giga-pixel whole slide image classification. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 3583–3592, 2025. [72] Juntao Zhang, Shaogeng Liu, Jun Zhou, Kun Bian, You Zhou, Jianning Liu, Pei Zhang, and Bingyan Liu. Vim-f: Visual state space model benefiting from learning in the frequency domain. 
+
+arXiv preprint arXiv:2405.18679 , 2024. [73] Bolei Zhou, Hang Zhao, Xavier Puig, Sanja Fidler, Adela Barriuso, and Antonio Torralba. Scene parsing through ade20k dataset. In Proceedings of the IEEE conference on computer vision and pattern recognition , pages 633–641, 2017. [74] Lianghui Zhu, Bencheng Liao, Qian Zhang, Xinlong Wang, Wenyu Liu, and Xinggang Wang. Vision mamba: Efficient visual representation learning with bidirectional state space model. 
+
+arXiv preprint arXiv:2401.09417 , 2024. 14

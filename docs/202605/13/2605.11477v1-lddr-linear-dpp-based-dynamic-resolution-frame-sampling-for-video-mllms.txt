@@ -1,0 +1,1072 @@
+Title: LDDR: Linear-DPP-Based Dynamic-Resolution Frame Sampling for Video MLLMs
+
+URL Source: https://arxiv.org/pdf/2605.11477v1
+
+Published Time: Wed, 13 May 2026 00:35:22 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# LDDR: Linear-DPP-Based Dynamic-Resolution Frame Sampling for Video MLLMs 
+
+Jingfeng Chen 1 Jiawen Qian 2 Wendi Deng 2 Yinuo Guo 3
+
+Jiaqi Yu 2 Sicong Leng 4 Raghuveer Thirukovalluru 5 Bhuwan Dhingra 51Carnegie Mellon University 2Individual Researcher 3National University Singapore 
+
+> 4
+
+Nanyang Technological University 5Duke University 
+
+## Abstract 
+
+Video understanding in multimodal large language models requires selecting in-formative frames from long, redundant videos under limited visual-token budgets. Existing methods often rely on uniform sampling, point-wise relevance scoring, chunk-wise selection, or agentic exploration, which either miss global dependen-cies or introduce substantial overhead. We propose LDDR ( Linear DPP-Based 
+
+Dynamic Resolution), a training-free, plug-and-play, and budget-aware video frame sampling framework. LDDR performs query-aware Determinantal Point Process (DPP) frame selection in a task-conditioned feature space, achieving a 3× runtime speedup over standard DPP baselines. It further introduces a Group DPP importance metric to guide frame retention and dynamic resolution allocation, assigning more tokens to informative, non-redundant frames while downscaling or pruning less useful ones. Across four video benchmarks spanning short-, medium-, and long-range videos, LDDR consistently outperforms the next-best baselines, achieving gains of 2.5 points under budget-constrained settings and 1.6 points in high-budget scenarios. These improvements are consistently observed across multi-ple MLLM backbones, including both open- and closed-source models. Qualitative analysis confirms that relevant frames are selected and allocated a higher budget, facilitating improved video understanding. 
+
+## 1 Introduction 
+
+Video understanding in Multimodal Large Language Models (MLLMs) requires compressing thou-sands of frames into a small set of informative visual tokens. Although recent MLLMs can process increasingly large visual inputs, simply adding more frames does not necessarily improve video reasoning [ 26 ]. Long videos often contain substantial redundancy: many frames provide little new information, increase computational cost, and may distract the model from task-critical evidence [ 37 ]. Therefore, frame sampling is not merely an efficiency choice, but an architectural necessity. It determines which visual evidence is preserved and how effectively the MLLMs can reason over the video. Despite its significance, recent MLLMs [ 3 , 2, 31 ] by default rely on a query-agnostic uniform sampling of video frames. Uniform or fixed-rate sampling overlooks that only a subset of frames is relevant to a given query, leading to redundancy and the risk of missing critical evidence. This has driven a shift to query-driven frame selection, where sampling is explicitly conditioned on the input query. Recent approaches have explored Top-K query-frame relevance sampling [ 36 , 15 , 29 ], leveraging CLIP-style text-visual encoders [ 21 , 39 , 40 ] to independently score and select frames based on their relevance to the query. Such point-wise selection methods fail to account for inter-frame dependencies, often leading to redundancy and incomplete interpretation of the video flow. Mitigating this, recent work proposed 
+
+> Preprint.
+> arXiv:2605.11477v1 [cs.CV] 12 May 2026
+
+agentic exploration [ 35 , 20 , 46 , 27 ] or learned frame selectors [ 10 ] to enable adaptive, temporally coherent, and less redundant frame selection. However, these methods introduce significant training and inference overhead, limiting their practicality for plug-and-play MLLM applications. Among training-free approaches, Determinantal Point Processes (DPPs) [ 19 , 8] have emerged as one of the most effective frameworks for selecting query-relevant frames while also minimizing redundancy among them. However, existing DPP-based approaches, such as MDP3 [ 26 ] exhibit two key limitations. First, MDP3 performs DPP inference in kernel space, where kernel construction and updates scale quadratically with the number of video frames, making global frame selection expensive for long videos. To mitigate this, MDP3 performs DPP-based selection over temporally chunked video segments. Secondly, MDP3 allocates the uniform token budget to all selected frames, despite large differences in their informativeness and visual complexity. With modern vision encoders supporting dynamic resolutions [ 2, 1], video understanding can instead be formulated as a joint optimization over frame selection and per-frame token allocation. To address these challenges, we propose LDDR (Linear DPP-Based Dynamic Resolution), a training-free framework for budget-aware long-video understanding. LDDR performs DPP-based selection directly in frame-feature space rather than kernel space, reducing complexity from quadratic to linear in the number of video frames. LDDR further introduces a Group DPP (GD) importance score to measure the marginal contribution of each selected frame and guide adaptive per-frame token allocation. Highly relevant and non-redundant frames receive larger token budgets, while redundant or less informative frames are downscaled or pruned. Our contributions are summarized as follows: • Linear DPP Selection. We perform query-aware DPP frame selection jointly over all video frames, avoiding temporal chunking and explicit kernel construction, and enabling frame selection with linear complexity in the number of video frames. • Group DPP Importance for Dynamic Resolution. We propose a Group DPP importance score based on each frame’s marginal determinant contribution and use it to jointly guide frame retention and adaptive per-frame token allocation. • Comprehensive Empirical Validation. We evaluate LDDR across four long-video bench-marks - Video-MME, LongVideoBench, LVBench, and MLVU; and multiple MLLM back-bones. LDDR achieves significant and consistent improvements across all benchmarks and models, with average gains of +2.5 points under budget-constrained settings and +1.6 points in high-budget settings, with the largest gains observed on longer videos. • Efficient and Scalable. Despite achieving strong performance gains, LDDR remains highly efficient and scalable, substantially outperforming existing baselines in runtime. 
+
+## 2 Related Work 
+
+Multimodal Video Understanding. Multimodal large language models (MLLMs) have demonstrated remarkable capabilities. Generally, existing strategies to handle long-video input can be categorized into three streams: video token compression after extensive frame sampling [ 24 , 11 , 14 , 13 , 22 , 38 ,23 , 17 ], heuristic or learned frame selection [ 10 , 28 , 27 , 45 , 8, 26 ], and agentic frameworks that employ iterative exploration, feedback, memory-update loops to retrieve informative frames along with query reasoning [32, 33, 35, 20, 46, 18]. 
+
+Frame Selection and Redundancy Reduction. While agentic frameworks can achieve high accuracy through iterative reasoning, they often incur substantial computational overhead. While token pruning majorly reduces the number of tokens that frames transform into. Regarding frame selection, traditional methods typically rely on Top-K query–frame relevance sampling [ 36 , 29 , 15 ]. Subsequent work jointly considers relevance and temporal coverage. For instance, AKS [ 28 ] introduces top relevance under binary-divided sections, while FOCUS [ 45 ] employs a two-stage bandit selection mechanism. Furthermore, chunked DPP-based approaches such as DSS [ 8] and MDP3 [ 26 ] are widely applied to select diverse subsets of frames. Recent advances in image token pruning [ 42 ]suggest that globally optimized DPPs can yield superior performance, but these methods are not directly designed for long-video settings due to their quadratic computational complexity. 
+
+Dynamic Frame Resolution. Dynamic resolution has emerged as an effective strategy to balance efficiency and visual detail in video understanding. Prior works, such as Q-frame [ 43 ], Anchor Frames [ 25 ], and ResAdapt [ 16 ], explore relevance-based scoring or reinforcement learning to allocate 2different visual tokens across frames. These methods often require training and model structure modification. Recent models like Qwen2.5-VL [ 3] and LLaVA-OneVision-1.5 [ 1] already inherently support flexible token allocation from variable-resolution inputs, but do not explicitly address how to allocate tokens under a global budget. Therefore, we develop a training-free, budget-aware pipeline that couples global diversity-preserving frame selection with GD-guided token allocation. Rather than optimizing frame selection and resolution allocation in isolation, our method signals on the same DPP feature space to guide both candidate selection and per-frame visual-token assignment. 
+
+## 3 Methodology ...                    
+
+> Selected
+> 𝑆 =4
+> repeat until select K frames
+> 𝑆 =3,4,6,9
+> 469
+> Linear DPP
+> Traditional DPP
+> T
+> 𝑂 𝐾𝑇 2𝑂 𝐾𝑇𝑑
+> What is the in front of the Piano the
+> woman is playing?
+> frame embedding
+
+...                                          
+
+> Update Score
+> 𝑆 =4,9
+> 3
+> Selected
+> (C) GD Importance Dynamic Resolution
+> 𝑡 𝑡
+> vs. 𝑙𝑜𝑔 𝑑𝑒𝑡 𝐺 𝑆 𝑙𝑜𝑔 𝑑𝑒𝑡 𝐺 𝑆 \𝑡
+> Group with frame 𝑡
+> included Group with frame 𝑡
+> excluded
+> ෩𝐼 𝑡 =exp log det 𝐺 𝑠 −log det 𝐺 𝑠 \𝑡 ·𝜌 𝜏
+> t
+> 1.0
+> 0.5
+> 0
+> GD Importance Scores
+> 298 tokens 723 tokens 500 tokens 1020 tokens
+> (B) Linear Feature -space DPP (A) Preprocessing
+> Complexity Comparision
+> no need to explicitly construct L
+> 𝑇 ×𝑑 𝑑 ×1
+> query embedding
+> 𝛷 =𝑑𝑖𝑎𝑔 ǁ𝑟 ෠F෨𝐿 =𝛷 𝛷 T
+
+Figure 1: LDDR Overview. LDDR first extracts frame and query embeddings, then applies Linear Feature-space DPP to select a diverse and query-relevant candidate frame set. GD-importance-based dynamic resolution further allocates visual tokens adaptively across selected frames. 
+
+3.1 LDDR Overview 
+
+Figure 1 shows the overall pipeline of our methodology. We first utilize Linear DPP to construct a query-aware and diverse candidate set S, and then optimize dynamic resolution allocation under a total visual-token budget Ctotal . Instead of selecting a fixed number of frames, we treat the per-frame visual-token count wt as the control variable. Each candidate is assigned tokens within a range 
+
+[wmin , w max ], where wmin ensures a valid visual resolution for effective MLLM processing and 
+
+wmax limits excessive computation. Tokens are allocated according to in-group contribution, so more informative candidates receive higher resolution while the total cost stays within Ctotal . The remainder of this section reviews the background and details the proposed LDDR pipeline. Section 3.2 reviews DPPs and their application to frame selection. Section 3.3 presents the linear DPP for video frame selection (3.3.1) and dynamic resolution allocation (3.3.2) pipeline. 
+
+3.2 DPP Background and Problem Setup 
+
+Determinantal Point Processes (DPPs), originally used to characterize fermion repulsion in quantum mechanics [ 19 ], have been widely used for subset selection, including recommendation, summariza-tion [ 5, 4 ], video frame sampling [ 26 , 8], and vision token pruning [ 42 ]. DPPs provide a probabilistic framework for subset selection that balances quality and diversity . Given a ground set of items 
+
+Y = {1, . . . , T }, a DPP defines a probability distribution over subsets S ⊆ Y as: 
+
+P (S) ∝ det( LS ) (1) where L ∈ RT ×T is a positive semidefinite kernel matrix that captures how two items in the set interact, and LS denotes the principal submatrix indexed by S. The determinant has a geometric interpretation: it measures the volume spanned by the feature vectors of the selected items. Therefore, subsets containing similar (redundant) items have a lower probability, naturally promoting diversity. We follow Zhang et al. [42] to construct a query-aware DPP kernel L ∈ RT ×T to encode both frame relevance and inter-frame diversity, where T denotes the number of video frames. Frame embeddings 
+
+H ∈ RT ×d and the query embedding q ∈ Rd are obtained using CLIP-style vision and text encoders 3in a shared embedding space. Frame features are ℓ2-normalized as ˆF =
+
+h h1 
+
+> ∥h1∥
+
+, . . . , hT 
+
+> ∥hT∥
+
+i⊤
+
+, and used to compute pairwise similarity S = ˆF ˆF⊤ ∈ RT ×T . Query relevance is computed via cosine similarity rt = h⊤  
+
+> tq
+> ∥ht∥∥ q∥
+
+, followed by MinMax normalization to obtain ˜r ∈ RT . The final kernel is defined as L = diag(˜ r) S diag(˜ r), where S captures redundancy and ˜r encodes query-dependent importance. The most relevant and diverse subset is then obtained via greedy MAP inference: 
+
+S∗ = arg max   
+
+> S⊆Y ,|S|=K
+
+log det( LS ), (2) where LS is the principal submatrix indexed by S, and K is the frame budget. The standard DPP solver uses a greedy algorithm in kernel-space [ 5, 42 ] that iteratively selects the item with the largest marginal log-determinant gain, incurring O(T 2) space and O(T 2d + T K 2) time. However, this process is prohibitive for long videos with large T , motivating the efficient LDDR design as follows. 
+
+3.3 LDDR Technical Details 3.3.1 Linear DPP Selection for Frame Candidate Set 
+
+The kernel-based DPP’s O(T 2d+T K 2) inference time prohibits its efficient application in long-video frame sampling. Prior work explored low-rank approximations [ 7], incremental updates [ 5 ], lazy Cholesky methods [ 9 ], or chunking strategies [ 8, 26 ], but they are primarily designed to accelerate inference over an explicit or implicitly maintained item-item kernel, and often still require kernel updates or local/chunked selection. We therefore follow the classical feature-space interpretation of DPPs developed by Kulesza and Taskar [12] , where item features induce a positive semidefinite kernel, and the determinant of a selected submatrix has a geometric interpretation as the squared volume spanned by the corresponding feature vectors, naturally capturing the tradeoff between quality and diversity. LDDR migrates the same determinant-volume geometry for deterministic greedy MAP selection in video frames to accelerate runtime (replacing probabilistic sampling with an argmax-based selection). Specifically, we construct the frame kernel as a Gram matrix of query-weighted frame features: 
+
+L = diag(˜ r) ˆF ˆF⊤diag(˜ r) = ΦΦ ⊤, Φ = diag(˜ r) ˆF, =⇒ 
+
+> which implies
+
+Lst = Φs, :Φ⊤ 
+
+> t, :
+
+(3) 
+
+Algorithm 1 Feature-space Greedy DPP Inference  
+
+> 1:
+
+Input: Feature matrix Φ ∈ RT ×d, budget K 
+
+> 2:
+
+Initialize: dt ← ∥ Φt, :∥22 for all t, S ← ∅ ,
+
+C ← [ ]  
+
+> 3:
+
+for i = 1 to K do  
+
+> 4:
+
+j ← arg max t / ∈S dt 
+
+> 5:
+
+S ← S ∪ { j} 
+
+> 6:
+
+v ← Φj, : − Pi−1
+
+> k=1
+
+(ckΦ⊤
+
+> j, :
+
+)ck 
+
+> 7:
+
+ci ← v/pdj 
+
+> 8:
+
+for each t / ∈ S do  
+
+> 9:
+
+dt ← dt − (Φt, :c⊤ 
+
+> i
+
+)2 
+
+> 10:
+
+end for  
+
+> 11:
+
+end for  
+
+> 12:
+
+Output: Selected Candidate set S
+
+We perform greedy MAP selection directly in feature space Φ, avoiding explicit construc-tion of the dense T × T kernel. For the ker-nel L = ΦΦ ⊤, this feature-space procedure produces the same greedy selection sequence as kernel-space DPP selection, while reducing the cost to O(KT d ) time and O(T d ) memory. The algorithm maintains an orthonormal basis 
+
+C ∈ RK×d for the selected directions and resid-ual gains d ∈ RT for the remaining frames. At each iteration, the frame with the largest residual gain is selected, and the gains of the remaining frames are updated by removing their projection onto the newly selected direction. This update penalizes frames that are redundant with the se-lected set, so later iterations favor frames that are both query-relevant and diverse. A proof of equivalence to greedy kernel-space DPP selection is provided in Appendix D. While the residual gain during iteration reflects the incremental contribution of a frame at selection time, it is order-dependent and does not fairly quantify the frame value. We therefore define a GD importance Score. 
+
+3.3.2 GD Importance Guided Dynamic Resolution 
+
+From the DPP-selected candidate set S of size K, our goal is to decide both how many frames to retain and how many visual tokens to assign to each retained frame within the total budget Ctotal .The value k∗ denotes the final number of retained frames, and S∗ denotes the final retained frame set. We proposed a density-aware GD importance to quantify the token assignment. 4Definition 1 (GD Importance) . For a selected set S, the Group DPP (GD) importance of a frame 
+
+t ∈ S is defined as its marginal determinant contribution: 
+
+It = exp  log det( GS ) − log det( GS\{ t}) , GS = ΦS Φ⊤S . (4) 
+
+Proposition 1 (Residual form) . For any t ∈ S ,
+
+It = (I − PS\{ t})ϕt 
+
+> 22
+
+,
+
+where PS\{ t} projects onto the span of {ϕj : j ∈ S \ { t}} . (5) Proposition 1 shows that It measures the residual uniqueness of frame t; its proof and geometric interpretation are provided in Appendix E.3. In practice, we also apply a density prior to the GD Score ˜It = Itρτt , where ρt = ∥ϕt∥22   
+
+> |S| −1P
+> j∈S ∥ϕj∥22
+
+and τ controls the prior strength. In all experiments, 
+
+τ = 1 .0 is used without tuning on datasets, and we report a sensitivity analysis in Appendix C. Specifically, we first sort candidate frames in descending order of their density-aware GD importance scores ˜It. Let Sk denote the top-k prefix in this sorted order. To determine how many frames can be retained, we perform a binary search over k. For each candidate prefix Sk, we normalize the importance scores within the prefix as α(k) 
+
+> t
+
+= ˜It/ P
+
+> j∈S k
+
+˜Ij and compute the clamped token allocation ˆw(k) 
+
+> t
+
+= min {wmax , max {wmin , C total α(k) 
+
+> t
+
+}} , ensuring that every retained frame has least 
+
+wmin tokens. The prefix is considered feasible if P 
+
+> t∈S k
+
+ˆw(k) 
+
+> t
+
+≤ Ctotal . We then select the largest feasible prefix size k∗ = max {k : P 
+
+> t∈S k
+
+ˆw(k) 
+
+> t
+
+≤ Ctotal } and retain S∗ = Sk∗ , while candidates outside this prefix are evicted. This procedure ensures that the retained frames are the most important ones under the GD scores, and that their token allocations remain within the valid range [wmin , w max ].
+
+## 4 Experiments 
+
+Models : We evaluate our LDDR on a diverse set of MLLMs, including Qwen2.5-VL-7B [ 3], Qwen3-VL-8B [ 2], LLaVA-OneVision-1.5-8B [ 1], and InternVL3.5 (4B/8B) [ 31 ]. These models differ in visual encoders and reasoning capabilities. Our primary method is LDDR. For models that support dynamic resolution, including Qwen-VL and LLaVA variants, we apply the full LDDR framework. For models without dynamic resolution support, we use the fixed-resolution variant, LD. All models are evaluated under unified inference settings without additional training, following official lmms-eval [41]. 
+
+Benchmarks : We conduct experiments on four popular benchmarks: Video-MME [6], LongVideoBench [34], LVBench [30], and MLVU [44]. 
+
+Baselines : We compare against the latest frame selection strategies, including a baseline uniform sampling, query-aware dynamic resolution: Q-frame [ 43 ], binary partition relevance sampling: AKS [ 28 ], optimal arm selection: FOCUS [ 45 ], and chunked DPP with dynamic programming: MDP3 [ 26 ]. Since all these methods require a text-image encoder and their original implementations adopt different CLIP variants, we standardize the pre-encoding backbone to LongCLIP for all baselines to ensure a fair comparison. This standardization does not disadvantage the baselines; in fact, we observe that the LongCLIP-based results are generally better than their originally reported results. More details are provided in Appendix F. 
+
+Setting : We applied a token-based formulation to control visual computation across all models. Following the resolution-to-token mapping of Qwen2.5-VL, each visual token corresponds to a 
+
+14 × 14 pixel patch. Thus, for a frame with spatial resolution H × W , its visual-token count is computed as w = H×W 
+
+> 14 2
+
+. In our experiments, we treat the per-frame token count wt as the primary control variable and constrain it within wmin ≤ wt ≤ wmax , where wmin = 256 and wmax = 1024 .Given a target token count wt, we derive the corresponding frame resolution by preserving the original aspect ratio and projecting the resized frame to the nearest valid patch grid. This token–resolution mapping is derived from Qwen2.5-VL and is applied consistently across all evaluated models. To ensure fair comparison across methods, we define a visual token budget using a frame-equivalent formulation: Ctotal = F × 1024 , where F denotes the frame-equivalent budget and 1024 tokens correspond to one maximum-resolution frame under our protocol. Under fixed-resolution settings, each selected frame uses wt = 1024 tokens, so exactly |S| = K = F frames are selected. Under 5Table 1: Main results across four video understanding benchmarks and five MLLM backbones under matched visual-token budgets. * denotes Model supporting dynamic resolution, † denotes LD, which applies linear DPP frame selection, and ‡ denotes LDDR, which adds GD-Guided dynamic resolution. LD improves over baselines, while LDDR achieves further gains on dynamic-resolution models. 
+
+Model #F Method Video-MME Long Video Bench LVBench MLVU 
+
+/ subset Short Med Long Overall 15s 60s 600s 3600s Overall 
+
+Uniform 65.1 51.1 48.1 54.78 68.3 66.3 51.2 46.8 53.70 33.89 53.31 AKS 70.4 57.1 49.2 58.93 66.7 70.4 59.5 52.7 59.01 40.54 65.54 Q-frame 69.8 60.7 51.1 59.07 70.9 68.6 55.1 49.1 56.54 36.15 58.49 8 FOCUS 69.0 54.1 43.7 55.59 58.7 69.6 59.0 50.4 56.54 37.18 63.01 MDP3 71.9 55.1 49.8 59.88 66.7 72.7 59.2 50.9 58.49 40.28 66.21 
+
+† LD 73.3 57.0 49.6 59.96 ↑5.2 66.7 69.8 59.2 54.8 59.76 ↑6.1 43.83 ↑9.9 66.63 ↑13.3 
+
+‡ LDDR 72.9 59.8 52.8 61.82 ↑7.0 69.3 73.3 60.7 55.9 61.48 ↑7.8 45.51 ↑11.6 66.04 ↑12.7 Qwen2.5-VL-7B* Uniform 72.6 59.1 50.0 60.56 69.3 71.5 54.6 50.7 57.22 38.09 59.03 AKS 72.8 59.0 51.1 60.96 69.3 72.7 60.0 55.7 61.11 42.93 63.19 Q-frame 74.4 60.3 52.0 62.26 69.3 72.1 56.6 51.1 58.04 39.25 62.81 32 FOCUS 72.0 59.2 52.2 61.15 68.3 69.2 60.9 55.7 60.81 45.31 63.25 MDP3 74.0 61.7 54.0 63.22 69.3 72.3 57.0 50.9 58.27 39.25 63.27 
+
+† LD 74.2 61.3 53.0 62.85 ↑2.3 67.7 71.5 63.4 54.8 61.41 ↑4.2 45.90 ↑7.8 65.62 ↑6.6 
+
+‡ LDDR 74.8 63.7 55.0 64.48 ↑3.9 69.3 70.3 62.1 54.4 60.96 ↑3.7 46.03 ↑7.9 65.25 ↑6.2 
+
+Uniform 68.2 53.6 49.8 57.19 70.9 66.9 54.6 45.2 54.53 28.08 51.28 AKS 73.2 59.1 52.1 61.48 68.8 72.1 61.2 51.4 59.54 40.15 64.86 
+
+Qwen3-VL-8B* 
+
+Q-frame 73.7 59.4 54.6 62.56 75.1 72.7 59.5 49.8 59.31 35.05 61.65 8 FOCUS 72.0 58.8 45.9 58.89 65.6 75.0 63.1 50.2 59.53 31.57 63.80 MDP3 73.0 58.9 54.1 62.00 73.5 70.9 60.9 51.1 59.83 37.83 68.76 
+
+† LD 73.4 62.3 53.7 63.15 ↑6.0 70.9 73.3 66.3 55.9 63.43 ↑8.9 43.06 ↑15.0 68.47 ↑17.2 
+
+‡ LDDR 76.1 62.4 55.8 64.78 ↑7.6 72.0 77.3 67.5 56.2 64.62 ↑10.1 45.13 ↑17.1 70.58 ↑19.3 
+
+Uniform 67.1 55.0 48.7 56.93 65.1 70.4 54.9 47.0 54.97 34.41 57.10 AKS 68.8 57.6 49.7 58.67 65.1 75.6 61.9 51.6 59.76 41.45 63.60 
+
+LLaVA OneVision 1.5-8b* 
+
+Q-frame 67.9 55.2 50.0 57.70 63.5 71.5 57.0 48.2 56.10 37.64 58.79 8 FOCUS 68.0 56.1 47.0 57.04 61.9 72.7 62.9 52.3 59.54 37.31 64.17 MDP3 70.8 56.4 51.8 59.66 66.7 74.4 57.8 51.1 58.33 40.02 65.53 
+
+† LD 70.8 57.8 52.2 60.26 ↑3.3 65.1 73.3 60.0 54.4 60.06 ↑5.1 44.87 ↑10.5 66.49 ↑9.4 
+
+‡ LDDR 71.3 58.4 53.0 60.93 ↑4.0 65.6 72.7 61.9 53.9 60.43 ↑5.5 44.67 ↑10.3 67.49 ↑10.4 
+
+Uniform 69.7 55.8 47.6 57.66 63.5 71.5 55.1 47.7 55.27 37.89 61.38 
+
+InternVL 3_5-4B 
+
+AKS 70.1 57.7 50.2 59.33 67.2 69.8 58.7 51.2 58.18 42.47 65.87 8 FOCUS 68.0 53.7 45.1 55.59 58.7 71.5 59.2 49.8 56.76 39.31 66.25 MDP3 73.2 57.4 49.2 59.96 67.7 72.1 56.3 48.6 56.69 42.93 69.33 
+
+† LD 72.4 59.7 50.4 60.85 ↑3.2 64.6 70.3 61.9 54.1 60.05 ↑4.8 46.28 ↑8.4 68.98 ↑7.6 
+
+Uniform 68.6 57.1 50.4 58.70 66.7 72.1 54.6 51.1 57.06 38.90 61.34 
+
+InternVL 3_5-8B 
+
+AKS 72.8 59.0 52.0 61.25 66.7 70.3 61.7 54.0 60.20 45.57 66.23 8 FOCUS 69.6 58.1 46.3 58.00 56.1 69.2 60.9 50.5 56.91 40.86 65.99 MDP3 74.2 59.2 54.3 62.59 65.1 70.9 59.2 51.1 58.11 43.51 69.78 
+
+† LD 72.3 61.1 52.9 62.11 ↑3.4 67.2 72.7 61.7 55.9 61.40 ↑4.3 48.22 ↑9.3 70.00 ↑8.7 
+
+dynamic-resolution settings, LDDR first constructs a larger candidate set S with |S| = K = 2 F
+
+using LD, and then applies GD-guided sorted-prefix retention and token allocation to obtain the final set S∗ of size k∗. Here, k∗ is typically larger than F , since lower-resolution frames allow more frames to be retained within the same budget. Frames in S∗ are assigned variable token counts while satisfying P
+
+t∈S ∗ wt ≤ Ctotal and wt ∈ [256 , 1024] .
+
+## 5 Results 
+
+Table 1 shows that LD and LDDR consistently outperform most baselines across models and bench-marks. Averaging the 32-frame setting and 8-frame setting in Qwen2.5-VL, LDDR beats the 6Table 2: Ablation study on Long Video Bench. Left: global selection outperforms chunked selection under the same 32-frame budget, especially on long videos. Right: LDDR achieves the best overall performance, showing the benefit of GD-based scoring and dynamic resolution. 
+
+(a) Ablation on chunked sampling. “Global” denotes our LD sampling over the entire video, while k(n×k) denotes dividing the video into k chunks and sampling n frames by LD from each chunk.                                
+
+> Long Video Bench #F Chunk 15s 60s 600s 3600s Overall 32 Global 67.7 71.5 63.4 54.8 61.4
+> 2(16 ×2) 67.7 72.7 60.7 52.1 59.6
+> 4(8 ×4) 67.7 73.3 59.0 52.8 59.5
+> 8(4 ×8) 67.7 73.3 59.0 52.8 59.5
+> 16 (2 ×16) 67.7 72.7 58.3 53.0 59.2
+
+(b) Ablation on scoring and resolution strategies, Rel denotes scoring frame importance by cosine similarity between frame and query. All scoring and dynamic resolution is performed after candidate set S obtained by LD.                                                                   
+
+> Frame Scoring Frame Resolution Long Video Bench
+> GD (Ours) Rel DR (Ours) Hard 15s 60s 600s 3600s Overall
+> ✓✗✓✗69.3 73.3 60.7 55.9 61.48
+> --✗✓-high 66.7 69.8 59.2 54.8 59.76 --✗✓-med 67.2 68.0 61.6 56.4 61.03 --✗✓-low 68.3 70.3 59.7 52.7 59.31
+> ✓✗✗✓-multi 70.4 72.1 58.0 57.1 61.18
+> ✗✓✗✓-multi 69.3 70.9 60.7 54.6 60.65
+> ✗✓✓✗66.1 72.7 60.2 55.5 60.66
+
+second-best baselines by 2.5 and 1.6. These gains are more pronounced as video length increases; at the 3600s subset in Long Video Bench, LD’s performance reaches 54.8, indicating that global-wise Linear DPP selection effectively captures long-range dependencies and removes redundancy .Notably, Dynamic resolution contributes consistently to performance, with an average gain of 1.2. Improvements also generalize across models, increasing performance on LLaVA-Onevision1.5 and InternVL3.5, confirming its robustness and model-agnostic nature. However, when the frame budget is sufficient, LDDR can perform slightly worse than the fixed-resolution variant LD, since most relevant frames can already be retained without additional resolution change. Therefore, dynamic resolution provides the largest additional gains under constrained frame budgets .
+
+5.1 Analysis 1: Efficiency Improvement with Linear DPP 
+
+Runtime is critical for MLLM video analysis because frame sampling precedes downstream inference. LD remains efficient by performing inference directly in the task-conditioned feature space, avoiding construction of the full T ×T kernel. As shown in Figure 2, kernel-space DPP scales quadratically with video length, while LD follows the proposed O(KT d ) formulation and exhibits near-linear scaling. Figure 3 further shows that LD mainly reduces the selection overhead, the dominant bottleneck in kernel-space DPP inference. As a result, LD makes global DPP-based frame selection efficient for long videos and achieves the lowest inference latency among AKS and MDP3 baselines. 5.2 Analysis 2: Global Selection vs. Chunked Selection 
+
+The linear feature-space formulation allows LD to optimize frame selection over the entire video, whereas several prior methods rely on chunk-level selection. Table 2a compares full-video selection with chunked variants under the same frame budget, with the budget evenly distributed across chunks. The global setting achieves the best overall score of 61.4, while splitting the video into 2 chunks reduces the score to 59.6. The degradation is most pronounced on long-duration 600s and 3600s subsets. This is because chunking imposes fixed local budgets, which can waste frames on low-information segments while preventing query-relevant frames in distant segments from competing globally. These results support the importance of global selection for long-video understanding. 
+
+5.3 Analysis 3: Plug-and-Play Generalization to Closed-Source Models 
+
+A practical frame selection method should be compatible with black-box MLLMs. LDDR satisfies this requirement as a plug-and-play framework: it selects query-relevant and diverse frames using visual-text embeddings, allocates resolutions based on GD importance, and feeds the resulting visual inputs to the target MLLM without accessing internal parameters. We verify this by evaluating LD and LDDR with GPT-5-mini on Video-MME and Long Video Bench, as reported in Table 3. The results show that the proposed strategy also improves closed-source inference. Compared with uniform sampling, LDDR improves the overall score by 7.3 points on Video-MME and 7.3 points on LongVideoBench, with the largest improvement appearing on the most challenging 3600s split. These 70 1000 2000 3000 4000                          
+
+> Total Frames ( T)
+> 0.01
+> 0.10
+> 1.00
+> 10.00
+> Latency (s)
+> #Frame f= 8
+> 01000 2000 3000 4000
+> Total Frames ( T)
+> #Frame f= 32
+> Linear_DPP (Ours) Org_DPP MDP3 FOCUS AKS 01000 2000 3000 4000
+> Total Frames ( T)
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> Latency (s)
+> #Frame f= 8
+> 01000 2000 3000 4000
+> Total Frames ( T)
+> #Frame f= 32
+> Linear_DPP (Ours) Org_DPP
+
+Figure 2: Sampling runtime under different total numbers of input frames on Video-MME. Left: comparison across different frame sampling methods. Right: comparison between our Linear DPP implementation and the original DPP. The runtime of Linear DPP scales approximately linearly as the total number of frames increases. 0-500         
+
+> 500-1000
+> 1000-1500
+> 1500-2000
+> 2000-2500
+> 2500-3000
+> 3000-3500
+> 3500-4000
+> Total Frames ( T)
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> Latency (s)
+> 0.03 0.04
+> 0.07
+> 0.11
+> 0.14
+> 0.17
+> 0.23
+> 0.27
+> 0.02 0.03 0.04 0.05 0.06 0.07 0.08 0.09
+> LongCLIP Text
+> LongCLIP Image
+> Selection (Org_DPP)
+> Selection (Linear_DPP (Ours))
+
+Figure 3: Phases latency breakdown, including LongCLIP processing and Frame Sampling time. 
+
+Table 3: Performance of GPT-5-mini on Video-MME and Long Video Bench. LDDR can be seamlessly integrated into closed-model serving, improving performance without accessing models. 
+
+Video-MME LongVideoBench Model Method #F Short Med Long Overall 15s 60s 600s 3600s Overall 
+
+GPT-5-mini Uniform 76.3 63.1 57.0 65.00 74.6 68.6 57.0 50.9 58.41 
+
+† LD 8 77.8 68.7 62.0 69.48 75.1 77.3 65.0 57.3 64.77 
+
+‡ LDDR 80.7 72.9 63.4 72.33 73.0 76.2 66.0 59.9 65.74 
+
+results indicate that LDDR can improve closed-source MLLMs through better input construction 
+
+alone, without modifying the target model or its inference procedure. 
+
+## 6 Ablation Study 
+
+6.1 Ablation 1: GD Importance Scoring and Dynamic Resolution Strategy 
+
+Table 2b ablates the GD importance scoring and dynamic-resolution allocation used in LDDR. All variants are evaluated under the same overall visual token budget. We compare LDDR with fixed-resolution baselines, where all selected frames use the same token budget ( wt = 1024 (high), 512 
+
+(med), or 256 (low)), and a hand-crafted multi-resolution baseline ( 4 × 1024 + 4 × 512 + 8 × 256 )inspired by Zhang et al. [43] . For hand-crafted multi-resolution allocation, token assignment is determined by the scoring sequence. To isolate the effect of the dynamic resolution scoring in Eq. 4, we replace GD importance with point-wise relevance scoring. The full LDDR variant achieves the best overall performance. Fixed-resolution allocation performs worse. The hand-crafted multi-resolution baseline improves over fixed allocation, suggesting that resolution diversity is useful. Replacing GD with relevance-only scoring also degrades performance, indicating that GD scoring is more effective at attributing the frame’s marginal contribution to the candidate frame set. The results show that both GD-based importance scoring and our dynamic resolution strategy are effective. 
+
+6.2 Ablation 2: Diversity vs. Relevance and Encoder Sensitivity 
+
+We ablate the DPP components in Table 4a, where Lij = riϕij rj contains query-conditioned relevance ri and similarity ϕij preserved diversity. The full setting performs best at 59.96; removing relevance drops performance to 51.37, while removing diversity reduces it to 54.89, confirming that 8Table 4: Component and encoder ablations on Video-MME. Left: removing either relevance or diversity substantially degrades performance. Right: LongCLIP achieves the best performance, showing that stronger vision-language alignment improves frame selection.                                 
+
+> (a) Ablation on two components of DPP: Diversity and Relevance. Method Short Med Long Overall LD 73.30 57.00 49.56 59.96
+> w/o Relevance 61.11 47.67 45.33 51.37 w/o Diversity 65.00 52.89 46.78 54.89 (b) Sensitivity Analysis of different text-visual en-coders. Encoder Short Med Long Overall CLIP 64.33 49.22 48.00 53.85 SigLIP 67.88 52.11 47.33 55.78 LongCLIP 73.30 57.00 49.56 59.96
+
+Figure 4: Qualitative examples of LDDR on video question answering tasks. relevance identifies informative frames and diversity suppresses redundancy. We further compare CLIP variants in Table 4b. LongCLIP performs best. Since LDDR performs global selection throughout the video, better visual features enable more reliable estimation and effective selection. 
+
+## 7 Qualitative Analysis 
+
+Figure 4 provides a video QA example visualizing LDDR’s frame sampling result. In the counting example, LDDR captures distinct appearances of the red flags instead of repeatedly selecting many irrelevant scenes. Dynamic resolution further improves efficiency by assigning more visual tokens to important frames that contain dense, small, or answer-critical details, while avoiding repeatedly allocating high token budgets to visually similar frames. For example, when the final website text “LEXANIMATA.COM” appears in consecutive frames, LDDR assigns a high token budget to the most informative frame and allocates lower token budgets to similar neighboring frames, preserving temporally localized evidence while saving budget. These examples show that global diversity, query relevance, and adaptive token allocation yield a compact yet informative video representation. 
+
+## 8 Conclusion 
+
+We introduced LDDR, a training-free and plug-and-play framework for efficient long-video un-derstanding. LDDR performs global query-aware DPP selection via linear feature-space inference and uses Group DPP importance for adaptive visual-token allocation under a fixed budget. Across multiple benchmarks and MLLM backbones, LDDR consistently outperforms uniform sampling and existing selection methods, especially on long videos and constrained budgets. Ablations confirm the benefits of global selection, diversity-aware scoring, and dynamic resolution, making LDDR a practical input-construction strategy for open- and closed-source video MLLMs. 9References 
+
+[1] Xiang An, Yin Xie, Kaicheng Yang, Wenkang Zhang, Xiuwei Zhao, Zheng Cheng, Yirui Wang, Songcen Xu, Changrui Chen, Didi Zhu, et al. Llava-onevision-1.5: Fully open framework for democratized multimodal training. arXiv preprint arXiv:2509.23661 , 2025. [2] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, et al. Qwen3-vl technical report. arXiv preprint arXiv:2511.21631 , 2025. [3] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, Humen Zhong, Yuanzhi Zhu, Mingkun Yang, Zhaohai Li, Jianqiang Wan, Pengfei Wang, Wei Ding, Zheren Fu, Yiheng Xu, Jiabo Ye, Xi Zhang, Tianbao Xie, Zesen Cheng, Hang Zhang, Zhibo Yang, Haiyang Xu, and Junyang Lin. Qwen2.5-vl technical report, 2025. URL https://arxiv.org/abs/2502.13923 .[4] Elisa Celis, Vijay Keswani, Damian Straszak, Amit Deshpande, Tarun Kathuria, and Nisheeth Vishnoi. Fair and diverse dpp-based data summarization. In International conference on machine learning , pages 716–725. PMLR, 2018. [5] Laming Chen, Guoxin Zhang, and Hanning Zhou. Fast greedy map inference for determinantal point process to improve recommendation diversity. In Proceedings of the 32nd International Conference on Neural Information Processing Systems , NIPS’18, page 5627–5638, Red Hook, NY, USA, 2018. Curran Associates Inc. [6] Chaoyou Fu, Yuhan Dai, Yongdong Luo, Lei Li, Shuhuai Ren, Renrui Zhang, Zihan Wang, Chenyu Zhou, Yunhang Shen, Mengdan Zhang, et al. Video-mme: The first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 24108–24118, 2025. [7] Mike Gartrell, Ulrich Paquet, and Noam Koenigstein. Low-rank factorization of determinantal point processes. Proceedings of the AAAI Conference on Artificial Intelligence , 31(1), Feb. 2017. doi: 10.1609/aaai.v31i1.10869. URL https://ojs.aaai.org/index.php/AAAI/ article/view/10869 .[8] Boqing Gong, Wei-Lun Chao, Kristen Grauman, and Fei Sha. Diverse sequential subset selection for supervised video summarization. In Proceedings of the 28th International Conference on Neural Information Processing Systems - Volume 2 , NIPS’14, page 2069–2077, Cambridge, MA, USA, 2014. MIT Press. [9] Shinichi Hemmi, Taihei Oki, Shinsaku Sakaue, Kaito Fujii, and Satoru Iwata. Lazy and fast greedy map inference for determinantal point process. Advances in Neural Information Processing Systems , 35:2776–2789, 2022. [10] Kai Hu, Feng Gao, Xiaohan Nie, Peng Zhou, Son Tran, Tal Neiman, Lingyun Wang, Mubarak Shah, Raffay Hamid, Bing Yin, et al. M-llm based video frame selection for efficient video understanding. In Proceedings of the Computer Vision and Pattern Recognition Conference ,pages 13702–13712, 2025. [11] Peng Jin, Ryuichi Takanobu, Wancai Zhang, Xiaochun Cao, and Li Yuan. Chat-univi: Unified visual representation empowers large language models with image and video understanding. In 
+
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 13700–13710, 2024. [12] Alex Kulesza and Ben Taskar. Determinantal point processes for machine learning. Foundations and Trends® in Machine Learning , 5(2-3):123–286, December 2012. ISSN 1935-8245. doi: 10.1561/2200000044. URL http://dx.doi.org/10.1561/2200000044 .[13] Yanwei Li, Chengyao Wang, and Jiaya Jia. Llama-vid: An image is worth 2 tokens in large language models. In European Conference on Computer Vision , pages 323–340. Springer, 2024. [14] Yulin Li, Haokun GUI, Ziyang Fan, Junjie Wang, Bin Kang, BIN CHEN, and Zhuotao Tian. Less is more, but where? dynamic token compression via LLM-guided keyframe prior. In 
+
+The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2026. URL 
+
+https://openreview.net/forum?id=uhFx1RGD1g .10 [15] Hao Liang, Jiapeng Li, Tianyi Bai, Xijie Huang, Linzhuang Sun, Zhengren Wang, Conghui He, Bin Cui, Chong Chen, and Wentao Zhang. Keyvideollm: Towards large-scale video keyframe selection. arXiv preprint arXiv:2407.03104 , 2024. [16] Huanxuan Liao, Zhongtao Jiang, Yupu Hao, Yuqiao Tan, Shizhu He, Jun Zhao, Kun Xu, and Kang Liu. Resadapt: Adaptive resolution for efficient multimodal reasoning. arXiv preprint arXiv:2603.28610 , 2026. [17] Bingjun Luo, Tony Wang, Hanqi Chen, and Xinpeng Ding. Enhancing visual token rep-resentations for video large language models via training-free spatial-temporal pooling and gridding. In The Fourteenth International Conference on Learning Representations , 2026. URL 
+
+https://openreview.net/forum?id=MZi9SYPVz5 .[18] Yongdong Luo, Xiawu Zheng, Guilin Li, Shukang Yin, Haojia Lin, Chaoyou Fu, Jinfa Huang, Jiayi Ji, Fei Chao, Jiebo Luo, et al. Video-rag: Visually-aligned retrieval-augmented long video comprehension. arXiv preprint arXiv:2411.13093 , 2024. [19] Odile Macchi. The coincidence approach to stochastic point processes. Advances in Applied Probability , 7(1):83–122, 1975. ISSN 00018678. URL http://www.jstor.org/stable/ 1425855 .[20] Junwen Pan, Yuan Zhang, Rui Zhang, Xin Wan, Qizhe Zhang, Ming Lu, Shanghang Zhang, and Qi She. Zoomv: Temporal zoom-in for efficient long video understanding, 2026. URL 
+
+https://openreview.net/forum?id=Spg6FCsmyc .[21] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al. Learning transferable visual models from natural language supervision. In International conference on machine learning ,pages 8748–8763. PmLR, 2021. [22] Kele Shao, Keda TAO, Can Qin, Haoxuan You, Yang Sui, and Huan Wang. Holitom: Holistic token merging for fast video large language models. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2026. URL https://openreview.net/forum?id= 6hvaQTKkpF .[23] Min Shi, Shihao Wang, Chieh-Yun Chen, Jitesh Jain, Kai Wang, Junjun Xiong, Guilin Liu, Zhiding Yu, and Humphrey Shi. Slow-fast architecture for video multi-modal large language models. arXiv preprint arXiv:2504.01328 , 2025. [24] Enxin Song, Wenhao Chai, Guanhong Wang, Yucheng Zhang, Haoyang Zhou, Feiyang Wu, Haozhe Chi, Xun Guo, Tian Ye, Yanting Zhang, et al. Moviechat: From dense token to sparse memory for long video understanding. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 18221–18232, 2024. [25] Guangyu Sun, Archit Singhal, Burak Uzkent, Mubarak Shah, Chen Chen, and Garin N. Kessler. From frames to clips: Efficient key clip selection for long-form video understanding, 2025. URL https://openreview.net/forum?id=BAdePgN4uR .[26] Hui Sun, Shiyin Lu, Huanyu Wang, Qing-Guo Chen, Zhao Xu, Weihua Luo, Kaifu Zhang, and Ming Li. Mdp3: A training-free approach for list-wise frame selection in video-llms. In 
+
+Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 24090– 24101, 2025. [27] Canhui Tang, Zifan Han, Hongbo Sun, Sanping Zhou, Xuchong Zhang, Xin Wei, Ye Yuan, Huayu Zhang, Jinglin Xu, and Hao Sun. Tspo: Temporal sampling policy optimization for long-form video language understanding. In Proceedings of the AAAI Conference on Artificial Intelligence , number 11, pages 9368–9376, 2026. [28] Xi Tang, Jihao Qiu, Lingxi Xie, Yunjie Tian, Jianbin Jiao, and Qixiang Ye. Adaptive keyframe sampling for long video understanding. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 29118–29128, 2025. 11 [29] Haibo Wang, Chenghang Lai, Yixuan Sun, and Weifeng Ge. Weakly supervised gaussian con-trastive grounding with large multimodal models for video question answering. In Proceedings of the 32nd ACM International Conference on Multimedia , pages 5289–5298, 2024. [30] Weihan Wang, Zehai He, Wenyi Hong, Yean Cheng, Xiaohan Zhang, Ji Qi, Ming Ding, Xiaotao Gu, Shiyu Huang, Bin Xu, et al. Lvbench: An extreme long video understanding benchmark. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 22958– 22967, 2025. [31] Weiyun Wang, Zhangwei Gao, Lixin Gu, Hengjun Pu, Long Cui, Xingguang Wei, Zhaoyang Liu, Linglin Jing, Shenglong Ye, Jie Shao, et al. Internvl3. 5: Advancing open-source multimodal models in versatility, reasoning, and efficiency. arXiv preprint arXiv:2508.18265 , 2025. [32] Xiaohan Wang, Yuhui Zhang, Orr Zohar, and Serena Yeung-Levy. Videoagent: Long-form video understanding with large language model as agent. In European Conference on Computer Vision , pages 58–76. Springer, 2024. [33] Ziyang Wang, Shoubin Yu, Elias Stengel-Eskin, Jaehong Yoon, Feng Cheng, Gedas Bertasius, and Mohit Bansal. Videotree: Adaptive tree-based video representation for llm reasoning on long videos. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 3272–3283, 2025. [34] Haoning Wu, Dongxu Li, Bei Chen, and Junnan Li. Longvideobench: A benchmark for long-context interleaved video-language understanding. Advances in Neural Information Processing Systems , 37:28828–28857, 2024. [35] Zeyuan Yang, Delin Chen, Xueyang Yu, Maohao Shen, and Chuang Gan. Vca: Video curious agent for long video understanding. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 20168–20179, 2025. [36] Shoubin Yu, Jaemin Cho, Prateek Yadav, and Mohit Bansal. Self-chained image-language model for video localization and question answering. Advances in Neural Information Processing Systems , 36:76749–76771, 2023. [37] Sicheng Yu, CHENGKAI JIN, Huanyu Wang, Zhenghao Chen, Sheng Jin, ZHONGRONG ZUO, XU XIAOLEI, Zhenbang Sun, Bingni Zhang, Jiawei Wu, Hao Zhang, and Qianru Sun. Frame-voyager: Learning to query frames for video large language models. In The Thirteenth International Conference on Learning Representations , 2025. URL https://openreview. net/forum?id=LNL7zKvm7e .[38] Yunzhuzhang, Yu Lu, Tianyi Wang, Fengyun Rao, Yi Yang, and Linchao Zhu. Flexselect: Flexible token selection for efficient long video understanding. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2026. URL https://openreview. net/forum?id=0D3ja9s17M .[39] Xiaohua Zhai, Basil Mustafa, Alexander Kolesnikov, and Lucas Beyer. Sigmoid loss for language image pre-training. In Proceedings of the IEEE/CVF international conference on computer vision , pages 11975–11986, 2023. [40] Beichen Zhang, Pan Zhang, Xiaoyi Dong, Yuhang Zang, and Jiaqi Wang. Long-clip: Unlocking the long-text capability of clip. In European conference on computer vision , pages 310–325. Springer, 2024. [41] Kaichen Zhang, Bo Li, Peiyuan Zhang, Fanyi Pu, Joshua Adrian Cahyono, Kairui Hu, Shuai Liu, Yuanhan Zhang, Jingkang Yang, Chunyuan Li, et al. Lmms-eval: Reality check on the evaluation of large multimodal models. URL https://arxiv. org/abs/2407.12772 , 17, 2024. [42] Qizhe Zhang, Mengzhen Liu, Lichen Li, Ming Lu, Yuan Zhang, Junwen Pan, Qi She, and Shanghang Zhang. Beyond attention or similarity: Maximizing conditional diversity for token pruning in MLLMs. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2026. URL https://openreview.net/forum?id=BLLixcuZgl .12 [43] Shaojie Zhang, Jiahui Yang, Jianqin Yin, Zhenbo Luo, and Jian Luan. Q-frame: Query-aware frame selection and multi-resolution adaptation for video-llms. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 22056–22065, 2025. [44] Junjie Zhou, Yan Shu, Bo Zhao, Boya Wu, Zhengyang Liang, Shitao Xiao, Minghao Qin, Xi Yang, Yongping Xiong, Bo Zhang, et al. Mlvu: Benchmarking multi-task long video understanding. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 13691–13701, 2025. [45] Zirui Zhu, Hailun Xu, Yang Luo, Yong Liu, Kanchan Sarkar, Zhenheng Yang, and Yang You. FOCUS: Efficient keyframe selection for long video understanding. In The Fourteenth International Conference on Learning Representations , 2026. URL https://openreview. net/forum?id=1OQKqLFcbB .[46] Jialong Zuo, Yongtai Deng, Lingdong Kong, Jingkang Yang, Rui Jin, Yiwei Zhang, Nong Sang, Liang Pan, Ziwei Liu, and Changxin Gao. Videolucy: Deep memory backtracking for long video understanding. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2026. URL https://openreview.net/forum?id=To7Rs2wsTd .13 Table 5: Ablation study on the density-prior exponent τ . τ = 0 removes the density prior, while 
+
+τ = 1 is used as the default setting in all main experiments.                                                        
+
+> τVideo-MME Long Video Bench
+> Short Med Long Overall 15s 60s 600s 3600s Overall 0.0 73.11 58.11 52.67 61.29 66.14 70.93 61.65 57.09 61.55 0.3 72.56 58.89 53.11 61.52 71.43 71.51 61.17 56.56 62.00 0.5 73.44 58.67 53.33 61.81 71.43 73.26 59.95 56.91 62.01
+> 0.7 72.56 58.89 52.78 61.41 69.31 72.09 61.41 56.21 61.71 1.0 default 72.89 59.78 52.78 61.80 69.31 73.26 60.68 55.85 61.48
+
+## A Code 
+
+Code Link: https://github.com/JingfengSteven/LDDR 
+
+## B Limitations 
+
+Although LDDR improves the efficiency of long-video understanding by selecting informative frames and assigning dynamic resolution, several limitations remain. First, LDDR relies on text-visual features extracted from external encoders, so its performance can be affected by the quality of that external module. Second, LDDR is designed as a training-free preprocessing method for existing MLLM backbones, and therefore, its final performance still depends on the reasoning capacity, ability to handle dynamic resolution, and visual-token handling capability of the downstream model. 
+
+## C Effect of density-prior 
+
+Table 5 studies the effect of the density-prior exponent τ in ˜It = Itρτt . The comparison between 
+
+τ = 0 and τ > 0 confirms the effectiveness of the density prior: incorporating relevance-weighted feature density consistently improves or maintains the overall performance. Empirically, τ = 0 .5
+
+gives the strongest average result among the tested settings, especially on Long Video Bench. Nevertheless, we intentionally avoid selecting τ based on these test-set results. Such tuning would make the method dependent on the target benchmark and compromise the fairness of comparison. Accordingly, we use the simple default τ = 1 for all main experiments, while reporting the full ablation to show that the method is robust to different density-prior strengths. 
+
+## D Equivalence Between Standard Greedy MAP and Kernel-Free Greedy MAP 
+
+In this section, we prove that the proposed kernel-free DPP inference is equivalent to standard greedy MAP inference applied to the modulated kernel 
+
+˜L = diag(˜ r) S diag(˜ r),
+
+rather than an approximation. Therefore, both methods optimize the same objective and produce the same greedy selection sequence under exact arithmetic and identical tie-breaking. 
+
+Step 1: Factorization of the modulated kernel. Let 
+
+ˆF =
+
+
+
+ˆf ⊤
+
+> 1
+
+...
+
+ˆf ⊤
+
+> T
+
+ ∈ RT ×d, ˆft = ht
+
+∥ht∥ .
+
+Since 
+
+S = ˆF ˆF⊤,
+
+14 the modulated kernel can be written as 
+
+˜L = diag(˜ r) ˆF ˆF⊤ diag(˜ r). (6) Define 
+
+Φ := diag(˜ r) ˆF ∈ RT ×d, (7) whose t-th row is denoted by ϕ⊤ 
+
+> t
+
+∈ Rd. Then 
+
+˜L = ΦΦ ⊤, ˜Lst = ϕ⊤ 
+
+> s
+
+ϕt. (8) Hence the modulated DPP kernel is exactly a Gram matrix in the task-conditioned feature space. 
+
+Step 2: Greedy MAP objective. For an L-ensemble DPP, the MAP objective is 
+
+S∗ = arg max   
+
+> S⊆ [T]
+
+det( ˜LS ), (9) where ˜LS is the principal submatrix indexed by S where |S| = K. Using (8), 
+
+˜LS = ΦS Φ⊤S .
+
+Therefore, 
+
+det( ˜LS ) = det( ΦS Φ⊤S ), (10) which shows that standard DPP MAP on ˜L and feature-space DPP MAP on Φ optimize the same determinant objective . The only difference is whether the computation is carried out in the T -dimensional sample space or in the d-dimensional feature space. 
+
+Step 3: Standard greedy MAP in sample space. Let d(i) 
+
+> t
+
+denote the marginal gain residual after i
+
+greedy steps. Standard Cholesky-style greedy MAP inference on ˜L initializes 
+
+d(0)  
+
+> t
+
+= ˜Ltt . (11) At step i, suppose the selected item is 
+
+ji = arg max  
+
+> t
+
+d(i−1)  
+
+> t
+
+.
+
+Then the new basis vector ei ∈ RT is computed as 
+
+ei = ˜L:,j i − Pi−1 
+
+> k=1
+
+ek,j i ek
+
+q
+
+d(i−1) 
+
+> ji
+
+, (12) and the residual gains are updated by 
+
+d(i) 
+
+> t
+
+= d(i−1)  
+
+> t
+
+− e2
+
+> i,t
+
+. (13) Since ˜L is symmetric, the row/column form is equivalent. 
+
+Step 4: Kernel-free greedy MAP in feature space. The proposed method instead maintains basis vectors ci ∈ Rd in the feature space: 
+
+ci = ϕji − Pi−1
+
+> k=1
+
+(c⊤ 
+
+> k
+
+ϕji ) ck
+
+q
+
+d(i−1) 
+
+> ji
+
+, (14) with gain update 
+
+d(i) 
+
+> t
+
+= d(i−1)  
+
+> t
+
+− (ϕ⊤ 
+
+> t
+
+ci)2. (15) In matrix form, this is 
+
+d(i) = d(i−1) − (Φc i)2,
+
+where the square is elementwise. 15 Theorem 1. For the kernel factorization ˜L = ΦΦ ⊤, the sample-space greedy updates (12) –(13) 
+
+and the feature-space greedy updates (14) –(15) are exactly equivalent. In particular, for every iteration i,
+
+ei = Φc i, (16) 
+
+and both methods maintain identical residual gains d(i) 
+
+> t
+
+. Consequently, they choose the same greedy item ji at every step. 
+
+Proof. We prove the statement by induction. 
+
+Base case. At initialization, 
+
+d(0)  
+
+> t
+
+= ˜Ltt .
+
+Using ˜L = ΦΦ ⊤,
+
+d(0)  
+
+> t
+
+= ˜Ltt = ϕ⊤ 
+
+> t
+
+ϕt = ∥ϕt∥22. (17) Thus both methods start from the same gain vector and therefore select the same first item 
+
+j1 = arg max  
+
+> t
+
+d(0)  
+
+> t
+
+,
+
+assuming identical tie-breaking. For the first selected item, the standard sample-space update gives 
+
+e1 = ˜L:,j 1
+
+q
+
+d(0) 
+
+> j1
+
+.
+
+Since ˜L = ΦΦ ⊤, we have ˜L:,j 1 = Φϕj1 .
+
+On the other hand, the feature-space update at the first step is 
+
+c1 = ϕj1
+
+q
+
+d(0) 
+
+> j1
+
+.
+
+Therefore, 
+
+e1 = Φϕj1
+
+q
+
+d(0) 
+
+> j1
+
+= Φ ϕj1
+
+q
+
+d(0) 
+
+> j1
+
+= Φc 1.
+
+Hence the base case establishes both identical initial gains and e1 = Φc 1.
+
+Induction hypothesis. Assume that after i − 1 steps, both methods have identical gains d(i−1)  
+
+> t
+
+, hence they choose the same next item 
+
+ji = arg max  
+
+> t
+
+d(i−1)  
+
+> t
+
+.
+
+Assume also that for all k < i ,
+
+ek = Φc k.
+
+Induction step: equivalence of the new basis vector. From the standard sample-space update (12) ,
+
+ei = ˜L:,j i − Pi−1 
+
+> k=1
+
+ek,j i ek
+
+q
+
+d(i−1) 
+
+> ji
+
+.
+
+Now use ˜L = ΦΦ ⊤. The ji-th column is 
+
+˜L:,j i = Φϕji .
+
+Also, by the induction hypothesis, 
+
+ek,j i = ( ek)ji = ( Φc k)ji = ϕ⊤ 
+
+> ji
+
+ck.
+
+16 Substituting these into the sample-space update gives 
+
+ei = Φϕji − Pi−1
+
+> k=1
+
+(ϕ⊤ 
+
+> ji
+
+ck) Φc k
+
+q
+
+d(i−1) 
+
+> ji
+
+(18) 
+
+= Φ ϕji − Pi−1
+
+> k=1
+
+(c⊤ 
+
+> k
+
+ϕji ) ck
+
+q
+
+d(i−1) 
+
+> ji
+
+. (19) The term in parentheses is exactly the feature-space update (14), so 
+
+ei = Φc i.
+
+This proves (16). 
+
+Induction step: equivalence of gain updates. Using (16), 
+
+ei,t = ( Φc i)t = ϕ⊤ 
+
+> t
+
+ci.
+
+Therefore the standard residual update (13) becomes 
+
+d(i) 
+
+> t
+
+= d(i−1)  
+
+> t
+
+− e2 
+
+> i,t
+
+= d(i−1)  
+
+> t
+
+− (ϕ⊤ 
+
+> t
+
+ci)2,
+
+which is exactly the kernel-free update (15) . Hence both methods maintain the same gain vector after step i.By induction, the equivalence holds for all iterations. Since the gain vectors are identical at every step, both algorithms choose the same next item ji and therefore produce the same greedy sequence and the same final subset. □
+
+Interpretation. The standard greedy algorithm orthogonalizes columns of ˜L in the T -dimensional sample space, whereas the kernel-free algorithm orthogonalizes row features ϕt in the d-dimensional latent space. Theorem 1 shows that these are two algebraically equivalent views of the same Cholesky/Gram–Schmidt process. 
+
+Corollary 1 (Objective consistency). The proposed kernel-free inference does not change the DPP objective. It maximizes the same greedy surrogate of 
+
+max  
+
+> S
+
+det( ˜LS ),
+
+but computes it through the feature factorization ˜L = ΦΦ ⊤.
+
+Complexity. The standard kernel-space Cholesky greedy algorithm explicitly constructs and stores 
+
+˜L ∈ RT ×T , requiring O(T 2d) time for kernel construction and O(T 2) memory. During inference, the i-th greedy step updates a length-T basis vector using the previous i − 1 basis vectors, incurring a cost of O(iT ). Summing over K iterations yields a total inference cost of O(T K 2). Therefore, the overall time complexity is O(T 2d + T K 2), with O(T 2) memory. In contrast, the kernel-free method stores only Φ ∈ RT ×d and K feature-space basis vectors {ci}Ki=1 , which costs O(T d +Kd ) memory. Each iteration requires computing inner products in d dimensions for all T items, leading to O(T d )
+
+work per iteration and O(KT d ) total time. Therefore, when d ≪ T , the kernel-free formulation is exactly equivalent in target but substantially more efficient. 
+
+## E Proof and Interpretation of Density-aware GD Importance 
+
+In this section, we provide a derivation and interpretation of the proposed Group-DPP (GD) im-portance score and its density-aware variant used for dynamic resolution allocation. The key idea is that each selected frame is first evaluated by its marginal contribution to the determinant of the selected group. This contribution admits both an algebraic interpretation as a determinant ratio and a geometric interpretation as residual uniqueness with respect to the other selected frames. We then incorporate a fixed density prior to obtain the final score used for budget-aware pruning and token allocation. 17 E.1 Definition 
+
+Let S be the subset selected by Global Linear DPP. Recall that the query-conditioned frame feature matrix is 
+
+Φ = diag(˜ r) ˆF ∈ RT ×d, (20) where the t-th row is denoted by ϕ⊤ 
+
+> t
+
+∈ Rd. For any subset A, define the group Gram matrix 
+
+GA = ΦAΦ⊤A. (21) For a selected frame t ∈ S , let 
+
+At = S \ { t}. (22) The pure GD importance is defined as the multiplicative leave-one-out contribution of frame t to the selected group: 
+
+It = exp (log det( GS ) − log det( GAt )) = det( GS )det( GAt ) . (23) Equivalently, the log GD score is 
+
+st = log It = log det( GS ) − log det( GAt ). (24) Thus, st measures the additive leave-one-out marginal contribution of frame t to the DPP log-volume objective, while It measures its multiplicative contribution to the determinant. In practice, a small diagonal jitter is added to the Gram matrix when computing log-determinants for numerical stability. 
+
+E.2 GD Importance as Multiplicative Marginal Contribution 
+
+The determinant det( GS ) measures the squared volume spanned by the query-conditioned features in S. Therefore, Eq. (23) measures how much this group volume changes when frame t is included: 
+
+det( GS ) = det( GAt ) · I t. (25) A larger It indicates that frame t contributes more new volume to the selected group. In contrast, if frame t is redundant with respect to the other selected frames, its contribution to the determinant becomes small. 
+
+E.3 Residual Uniqueness Interpretation 
+
+We next show that the pure GD importance It is exactly the squared residual norm of frame t after projecting it onto the span of the other selected frames. Assume that GAt is non-singular. After reordering the indices so that frame t is the last element, the Gram matrix of S = At ∪ { t} can be written as 
+
+GS =
+
+ GAt ΦAt ϕt
+
+ϕ⊤ 
+
+> t
+
+Φ⊤At ϕ⊤ 
+
+> t
+
+ϕt
+
+
+
+. (26) By the Schur complement formula, 
+
+det( GS ) = det( GAt )
+
+
+
+ϕ⊤ 
+
+> t
+
+ϕt − ϕ⊤ 
+
+> t
+
+Φ⊤At G−1 
+
+> At
+
+ΦAt ϕt
+
+
+
+. (27) Dividing both sides by det( GAt ) gives 
+
+It = ϕ⊤
+
+> t
+
+ I − Φ⊤At G−1 
+
+> At
+
+ΦAt
+
+ ϕt. (28) Define 
+
+PAt = Φ⊤At
+
+ ΦAt Φ⊤At
+
+−1 ΦAt . (29) This is the orthogonal projector onto the span of the features in At. Therefore, 
+
+It = ϕ⊤ 
+
+> t
+
+(I − PAt )ϕt = ∥(I − PAt )ϕt∥22 . (30) 18 This proves the proposition in the main text. The pure GD importance of frame t is exactly the amount of information in ϕt that cannot be linearly explained by the other selected frames. Therefore, 
+
+It captures residual uniqueness within the query-conditioned feature space. Since ϕt = ˜ rtˆft and ∥ˆft∥2 = 1 , we also have 
+
+0 ≤ I t ≤ ∥ ϕt∥22 = ˜ r2 
+
+> t
+
+. (31) Thus, the pure GD score is upper-bounded by the query relevance of the frame. A frame can receive a high pure GD importance only when it is both query-relevant and not redundant with respect to the rest of the selected group. 
+
+E.4 Density-aware GD Score 
+
+Although pure GD importance captures residual uniqueness, it may still overemphasize frames that are geometrically distinctive but have relatively weak query-conditioned feature magnitude. To stabilize the score used for dynamic resolution, we incorporate a fixed density prior: 
+
+ρt = ∥ϕt∥221
+
+> |S|
+
+P 
+
+> j∈S
+
+∥ϕj ∥22
+
+. (32) The final density-aware GD score is 
+
+˜It = Itρt. (33) Because ϕt = ˜ rtˆft and ∥ˆft∥2 = 1 , the density prior is proportional to the squared query relevance: 
+
+∥ϕt∥22 = ˜ r2 
+
+> t
+
+. (34) Therefore, ˜It combines two factors: 
+
+˜It = ∥(I − PAt )ϕt∥22
+
+| {z }
+
+> residual uniqueness
+
+· ρt
+
+|{z} 
+
+> query-density prior
+
+. (35) This score preserves the diversity-aware residual contribution of GD while further favoring frames with strong query-conditioned magnitude. In the rest of the allocation procedure, we use ˜It rather than the pure GD score It.
+
+E.5 Why Density-aware GD Encourages Relevant Diversity 
+
+The residual form in Eq. (30) directly explains why GD importance discourages redundancy. If frame 
+
+t is nearly explained by the other selected frames, then 
+
+(I − PAt )ϕt ≈ 0, (36) and therefore It is small. In contrast, if frame t contains information that is not covered by the other selected frames, its residual norm is large and It increases. The density prior further modulates this residual uniqueness by the magnitude of the query-conditioned feature. Therefore, a frame receives a large density-aware GD score only when it is both non-redundant with respect to the selected group and strongly aligned with the query. This avoids assigning excessive visual tokens to low-density outliers whose residual uniqueness is large only because they are visually unusual. Moreover, if A ⊆ B , then the span of A is contained in the span of B. Hence projecting onto B can only reduce the residual: 
+
+∥(I − PB)ϕt∥22 ≤ ∥ (I − PA)ϕt∥22 . (37) This gives a diminishing-residual interpretation: as more similar frames are included, the marginal uniqueness of an additional frame decreases. 19 F Implementation and Evaluation Details 
+
+F.1 Evaluation Setup 
+
+All evaluations are conducted with the official lmms-eval pipeline. We use the default prompt templates, answer extraction rules, and scoring scripts provided by each benchmark. Unless otherwise specified, all methods use the same decoding configuration for a given backbone and benchmark. During evaluation, no additional training, subtitles, audio inputs, or external tools are used. For each video-query pair, different frame selection methods are applied before feeding the selected visual inputs into the same target MLLM. For methods that require frame-query similarity, we use the same LongCLIP features to avoid differences caused by external encoders. For closed-source models, we do not access model internals or modify the inference process. LDDR is used only as an external preprocessing step: it selects query-relevant and diverse frames, assigns different resolutions according to their GD importance scores, and sends the resulting multi-resolution frames with the text query to the model API. 
+
+Inference setting. All experiments are conducted under a unified inference setting using the official lmms-eval evaluation pipeline. We use greedy decoding for all open-source MLLMs, with temperature set to 0, top-p disabled, beam size set to 1, and a maximum generation length of 128 tokens. No subtitles, audio inputs, external tools, or additional training data are used during evaluation. For video preprocessing, we decode each video into frames at 1 FPS and apply the corresponding frame selection strategy before feeding the selected visual inputs into the target MLLM. For all methods, the total visual budget is normalized by the number of full-resolution frame equiva-lents. Following the Qwen-VL visual-token setting, one full-resolution frame corresponds to 1024 visual tokens, and each visual token corresponds to a 14 × 14 image patch. Therefore, a frame budget of F corresponds to a total budget of F × 1024 visual tokens. For fixed-resolution methods, each selected frame is assigned 1024 tokens. For dynamic-resolution methods, the per-frame token budget is constrained to wmin = 256 and wmax = 1024 , while keeping the total visual-token budget identical across methods. All experiments are evaluated on a single NVIDIA RTX A6000 GPU. We use LongCLIP as the default text-image encoder for frame pre-encoding across our method and all frame-selection baselines, unless otherwise specified. The evaluated MLLM backbones include Qwen2.5-VL-7B, Qwen3-VL-8B, LLaVA-OneVision-1.5-8B, InternVL3.5-4B, and InternVL3.5-8B. For closed-source evaluation, we additionally evaluate GPT-5-mini using the same selected-frame inputs and benchmark prompts. 
+
+F.2 Candidate Frame Pool and Feature Extraction 
+
+For each benchmark, we first sample candidate frames from each video at 1 FPS. All frame selection methods are then applied to this shared candidate frame pool to select the final visual inputs for the target MLLM. This ensures that different methods are compared under the same initial temporal coverage and that performance differences mainly come from the selection strategy rather than the candidate frame construction. 
+
+F.3 Benchmark Prompt Templates 
+
+To improve the reproducibility of our evaluation protocol, we provide examples of the prompt templates used in our experiments. These prompts follow the official benchmark or lmms-eval 
+
+formats whenever available, and are used consistently across different frame selection methods and MLLM backbones. 20 Video-MME 
+
+<video> Select the best answer to the following multiple-choice question based on the video and the subtitles. Respond with only the letter (A, B, C, or D) of the correct option. {question} {option_1} {option_2} {option_3} {option_4} Answer with the option’s letter from the given choices directly. 
+
+LongVideoBench 
+
+<video> Select the best answer to the following multiple-choice question based on the video and the subtitles. Respond with only the letter (A, B, C, D or E) of the correct option. {question} A. {option0} B. {option1} C. {option2} D. {option3} E. {option4_if_exists} Answer with the option’s letter from the given choices directly. 
+
+LVBench 
+
+<video> {question} Answer the question with the option letter 
+
+MLVU 
+
+<video> {question} Only give the best option. Best option: 
+
+## Broader Impact 
+
+LDDR aims to improve long-video understanding by reducing redundant visual tokens and enabling more efficient use of multimodal large language models. Its positive impacts include lowering computational cost, improving accessibility of long-video analysis, and supporting applications such as video search, education, assistive technologies, and content understanding. Potential negative impacts may arise if improved long-video understanding systems are used for surveillance, privacy-invasive video analysis, or misleading interpretation of visual content. LDDR does not introduce new datasets or generative capabilities, but downstream use should still follow appropriate privacy, consent, and responsible deployment practices. 21

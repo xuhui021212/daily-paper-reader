@@ -1,0 +1,690 @@
+Title: OmniRefine: Alignment-Aware Cooperative Compression for Efficient Omnimodal Large Language Models
+
+URL Source: https://arxiv.org/pdf/2605.12056v1
+
+Published Time: Wed, 13 May 2026 01:15:16 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# OmniRefine: Alignment-Aware Cooperative Compression for Efficient Omnimodal Large Language Models 
+
+Yuchen Deng 1,2, Zidang Cai 1, Hai-Tao Zheng 1,2, Jie Wang 1,2, Feidiao Yang 2, and Yuxing Han 1† 
+
+> 1
+
+Tsinghua Shenzhen International Graduate School, Tsinghua University  
+
+> 2
+
+Pengcheng Laboratory 
+
+{dyc23,jie-wang24}@mails.tsinghua.edu.cn {zheng.haitao,yuxinghan}@sz.tsinghua.edu.cn caizidang@gmail.com, yangfd@pcl.ac.cn 
+
+> †
+
+Corresponding authors. 
+
+Abstract 
+
+Omnimodal large language models (Omni-LLMs) show strong capability in audio-video understanding, but their practical deployment remains limited by high in-ference cost of long video streams and dense audio sequences. Despite recent progress, existing compression methods for Omni-LLMs typically rely on fixed or native compression units, which can disrupt cross-modal correspondence and the complementary information required for audio-video reasoning, making it difficult to improve inference efficiency while stably preserving performance. To address this, we propose OmniRefine, a training-free two-stage framework for efficient audio-visual token compression in Omni-LLMs. First, Correspondence-Preserving Chunk Refinement refines native chunk boundaries into cross-modally aligned compression units through frame-audio similarity and dynamic program-ming. Second, Modality-Aware Cooperative Compression jointly compresses video and audio tokens within each refined unit to reduce redundancy while preserving critical evidence. Extensive experiments show that OmniRefine achieves a better efficiency-performance trade-off than strong baselines and maintains stable per-formance under lower compression ratios. On WorldSense, it still reaches 46.7% accuracy at a 44% token retention ratio, nearly matching the full-token baseline. The code and interface will be released to facilitate further research. 
+
+1 Introduction 
+
+Multimodal Large Language Models (MLLMs) [ 2, 6 , 7, 10 , 11 , 25 – 27 , 30 , 32 –34 , 49 ] have rapidly extended the capabilities of large language models from static image-text understanding to audio-visual perception and reasoning. In particular, building on the progress of video large language models (VLLMs), the rise of omnimodal large language models (Omni-LLMs) [ 16 , 41 , 46 , 52 , 53 , 55 ] further enables joint modeling of visual and acoustic inputs. However, the deployment of Omni-LLMs still faces severe efficiency bottlenecks [ 20 , 37 – 39 , 45 ]. This is mainly because long video streams and dense audio token sequences substantially enlarge the inference context, while the quadratic complexity of attention further increases computational and memory overhead. As a result, token compression has emerged as an important direction for accelerating inference. Early token compression methods were developed mainly for VLLMs, where spatial and temporal redundancy is reduced by pruning or merging visual tokens [ 4 , 19 , 20 , 36 , 39 ,43 , 44 , 51 , 54 , 56 , 59 ]. More recent methods have begun to incorporate cross-modal structure into  
+
+> Preprint.
+> arXiv:2605.12056v1 [cs.AI] 12 May 2026 Vision Encoder Audio Encoder
+
+· ·
+
+> OmniRefine
+> Stage-1: Correspondence-
+> Preserving Chunk
+> Refinement (CPCR)
+> Stage-2: Modality-Aware
+> Cooperative Compression
+> (MACC)
+> Text ：
+> Prompt
+
+· ·     
+
+> Encoder
+> Large Language Model
+> Text Tokens Video Tokens Audio Tokens
+> (a) (b) (c)
+> T
+
+Figure 1: (a) Overview of OmniRefine. (b) OmniRefine outperforms baselines on WorldSense and nearly matches the full-token baseline at a 44% retention ratio. (c) Visualization of token retention, where gray regions are pruned and the audio timeline marks retained anchor-related positions. Omni-LLM acceleration, for example through asymmetric compression and cross-modal calibration to better coordinate visual and audio token reduction [ 12 , 17 , 21 , 22 , 24 , 45 ]. Nevertheless, existing compression methods still typically rely on fixed or native compression units, which can easily disrupt cross-modal correspondence and the complementary information required for audio-video reasoning, making it difficult to improve inference efficiency while stably preserving performance. To investigate this issue, we conduct an empirical analysis of audio-visual correspondence in Qwen2.5-Omni-7B [ 52 ]. Native temporal chunk boundaries do not always reflect local audio-visual correspon-dence [ 48 ]. Some audio tokens may maintain stronger correspondence with video tokens in adjacent chunks. Moreover, within shared compression units, video and audio exhibit different redundancy structures: the former is dominated by spatial and temporal redundancy, whereas the latter relies more on semantic constraints due to the temporal continuity and partial overlap of neighboring audio tokens. This indicates that cross-modally aligned compression units and cooperative compression can better balance the inference efficiency and accuracy of Omni-LLMs. To this end, we propose OmniRefine , a training-free framework for two-stage audio-visual token compression in Omni-LLMs. As shown in Fig. 1(a), OmniRefine first introduces Correspondence-Preserving Chunk Refinement (CPCR) , which uses frame-audio similarity and dynamic program-ming to refine chunk boundaries into cross-modally aligned compression units. Second, OmniRefine applies Modality-Aware Cooperative Compression (MACC) to exploit cross-modal complemen-tarity, where the video branch reduces spatial and temporal redundancy through a tree-structured strategy, while the audio branch compresses continuous acoustic content under semantic-anchor constraints, with its retention budget adaptively modulated by the video-side retention ratio. Extensive experiments on WorldSense, AVUT, and VideoMME demonstrate that OmniRefine con-sistently achieves a better efficiency-performance trade-off than strong baselines. As illustrated in Fig. 1, OmniRefine reaches 46.7% accuracy on Qwen2.5-Omni-7B at a 44% token retention ratio, nearly matching the full-token baseline. In addition, the visualization further shows that it preserves key audio-video tokens while pruning redundant regions. Crucially, OmniRefine is training-free and supports KV-cache reuse, making multi-turn reasoning more efficient at lower cost. In summary, our contributions are listed as follows: • Existing Omni-LLM acceleration methods overlook cross-modal correspondence, making it difficult to balance inference efficiency and quality. Therefore, we propose OmniRefine, a training-free framework for audio-visual token compression. • We further develop a two-stage compression method in which CPCR first refines native chunk boundaries into correspondence-preserving compression units, and MACC then performs modality-aware cooperative compression within each unit. • Extensive experiments on audio-visual benchmarks demonstrate that OmniRefine achieves a more favorable efficiency–performance trade-off than competitive Omni-LLM compression baselines, while remaining training-free and compatible with KV-cache reuse. 22 Related work 
+
+Omnimodal Large Language Models. In recent years, multimodal large language models (MLLMs) have evolved from static image-text understanding to reasoning over audio-visual scenarios. Unlike conventional MLLMs [ 2 , 6 , 7, 27 , 30 , 34 , 42 , 62 ], which process different modalities in a relatively separate manner, Omni-LLMs aim to handle heterogeneous inputs, including text, images, video, and audio, within a unified framework [ 13 , 28 , 46 , 52 , 53 ]. Audio-visual understanding has become a key research problem [ 1, 47 , 50 , 58 ], as it constitutes a core form of real-world interac-tion. Along a shared temporal axis, visual and acoustic signals jointly characterize event dynamics: video provides spatial layout, object states, and temporal motion, while audio conveys semantic content, sound events, and temporal cues. Therefore, effective audio-visual understanding requires not only modeling cross-modal temporal relationships, but also fully exploiting the complementary information carried by the two modalities. 
+
+Token Compression in Multimodal LLMs. Existing token compression methods have been developed mainly for images [ 3 , 4 , 36 , 43 , 51 , 54 ], videos [ 5, 15 , 19 , 20 , 37 , 39 , 40 , 44 ], and other single-modal inputs [ 8, 9 , 23 , 29 , 31 , 35 , 42 ], primarily exploiting intra-modal redundancy through pruning or merging. However, such methods are not directly suitable for scenarios requiring cross-modal cooperative reasoning, especially when audio and video jointly constitute event evidence along a shared temporal axis [ 45 ]. This is because single-modal compression can disrupt cross-modal correspondence and consequently degrade downstream reasoning quality. Recently, to improve the inference efficiency of Omni-LLMs, token compression methods have begun to explicitly incorporate cross-modal structure [ 12 , 24 , 60 ]. OmniZip [ 45 ] adopts an asymmetric compression paradigm, using audio to guide dynamic video compression; AccKV [ 21 ] coordinates the retention of audio and video KV caches through cross-modal calibration; FastAV [ 22 ] employs attention-based two-stage token pruning; and EchoingPixels [ 17 ] performs adaptive compression over joint audio-video tokens under early cross-modal interaction. Despite this progress, existing methods still struggle to maintain stable reasoning accuracy while improving inference efficiency. A key reason is that they overlook cross-modal correspondence and complementary evidence during compression. Differently, OmniRefine refines chunk boundaries to construct cross-modally aligned compression units, and performs cooperative compression by exploiting complementary information from audio and video, thereby achieving a better balance between inference efficiency and accuracy. 
+
+3 Method 
+
+We propose OmniRefine, a training-free audio-visual token compression framework for efficient Omni-LLMs inference. OmniRefine follows a two-stage design that jointly considers cross-modal alignment and modality complementarity. It first refines the native chunks into correspondence-preserving compression units, and then performs cooperative token compression within each unit. The module is applied once to encoded tokens before the LLM prefill stage. Furthermore, our method is question-agnostic, enabling KV-cache reuse across different questions over the same video. 
+
+3.1 Motivating Analysis 
+
+In Qwen2.5-Omni, audio and video tokens are organized into fixed-duration interleaved chunks according to temporal position indices, providing a coarse synchronization prior between modalities. However, these boundaries do not always align with local audio-visual correspondence, so directly using native chunks as compression units may separate locally coherent cross-modal evidence. To analyze this, we examine the cross-modal attention distributions between audio and video tokens. As shown in Fig. 2(a), although shallow-layer attention is strongly influenced by positional bias, some boundary-adjacent audio tokens in the back chunk already exhibit stronger peak responses to front video tokens. This tendency becomes more pronounced at deeper layers: Fig. 2(b) shows that the same audio token assigns a larger overall attention mass to front video tokens than to back video tokens. This suggests that the cross-modal evidence may extend across native chunk boundaries. In addition, we use frame-audio cosine similarity in the shared representation space of Omni-LLMs to characterize local audio-visual correspondence. Specifically, video tokens within each frame are aggregated into frame embeddings and compared with boundary-adjacent audio tokens. As shown in 30 50 100 150 200 250 
+
+> Video-token index (front then back)
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> Attention score
+> Attention Score Distribution
+> Front region
+> Back region
+> Front/Back boundary
+> Attention Score
+
+(a) 0 50 100 150 200 250 
+
+> Video-token index (front then back)
+> 0.00
+> 0.01
+> 0.02
+> 0.03
+> 0.04
+> 0.05
+> 0.06
+> Attention score
+> Attention Score Distribution
+> Front region
+> Back region
+> Front/Back boundary
+> Attention Score
+
+(b) 1 2 3 4 5 6 7 8                                                        
+
+> Chunk Index
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> Token Index
+> -0.000 -0.000 -0.009 0.001 0.002 -0.006 0.000 0.026
+> 0.001 -0.000 -0.027 0.001 0.010 -0.001 -0.009 0.044
+> -0.000 0.001 -0.019 0.004 0.006 -0.004 -0.004 0.030
+> -0.000 0.001 -0.004 0.001 0.007 -0.011 -0.005 0.028
+> -0.000 -0.000 -0.005 -0.000 0.012 -0.013 -0.013 0.034
+> 0.000 0.001 -0.011 0.000 0.020 -0.012 -0.005 0.035
+> -0.000 0.001 -0.013 0.000 0.012 -0.014 -0.005 0.025
+> 0.000 0.000 -0.001 -0.001 0.011 -0.010 -0.020 0.025
+
+Token Alignment Sensitivity ( ε = 0.005 ) 
+
+> -0.04
+> -0.03
+> -0.02
+> -0.01
+> 0.00
+> 0.01
+> 0.02
+> 0.03
+> 0.04
+> Similarity  Δ (Front vs Back)
+> +ε
+> −ε
+
+(c) 
+
+Figure 2: Motivating analysis of native chunk boundaries in Qwen2.5-Omni. (a) Shallow-layer (layer 0) cross-modal attention of a boundary-adjacent audio token. (b) Deeper-layer (layer 8) cross-modal attention of the same token. (c) Frame-audio correspondence near native chunk boundaries. Fig. 2(c), some audio tokens on the back side remain closer to the front-frame embedding, indicating that fixed native boundaries may split locally coherent audio-visual evidence. Taken together, although native chunks provide a coarse temporal synchronization prior, they do not always align with the local audio-visual evidence structure. This motivates OmniRefine to refine the native temporal partition before token compression, and construct correspondence-preserving compression units. However, improved compression units alone are insufficient for efficient audio-visual compression. Under shared chunk boundaries, video and audio still exhibit different redundancy structures: the former depends on spatial layout and temporal dynamics, whereas the latter is dependent on semantic content and temporal continuity. Therefore, cooperative compression is better suited to preserving heterogeneous audio-visual evidence than compression dominated by a single modality. Motivated by this, OmniRefine further adopts a modality-specialized cooperative compression strategy under shared chunk boundaries. 
+
+3.2 Overview of OmniRefine 
+
+OmniRefine is a training-free framework for two-stage audio-visual token compression in Omni-LLMs. As shown in Fig. 3, it operates on encoded audio and video tokens before the LLM prefill stage. In the first stage, OmniRefine performs Correspondence-Preserving Chunk Refinement (CPCR), which refines native chunk boundaries into cross-modally aligned compression units. Specifically, video tokens within each frame are aggregated into frame-level embeddings and compared with audio token under a native neighborhood constraint. Based on the resulting frame-audio correspondence field, OmniRefine applies constrained dynamic programming to jointly refine video-frame and audio-token boundaries, producing chunks that better match the audio-visual evidence structure. In the second stage, OmniRefine performs Modality-Aware Cooperative Compression (MACC) within each refined chunk. On the video side, it applies tree-structured spatio-temporal compression (TSST) to reduce spatial and temporal redundancy. On the audio side, it performs semantic-anchor audio compression (SAAC) to preserve semantic continuity while grouping and merging locally related tokens. To enable cross-modal cooperation, the audio branch further adjusts its retention budget according to the video-side retention ratio. Finally, the compressed audio-visual tokens are reassembled in temporal order and passed to the LLM prefill stage for downstream inference. 
+
+3.3 Correspondence-Preserving Chunk Refinement 
+
+Based on the analysis in Sec. 3.1, native temporal chunks are better treated as coarse alignment priors rather than compression units. Thus, we propose Correspondence-Preserving Chunk Refinement (CPCR), which refines chunk boundaries using frame-audio similarity to construct correspondence-4T                
+
+> Window
+> Empty
+> Lv.1
+> Lv.2
+> Lv.3
+> Merge
+> Cosine
+> Similarity
+> Unimportant
+> Important
+> Audio
+> Attention
+> Score
+> 12122132
+> (Top-K = Semantic Anchor + Important Tokens) + Contextual Tokens
+> (Semantic Anchor Retrieval Based on Similarity)
+> 1Semantic
+> Anchor 2Important
+> Tokens 3Contextual
+> Tokens
+> Empty Merge
+> Video Tokens
+> Audio Tokens
+> Frame Embedding 1 Frame Embedding 2
+> Frame
+> Embeddings
+> T
+> Audio
+> Tokens
+> (Boundary Refinement: Cross-modal Similarity + Dynamic Programming)
+> Frame Embedding 1 Frame Embedding 2
+> Cross-modal
+> Similarity
+> Vision Encoder Audio Encoder
+> MLP
+
+## · · ·
+
+> OmniRefine
+> Stage-1: Correspondence-
+> Preserving Chunk
+> Refinement (CPCR)
+> Stage-2: Modality-Aware
+> Cooperative Compression
+> (MACC)
+> Text ：
+> Prompt
+
+## · · ·   
+
+> Encoder
+> Large Language Model
+> Text Tokens Video Tokens Audio Tokens
+> CPCR TSST SAAC
+
+Figure 3: Overview of OmniRefine. Given encoded audio-visual tokens, OmniRefine first applies CPCR to refine native chunks into correspondence-preserving compression units, and then performs MACC within each refined chunk. The compressed tokens are finally passed to the LLM prefill stage. preserving compression units. This process is formulated as a temporally constrained joint segmenta-tion problem over video frames and audio tokens, and solved with dynamic programming. 
+
+Frame-audio correspondence modeling. Let {vf,p }Pf
+
+p=1 denote the encoded video tokens in frame 
+
+f , and let {at}Nt=1 denote the encoded audio tokens. We compute frame-audio similarity by first aggregating video tokens within each frame into a frame-level representation and then comparing it with each audio token: 
+
+Sf,t = cos 
+
+ 1
+
+PfPf
+
+X
+
+p=1 
+
+vf,p , at
+
+ . (1) The resulting similarity matrix characterizes frame-audio correspondence. In addition, to preserve temporal priors and confine boundary refinement to native neighborhoods, we only consider valid frame-audio correspondences within those neighborhoods. Let cv (f ) and ca(t) denote the native video bucket of frame f and the native audio bucket of audio token t. We define a binary mask as 
+
+Mf,t = I[ca(t) ∈ N (cv (f ))] , (2) where N (k) denotes the valid audio neighborhood of bucket k, consisting of the current bucket and its immediate temporal neighbors, except at the sequence boundaries where only the bucket itself is retained. Therefore, the corresponding masked field is given by 
+
+˜Sf,t = Mf,t Sf,t , (3) which preserves local frame-audio correspondence within native temporal neighborhoods while confining boundary refinement to locally misaligned regions. 
+
+Dynamic programming for chunk refinement. A candidate refined chunk consists of a contiguous video-frame interval [i + 1 , u ] and a contiguous audio-token interval [j + 1 , q ]. We define its score as the average similarity over valid frame-audio pairs within the block: 
+
+ϕ(i, u, j, q ) = 
+
+Puf =i+1 
+
+Pqt=j+1 ˜Sf,t 
+
+Puf =i+1 
+
+Pqt=j+1 Mf,t 
+
+. (4) This score measures the internal consistency of a candidate audio-visual block in the shared repre-sentation space, where higher values indicate better agreement with the local audio-visual evidence 5structure. Based on this score, CPCR formulates chunk refinement as a constrained monotonic segmentation problem over video frames and audio tokens. Let D[u, q ] denote the best segmentation score for the first u video frames and the first q audio tokens. The recurrence is 
+
+D[u, q ] = max  
+
+> (i,j )
+
+[D[i, j ] + ϕ(i, u, j, q ) − λc] , (5) where λc is a chunk regularization term that discourages over-fragmentation. The optimization enforces monotonic progression, continuous coverage, and predefined length constraints in both modalities. Thus, dynamic programming balances local frame-audio correspondence against global segmentation consistency, and traceback yields a sequence of refined audio-visual chunks. These chunks preserve the coarse synchronization structure of the native temporal partition while better matching local audio-visual evidence, and are used as the compression units for the second stage. 
+
+3.4 Modality-Aware Cooperative Compression 
+
+Given the refined chunks produced by CPCR, OmniRefine performs modality-aware cooperative com-pression within each compression unit. The video branch applies Tree-Structured Spatio-Temporal Compression (TSST), while the audio branch adopts Semantic-Anchor Audio Compression (SAAC), each tailored to the redundancy structure of its modality. Because audio tokens typically encode local acoustic content, neighboring tokens often exhibit temporal continuity and partial overlap. Accordingly, the audio branch references the video-side retention ratio in budget allocation, enabling cross-modal cooperation while preserving semantic continuity. 
+
+Tree-Structured Spatio-Temporal Compression. For a refined chunk g, let V(g) denote its video tokens. Using the original spatial position encoding, we reorganize these tokens into frame-wise 2D grids. As illustrated in Fig. 3, OmniRefine performs spatial compression within each frame through a coarse-to-fine tree-structured search. Specifically, each frame is organized into a multi-scale spatial hierarchy, where a coarse-level node corresponds to a larger 2D region, and each parent node is connected to 2 × 2 child regions. Based on this hierarchy, OmniRefine performs top-down granularity decisions. If all child regions remain sufficiently similar to the parent, the parent node is retained: 
+
+cos  z(R), z(Rc) ≥ τs, ∀Rc ∈ C (R) (6) where τs is the spatial similarity threshold and C(R) denotes the set of child regions of R. Otherwise, the region is subdivided until finer-grained child regions are reached. This coarse-to-fine search preserves large homogeneous regions while assigning finer-grained representations to complex ones. After spatial node construction, OmniRefine further performs temporal de-redundancy across adjacent frames. Let n(t−1)  
+
+> i
+
+and n(t) 
+
+> j
+
+denote two nodes from consecutive frames whose spatial supports overlap or contain one another. We merge n(t) 
+
+> j
+
+into the representative of the previous frame when 
+
+cos  z(n(t−1)  
+
+> i
+
+), z(n(t) 
+
+> j
+
+) ≥ τt (7) where τt is the temporal similarity threshold. The merged representative is updated by weighted averaging, and only the surviving nodes are mapped back to the visual token mask. The resulting retained set can be written as 
+
+K(g) 
+
+> v
+
+= Compress v
+
+
+
+V(g); τs, τ t
+
+
+
+. (8) In this way, the video branch removes both frame-internal spatial redundancy and cross-frame temporal redundancy while preserving object layout and motion-relevant structure. 
+
+Semantic-Anchor Audio Compression. On the audio side, SAAC combines token saliency, semantic grouping, and cross-modal guidance. For chunk g, let its audio tokens be denoted by A(g) =
+
+{a(g) 
+
+> t
+
+}Ng
+
+> t=1
+
+. First, we identify semantic anchors from adjacent audio-token similarity: whenever the cosine similarity between neighboring tokens falls below a threshold, the latter token is marked as an anchor, partitioning the chunk into local semantic intervals. We then retain a set of dominant audio tokens according to fused attention-based importance scores and keep a small number of contextual anchors from the remaining tokens. Each residual non-anchor token is assigned to its most similar anchor according to local audio similarity, within its semantic interval: 
+
+π(t) = arg max 
+
+> h∈H (g)
+
+cos( a(g) 
+
+> t
+
+, a(g) 
+
+> h
+
+). (9) 6Table 1: Comparison of different methods on WorldSense. FLOPs calculation considers only multimodal tokens from audio and video inputs. Best result is in bold, second best is underlined.                                                                                                                                                                                      
+
+> Method Retained Ratio FLOPs Ratio Tech & Science Culture & Politics Daily Life Film & TV Perfor-mance Games Sports Music Avg. Qwen2.5-Omni-7B Full Tokens 100% 100% 52.4 50.1 48.5 44.6 43.8 41.6 41.6 47.3 46.8 Random 55% 48% 47.1 47.0 44.4 41.2 40.0 40.1 40.1 46.3 43.6 FastV 50% 54% 48.8 47.4 44.2 44.1 41.2 38.3 40.0 46.6 44.3 DyCoke (V&A) 50% 44% 48.4 49.9 46.7 41.4 39.9 40.8 40.2 46.5 44.6 OmniZip 45% 39% 50.1 51.1 47.6 43.9 40.1 40.8 41.9 46.7 45.9 OmniRefine (Ours) 44% 31% 50.4 52.1 46.0 44.3 44.6 43.8 43.0 48.3 46.7
+> OmniZip 35% 29% 48.3 49.5 47.6 42.5 40.1 40.2 42.3 46.3 45.3 OmniRefine (Ours) 30% 20% 50.4 51.5 45.3 43.3 44.2 44.6 43.0 48.8 46.4 Qwen2.5-Omni-3B Full Tokens 100% 100% 51.5 50.8 45.0 45.4 43.8 42.5 44.2 46.1 46.4 Random 55% 45% 48.2 46.3 40.7 41.4 38.6 40.0 41.8 43.4 42.8 FastV 50% 49% 50.0 50.5 44.1 43.0 40.5 41.6 41.8 42.1 44.4 DyCoke (V&A) 50% 40% 48.1 48.5 42.3 43.3 39.7 43.4 42.1 43.0 44.0 OmniZip 45% 36% 50.1 50.5 43.9 45.6 40.5 40.8 43.7 43.1 45.2 OmniRefine (Ours) 37% 22% 52.2 49.5 45.6 43.0 41.6 39.1 43.5 44.1 45.4
+> OmniZip 35% 26% 48.8 48.9 41.8 46.4 39.8 42.5 42.6 43.1 44.3 OmniRefine (Ours) 23% 18% 49.6 49.5 45.0 43.5 41.9 39.1 40.7 45.1 44.7
+
+where H(g) denotes the set of retained anchors in chunk g, and π(t) denotes the anchor assigned to token t. Within each anchor group, we select a small set of merge candidates according to their cross-modal matching scores with the retained video tokens. Let r(g) 
+
+> v
+
+denote the video-side retention ratio of chunk g. The audio merging ratio is conservatively adjusted according to r(g) 
+
+> v
+
+, with higher visual retention leading to lighter audio compression. The retained audio set is written as 
+
+K(g) 
+
+> a
+
+= Compress a
+
+
+
+A(g); H(g), r (g)
+
+> v
+
+
+
+. (10) For each anchor h, the selected tokens assigned to it are merged back into the anchor representation through a similarity-weighted update: 
+
+˜a(g) 
+
+> h
+
+= a(g) 
+
+> h
+
++ P 
+
+> t∈M (h)
+
+wt a(g)
+
+> t
+
+1 + P 
+
+> t∈M (h)
+
+wt
+
+, (11) where M(h) denotes the merge set of anchor h, and wt is obtained by normalizing the relevance scores within M(h). By partitioning semantic intervals, this design preserves key audio tokens while introducing cross-modal guidance through budget allocation and merge weighting. As a result, the audio branch maintains semantic coherence while remaining coordinated with the visual branch. 
+
+4 Experiments 
+
+4.1 Experimental Setting Benchmarks. We evaluate our performance on established audio-video understanding benchmarks: WorldSense [ 18 ], VideoMME [ 14 ], and AVUT [ 57 ]. WorldSense assesses the model’s ability to jointly understand audio and video across eight distinct domains. VideoMME is widely adopted for video-understanding evaluations, where incorporating audio information can further improve accuracy. AVUT is an audio-centric video understanding benchmark covering six tasks. 
+
+Comparison Methods. Since token compression methods tailored to omnimodal architectures remain limited, we compare OmniRefine with both the state of the art for Omni-LLMs and represen-tative single-modal baselines. OmniZip [ 45 ] is the first compression method tailored for Omni-LLMs. FastV [ 4 ] achieves inference-time, training-free token dropping guided solely by the attention matrix of the L-th layer. DyCoke [ 44 ] represents the first dynamic token compression strategy proposed for VideoLLMs. In addition, random pruning is included as a control baseline for comparison. 7Table 2: Comparison of different token compression methods on AVUTBench and VideoMME. 
+
+The FLOPs ratio represents the relative computational overhead compared to the Full Tokens baseline. The ‘-’ symbol indicates that the method (e.g., FastV) failed to execute due to Out-of-Memory (OOM) errors, and such entries are excluded from average calculations.                                                                                                                                                  
+
+> Method Settings AVUTBench VideoMME Avg. Retained FLOPs EL OR OM IE CC CM Avg. wo
+> Qwen2.5-Omni-7B
+> Full Tokens 100% 100% 38.2 67.8 59.6 85.6 44.1 66.7 64.5 66.0 100% Random 55% 48% 38.2 64.9 55.6 80.1 44.7 65.0 61.0 65.4 96.9% FastV 50% 54% 34.1 64.3 57.1 77.6 36.4 56.4 58.4 -90.5% DyCoke (V&A) 50% 44% 38.8 67.2 58.2 81.9 39.0 62.4 62.0 65.5 97.7% OmniZip 45% 39% 38.4 67.2 56.9 85.3 42.4 66.0 63.0 66.3 99.1% OmniRefine (Ours) 44% 36% 36.6 69.2 56.2 86.1 43.1 65.7 63.5 66.4 99.5 %
+> Qwen2.5-Omni-3B
+> Full Tokens 100% 100% 32.9 65.3 58.4 85.0 44.1 62.6 62.2 62.6 100% Random 55% 45% 31.7 59.2 55.4 77.3 44.9 62.1 58.7 61.1 96.0% FastV 50% 49% 27.1 57.0 56.3 80.5 42.3 60.1 55.9 -89.9% DyCoke (V&A) 50% 40% 31.9 64.3 57.3 82.2 40.7 61.3 60.7 61.6 98.0% OmniZip 45% 36% 32.4 65.0 57.7 84.9 41.5 61.4 61.3 62.8 99.4% OmniRefine (Ours) 39% 28% 29.9 63.7 58.9 84.5 44.8 63.0 61.7 62.8 99.8%
+
+Implementation Details. OmniRefine is implemented based on the Qwen2.5-Omni 7B and 3B architectures [ 52 ], utilizing NVIDIA L20 (48GB) GPUs. For fair comparison, we adopt the overall FLOPs ratio as the standardized metric. Following prior work, we cap the maximum number of frames at 768 for VideoMME and 128 for WorldSense and AVUT. For hyperparameter settings, OmniRefine uses ρa = 0 .3, ρv = 0 .6, and a contextual ratio of 0.05. In the video branch, the spatial and temporal thresholds are set to τs = 0 .82 and τt = 0 .58 . In the audio branch, the cross-modal budget coefficient β and the semantic-anchor similarity threshold are both set to 0.4. For CPCR, we use a regularization term λc = 0 .02 . Additional details are provided in Appendix A and B. 
+
+4.2 Main Results 
+
+We evaluate our proposed OmniRefine on the Qwen2.5-Omni model at two parameter scales (7B and 3B) across three major benchmarks: WorldSense, VideoMME, and AVUT. Specifically, we utilize the LMMs-Eval framework [ 61 ] for the VideoMME evaluation, while applying a unified testing codebase across all experimental settings for the remaining benchmarks. For comparison, we establish baselines using random pruning, FastV, DyCoke, and OmniZip. Furthermore, OmniRefine is evaluated under various token retention rates to comprehensively analyze the trade-off between model performance and inference overhead. To facilitate a more thorough horizontal comparison, the FLOPs presented in Tab.1 and Tab.2 are normalized into percentages, where the computational cost of the uncompressed full-token baseline is designated as 100%. 
+
+Comparison with State-of-the-Art Methods. As shown in Tab. 1, OmniRefine consistently performs strongly across diverse audio-video understanding tasks, remaining stable even under aggressive compression. On the 7B model, utilizing a 44% token retention ratio, OmniRefine achieves 46.7% accuracy, essentially matching the uncompressed full-token baseline while reducing computational FLOPs by 69%. When the retention ratio is further reduced to 30%, OmniRefine exhibits only a minor performance drop and still achieves 46.4% accuracy, outperforming OmniZip at higher 45% / 35% retention budgets (45.9% / 45.3%) as well as DyCoke at 50% retention (44.6%). Furthermore, as shown in Tab. 2, OmniRefine maintains strong performance on both AVUT and VideoMME under substantially reduced computational budgets. Across model scales, it overall outperforms OmniZip on AVUT while matching or slightly exceeding the full-token baseline on VideoMME. Even with a 72% FLOPs reduction, OmniRefine still retains 99.8% average normalized accuracy, indicating that the proposed design generalizes well across diverse audio-video benchmarks. 
+
+Efficiency Analyses. We evaluate the inference latency and memory consumption across four benchmarks. As detailed in Tab. 3, a comprehensive analysis is conducted on the WorldSense 8Table 3: Efficiency comparison on the WorldSense benchmark. We report peak GPU memory usage and inference latency for Qwen2.5-Omni-7B. 
+
+Method GPU Mem. ↓
+
+Prefilling Time ↓
+
+Acc. 
+
+↑
+
+Latency per Example ↓
+
+Full Tokens 44G 2371ms (1.00 ×) 46.8 10.99s (1.00 ×)FastV OOM DyCoke (V&A) 36G 1386ms (1.71 ×) 44.6 8.59s (1.28 ×)OmniZip (45%) 32G 894ms (2.65 ×) 45.9 7.99s (1.38 ×)OmniZip (35%) 30G 649ms (3.65 ×) 45.3 7.46s (1.47 ×)
+
+Ours (30%) 29G 451ms (5.26 ×) 46.4 9.59s (1.15 ×)0* 0.2 0.4 0.5 0.6 0.8   
+
+> Compression Ratio Parameter
+> 26
+> 27
+> 28
+> 29
+> 30
+> 31
+> 32
+> 33
+> 34
+> 35
+> Retained Ratio (%)
+> 45.6
+> 45.8
+> 46.0
+> 46.2
+> 46.4
+> 46.6
+> 46.8
+> 47.0
+> Avg. Accuracy
+> *Ratio = 0: Independent Bi-modal
+> (Mapping effect disabled) Retained Ratio (%)
+> Avg. Accuracy
+
+Figure 4: Ablation on the audio budget. 
+
+Performance across budget parameters. Table 4: Ablation of CPCR and MACC in Om-niRefine. Specifically, w/o CPCR uses native chunks with MACC, w/o MACC uses CPCR with OmniZip-style compression, and w/o Both uses native chunks with OmniZip-style compression. 
+
+Settings CPCR MACC Retained WorldSense Full OmniRefine ✓ ✓ 44 46.7 w/o CPCR ✗ ✓ 45 46.4 w/o MACC ✓ ✗ 45 46.2 w/o Both ✗ ✗ 45 45.9 0 1 2 3 4 5 6 7
+
+> Chunk ID (Temporal Groups)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Retention Ratio
+> Video Ret.
+> Audio Ret.
+
+Figure 5: Visualization of Dynamic Pruning. 
+
+Video and audio retention ratios per chunk. benchmark. The results demonstrate that, on the 7B model, our method achieves a 1.15× speedup in overall inference and a remarkable 5.26× acceleration during the prefilling stage compared to the full-token baseline. Furthermore, our approach substantially mitigates memory overhead. By saving 15GB of GPU memory while retaining approximately 99% of the original accuracy, this method provides crucial efficiency gains for the practical deployment of OmniLLMs. Since OmniRefine is training-free and supports KV-cache reuse, it is attractive for low-cost multi-turn inference. 
+
+4.3 Ablation Study Ablation of CPCR and MACC. Tab. 4 studies the contributions of CPCR and MACC in Om-niRefine. The full model achieves the highest WorldSense score (46.7%) with the lowest retained ratio (44%). Removing CPCR or MACC drops performance to 46.4% and 46.2% respectively, while increasing the ratio to 45%. Disabling both yields the lowest accuracy (45.9%), indicating that CPCR and MACC are complementary for balancing performance and efficiency. 
+
+Analysis of audio budget coordination. Fig. 4 evaluates our audio budget strategy. While indepen-dent bi-modal compression (Ratio=0) yields the highest accuracy (46.59%), it suffers from the highest retained ratio (31.28%). Our video-referenced modulation achieves an optimal trade-off at Ratio=0.5, maintaining a highly competitive 46.47% accuracy while reducing the retained ratio to 30.19%, demonstrating effective adaptive budget coordination. Fig. 5 further visualizes dynamic pruning. The retained ratios of video and audio tokens vary substantially across chunks, showing that OmniRefine allocates modality-specific budgets adaptively rather than applying uniform compression. 
+
+5 Conclusion 
+
+In this paper, we propose OmniRefine, a training-free framework for two-stage audio-visual token compression in Omni-LLMs. It first refines native temporal chunks into correspondence-preserving compression units, and then performs modality-aware cooperative compression within each refined chunk. Notably, under matched compression budgets, OmniRefine preserves model accuracy sub-stantially better than existing baselines, achieving a more favorable trade-off between efficiency and performance. Since OmniRefine is training-free and question-agnostic, it is naturally compatible with efficient inference settings such as KV-cache reuse. While OmniRefine achieves strong compression performance, its reliance on manual hyperparameters is a limitation further discussed in Appendix D. 9Future work will explore adaptive hyperparameter selection under different token budgets, enabling chunk refinement and cooperative compression to adjust automatically to input complexity. 
+
+References 
+
+[1] Inclusion AI, Biao Gong, Cheng Zou, Chuanyang Zheng, Chunluan Zhou, Canxiang Yan, Chunxiang Jin, Chunjie Shen, Dandan Zheng, Fudong Wang, et al. Ming-omni: A unified multimodal model for perception and generation. arXiv preprint arXiv:2506.09344 , 2025. [2] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, et al. Qwen3-vl technical report. arXiv preprint arXiv:2511.21631 , 2025. [3] Daniel Bolya, Cheng-Yang Fu, Xiaoliang Dai, Peizhao Zhang, Christoph Feichtenhofer, and Judy Hoffman. Token merging: Your vit but faster. arXiv preprint arXiv:2210.09461 , 2022. [4] Liang Chen, Haozhe Zhao, Tianyu Liu, Shuai Bai, Junyang Lin, Chang Zhou, and Baobao Chang. An image is worth 1/2 tokens after layer 2: Plug-and-play inference acceleration for large vision-language models. In European Conference on Computer Vision , pages 19–35. Springer, 2024. [5] Xueyi Chen, Keda Tao, Kele Shao, and Huan Wang. Streamingtom: Streaming token compres-sion for efficient video understanding. arXiv preprint arXiv:2510.18269 , 2025. [6] Zhe Chen, Jiannan Wu, Wenhai Wang, Weijie Su, Guo Chen, Sen Xing, Muyan Zhong, Qinglong Zhang, Xizhou Zhu, Lewei Lu, et al. Internvl: Scaling up vision foundation models and aligning for generic visual-linguistic tasks. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 24185–24198, 2024. [7] Zesen Cheng, Sicong Leng, Hang Zhang, Yifei Xin, Xin Li, Guanzheng Chen, Yongxin Zhu, Wenqi Zhang, Ziyang Luo, Deli Zhao, et al. Videollama 2: Advancing spatial-temporal modeling and audio understanding in video-llms. arXiv preprint arXiv:2406.07476 , 2024. [8] Tri Dao. Flashattention-2: Faster attention with better parallelism and work partitioning. arXiv preprint arXiv:2307.08691 , 2023. [9] Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. Flashattention: Fast and memory-efficient exact attention with io-awareness. Advances in neural information processing systems , 35:16344–16359, 2022. [10] Yuchen Deng, Xiuyang Wu, Hai-Tao Zheng, Jie Wang, Feidiao Yang, and Yuxing Han. Beyond boundary frames: Audio-visual semantic guidance for context-aware video interpolation. arXiv preprint arXiv:2512.03590 , 2025. [11] Yuchen Deng, Xiuyang Wu, Hai-Tao Zheng, Suiyang Zhang, Yi He, and Yuxing Han. Avatarsync: Rethinking talking-head animation through autoregressive perspective. arXiv e-prints , pages arXiv–2509, 2025. [12] Yue Ding, Yiyan Ji, Jungang Li, Xuyang Liu, Xinlong Chen, Junfei Wu, Bozhou Li, Bohan Zeng, Yang Shi, Yushuo Guan, et al. Omnisift: Modality-asymmetric token compression for efficient omni-modal large language models. arXiv preprint arXiv:2602.04804 , 2026. [13] Chaoyou Fu, Haojia Lin, Zuwei Long, Yunhang Shen, Yuhang Dai, Meng Zhao, Yi-Fan Zhang, Shaoqi Dong, Yangze Li, Xiong Wang, et al. Vita: Towards open-source interactive omni multimodal llm. arXiv preprint arXiv:2408.05211 , 2024. [14] Chaoyou Fu, Yuhan Dai, Yongdong Luo, Lei Li, Shuhuai Ren, Renrui Zhang, Zihan Wang, Chenyu Zhou, Yunhang Shen, Mengdan Zhang, et al. Video-mme: The first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 24108–24118, 2025. [15] Tianyu Fu, Tengxuan Liu, Qinghao Han, Guohao Dai, Shengen Yan, Huazhong Yang, Xuefei Ning, and Yu Wang. Framefusion: Combining similarity and importance for video token reduction on large vision language models. arXiv preprint arXiv:2501.01986 , 2024. 10 [16] Yuying Ge, Yixiao Ge, Chen Li, Teng Wang, Junfu Pu, Yizhuo Li, Lu Qiu, Jin Ma, Lisheng Duan, Xinyu Zuo, et al. Arc-hunyuan-video-7b: Structured video comprehension of real-world shorts. arXiv preprint arXiv:2507.20939 , 2025. [17] Chao Gong, Depeng Wang, Zhipeng Wei, Ya Guo, Huijia Zhu, and Jingjing Chen. Echoing-pixels: Cross-modal adaptive token reduction for efficient audio-visual llms. arXiv preprint arXiv:2512.10324 , 2025. [18] Jack Hong, Shilin Yan, Jiayin Cai, Xiaolong Jiang, Yao Hu, and Weidi Xie. Worldsense: Evaluat-ing real-world omnimodal understanding for multimodal llms. arXiv preprint arXiv:2502.04326 ,2025. [19] Xiaohu Huang, Hao Zhou, and Kai Han. Prunevid: Visual token pruning for efficient video large language models. In Findings of the Association for Computational Linguistics: ACL 2025 , pages 19959–19973, 2025. [20] Jeongseok Hyun, Sukjun Hwang, Su Ho Han, Taeoh Kim, Inwoong Lee, Dongyoon Wee, Joon-Young Lee, Seon Joo Kim, and Minho Shim. Multi-granular spatio-temporal token merging for training-free acceleration of video llms. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 23990–24000, 2025. [21] Zhonghua Jiang, Kui Chen, Kunxi Li, Keting Yin, Yiyun Zhou, Zhaode Wang, Chengfei Lv, and Shengyu Zhang. Acckv: Towards efficient audio-video llms inference via adaptive-focusing and cross-calibration kv cache optimization. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, pages 5494–5502, 2026. [22] Chaeyoung Jung, Youngjoon Jang, Seungwoo Lee, and Joon Son Chung. Fastav: Efficient token pruning for audio-visual large language model inference. arXiv preprint arXiv:2601.13143 ,2026. [23] Taehan Lee and Hyukjun Lee. Token pruning in audio transformers: Optimizing performance and decoding patch importance. arXiv preprint arXiv:2504.01690 , 2025. [24] Bingzhou Li and Tao Huang. Dash: Dynamic audio-driven semantic chunking for efficient omnimodal token compression. arXiv preprint arXiv:2603.15685 , 2026. [25] Bo Li, Yuanhan Zhang, Dong Guo, Renrui Zhang, Feng Li, Hao Zhang, Kaichen Zhang, Peiyuan Zhang, Yanwei Li, Ziwei Liu, et al. Llava-onevision: Easy visual task transfer. arXiv preprint arXiv:2408.03326 , 2024. [26] Junnan Li, Dongxu Li, Silvio Savarese, and Steven Hoi. Blip-2: Bootstrapping language-image pre-training with frozen image encoders and large language models. In International conference on machine learning , pages 19730–19742. PMLR, 2023. [27] KunChang Li, Yinan He, Yi Wang, Yizhuo Li, Wenhai Wang, Ping Luo, Yali Wang, Limin Wang, and Yu Qiao. Videochat: Chat-centric video understanding. Science China Information Sciences , 68(10):200102, 2025. [28] Yadong Li, Haoze Sun, Mingan Lin, Tianpeng Li, Guosheng Dong, Tao Zhang, Bowen Ding, Wei Song, Zhenglin Cheng, Yuqi Huo, et al. Baichuan-omni technical report. arXiv preprint arXiv:2410.08565 , 2024. [29] Yuang Li, Yu Wu, Jinyu Li, and Shujie Liu. Accelerating transducers through adjacent token merging. arXiv preprint arXiv:2306.16009 , 2023. [30] Bin Lin, Yang Ye, Bin Zhu, Jiaxi Cui, Munan Ning, Peng Jin, and Li Yuan. Video-llava: Learning united visual representation by alignment before projection. In Proceedings of the 2024 conference on empirical methods in natural language processing , pages 5971–5984, 2024. [31] Yueqian Lin, Yuzhe Fu, Jingyang Zhang, Yudong Liu, Jianyi Zhang, Jingwei Sun, Hai Helen Li, and Yiran Chen. Speechprune: Context-aware token pruning for speech information retrieval. In 2025 IEEE International Conference on Multimedia and Expo (ICME) , pages 1–6. IEEE, 2025. 11 [32] Haotian Liu, Chunyuan Li, Yuheng Li, and Yong Jae Lee. Improved baselines with visual instruction tuning. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 26296–26306, 2024. [33] Haotian Liu, Chunyuan Li, Yuheng Li, Bo Li, Yuanhan Zhang, Sheng Shen, and Yong Jae Lee. Llavanext: Improved reasoning, ocr, and world knowledge, 2024. [34] Andrew Sellergren, Sahar Kazemzadeh, Tiam Jaroensri, Atilla Kiraly, Madeleine Traverse, Timo Kohlberger, Shawn Xu, Fayaz Jamil, Cían Hughes, Charles Lau, et al. Medgemma technical report. arXiv preprint arXiv:2507.05201 , 2025. [35] Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao. Flashattention-3: Fast and accurate attention with asynchrony and low-precision. Advances in Neural Information Processing Systems , 37:68658–68685, 2024. [36] Yuzhang Shang, Mu Cai, Bingxin Xu, Yong Jae Lee, and Yan Yan. Llava-prumerge: Adaptive token reduction for efficient large multimodal models. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 22857–22867, 2025. [37] Kele Shao, Keda Tao, Can Qin, Haoxuan You, Yang Sui, and Huan Wang. Holitom: Holistic token merging for fast video large language models. arXiv preprint arXiv:2505.21334 , 2025. [38] Kele Shao, Keda Tao, Kejia Zhang, Sicheng Feng, Mu Cai, Yuzhang Shang, Haoxuan You, Can Qin, Yang Sui, and Huan Wang. When tokens talk too much: A survey of multimodal long-context token compression across images, videos, and audios. arXiv preprint arXiv:2507.20198 ,2025. [39] Leqi Shen, Guoqiang Gong, Tao He, Yifeng Zhang, Pengzhang Liu, Sicheng Zhao, and Guiguang Ding. Fastvid: Dynamic density pruning for fast video large language models. 
+
+arXiv preprint arXiv:2503.11187 , 2025. [40] Xiaoqian Shen, Yunyang Xiong, Changsheng Zhao, Lemeng Wu, Jun Chen, Chenchen Zhu, Zechun Liu, Fanyi Xiao, Balakrishnan Varadarajan, Florian Bordes, et al. Longvu: Spa-tiotemporal adaptive compression for long video-language understanding. arXiv preprint arXiv:2410.17434 , 2024. [41] Fangxun Shu, Lei Zhang, Hao Jiang, and Cihang Xie. Audio-visual llm for video understanding. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 4246– 4255, 2025. [42] Guangzhi Sun, Wenyi Yu, Changli Tang, Xianzhao Chen, Tian Tan, Wei Li, Lu Lu, Zejun Ma, Yuxuan Wang, and Chao Zhang. video-salmonn: Speech-enhanced audio-visual large language models. arXiv preprint arXiv:2406.15704 , 2024. [43] Xudong Tan, Peng Ye, Chongjun Tu, Jianjian Cao, Yaoxin Yang, Lin Zhang, Dongzhan Zhou, and Tao Chen. Tokencarve: Information-preserving visual token compression in multimodal large language models. arXiv preprint arXiv:2503.10501 , 2025. [44] Keda Tao, Can Qin, Haoxuan You, Yang Sui, and Huan Wang. Dycoke: Dynamic compression of tokens for fast video large language models. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 18992–19001, 2025. [45] Keda Tao, Kele Shao, Bohan Yu, Weiqiang Wang, Huan Wang, et al. Omnizip: Audio-guided dynamic token compression for fast omnimodal large language models. arXiv preprint arXiv:2511.14582 , 2025. [46] Qwen Team. Qwen3. 5-omni technical report. arXiv preprint arXiv:2604.15804 , 2026. [47] Wenwen Tong, Hewei Guo, Dongchuan Ran, Jiangnan Chen, Jiefan Lu, Kaibin Wang, Keqiang Li, Xiaoxu Zhu, Jiakui Li, Kehan Li, et al. Interactiveomni: A unified omni-modal model for audio-visual multi-turn dialogue. arXiv preprint arXiv:2510.13747 , 2025. [48] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information processing systems , 30, 2017. 12 [49] Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, et al. Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution. arXiv preprint arXiv:2409.12191 , 2024. [50] Zhifei Xie and Changqiao Wu. Mini-omni2: Towards open-source gpt-4o with vision, speech and duplex capabilities. arXiv preprint arXiv:2410.11190 , 2024. [51] Long Xing, Qidong Huang, Xiaoyi Dong, Jiajie Lu, Pan Zhang, Yuhang Zang, Yuhang Cao, Conghui He, Jiaqi Wang, Feng Wu, et al. Pyramiddrop: Accelerating your large vision-language models via pyramid visual redundancy reduction. arXiv preprint arXiv:2410.17247 , 2024. [52] Jin Xu, Zhifang Guo, Jinzheng He, Hangrui Hu, Ting He, Shuai Bai, Keqin Chen, Jialin Wang, Yang Fan, Kai Dang, Bin Zhang, Xiong Wang, Yunfei Chu, and Junyang Lin. Qwen2.5-omni technical report, 2025. URL https://arxiv.org/abs/2503.20215 .[53] Jin Xu, Zhifang Guo, Hangrui Hu, Yunfei Chu, Xiong Wang, Jinzheng He, Yuxuan Wang, Xian Shi, Ting He, Xinfa Zhu, et al. Qwen3-omni technical report. arXiv preprint arXiv:2509.17765 ,2025. [54] Cheng Yang, Yang Sui, Jinqi Xiao, Lingyi Huang, Yu Gong, Chendi Li, Jinghua Yan, Yu Bai, Ponnuswamy Sadayappan, Xia Hu, et al. Topv: Compatible token pruning with inference time optimization for fast and low-memory multimodal vision language model. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 19803–19813, 2025. [55] Qize Yang, Shimin Yao, Weixuan Chen, Shenghao Fu, Detao Bai, Jiaxing Zhao, Boyuan Sun, Bowen Yin, Xihan Wei, and Jingren Zhou. Humanomniv2: From understanding to omni-modal reasoning with context. arXiv preprint arXiv:2506.21277 , 2025. [56] Senqiao Yang, Yukang Chen, Zhuotao Tian, Chengyao Wang, Jingyao Li, Bei Yu, and Jiaya Jia. Visionzip: Longer is better but not necessary in vision language models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 19792–19802, 2025. [57] Yudong Yang, Jimin Zhuang, Guangzhi Sun, Changli Tang, Yixuan Li, Peihan Li, Yifan Jiang, Wei Li, Zejun Ma, and Chao Zhang. Audio-centric video understanding benchmark without text shortcut. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 6580–6598, 2025. [58] Hanrong Ye, Chao-Han Huck Yang, Arushi Goel, Wei Huang, Ligeng Zhu, Yuanhang Su, Sean Lin, An-Chieh Cheng, Zhen Wan, Jinchuan Tian, et al. Omnivinci: Enhancing architecture and data for omni-modal understanding llm. arXiv preprint arXiv:2510.15870 , 2025. [59] Weihao Ye, Qiong Wu, Wenhao Lin, and Yiyi Zhou. Fit and prune: Fast and training-free visual token pruning for multi-modal large language models. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 39, pages 22128–22136, 2025. [60] Peiqi Yin, Jiangyun Zhu, Han Gao, Chenguang Zheng, Yongxiang Huang, Taichang Zhou, Ruirui Yang, Weizhi Liu, Weiqing Chen, Canlin Guo, et al. vllm-omni: Fully disaggregated serving for any-to-any multimodal models. arXiv preprint arXiv:2602.02204 , 2026. [61] Kaichen Zhang, Bo Li, Peiyuan Zhang, Fanyi Pu, Joshua Adrian Cahyono, Kairui Hu, Shuai Liu, Yuanhan Zhang, Jingkang Yang, Chunyuan Li, et al. Lmms-eval: Reality check on the evaluation of large multimodal models. In Findings of the Association for Computational Linguistics: NAACL 2025 , pages 881–916, 2025. [62] Yuanhan Zhang, Jinming Wu, Wei Li, Bo Li, Zejun Ma, Ziwei Liu, and Chunyuan Li. Llava-video: Video instruction tuning with synthetic data. arXiv preprint arXiv:2410.02713 , 2024. 13 A Hyperparameter Settings 
+
+To supplement the configuration details provided in the main text, Table 5 summarizes the compre-hensive hyperparameter settings utilized in the OmniRefine framework. While the primary thresholds (ρ, τ , β, λc) control the core semantic filtering behavior, we introduce specific boundary constraints and hardware-aware optimizations to ensure stable feature compression and alignment efficiency. 
+
+Cross-Modal Budget Bounds. To prevent extreme pruning that could lead to catastrophic semantic loss, or insufficient compression that undermines acceleration, we define hard boundaries for the token retention mechanisms. The video token retention ratio is strictly bounded within [0 .18 , 0.55] ,ensuring that at least 18% of the most critical visual cues are preserved regardless of the scene’s sparsity. The audio retention bounds are set to [0 .1, 0.9] . Additionally, a video budget modulation factor α = 0 .15 is employed to fine-tune the cross-chunk visual budget allocation. 
+
+Chunking and DP Alignment Constraints. For the multimodal alignment module, we impose physical chunking limits to maintain intra-chunk temporal coherence. Specifically, The minimum and maximum sizes of an audio segment are set to 90 and 140 tokens, and each video chunk is constrained to contain between 3 and 5 frames. To accelerate the Dynamic Programming (DP) based joint chunking process, we apply a local alignment window strategy. The DP band ratio is set to 2.0 with a local minimum window size of 48 tokens, effectively reducing the computational overhead of solving the optimal global alignment path without sacrificing matching accuracy. Table 5: Detailed hyperparameter configurations for OmniRefine.                                    
+
+> Category Parameter Value Description Main Settings (Main Text)
+> ρa, ρ v0.3, 0.6 Global compression ratios
+> τs, τ t0.82, 0.58 Spatial and temporal STTM thresholds
+> β0.5 Audio-to-video cross-modal budget coefficient
+> λc0.02 CPCR regularization penalty term
+> Budget Constraints
+> G3Group block size for local token processing
+> [vmin , v max ][0 .18 ,0.55] Hard lower/upper bounds for video token retention
+> [amin , a max ][0 .1,0.9] Hard lower/upper bounds for audio token retention
+> α0.15 Video budget modulation factor
+> Chunking & DP
+> SA−min 90 Minimum allowable audio chunk size (tokens)
+> SA−max 140 Maximum allowable audio chunk size (tokens)
+> SV−min 3Minimum allowable video chunk size (frames)
+> SV−max 5Maximum allowable video chunk size (frames) DP Band Ratio 2.0 Search bandwidth ratio for DP alignment efficiency Min DP Window 48 Minimum local matching window for DP (tokens)
+
+B Algorithmic Details & Pseudo-code 
+
+To address the implementation specifics of the multimodal fusion process, we detail the represen-tation computation, cross-modal budget modulation, and the constrained dynamic programming optimization below. 
+
+B.1 MACC Representation and Audio Budget Allocation 
+
+To clarify the region/node representations z(·) used in the MACC module, z(·) is computed as the average-pooled representation of the hidden states of the tokens within the corresponding spatial-temporal region. Specifically, for a set of token embeddings {h1, h2, . . . , hk} in a given block, the aggregated representation is defined as: 
+
+z = 1
+
+k
+
+> k
+
+X
+
+> i=1
+
+hi (12) Furthermore, to address the cross-modal budget allocation (illustrated as the “Compression Ratio Parameter” in Fig. 4 of the main text), we denote ρa, ρ v as the global base merging ratios (compression ratios). Let ma be the audio merging ratio and Rv be the observed video retention ratio in the current chunk. The video-referenced audio budget is updated by: 
+
+ma = min 
+
+
+
+amax , max  amin , ρ a − β · (Rv − (1 − ρv )) 
+
+(13) 14 and the corresponding audio retention ratio is 
+
+Ra = 1 − ma. (14) where (1 − ρv ) is the base video retention level implied by ρv , and [amin , a max ] are safety bounds on the audio merging ratio to avoid over-pruning or under-compression. 
+
+B.2 CPCR Constrained Dynamic Programming 
+
+A naive global solution for the joint chunking alignment (Eq. 5 in the main text) would require 
+
+O(F 2N 2) time complexity, making it computationally prohibitive for long contexts. To mitigate this, we introduce the CPCR Constrained Dynamic Programming algorithm. We constrain the search space using physical chunk boundaries ( SV −min , S V −max , S A−min , S A−max )together with a Neighborhood Mask M. The admissible region is further restricted by a DP band ratio ( B) and a local minimum window size ( W ), which keeps valid alignments near the temporal diagonal while preserving feasible chunk transitions. The detailed procedure is given in Algorithm 1. 
+
+Algorithm 1 CPCR Constrained Dynamic Programming for Joint Chunking 
+
+Require: Video frame sequence V (length F ), audio token sequence A (length N )
+
+Require: Chunk bounds SV −min = 3 , SV −max = 5 , SA−min = 90 , SA−max = 140 
+
+Require: DP band ratio B = 2 .0, minimum DP window W = 48 , penalty λc = 0 .02 
+
+Ensure: Optimal alignment path P∗ 
+
+> 1:
+
+Initialize DP matrix D ∈ R(F +1) ×(N +1) with +∞ 
+
+> 2:
+
+Initialize backpointer matrix Π of size (F + 1) × (N + 1)  
+
+> 3:
+
+D[0 , 0] ← 0 
+
+> 4:
+
+Define expected diagonal position ˆj(i) ← i · NF 
+
+> 5:
+
+Define admissible mask  
+
+> 6:
+
+M(i, j ) = 1
+
+
+
+j − ˆj(i) ≤ max  W, B · NF · SV −max 
+
+ 
+
+> 7:
+
+for i = 1 to F do  
+
+> 8:
+
+for j = 1 to N do  
+
+> 9:
+
+if not isValid (M(i, j )) then  
+
+> 10:
+
+continue {Prune out-of-band states}  
+
+> 11:
+
+end if  
+
+> 12:
+
+D[i, j ] ← +∞ 
+
+> 13:
+
+imin 0 ← max(0 , i − SV −max ) 
+
+> 14:
+
+imax 0 ← i − SV −min  
+
+> 15:
+
+jmin 0 ← max(0 , j − SA−max ) 
+
+> 16:
+
+jmax 0 ← j − SA−min  
+
+> 17:
+
+for prev i = imax 0 to imin 0 do  
+
+> 18:
+
+for prev j = jmax 0 to jmin 0 do  
+
+> 19:
+
+Compute match score Smatch between V[prev i : i] and A[prev j : j] 
+
+> 20:
+
+cost ← − Smatch + λc · ChunkVariance  
+
+> 21:
+
+if D[prev i, prev j ] + cost < D [i, j ] then  
+
+> 22:
+
+D[i, j ] ← D[prev i, prev j ] + cost  
+
+> 23:
+
+Π[ i, j ] ← (prev i, prev j ) 
+
+> 24:
+
+end if  
+
+> 25:
+
+end for  
+
+> 26:
+
+end for  
+
+> 27:
+
+end for  
+
+> 28:
+
+end for  
+
+> 29:
+
+Backtrack from Π[ F, N ] to (0 , 0) to obtain P∗ 
+
+> 30:
+
+return P∗
+
+Complexity Reduction: By jointly enforcing (i) diagonal neighborhood constraints via M, (ii) local window/band limits, and (iii) chunk-size bounds [SV −min , S V −max ] and [SA−min , S A−max ],we prune a large portion of infeasible transitions compared with the unconstrained global search. Therefore, while the naive formulation scales as O(F 2N 2), the practical runtime of CPCR is governed by the admissible band/window width and the chunk-bound candidate ranges, yielding a substantially smaller effective search space for deployment. 15 C Evaluation Protocol 
+
+C.1 Hardware & Latency Profiling 
+
+All inference speed and memory profiling were conducted on a single NVIDIA L20 (48GB) GPU to ensure hardware consistency. To address concerns regarding end-to-end speedups, we strictly decouple the runtime into three distinct stages: preprocessing (CPCR and MACC), prefill, and decoding. In our implementation, preprocessing entails the CPU-side multimodal preparation prior to generation, while prefill latency is measured by timing the first forward pass. End-to-end latency covers the full duration from preprocessing to the completion of generation. Importantly, the preprocessing overhead of OmniRefine is extremely lightweight—typically taking only a few milliseconds—which is entirely negligible compared to the prefill and decoding stages. The observed gap between the massive prefill acceleration and the more modest end-to-end speedup is an expected behavior of LLMs, as the autoregressive decoding phase dominates the total wall-clock time for long textual outputs. OmniRefine effectively eliminates the computational bottleneck of processing long multimodal contexts without altering the inherent decoding speed. 
+
+C.2 Multi-Turn KV-Cache Simulation 
+
+A major practical advantage of our question-agnostic, training-free compression is its inherent com-patibility with KV-cache reuse in multi-turn interactions. Under our protocol, the multimodal context is compressed only once during the initial prefill stage. For subsequent queries ( q2, q 3, . . . , q k) re-garding the same media, the refined KV-cache is directly reused without re-triggering the visual/audio encoders or the compression modules. This efficiently amortizes the initial context-processing cost over multiple turns. While our primary quantitative evaluation focuses on standard single-turn benchmarks, this simulation protocol theoreti-cally characterizes how OmniRefine yields substantial cumulative efficiency gains and deployment benefits in real-world conversational scenarios. 
+
+C.3 Constant-Budget Alignment & Reliability 
+
+To ensure ablation fairness and avoid confounding factors from varying compression budgets, our extended ablation studies follow a strict constant-budget protocol. Specifically, we fine-tune the global compression parameters ( ρa, ρ v ) and adjust corresponding constraints to lock the overall token compression rate to a shared target budget ( ρ⋆
+
+> ret
+
+) across all compared variants. This ensures that the ablation comparisons are directly attributable to architectural contributions (i.e., CPCR and MACC) under matched computational FLOPs. Furthermore, to mitigate potential hardware variance and decoding randomness, the latency profiling and key performance metrics are averaged over multiple independent evaluation runs. This standard-izes the reported FLOPs ratios, latency, and memory metrics, ensuring the statistical reliability and reproducibility of our results across different models and settings. 
+
+D Limitations and Future Work 
+
+While OmniRefine demonstrates state-of-the-art compression efficiency and robust cross-modal alignment across diverse benchmarks, we identify two primary limitations that present promising avenues for future research. 
+
+Audio-Dominant and Off-Screen Scenarios. A core design of our Modality-Aware Cooperative Compression (MACC) module is the video-referenced audio budget allocation, which couples audio retention to the visual compression rate. While highly effective for general multimodal scenes, this mechanism may exhibit vulnerabilities in extreme audio-dominant or visually sparse scenarios (e.g., speech over static presentation slides, or critical off-screen sound events). In such cases, a low visual token retention rate could inadvertently lead to the over-compression of information-dense audio tokens. Although we currently mitigate this risk by enforcing hard minimum retention bounds (fail-safes such as amin ), future work could introduce dynamic, cross-modal entropy-based fail-safe mechanisms. This would allow the framework to automatically decouple modality budgets when the semantic density of the audio stream significantly outweighs that of the visual stream. 16 Auto-Tuning of Hyperparameters. A secondary limitation lies in the reliance on predefined empirical thresholds (e.g., spatial-temporal thresholds τs, τ t and the CPCR regularization penalty λc). Although our extensive evaluations confirm that these default parameters generalize remarkably well across different model scales (7B/3B) and datasets without task-specific modifications, the framework is not entirely parameter-free. To further enhance its plug-and-play capability, future iterations of OmniRefine could leverage automated hyperparameter search (Auto-tuning) or reinforcement learning strategies. This would enable the model to adaptively find the optimal threshold configurations conditioned on specific hardware FLOP constraints and shifting data distributions. 17

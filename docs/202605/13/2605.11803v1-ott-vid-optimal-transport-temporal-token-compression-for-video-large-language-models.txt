@@ -1,0 +1,532 @@
+Title: OTT-Vid: Optimal Transport Temporal Token Compression for Video Large Language Models
+
+URL Source: https://arxiv.org/pdf/2605.11803v1
+
+Published Time: Wed, 13 May 2026 01:09:56 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# OTT-Vid: Optimal Transport Temporal Token Compression for Video Large Language Models 
+
+Minseok Kang ∗
+
+Yonsei University 
+
+Minhyeok Lee 
+
+Yonsei University 
+
+Jungho Lee 
+
+Yonsei University 
+
+Minjung Kim 
+
+LG Electronics 
+
+Donghyeong Kim 
+
+Yonsei University 
+
+Dayeon Lee 
+
+Yonsei University 
+
+Heeseung Choi 
+
+KIST 
+
+Ig-Jae Kim 
+
+KIST 
+
+Sangyoun Lee †
+
+Yonsei University 
+
+https://github.com/minseokii/OTT-Vid 
+
+## Abstract 
+
+As Video Large Language Models (Video-LLMs) scale to longer and more com-plex videos, their inference cost grows rapidly due to the large volume of visual tokens accumulated across frames. Training-free token compression has emerged as a practical solution to this bottleneck. However, existing temporal compression methods rely primarily on cross-frame token similarity or segmentation heuristics, overlooking each token’s semantic role within its frame and failing to adapt com-pression strength to the compressibility of each frame pair. In this work, we propose OTT-Vid, a transport-derived allocation framework for temporal token compres-sion. Our approach consists of two stages: spatial pruning identifies representative content within each frame, and optimal transport (OT) is then solved between neighboring frames to estimate temporal compressibility. We formulate this OT with non-uniform token mass, which protects semantically important tokens from aggressive compression, and a locality-aware cost that captures both feature and spatial disparities. The resulting transport plan jointly balances token importance and matching cost, while its total cost defines the transport difficulty of each frame pair, which we use to allocate compression budgets dynamically. Experiments on six benchmarks spanning video question answering and temporal grounding show that OTT-Vid preserves 95.8% of VQA and 73.9% of VTG performance while retaining only 10% of tokens, consistently outperforming existing state-of-the-art training-free compression methods. 
+
+## 1 Introduction 
+
+Recent advances in Video-LLMs [ 33 , 21 , 27 , 2] have achieved remarkable progress in video un-derstanding, enabling complex tasks such as video question answering, temporal grounding, and long video reasoning. As these capabilities extend to longer and more complex videos, a practical bottleneck has become increasingly apparent: processing many frames requires a large number of visual tokens, which quickly drives up sequence length and computational cost. In practice, the resulting visual token overhead often limits how many frames a Video-LLM can handle effectively. To mitigate this bottleneck, training-free token compression has emerged as a practical direction that preserves compatibility with pretrained Video-LLMs without retraining. Such methods can be broadly categorized into two regimes according to where compression is applied in the inference pipeline: Inner-LLM methods and Outer-LLM methods. Inner-LLM methods [ 5, 14 , 18 ] operate within the transformer layers of the LLM to prune or merge tokens at intermediate depths. While they benefit       
+
+> ∗Email: louis0503@yonsei.ac.kr
+> †Corresponding author. Preprint.
+> arXiv:2605.11803v1 [cs.CV] 12 May 2026 Similarity -based Temporal Compression OTT -Vid (Ours)
+> èGT Answer : 2
+> Predicted Answer : 0 Predicted Answer : 2
+> Frame 1 Frame 2 Frame 3
+
+✗ Similarity -driven temporal matching 
+
+✗ Risks losing temporal persistence evidence 
+
+✓ Importance & Similarity aware temporal matching 
+
+✓ Preserves duration, continuity, event boundaries 
+
+> Q) How many stationary
+> objects are in this video?
+
+Figure 1: Illustration of temporal compression strategies, where white-shaded regions denote com-pressed tokens. For simplicity, only compression of stationary object regions is depicted. Similarity-driven compression merges stationary objects away due to high cross-frame similarity, losing persis-tence evidence. OTT-Vid jointly considers token importance and similarity, preserving semantically representative tokens across frames. from richer multimodal and query-aware signals for compression, these signals become available only during prefill, limiting the overall efficiency gains. Outer-LLM methods [ 29 , 25 , 11 , 19 , 6 ], by contrast, compress visual tokens before they enter the LLM, directly shortening the sequence length processed by the model. Outer-LLM compression is therefore more effective at reducing the cost of handling long visual sequences. Within the outer-LLM regime, video token compression targets two sources of redundancy under a fixed token budget: spatial redundancy, where nearby patches within a frame encode overlapping content, and temporal redundancy, where similar content recurs across neighboring frames. Since current Video-LLMs encode each frame independently through an image encoder, spatial redundancy can be identified using per-frame signals such as attention-based saliency [ 29 , 24 ], diversity [ 1 , 12 ], coverage [ 8 , 6], and intra-frame feature similarity [ 18 , 11 , 25 ]. Temporal redundancy, by contrast, lacks explicit cross-frame cues from the encoder, and therefore most existing methods [ 18 , 24 , 11 , 25 , 19 ] rely primarily on token similarity across adjacent frames. However, high token similarity across neighboring frames does not necessarily imply redundancy. Temporal repetition often reflects the persistence of semantically important content, which similarity alone cannot distinguish from uninformative background recurrence. Temporal compression driven purely by similarity therefore risks losing evidence of duration, continuity, and event boundaries. Figure 1 illustrates this with stationary objects: although their temporal persistence constitutes essential evidence for the correct answer, their high cross-frame similarity can cause similarity-driven compression to discard them as redundant. In contrast, an importance-aware strategy compresses uninformative regions while preserving such persistence evidence, leading to the correct prediction. The same failure mode manifests at the task level in temporal grounding, where existing similarity-driven methods [ 25 , 11 ] exhibit substantially larger performance drops relative to standard video question answering, reflecting their inability to preserve the temporal evidence such tasks rely on. This motivates incorporating intra-frame token importance into temporal compression, providing a semantic prior that helps separate meaningful persistence from removable redundancy. A further challenge is that temporal compression requires not only identifying which cross-frame correspondences are safely compressible, but also deciding how much compression each frame pair can tolerate under a limited token budget. Temporal redundancy is not distributed uniformly across a video: some neighboring frames are highly redundant and can tolerate aggressive compression, whereas others contain temporally informative evidence that should be preserved more carefully. Existing methods, however, do not treat this as an explicit allocation problem, instead relying on similarity thresholds [ 18 , 24 ] or hard temporal boundaries [ 11 , 25 ] that do not adapt to the 2compressibility of each frame pair. This can lead to under-compression of highly redundant regions and over-compression of regions whose temporal evidence should be preserved. We propose OTT-Vid , a training-free video token compression framework that first applies spatial pruning to retain representative semantic content within each frame, and then performs adaptive temporal compression between neighboring frames. Our method decomposes temporal compression into two coupled questions: (1) how much information each token should preserve, and (2) how easily this information can be transferred across neighboring frames. Optimal transport (OT) is a principled framework for solving these two questions jointly, as its two primitives, mass and cost ,are directly suited to encode token preservation priority and cross-frame transferability, respectively. In OT, the mass of each token specifies how much of it must be transferred. Viewing transport as compression, since larger mass is transferred more extensively, mass directly encodes compression priority. Compressing while preserving important content thus calls for a counter-intuitive design that assigns smaller mass to more important tokens. We therefore set mass inversely to frame-wise token importance, so that semantically representative tokens receive smaller mass and resist compression, while less informative tokens receive larger mass and are more readily transferred. The cost between two tokens quantifies the difficulty of mass transfer, and we define it from spatial distance and feature dissimilarity so that nearby and similar tokens incur low cost while distant or dissimilar pairs incur high cost. By solving a single optimization problem with these two quantities, OT yields a transport plan for each adjacent frame pair that jointly balances the two questions in a unified solution. The resulting transport plan characterizes which token correspondences carry high compression priority, together with a transport difficulty that signals how much redundancy the pair contains. We use this difficulty to distribute the compression budget non-uniformly across frame pairs, and execute compression within each pair according to its transport plan and allocated budget. In this way, OTT-Vid unifies token-level compression decisions with pair-level budget allocation in a single transport formulation. We evaluate OTT-Vid on four video question answering benchmarks (MVBench [ 23 ], VideoMME [ 13 ], LongVideoBench [ 28 ], MLVU [ 34 ]) and two video temporal grounding bench-marks (Charades-STA [ 15 ], ActivityNet-Captions [ 3], with refined annotations from TimeLens [ 31 ]). The latter directly tests whether compression preserves temporal evidence, which prior work rarely evaluates. On Qwen2.5-VL-7B [ 2 ], OTT-Vid consistently outperforms strong training-free baselines under matched token budgets, preserving 95.8% of uncompressed VQA performance and 73.9% of VTG performance at 10% token retention. Experiments on LLaVA-OV [ 21 ] and LLaVA-Video [ 33 ]confirm that these gains generalize across Video-LLM backbones. 
+
+## 2 Background and Related Work 
+
+2.1 Video-LLM Inference Pipeline 
+
+Recent Video-LLMs such as LLaVA-OneVision [ 21 ], LLaVA-Video [ 33 ], and Qwen2.5-VL [ 2]combine a pretrained image encoder, a lightweight projector, and a large language model. Each frame is encoded independently into Nv visual tokens and projected into the language embedding space to form Hv ∈ RT ·Nv ×d. A text prompt is embedded as Hq ∈ RNq ×d, and the multimodal input 
+
+H = concat( Hv , H q ) has total length n = T · Nv + Nq . The prefilling stage dominates inference cost due to quadratic self-attention over this sequence, and since T · Nv typically far exceeds Nq ,visual tokens are the primary driver of overhead. Visual token compression therefore targets the prefill bottleneck by shortening the multimodal sequence before or during LLM processing. 
+
+2.2 Token Compression for Video-LLMs Training-free visual token compression. Training-free token compression for Video-LLMs has been explored along several directions. Among outer-LLM methods, spatial approaches reduce within-frame redundancy using per-frame signals such as attention-based saliency, token diversity, coverage, or information uniqueness [ 29 , 30 , 1, 17 ]. Spatiotemporal methods address both sources of redundancy through diverse strategies. Some explicitly partition videos at scene transitions and compress within each segment [ 25 , 11 ]. Others constrain temporal matching to spatially nearby tokens across adjacent frames, for example by dynamic programming over temporal windows [ 24 ]or connecting tokens into forests under spatiotemporal distance constraints [ 19 ]. A further line of work bypasses locality altogether and selects tokens from the full spatiotemporal pool, either through 3Vision Encoder & Projector                 
+
+> [Sec 3.2] Spatial Compression [Sec 3.2] Spatial Compression [Sec 3.3] Inter -Frame Optimal Transport [Sec 3.3] Inter -Frame Optimal Transport [Sec 3.4] Budget Allocation & Compression [Sec 3.4] Budget Allocation & Compression
+> 12
+> 3
+> 4
+> 12
+> 3
+> 4
+> W1
+> Input Video
+> mass ( mt,k )∝exp( -ut,k)
+> ut,k :saliency + coverage score
+> m2
+> Mass Vector
+> Cost Matrix
+> Transport Plan
+> mt,1 mt,2
+> mt,4
+> mt,3
+> FtSt
+> Budget(B) Allocation over Pair
+
+...    
+
+> 12
+> 3
+> Top B2Index Selection
+> Top 1 : (2,1)
+> Top 2 : (3,4)
+> Compression Execution
+
+...     
+
+> 1234T-1T-2T-3
+
+...         
+
+> Transport Difficulty W
+> Compression Budget B
+> 0
+> 1
+> 2
+> 3
+> 0
+> 0.25
+> 0.5 High W èLow B
+> Low W èHigh B
+> 1
+> 2
+> 1
+> 4
+> Merge
+> Merge 4
+> Sinkhorn OT
+> 4321
+> 4321
+> F1F1F2F2FTFTF3F3
+
+... 
+
+> 3
+> 2
+> Saliency + Coverage Aware Pruning
+> Transport Difficulty
+
+# ΣW2 = P2 C2
+
+.       
+
+> B2= 2
+> S1S1S2S2S3S3STST
+> W2WT-1
+> m3
+> C2
+> P2
+> P2
+> S2S3
+> S2S3
+
+Figure 2: Overview of OTT-Vid . (Sec 3.2) Each frame t is encoded into visual tokens Ft, spatially pruned to retained tokens St, and converted into a mass vector mt from per-token importance. 
+
+(Sec 3.3) Sinkhorn OT computes a transport plan Pt and transport difficulty Wt for each neighboring frame pair. (Sec 3.4) Compression budgets Bt are allocated in inverse proportion to transport difficulty, and the transport plan determines which tokens to compress. submodular optimization [ 6 ] or unified global selection [ 10 ]. A concurrent line of work also explores optimal transport for video token compression. AOT [ 22 ] applies OT to aggregate token information into pre-selected anchors at both spatial and temporal levels, but leaves the compression decision itself outside the transport formulation. In contrast, our work treats temporal compression as a transport-based allocation problem, where importance-aware mass and pairwise transport difficulty jointly determine token-level compression and budget distribution across frame pairs. 
+
+## 3 Method 
+
+3.1 Overview 
+
+An overview of OTT-Vid is provided in Figure 2. A video of T frames is encoded into Nv visual tokens per frame by the vision encoder and projector, yielding T · Nv tokens in total. Given a target retention ratio r, OTT-Vid compresses this set through two stages, governed by a temporal share parameter γ ∈ [0 , 1] that controls the balance between spatial and temporal compression. The total retention ratio r is decomposed as r = rs · rt, where rs = r1−γ and rt = rγ . In Sec. 3.2 , we first prune each frame independently to remove spatial redundancy, retaining K = Nv ·rs tokens per frame and constructing a non-uniform mass for each retained token according to its frame-wise importance. In the temporal stage, we solve optimal transport between neighboring frame pairs to obtain two decision signals: a transport coupling that ranks compression candidates under importance-aware mass and matching cost ( Sec. 3.3 ), and a transport difficulty that estimates pairwise compressibility. We then distribute a total budget of Btot = K · T · (1 − rt) compression operations across all 
+
+T −1 adjacent frame pairs according to this difficulty, and simultaneously execute the allocated compression on all pairs in parallel ( Sec. 3.4 ). 
+
+3.2 Spatial Compression and Mass Assignment 
+
+The first stage of our framework compresses each frame independently and assigns a transport mass to each retained token. Prior spatial token selection methods [ 8 , 11 ] have explored semantic importance and representativeness as complementary criteria: importance preserves informative content, while representativeness prevents the selected tokens from collapsing onto a few redundant regions. We instantiate this principle with a saliency-weighted coverage objective, where coverage is weighted by the saliency of the tokens being covered, and pass the selected tokens to the temporal OT stage. 4Saliency-weighted representative token selection. For each frame t with Nv tokens {xt,i }Nv
+
+> i=1
+
+where xt,i ∈ Rd, our goal is to retain K tokens. A saliency score wt,i is computed from the last layer of the vision encoder by averaging its self-attention weights over all heads and query positions, normalized such that P 
+
+> i
+
+wt,i = 1 . We then greedily construct a representative subset St of size K
+
+by maximizing saliency-weighted coverage. Starting from an empty set, we iteratively add the token whose marginal gain is largest. The gain of a candidate token j measures how much additional salient content it would cover beyond what the current selected set already explains: 
+
+gain( j) = 
+
+> Nv
+
+X
+
+> i=1
+
+wt,i max  0, sim( xt,i , x t,j ) − μi
+
+, (1) where sim( ·, ·) denotes cosine similarity and μi = max v∈S t sim( xt,i , v ) measures how well token 
+
+xt,i is currently covered by the selected set, initialized to zero. The weighting by wt,i ensures that improvements in covering more salient tokens contribute more to the gain. We update μi after each addition and repeat until K tokens are retained. 
+
+Leave-one-out mass assignment. To quantify the preservation priority of each selected token 
+
+st,k ∈ S t, we estimate its irreplaceable semantic contribution. Concretely, we ask: if st,k were removed from the selected set, how much representation quality would the original frame lose? We first induce a nearest-neighbor partition of the original tokens by assigning each xt,i to its best-matching retained token ˆk(i) in St. Let σi, 1 and σi, 2 denote the largest and second-largest cosine similarities between xt,i and tokens in St. If the best match st, ˆk(i) were removed, the second-best would take over, and the gap σi, 1 − σi, 2 quantifies the resulting loss in representation quality. We define the contribution ut,k by aggregating these saliency-weighted gaps over the original tokens for which st,k is the best match, and convert it into a mass mt,k via a negative softmax with temperature 
+
+τm:
+
+ut,k = X
+
+> i:ˆk(i)= k
+
+wt,i max  0, σ i, 1 − σi, 2
+
+, ˆk(i) = arg max  
+
+> k
+
+sim( xt,i , s t,k ), (2) 
+
+˜ut,k = ut,k 
+
+ max  
+
+> k′
+
+ut,k ′ , mt,k = exp( −˜ut,k /τ m) X 
+
+> k′
+
+exp( −˜ut,k ′ /τ m). (3) The negation inverts priority so that important tokens receive smaller mass and resist compression, while the softmax normalizes total mass to one for consistent scaling across frame pairs. 
+
+3.3 Temporal Compression via Optimal Transport 
+
+Let St = {st,i }Ki=1 and St+1 = {st+1 ,j }Kj=1 denote the retained token sets of two neighboring frames, with corresponding mass vectors mt, m t+1 ∈ RK 
+
+> +
+
+constructed in Sec. 3.2. We formulate temporal compression as an optimal transport problem balancing importance-aware mass and matching cost. Since OT’s marginal constraint prevents small-mass tokens from accumulating large coupling entries, our mass construction directly encodes preservation priority into the transport plan, with larger coupling values identifying high-priority compression candidates. 
+
+Transport cost. The cost matrix Ct ∈ RK×K assigns a transport penalty to each cross-frame token pair, with smaller values indicating preferred correspondences. Existing methods either define this cost purely by semantic similarity [ 11 , 25 ], which risks pairing visually similar tokens from different objects, or restrict matching to identical grid positions [ 18 , 24 ], which leaves few valid matches under camera panning or substantial object motion. To benefit from both while mitigating their weaknesses, we combine a semantic dissimilarity term with a spatial distance term and adapt their relative weight according to the motion characteristics of each frame pair. We define semantic dissimilarity by cosine distance and spatial dissimilarity by scaled Euclidean distance on the patch grid, where pt,i and 
+
+pt+1 ,j are the patch-grid positions and dmax is the grid diagonal length. The two terms are combined with a mixing coefficient αt:
+
+csem (i, j ) = 1 − sim( st,i , s t+1 ,j ), cloc (i, j ) = ∥pt,i − pt+1 ,j ∥2
+
+dmax , (4) 
+
+Ct,ij = αt csem (i, j ) + (1 − αt) cloc (i, j ). (5) The mixing coefficient αt is computed as αt = 1 − ¯st/2, where ¯st is the mean cosine similarity between co-located token pairs in the original (pre-pruning) frames t and t+1 , clamped to [0 , 1] .5We use ¯st as a lightweight proxy for scene dynamics. When ¯st is high, the frame pair is likely to be mostly static and co-located patches provide reliable correspondence cues, so we give locality a stronger role to discourage matches between visually similar but spatially distant regions. Conversely, low ¯st suggests camera motion, object motion, or a scene transition, where fixed spatial positions are less reliable. In this case, semantic dissimilarity remains more influential, allowing correspondences across larger spatial displacements. This adaptive behavior is bounded by the 1/2 scaling, which confines αt to [1 /2, 1] so that semantic dissimilarity remains the dominant cost component while locality can contribute up to an equal weight in highly static frame pairs. 
+
+Transport plan and compression difficulty. Given the mass vectors and the cost matrix, we solve an entropically regularized OT problem via Sinkhorn iterations [7]: 
+
+Pt = argmin  
+
+> P∈Π( mt,m t+1 )
+
+X
+
+> i,j
+
+Pij Ct,ij − εH (P ), (6) where Π( mt, m t+1 ) denotes all valid transport plans whose rows sum to mt and columns sum to 
+
+mt+1 , and H(P ) = − P 
+
+> i,j
+
+Pij log Pij is the entropic regularizer that smooths the solution. The resulting transport plan Pt specifies an optimal coupling, where larger Pt,ij entries indicate high-priority candidates for compression. Beyond individual coupling values, we also quantify the overall transport difficulty of each frame pair as the total cost incurred by the transport plan: 
+
+Wt = X
+
+> i,j
+
+Pt,ij Ct,ij . (7) 
+
+3.4 Transport-Derived Budget Allocation Per-pair budget allocation. The transport difficulty Wt quantifies how easily the retained tokens in neighboring frame pair (t, t +1) can be matched. Since each cost is weighted by its transport mass, Wt primarily reflects the matching cost of redundant tokens, while important tokens (with smaller mass) contribute little. A smaller Wt thus indicates that redundant tokens find low-cost counterparts, implying the pair is more compressible. We therefore use {Wt}T −1 
+
+> t=1
+
+to allocate the temporal compression budget non-uniformly via a negative softmax with temperature τb, so that pairs with smaller Wt receive larger budgets: 
+
+βt = exp( −Wt/τ b)
+
+. T −1X
+
+> t′=1
+
+exp( −Wt′ /τ b), Bt = round( βtBtot ), (8) 
+
+Compression execution. Given each transport plan Pt and its allocated budget Bt, we select compression candidates from frame t+1 (source) to frame t (destination) by ranking pairs according to their coupling entries Pt,ij and taking the top-Bt entries, under the constraint that each source token is selected at most once. This yields a per-pair many-to-one assignment, in which multiple source tokens may map to the same destination while unselected source tokens are retained. The top-Bt selection may include pairs with high transport cost when low-cost correspondences are scarce. Since high cost indicates a semantically unreliable match, we merge a selected pair only when 
+
+Ct,ij < τ c, otherwise pruning the source token to avoid contaminating the merged representation. All T −1 transport plans are computed from the initial spatially-pruned sets {St}, and the resulting matches form edges in a global directed graph. Since a token may serve as both destination and source across consecutive pairs, we resolve the resulting chains via union-find, with each connected component collapsed to its root by uniform averaging. This generalizes per-pair merging to the full sequence in a single parallel pass. 
+
+## 4 Experimental Results 
+
+Benchmarks. We evaluate on four video question answering (VQA) benchmarks: MVBench [ 23 ], VideoMME [ 13 ], LongVideoBench [ 28 ], and MLVU [ 34 ], and on two video temporal grounding (VTG) benchmarks. For VTG, we use the recently refined Charades-TimeLens and ActivityNet-TimeLens splits [ 31 ], which provide manually re-annotated versions of Charades-STA [ 15 ] and ActivityNet Captions [ 3] with improved annotation quality. VTG requires precise event localization and is therefore particularly sensitive to the preservation of temporal evidence during compression. 6Table 3: Ablation on the core components of OTT-Vid at 10% retention on Qwen2.5-VL-7B. Mass denotes importance-aware mass ( ✓) vs. uniform. Budget denotes adaptive allocation ( ✓)vs. uniform.                  
+
+> Row Method Performance (%)
+> Mass Budget VQA Avg. VTG Avg. (a) 94.3 63.1 (b) ✓94.6 64.3 (c) ✓95.2 72.2 (d) ✓✓95.8 73.9
+
+Figure 3: Ablation on temporal share γ on av-erage performance and compression latency at 10% retention. Average performance is the mean of VQA and VTG retention. Temporal share ( γ)
+
+Implementation details. The default hyperparameters in our experiments are γ = τm = τb = τc =0.3 for the temporal share, mass temperature, budget temperature, and cost threshold, respectively. Evaluations are performed on three Video-LLMs: Qwen2.5-VL-7B [ 2 ] (32 frames for VQA, 2 fps for temporal grounding with dynamic resolution), LLaVA-OneVision-7B [ 21 ] (32 frames, 196 tokens per frame), and LLaVA-Video-7B [ 33 ] (64 frames, 169 tokens per frame). Additional implementation details are provided in Appendix A. 
+
+Compared methods. We compare OTT-Vid against four state-of-the-art training-free video token compression methods. HoliTom [24 ] performs redundancy-aware temporal segmentation via dynamic programming, followed by spatiotemporal token merging. FastVID [ 25 ] segments videos at scene transitions and applies density-based spatiotemporal pruning within each segment. FlashVID [ 11 ]selects representative tokens via saliency and diversity, then merges remaining tokens through tree-structured spatiotemporal compression. UniComp [ 30 ] introduces information uniqueness as a unified criterion for frame-level fusion, per-frame token allocation, and spatial compression. Since HoliTom [24 ] and FlashVID [11 ] include inner-LLM compression stages, we disable these components and retain only their outer-LLM compression to ensure fair comparison at the same retention ratio. 
+
+4.1 Comparisons with State-of-the-Art Methods Main results on Qwen2.5-VL. Table 1 compares OTT-Vid with recent training-free token compres-sion methods on Qwen2.5-VL-7B across four VQA and two VTG benchmarks. OTT-Vid achieves the best average retention at every token budget on both task families, and the margin grows as compression becomes more aggressive. At the most challenging 10% retention, OTT-Vid preserves 95.8% of the uncompressed VQA performance and 73.9% of VTG performance, outperforming the strongest competing baseline by 1.0 and 7.3 percentage points, respectively. The advantage is particularly pronounced on temporal grounding, which directly probes whether compression preserves fine-grained temporal structure. Existing similarity-driven methods [ 11 , 25 ]exhibit substantial VTG degradation under tight budgets, dropping to 51.3–66.6% retention at 10%, while OTT-Vid maintains 73.9%. The gap widens substantially as the budget shrinks. This consistent VTG advantage supports our central claim that incorporating intra-frame token importance and transport-derived budget allocation is critical for handling redundancy in the temporal domain. 
+
+Generalization across Video-LLM backbones. Table 2 reports VQA results on LLaVA-OneVision-7B and LLaVA-Video-7B (these backbones do not support temporal grounding). OTT-Vid remains competitive across both backbones at every retention ratio, ranking first or within 0.6 points of the best baseline. On LLaVA-Video-7B at 10% retention, OTT-Vid achieves the highest average retention of 94.5%. These results indicate that the benefits of importance-aware mass and transport-derived budget allocation are not tied to a specific Video-LLM and transfer across backbones with different frame counts and per-frame token configurations. 7Table 1: Main results on Qwen2.5-VL-7B across four VQA and two VTG benchmarks. VQA scores are reported as accuracy and VTG scores as mIoU. Avg. (%) denotes the mean performance retention relative to the uncompressed baseline. Best results per retention ratio are in bold .
+
+Video Question Answering Video Temporal Grounding Method Ret. MVBench VideoMME LVB MLVU Avg. (%) Charades ANet Avg. (%) Vanilla 100% 67.8 62.1 58.8 62.1 100.0 36.7 30.7 100.0 HoliTom [24] NeurIPS’25 25% 66.1 60.3 57.8 61.3 97.9 35.2 24.3 87.5 FastVID [25] NeurIPS’25 25% 65.1 59.0 57.5 61.1 96.8 25.5 20.8 68.5 FlashVID [11] ICLR’26 25% 66.0 58.7 58.5 61.6 97.6 33.1 16.6 72.2 UniComp [30] CVPR’26 25% 65.4 60.6 58.1 61.6 98.0 35.0 24.5 87.5 
+
+OTT-Vid 25% 66.5 60.4 58.3 61.8 98.5 35.9 25.5 90.3 
+
+HoliTom [24] NeurIPS’25 20% 66.1 60.0 57.1 61.6 97.6 34.3 22.3 82.9 FastVID [25] NeurIPS’25 20% 65.1 58.2 57.2 60.8 96.2 25.2 19.9 66.5 FlashVID [11] ICLR’26 20% 65.8 57.6 57.8 60.8 96.5 31.9 14.2 66.5 UniComp [30] CVPR’26 20% 64.8 61.0 57.4 61.3 97.5 34.6 22.7 84.0 
+
+OTT-Vid 20% 66.3 61.0 57.8 61.5 98.2 34.8 24.0 86.5 
+
+HoliTom [24] NeurIPS’25 15% 65.4 59.2 56.8 61.0 96.6 32.5 19.5 76.0 FastVID [25] NeurIPS’25 15% 64.2 58.2 57.2 59.9 95.5 24.8 18.1 63.2 FlashVID [11] ICLR’26 15% 65.1 56.9 57.1 61.3 95.8 29.8 11.5 59.2 UniComp [30] CVPR’26 15% 64.1 59.8 56.4 59.5 95.6 33.2 20.2 78.0 
+
+OTT-Vid 15% 65.5 60.4 57.5 61.4 97.6 33.7 21.8 81.5 
+
+HoliTom [24] NeurIPS’25 10% 64.2 57.9 55.6 60.1 94.8 28.0 14.8 62.3 FastVID [25] NeurIPS’25 10% 63.2 55.9 55.6 59.6 93.4 23.9 15.7 58.0 FlashVID [11] ICLR’26 10% 63.7 55.2 56.9 59.7 93.9 26.1 9.8 51.3 UniComp [30] CVPR’26 10% 61.9 58.2 54.2 57.4 92.4 29.7 16.0 66.6 
+
+OTT-Vid 10% 64.0 58.7 56.7 60.7 95.8 32.3 18.4 73.9 
+
+Table 2: Cross-backbone evaluation on LLaVA-OneVision-7B and LLaVA-Video-7B (VQA only, as these models do not support temporal grounding). Avg. (%) denotes the mean performance retention relative to the uncompressed baseline. Best results per setting are in bold .                                                                                                                                     
+
+> LLaVA-OV-7B LLaVA-Video-7B Method Ret. MVB VMME LVB MLVU Avg(%) MVB VMME LVB MLVU Avg(%) Vanilla 100% 58.4 58.6 56.4 63.3 100.0 62.3 64.4 59.9 68.2 100.0 HoliTom 25% 58.5 58.9 57.1 63.1 100.4 60.9 62.7 57.8 65.9 97.0 FastVID 25% 58.3 58.0 55.8 61.4 98.7 61.1 63.8 57.7 66.3 97.6
+> FlashVID 25% 58.4 58.2 57.1 63.4 100.2 59.9 61.7 58.8 66.3 96.8 UniComp 25% 57.7 58.9 57.7 62.4 100.0 58.3 60.8 58.3 65.1 95.1
+> OTT-Vid 25% 58.0 58.2 56.9 63.5 100.0 60.8 62.2 58.3 66.7 97.5 HoliTom 10% 57.0 57.5 56.2 60.4 97.7 59.8 61.2 55.9 62.9 94.1 FastVID 10% 57.0 56.8 55.1 60.3 96.8 59.7 60.2 56.8 63.3 94.2 FlashVID 10% 56.3 56.7 54.2 61.9 96.8 59.3 59.9 56.4 63.4 93.8 UniComp 10% 56.4 58.0 57.4 60.9 98.4 55.9 59.3 57.0 64.8 93.0
+> OTT-Vid 10% 56.6 57.1 56.1 61.5 97.8 59.2 61.5 55.8 64.4 94.5
+
+4.2 Ablation Studies Ablation on core components. Table 3 ablates the two core components of OTT-Vid at 10% retention. Row (a) uses uniform mass and uniform budget as the non-adaptive baseline, while rows (b) and (c) enable each component independently. Mass alone (c) yields a substantial gain over (a), particularly on VTG (+9.1 percentage points), supporting our claim that jointly considering token importance and similarity helps preserve temporal evidence. Budget alone (b) provides a smaller but positive improvement, more pronounced on benchmarks with greater variation in temporal compressibility (refer to Table A2 in Appendix). Their combination (d) achieves the best results on both task families, indicating that the two components address complementary sources of redundancy. 
+
+Ablation on temporal share γ. The temporal share γ controls the balance between spatial pruning and temporal compression. Since the per-frame token count K = Nv · rs governs the cost of greedy selection, leave-one-out mass computation, and the OT solver, latency grows with γ. Figure 3 reports the average performance retention across all six benchmarks (the mean of VQA and VTG averages) against compression latency (ms) as γ varies at 10% retention. Average retention peaks at γ = 0 .3
+
+with 84.9% and degrades toward both extremes, falling to 82.1% at γ = 0 and 80.4% at γ = 1 , while 8Table 4: Efficiency and performance at 10% retention on Qwen2.5-VL-7B. VQA and VTG report mean performance retention (%) relative to the uncompressed baseline.                                                   
+
+> Latency (ms) Perf. (%) Method Ret. Vision Comp. LLM TTFT Peak Mem. (GB) TFLOPs VQA VTG Vanilla 100% 786.0 –1088.8 1874.8 (1.0 ×)17.76 120.25 100.0 100.0 FastVID 10% 786.0 17.3 104.0 907.3 (2.1 ×)17.90 26.11 93.4 58.0 UniComp 10% 786.0 286.1 104.0 1176.1 (1.6 ×)23.17 26.07 92.4 66.6
+> OTT-Vid 10% 786.0 48.0 104.0 938.0 (2.0 ×)18.22 26.11 95.8 73.9 Q) What is the action
+> performed
+> by the person?
+> èGT Answer : Putting
+> ✗A) Not Sure
+> ✓A) Putting
+> Uniform Mass
+> Importance -aware Mass
+
+Figure 4: Visualization result of token compression with uniform vs. importance-aware mass at 10% retention. Bright patches indicate retained tokens. Uniform mass loses tokens around the hand and object, while importance-aware mass preserves these semantically critical regions. latency rises from 24.1 ms at γ = 0 to 151.3 ms at γ = 1 . The setting γ = 0 .3 thus offers the best trade-off and is set as the default. Additional ablations on τb, τm, τc, and the mixing coefficient αt are provided in Appendix D. 
+
+4.3 Efficiency Analysis 
+
+Table 4 compares OTT-Vid with FastVID [ 25 ] and UniComp [ 30 ] at r=10% on Qwen2.5-VL-7B. OTT-Vid achieves a 2.0× TTFT speedup with 18.22 GB peak memory, comparable to FastVID ( 2.1×,17.90 GB) and improving over UniComp ( 1.6×, 23.17 GB). All three methods reduce TFLOPs to roughly 26 from the uncompressed 120.25, indicating that the dominant inference cost is governed by the retention ratio rather than the compression algorithm. Under this comparable efficiency profile, OTT-Vid maintains the strongest accuracy across both VQA and VTG benchmarks. 
+
+4.4 Qualitative Analysis 
+
+Figure 4 compares retained tokens under uniform mass and importance-aware mass at 10% retention on a video of a person putting down a pen. With uniform mass, tokens are distributed regardless of semantic role, and the regions corresponding to the hand and the pen are largely discarded, leading the model to fail at identifying the action. In contrast, importance-aware mass concentrates the budget on tokens carrying the action evidence, preserving the hand and the pen across frames and yielding the correct prediction. This illustrates how encoding token preservation priority into the transport constraints translates OTT-Vid’s quantitative gains into more semantically faithful compression. Additional qualitative results are in Appendix E. 95 Conclusion 
+
+We presented OTT-Vid, a training-free video token compression framework that formulates temporal compression as an optimal transport problem with adaptive budget allocation across frame pairs. Across six benchmarks, OTT-Vid retains 95.8% VQA and 73.9% VTG performance at 10% retention, outperforming existing training-free baselines. The advantage is most pronounced on temporal grounding, where prior similarity-driven methods degrade sharply. 
+
+Limitations and Future Work. OTT-Vid computes all pairwise transport plans in parallel from the initial spatially-pruned representations, which enables single-pass global budget allocation with low overhead but does not account for representational changes induced by compression on earlier pairs. Sequential execution that propagates these changes could refine transport plans at the cost of higher computational overhead, which we leave for future work. 10 References 
+
+[1] Saeed Ranjbar Alvar, Gursimran Singh, Mohammad Akbari, and Yong Zhang. Divprune: Diversity-based visual token pruning for large multimodal models. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 9392–9401, 2025. [2] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, Humen Zhong, Yuanzhi Zhu, Mingkun Yang, Zhaohai Li, Jianqiang Wan, Pengfei Wang, Wei Ding, Zheren Fu, Yiheng Xu, Jiabo Ye, Xi Zhang, Tianbao Xie, Zesen Cheng, Hang Zhang, Zhibo Yang, Haiyang Xu, and Junyang Lin. Qwen2.5-vl technical report. 
+
+arXiv preprint arXiv:2502.13923 , 2025. [3] Fabian Caba Heilbron, Victor Escorcia, Bernard Ghanem, and Juan Carlos Niebles. Activitynet: A large-scale video benchmark for human activity understanding. In Proceedings of the ieee conference on computer vision and pattern recognition , pages 961–970, 2015. [4] Qingqing Cao, Bhargavi Paranjape, and Hannaneh Hajishirzi. Pumer: Pruning and merging tokens for efficient vision language models. In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (ACL) , pages 12736–12746, 2023. [5] Liang Chen, Haozhe Zhao, Tianyu Liu, Shuai Bai, Junyang Lin, Chang Zhou, and Baobao Chang. An image is worth 1/2 tokens after layer 2: Plug-and-play inference acceleration for large vision-language models. In European Conference on Computer Vision (ECCV) , 2024. [6] Janghoon Cho, Jungsoo Lee, Munawar Hayat, Kyuwoong Hwang, Fatih Porikli, and Sungha Choi. Floc: Facility location-based efficient visual token compression for long video under-standing. arXiv preprint arXiv:2511.00141 , 2025. [7] Marco Cuturi. Sinkhorn distances: Lightspeed computation of optimal transport. Advances in neural information processing systems , 26, 2013. [8] Jinhong Deng, Wen Li, Joey Tianyi Zhou, and Yang He. Scope: Saliency-coverage oriented token pruning for efficient multimodel llms. arXiv preprint arXiv:2510.24214 , 2025. [9] Mohamed Dhouib, Davide Buscaldi, Sonia Vanier, and Aymen Shabou. Pact: Pruning and clustering-based token reduction for faster visual language models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 14582– 14592, 2025. [10] Junhao Du, Jialong Xue, Anqi Li, Jincheng Dai, and Guo Lu. Unified spatiotemporal token compression for video-llms at ultra-low retention. arXiv preprint arXiv:2603.21957 , 2026. [11] Ziyang Fan, Keyu Chen, Ruilong Xing, Yulin Li, Li Jiang, and Zhuotao Tian. Flashvid: Efficient video large language models via training-free tree-based spatiotemporal token merging. arXiv preprint arXiv:2602.08024 , 2026. [12] Zhengyao Fang, Pengyuan Lyu, Chengquan Zhang, Guangming Lu, Jun Yu, and Wenjie Pei. Prune redundancy, preserve essence: Vision token compression in vlms via synergistic importance-diversity. arXiv preprint arXiv:2603.09480 , 2026. [13] Chaoyou Fu, Yuhan Dai, Yongdong Luo, Lei Li, Shuhuai Ren, Renrui Zhang, Zihan Wang, Chenyu Zhou, Yunhang Shen, Mengdan Zhang, et al. Video-mme: The first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 24108–24118, 2025. [14] Tianyu Fu, Tengxuan Liu, Qinghao Han, Guohao Dai, Shengen Yan, Huazhong Yang, Xuefei Ning, and Yu Wang. Framefusion: Combining similarity and importance for video token reduction on large visual language models. arXiv preprint arXiv:2501.01986 , 2025. [15] Jiyang Gao, Chen Sun, Zhenheng Yang, and Ram Nevatia. Tall: Temporal activity localization via language query. In Proceedings of the IEEE international conference on computer vision ,pages 5267–5275, 2017. 11 [16] Xiaohu Huang, Hao Zhou, and Kai Han. Prunevid: Visual token pruning for efficient video large language models. In Findings of the Association for Computational Linguistics: ACL 2025 , pages 19959–19973, 2025. [17] Yihong Huang, Fei Ma, Yihua Shao, Jingcai Guo, Zitong Yu, Laizhong Cui, and Qi Tian. N \"uwa: Mending the spatial integrity torn by vlm token pruning. arXiv preprint arXiv:2602.02951 ,2026. [18] Jeongseok Hyun, Sukjun Hwang, Su Ho Han, Taeoh Kim, Inwoong Lee, Dongyoon Wee, Joon-Young Lee, Seon Joo Kim, and Minho Shim. Multi-granular spatio-temporal token merging for training-free acceleration of video llms. In IEEE/CVF International Conference on Computer Vision (ICCV) , 2025. [19] Shaobo Ju, Baiyang Song, Tao Chen, Jiapeng Zhang, Qiong Wu, Chao Chang, HuaiXi Wang, Yiyi Zhou, and Rongrong Ji. Forestprune: High-ratio visual token compression for video multimodal large language models via spatial-temporal forest modeling. arXiv preprint arXiv:2603.22911 , 2026. [20] Minchul Kim, Shangqian Gao, Yen-Chang Hsu, Yilin Shen, and Hongxia Jin. Token fusion: Bridging the gap between token pruning and token merging. In Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision (WACV) , pages 1383–1392, 2024. [21] Bo Li, Yuanhan Zhang, Dong Guo, Renrui Zhang, Feng Li, Hao Zhang, Kaichen Zhang, Yanwei Li, Ziwei Liu, and Chunyuan Li. Llava-onevision: Easy visual task transfer. arXiv preprint arXiv:2408.03326 , 2024. [22] Jinlong Li, Liyuan Jiang, Haonan Zhang, and Nicu Sebe. Token reduction via local and global contexts optimization for efficient video large language models. arXiv preprint arXiv:2603.01400 , 2026. [23] Kunchang Li, Yali Wang, Yinan He, Yizhuo Li, Yi Wang, Yi Liu, Zun Wang, Jilan Xu, Guo Chen, Ping Luo, et al. Mvbench: A comprehensive multi-modal video understanding benchmark. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,pages 22195–22206, 2024. [24] Kele Shao, Keda Tao, Can Qin, Haoxuan You, Yang Sui, and Huan Wang. Holitom: Holistic token merging for fast video large language models. arXiv preprint arXiv:2505.21334 , 2025. [25] Leqi Shen, Guoqiang Gong, Tao He, Yifeng Zhang, Pengzhang Liu, Sicheng Zhao, and Guiguang Ding. Fastvid: Dynamic density pruning for fast video large language models. 
+
+arXiv preprint arXiv:2503.11187 , 2025. [26] Keda Tao, Can Qin, Haoxuan You, Yang Sui, and Huan Wang. Dycoke: Dynamic compression of tokens for fast video large language models. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 18992–19001, 2025. [27] Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Yang Fan, Kai Dang, Mengfei Du, Xuancheng Ren, Rui Men, Dayiheng Liu, Chang Zhou, Jingren Zhou, and Junyang Lin. Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution. arXiv preprint arXiv:2409.12191 ,2024. [28] Haoning Wu, Dongxu Li, Bei Chen, and Junnan Li. Longvideobench: A benchmark for long-context interleaved video-language understanding. Advances in Neural Information Processing Systems , 37:28828–28857, 2024. [29] Senqiao Yang, Yukang Chen, Zhuotao Tian, Chengyao Wang, Jingyao Li, Bei Yu, and Jiaya Jia. Visionzip: Longer is better but not necessary in vision language models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 19792–19802, 2025. [30] Chao Yuan, Shimin Chen, Minliang Lin, Limeng Qiao, Guanglu Wan, and Lin Ma. Uni-comp: Rethinking video compression through informational uniqueness. arXiv preprint arXiv:2512.03575 , 2025. 12 [31] Jun Zhang, Teng Wang, Yuying Ge, Yixiao Ge, Xinhao Li, Ying Shan, and Limin Wang. Timelens: Rethinking video temporal grounding with multimodal llms. arXiv preprint arXiv:2512.14698 , 2025. [32] Kaichen Zhang, Bo Li, Peiyuan Zhang, Fanyi Pu, Joshua Adrian Cahyono, Kairui Hu, Shuai Liu, Yuanhan Zhang, Jingkang Yang, Chunyuan Li, et al. Lmms-eval: Reality check on the evaluation of large multimodal models. In Findings of the Association for Computational Linguistics: NAACL 2025 , pages 881–916, 2025. [33] Yuanhan Zhang, Jinming Wu, Wei Li, Bo Li, Zejun Ma, Ziwei Liu, and Chunyuan Li. Video instruction tuning with synthetic data. arXiv preprint arXiv:2410.02713 , 2024. [34] Junjie Zhou, Yan Shu, Bo Zhao, Boya Wu, Zhengyang Liang, Shitao Xiao, Minghao Qin, Xi Yang, Yongping Xiong, Bo Zhang, et al. Mlvu: Benchmarking multi-task long video understanding. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 13691–13701, 2025. 13 A Additional Implementation Details 
+
+Sinkhorn parameters. The OT transport plan in Eq. (6) is solved using the Sinkhorn algorithm with entropic regularization parameter ϵ=0 .01 and a maximum of 200 iterations. We choose a small 
+
+ϵ since our compression executes discrete decisions: each source token is either fully assigned to a target token (merge) or removed (prune), without fractional mass splitting. A small ϵ produces a sharper transport plan that more closely approximates the discrete optimal assignment, while larger values would introduce excessive mass dispersion that the discrete execution cannot exploit. The iteration limit of 200 ensures convergence within numerical tolerance ( ∥u(t+1) − u(t)∥∞ < 10 −5 in practice) for all configurations tested. 
+
+Software environment. All experiments use Python 3.10, PyTorch 2.7.0, and CUDA 12.8 on a single NVIDIA RTX Pro 5000 (Blackwell) GPU. We use the lmms-eval framework [ 32 ] for both VQA and VTG evaluation, with the official model checkpoints for Qwen2.5-VL-7B [ 2 ], LLaVA-OneVision-7B [ 21 ], and LLaVA-Video-7B [ 33 ] from HuggingFace. All baseline methods are reproduced under the same evaluation protocol for fair comparison. 
+
+Evaluation protocol. VQA scores are reported as accuracy on multiple-choice questions, while VTG scores are reported as mean IoU (mIoU) between predicted and ground-truth temporal segments. MVBench [ 23 ] consists of short videos covering diverse temporal reasoning skills, Video-MME [ 13 ]spans short, medium, and long videos for comprehensive multimodal evaluation, and MLVU-dev [ 34 ]and LongVideoBench [ 28 ] both target long-form video understanding. For VTG, Charades-STA [ 15 ]contains short videos captured from fixed indoor cameras, and ActivityNet-Captions [ 3] (using the TimeLens [ 31 ] split) covers longer activity videos, though shorter than typical long-video benchmarks. 
+
+## B Spatial Compression Analysis 
+
+B.1 Comparison with Alternative Spatial Methods 
+
+We compare five spatial pruning methods within the OTT-Vid framework while keeping the OT-based temporal compression fixed. Each method consists of (i) a token selection algorithm and (ii) a mass function that maps each selected token to its preservation priority for the temporal stage. For fair comparison, the mass function of each method mirrors its selection criterion: tokens scoring high under the selection objective receive low mass (preserved) and low-scoring tokens receive high mass (compressed), with all methods using the same negative softmax temperature τm=0 .3.
+
+Top-K. Selection ranks tokens by their saliency wj and retains the top K. Mass is assigned directly from saliency: mj ∝ exp( −wj /τ m). Diversity or coverage are not considered, so selected tokens may concentrate within a few semantic clusters. 
+
+DivPrune [ 1]. Selection uses max-min farthest-point sampling on the cosine distance matrix without considering saliency: each subsequent token maximizes its minimum cosine distance to the already selected set. Mass is derived from the same isolation quantity that drives selection, iso j = min k∈S\{ j}(1 − cos( j, k )) , with mj ∝ exp( −iso j /τ m).
+
+ADTS [ 11 ]. The spatial pruning component of FlashVID combines diversity and saliency through saliency-scaled distances: each candidate’s distance to the selected set is multiplied by its saliency before max-min selection. Mass uses the same saliency-scaled isolation, iso j = wj · min k∈S\{ j}(1 −
+
+cos( j, k )) .
+
+SCOPE [ 8 ]. Selection performs greedy coverage maximization with a coverage gain weighted by the candidate’s own saliency: gain (j) = wj · P 
+
+> i
+
+max(0 , cos( i, j ) − cur_max i). Mass uses a leave-one-out form of the same expression, measuring how much coverage is lost when j is removed from the selected set, scaled by wj .
+
+OTT-Vid (Ours). Selection greedily picks tokens that maximize a coverage gain weighted by the saliency of the covered tokens rather than the candidate: gain (j) = P 
+
+> i
+
+wi · max(0 , cos( i, j ) −
+
+cur_max i). While SCOPE [ 8] incorporates saliency explicitly via the candidate weight wj , our 14 Table A1: Comparison of spatial pruning methods within the OTT-Vid framework on Qwen2.5-VL-7B at 10% retention. The temporal compression stage is fixed; only the spatial pruning method is varied. VQA scores are reported as accuracy and VTG scores as mIoU. Avg. (%) denotes the mean performance retention relative to the uncompressed baseline. Best results are in bold .                                                      
+
+> Video Question Answering Video Temporal Grounding Spatial Pruning Method Ret. MVBench VideoMME LVB MLVU Avg. (%) Charades ANet Avg. (%) Saliency 10% 63.9 58.5 56.0 60.0 95.1 32.4 16.9 71.5 DivPrune [1] CVPR’25 10% 61.9 56.7 57.2 59.2 93.7 30.1 16.6 68.0 SCOPE [8] NeurIPS’25 10% 63.4 58.7 56.8 60.3 95.3 31.4 17.5 71.2 ADTS [11] ICLR’26 10% 64.1 58.9 55.7 60.5 95.4 32.1 17.8 72.6
+> OTT-Vid 10% 64.0 58.7 56.7 60.7 95.8 32.3 18.4 73.9
+
+Figure A1: t-SNE visualization of selected tokens (dark blue) versus all tokens (light blue) for the five spatial pruning methods on three images at r=10% retention on Qwen2.5-VL. Top-K concentrates within a few feature-space clusters, DivPrune spreads uniformly without prioritization, and our saliency-and-coverage formulation produces a selection that spans the full distribution while maintaining density on salient regions. formulation incorporates it implicitly through the covered tokens. As a result, the iterative selection naturally prioritizes salient regions in the early steps where their weighted gain is largest, and shifts toward under-covered regions in later steps as the salient regions saturate. Mass follows the same leave-one-out form, measuring the loss in coverage of salient tokens when j is removed. 
+
+Comparison Result. Table A1 reports the quantitative results at r=10% retention on Qwen2.5-VL-7B, while Figure A1 qualitatively illustrates which tokens each method retains via t-SNE. At the quantitative level, our saliency-and-coverage formulation achieves the strongest average performance on both task families (95.8% VQA and 73.9% VTG). On VQA, the differences across methods are modest, with SCOPE [ 8 ], FlashVID [ 11 ] (ADTS), and our method all falling within 0.6pp of each other. On VTG, the gaps widen, with our method exceeding ADTS by 1.3pp and SCOPE by 2.7pp, suggesting that spatial pruning choice matters more for tasks that require fine-grained temporal evidence. Across both task families, the OT-based temporal compression remains effective regardless of the specific spatial choice. 15 This modularity has a notable practical implication: when ADTS is used as the spatial stage within our framework, it achieves 95.4% VQA, substantially exceeding the 93.9% reported in Table 1 for FlashVID [ 11 ] as a complete pipeline at the same retention ratio. The temporal compression mechanism therefore contributes meaningfully on top of reasonable spatial pruning choice. The qualitative t-SNE visualization further reveals the design intent of each method: Saliency concentrates the selection within a few feature-space clusters, while DivPrune [ 1] spreads it uniformly without prioritization. The remaining methods (SCOPE [ 8], ADTS [ 11 ], ours) jointly consider saliency together with either diversity or coverage, producing intermediate selection patterns that combine clustering on salient regions with broader coverage of the token distribution. 
+
+## C Adaptive Behavior Analysis 
+
+C.1 Budget Feasibility and Overflow Analysis 
+
+The pairwise budget allocation distributes the global budget Btot across T −1 adjacent frame pairs via a softmax over transport difficulties, with no inherent upper bound on the per-pair budget Bt.However, each pair (t, t +1) supports at most K compression operations under the constraint that each source token in St+1 is selected at most once, giving Bt ≤ K. We refer to the condition Bt > K as 
+
+budget overflow , in which the allocation exceeds the per-pair feasibility cap and the excess operations cannot be executed. In this subsection, we describe the mechanism handling overflow, derive its theoretical condition, and empirically verify its frequency under our default configuration. 
+
+Theoretical overflow condition. The uniform per-pair budget is Buniform = Btot /(T − 1) = 
+
+KT (1 − rt)/(T − 1) . Defining the budget ratio ρt := Bt/B uniform , the overflow condition Bt > K 
+
+becomes 
+
+ρt > ρ ∗ := T − 1
+
+T (1 − rt) , (A1) which converges to 1/(1 − rt) as T → ∞ . For our default configuration on Qwen2.5-VL [ 2 ] ( r=0 .10 ,
+
+γ=0 .3, T =32 ), rt = rγ ≈ 0.501 yields ρ∗ ≈ 1.94 , meaning a pair must receive nearly twice the uniform budget before exceeding the feasibility cap. 
+
+C.2 Per-Benchmark Budget Distribution Per-benchmark budget variability. To characterize how non-uniformly OTT-Vid distributes the budget within a single video, we compute the coefficient of variation CV = σ(Bt)/μ (Bt),where σ and μ denote the standard deviation and mean of the pairwise budgets {Bt}T −1 
+
+> t=1
+
+. A CV of 0 corresponds to a uniform allocation, while larger CV indicates that the adaptive mechanism concentrates budget on a smaller subset of frame pairs. Figure A2 reports the distribution of per-video CV across the six benchmarks on Qwen2.5-VL at r=0 .10 and τb=0 .3. The median CV ranges from 0.095 (MVBench) to 0.234 (ANet-TL), reflecting substantial differences in the temporal compressibility of each benchmark. MVBench and Charades-TL exhibit the lowest median CV (0.095 and 0.113), with most videos producing nearly uniform budget allocations. MLVU-dev (0.135) and Video-MME (0.145) form an intermediate group, while LongVideoBench (0.174) and ANet-TL (0.234) show substantially higher variability, with a long tail of videos exceeding CV 0.4. 
+
+C.3 Per-LLM Budget Distribution Cross-backbone budget distribution and overflow. While CV captures within-video variability, we further examine the pair-level distribution of budgets across all videos and backbones. Specifically, we measure the ratio ρt = Bt/B uniform for each frame pair, where ρt=1 indicates a budget equal to the uniform allocation, ρt<1 indicates a pair receiving less than its uniform share, and ρt>1 indicates a pair receiving more. Figure A3 shows the pooled distribution of ρt across three Video-LLM backbones (Qwen2.5-VL, LLaVA-OV, LLaVA-Video) and four VQA benchmarks at r=0 .10 and 
+
+τb=0 .3. The red dashed line marks the overflow threshold ρ∗ derived in Eq. (A1) : ρ∗=1 .94 for Qwen2.5-VL and LLaVA-OV ( T =32 ), and ρ∗=1 .97 for LLaVA-Video ( T =64 ). Across all twelve backbone-benchmark combinations, the empirical overflow rate remains below 1%, with a maximum of 0.52% (LLaVA-Video on Video-MME). The vast majority of pairs fall within [0 .5, 1.5] , well inside the feasibility region. This confirms that the softmax allocation naturally produces feasible budgets 16 Figure A2: Per-video coefficient of variation CV = σ(Bt)/μ (Bt) of pairwise budgets across six benchmarks on Qwen2.5-VL at r=0 .10 and τb=0 .3. Red dashed lines mark medians. across diverse video distributions and backbone configurations, and the redistribution mechanism described above is rarely activated in practice. 
+
+Handling overflow. During budget allocation process, if the initial softmax produces Bt > K for some pair, the excess is redistributed through an iterative procedure that recomputes the softmax over the active set of pairs below their cap. The allocated amount is applied up to the headroom 
+
+K − Bt of each pair, with any excess carried to the next iteration. Pairs reaching K are frozen and excluded thereafter. This preserves the softmax-based prioritization within the feasible region and guarantees P 
+
+> t
+
+Bt = Btot exactly. As Figure A3 shows, overflow is rare in practice, and most allocations terminate after the initial softmax step on the full set. 
+
+C.4 Budget Allocation Across Time 
+
+Figure A4 visualizes the per-pair transport difficulty Wt (red line) and the allocated budget Bt (blue bars) on two videos with contrasting temporal characteristics. In the dynamic video (top), where frame content changes substantially across pairs, Wt varies accordingly and the budget is allocated non-uniformly, concentrating on pairs with smaller content changes. In the static video (bottom), where consecutive frames depict nearly identical scenes, Wt remains uniformly low and the budget distribution approaches the uniform allocation. The adaptive mechanism thus produces non-uniform budgets when warranted by the video content and near-uniform budgets otherwise. 
+
+## D Additional Ablation Study 
+
+Per-benchmark results of core component ablation. Table A2 provides the per-benchmark breakdown of the core component ablation summarized in Table 3. The results show that mass and budget contributions vary across benchmarks, consistent with the analyses of τm and τb in the following subsections. 17 Figure A3: Pooled distribution of pair-level budget ratios ρt = Bt/B uniform across three Video-LLM backbones (rows) and four VQA benchmarks (columns) at r=0 .10 and τb=0 .3. Red dashed lines mark the overflow threshold ρ∗, with annotated overflow rates ( >cap ). The slight variation in ρ∗
+
+between backbones reflects different frame counts T (32 for Qwen2.5-VL and LLaVA-OV, 64 for LLaVA-Video). All twelve combinations show overflow rates below 1%. Table A2: Per-benchmark results of the core component ablation on Qwen2.5-VL-7B at 10% retention. Mass denotes importance-aware mass ( ✓) vs. uniform. Budget denotes adaptive allocation ( ✓) vs. uniform. VQA scores are reported as accuracy and VTG scores as mIoU. Avg. (%) denotes the mean performance retention relative to the uncompressed baseline.                                                 
+
+> Comp. Video Question Answering Video Temporal Grounding Row Mass Budget MVBench VideoMME LVB MLVU Avg. (%) Charades ANet Avg. (%) (a) 63.7 57.5 55.6 59.7 94.3 30.2 13.5 63.1 (b) ✓63.2 57.7 56.5 59.7 94.6 30.5 14.0 64.3 (c) ✓63.9 58.3 56.0 60.4 95.2 32.0 17.6 72.2 (d) ✓✓64.0 58.7 56.7 60.7 95.8 32.3 18.4 73.9
+
+D.1 Budget Temperature τb
+
+The budget temperature τb controls the sharpness of the softmax distribution over transport difficulties 
+
+{Wt} in Eq. (8) . As τb → 0, the allocation concentrates on the pair with the smallest Wt, amplifying the adaptive behavior but pushing the budget ratio ρt closer to the overflow threshold ρ∗. As τb → ∞ ,the allocation converges to the uniform baseline Bt = Buniform , eliminating the data-dependent prioritization. Intermediate values balance these two regimes by modulating how strongly the relative differences in {Wt} influence the budget distribution. Table A3 reports the effect of τb on average performance at r=0 .10 on Qwen2.5-VL-7B. As τb → ∞ ,the allocation converges to the uniform baseline and performance degrades on both task families, confirming that adaptive allocation contributes meaningfully beyond uniform budgeting. Conversely, smaller τb sharpens the allocation but increases overflow frequency, triggering the iterative redistri-bution more often. The default τb=0 .3 operates in the intermediate region where overflow remains below 1% across all benchmarks while preserving meaningful non-uniformity in the allocation. The sensitivity to τb also varies across benchmarks in a way consistent with their compressibility profiles in Figure A2. Benchmarks with low median CV, such as MVBench and Charades, show 18 Figure A4: Per-pair transport difficulty Wt (red) and allocated budget Bt (blue) on 10% retention at Qwen2.5-VL with T =16 . Top: dynamic video. Bottom: static video. Table A3: Effect of the budget temperature τb on Qwen2.5-VL-7B at 10% retention. VQA scores are reported as accuracy and VTG scores as mIoU. Avg. (%) denotes the mean performance retention relative to the uncompressed baseline.                                               
+
+> Video Question Answering Video Temporal Grounding
+> τbRet. MVBench VideoMME LVB MLVU Avg. (%) Charades ANet Avg. (%) 0.1 10% 64.2 57.8 56.2 60.9 95.3 32.1 18.0 73.0
+> 0.3 10% 64.0 58.7 56.7 60.7 95.8 32.3 18.4 73.9
+> 1.0 10% 64.1 58.2 56.2 60.5 95.3 32.3 17.9 73.1
+> ∞10% 63.9 58.3 56.0 60.4 95.2 32.0 17.6 72.2
+
+minimal performance variation across τb, as their nearly uniform budget distributions leave little room for τb to amplify. In contrast, benchmarks with higher CV, such as ANet, are more sensitive to 
+
+τb and peak around the default τb=0 .3. This indicates that τb plays a more substantive role on videos with dynamic temporal context, where compressibility varies across frame pairs, while having limited effect on videos with more uniform temporal content. 
+
+D.2 Mass Temperature τm
+
+The mass temperature τm controls the sharpness of the negative softmax in Eq. (3) , which converts per-token contribution scores ˜ut,k into the transport mass vector mt. As τm → 0, the mass distribu-tion concentrates on tokens with the smallest contribution scores, sharply prioritizing semantically representative tokens for preservation while making the transport plan strongly biased against com-pressing them. As τm → ∞ , the mass distribution converges to a uniform vector mt,k = 1 /K , in which case the OT marginal constraint no longer encodes preservation priority and the transport reduces to similarity-driven matching. Intermediate values modulate how strongly intra-frame token importance influences the transport plan. 19 Table A4: Effect of the mass temperature τm on Qwen2.5-VL-7B at 10% retention. VQA scores are reported as accuracy and VTG scores as mIoU. Avg. (%) denotes the mean performance retention relative to the uncompressed baseline.                                               
+
+> Video Question Answering Video Temporal Grounding
+> τmRet. MVBench VideoMME LVB MLVU Avg. (%) Charades ANet Avg. (%) 0.1 10% 63.6 58.1 56.7 60.3 95.2 31.6 17.4 71.3
+> 0.3 10% 64.0 58.7 56.7 60.7 95.8 32.3 18.4 73.9
+> 1.0 10% 64.0 57.6 56.5 60.0 95.0 31.8 16.2 69.6
+> ∞10% 63.2 57.7 56.5 59.7 94.6 30.5 14.0 64.3
+
+Table A5: Effect of the cost threshold τc on Qwen2.5-VL-7B at 10% retention. VQA scores are reported as accuracy and VTG scores as mIoU. Avg. (%) denotes the mean performance retention relative to the uncompressed baseline.                                               
+
+> Video Question Answering Video Temporal Grounding
+> τcRet. MVBench VideoMME LVB MLVU Avg. (%) Charades ANet Avg. (%) 0.0 10% 63.8 57.9 56.9 60.2 95.3 32.1 18.0 73.0
+> 0.3 10% 64.0 58.7 56.7 60.7 95.8 32.3 18.4 73.9
+> 0.7 10% 63.4 58.7 57.6 60.6 95.8 32.2 18.1 73.3 1.0 10% 63.8 58.1 57.1 60.1 95.4 32.1 17.8 72.6
+
+Table A4 reports the effect of τm on average performance at r=0 .10 on Qwen2.5-VL-7B. The uniform-mass case ( τm → ∞ ) shows a sharp drop on both task families and especially on VTG, confirming that without preservation priority, important tokens fail to persist across frames. At the other end, τm=0 .1 also degrades performance: the sharply peaked mass distribution biases the transport plan toward mass over cost, restricting its flexibility to find low-cost cross-frame correspondences. The default τm=0 .3 balances these two regimes, preserving important tokens through non-uniform mass while leaving sufficient room for cost-driven matching. 
+
+D.3 Cost Threshold τc
+
+The cost threshold τc determines whether each selected match in the transport plan is executed as a merge (uniform averaging) or as a prune (deletion of the source token), with matches satisfying 
+
+Ct,ij < τ c being merged and the remainder pruned. We introduced this dual-mode formulation following the well-established principle that merging is reliable when matched representations are close enough that uniform averaging preserves their information, while pruning is preferable when the matched representations differ substantially [ 20 , 9 , 4]. Recent video token compression methods such as DyCoke [ 26 ] and PruneVid [ 16 ] adopt similar dual-mode strategies, and we incorporate τc as a principled safeguard against unreliable cross-frame correspondences. Table A5 reports the effect of τc at r=10% on Qwen2.5-VL-7B. Performance is robust to τc across a wide range, but degrades slightly at both extremes. At τc=0 (all-pruning), the dual-mode formulation collapses to pure pruning, discarding information from reliable low-cost matches that uniform averaging could have preserved. At τc=1 .0 (all-merging), high-cost matches are merged despite representing semantically unreliable correspondences, contaminating the target representation through averaging. Within the intermediate range τc ∈ [0 .3, 0.7] , performance remains stable because high-cost matches typically involve source tokens with relatively low importance, so the choice between merging and pruning yields similar downstream effects. We adopt τc=0 .3 as default, which also offers compression overhead efficiency since pruning removes tokens directly rather than computing weighted averages. 
+
+D.4 Mixing Weight αt
+
+We compare five formulations of the mixing weight αt in Eq. (5) : two fixed values ( α=1 and α=0 .5,corresponding to the upper and lower bounds in our formulation), and three dynamic variants based on ¯st computed at different spatial scales: position-aligned (per-token similarity at identical grid 20 Table A6: Effect of the mixing weight αt formulation on Qwen2.5-VL-7B at 10% retention. Fixed values ( α=1 , α=0 .5) correspond to the upper and lower bounds of our formulation, while the dynamic variants compute ¯st at different spatial scales. VQA scores are reported as accuracy and VTG scores as mIoU. Avg. (%) denotes the mean performance retention relative to the uncompressed baseline.                                                        
+
+> Video Question Answering Video Temporal Grounding Variant Ret. MVBench VideoMME LVB MLVU Avg. (%) Charades ANet Avg. (%)
+> α=1 10% 63.8 58.1 55.9 60.5 95.0 32.1 18.0 73.0
+> α=0 .510% 63.8 58.4 56.3 59.9 95.1 32.0 18.1 73.0
+> α=global 10% 64.3 59.0 56.6 60.4 95.8 32.1 18.2 73.3
+> α=kernel 10% 64.2 58.6 56.3 60.6 95.6 32.4 18.5 74.2 Ours 10% 64.0 58.7 56.7 60.7 95.8 32.3 18.4 73.9
+
+positions, our default), kernel-based ( 3×3 neighborhood averaging without padding), and global (frame-level mean similarity). Table A6 reports the results at r=0 .10 on Qwen2.5-VL-7B. The dynamic variants consistently out-perform the fixed values, confirming that adapting αt to scene dynamics is beneficial. Among the dynamic variants, position-aligned, kernel, and global perform comparably on VQA benchmarks, but global is weaker on VTG. We attribute this to the difference in frame sampling: VQA’s sparse 32-frame sampling produces large frame-to-frame changes captured even at coarse spatial reso-lutions, while VTG’s dense 2 fps sampling yields small, spatially localized differences between adjacent frames. Under such fine granularity, the global variant’s frame-level averaging smooths out localized motion and loses the ability to distinguish static and dynamic regions within a pair. The position-aligned and kernel variants retain per-token (or near per-token) spatial resolution and remain sensitive to localized dynamics, yielding consistent performance across both task families. We adopt position-aligned as default for its simplicity, since per-token similarity already captures the local correspondence signal that kernel averaging would aggregate, making the additional neighborhood operation unnecessary in practice. 
+
+## E Additional Qualitative Results 
+
+We provide additional qualitative comparisons with FlashVID [ 11 ] on MVBench (Figure A5) and ActivityNet-TimeLens (Figure A6) at 10% retention. In both figures, bright patches indicate retained tokens and red circles mark the query-relevant regions. Figure A5 shows a counting query asking how many purple objects exit the scene. The purple cylinder on the right gradually exits as the camera moves, serving as the key evidence for the correct answer. FlashVID’s similarity-driven temporal compression treats this object as redundant across frames and fails to retain tokens covering its exit, leading to an incorrect count of zero. OTT-Vid preserves tokens around the cylinder throughout the sequence under its importance-aware mass formulation, capturing the exit evidence and producing the correct answer. Figure A6 shows a temporal grounding query for the moment of cutting the meat (ground truth: 51.4–58.2s). The cutting action repeats across multiple frames in this interval, and FlashVID’s similarity-based compression treats the recurring motion as redundant, discarding tokens around the hand and knife in the middle frames (e.g., 56s). This loss collapses the localized estimate to 52–54s, missing most of the action span. OTT-Vid retains the cutting region across all frames in the interval, producing a temporal estimate (51–58s) that closely matches the ground truth. 21 Q) How many pur ple objects exit the scene? A) 1. 
+
+FlashVID ✗ A) 0. 
+
+OTT -Vid ✓ A) 1. Figure A5: Qualitative comparison on MVBench at 10% retention. Bright patches indicate retained tokens. Red circles highlight the question-relevant region. Q) When does the person cut the meat? A) 51.4s ~ 58.2s      
+
+> 50s 52s 54s 56s 58s 60s
+
+FlashVID ✗ A) 52s~54s. 
+
+OTT -Vid ✓ A) 51s~58s. 
+
+Figure A6: Qualitative comparison on ActivityNet-TimeLens at 10% retention. Bright patches indicate retained tokens. Red circles highlight the question-relevant region. 22

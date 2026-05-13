@@ -1,0 +1,807 @@
+Title: FluxShard: Motion-Aware Feature Cache Reuse for Collaborative Video Analytics in Mobile Edge Computing
+
+URL Source: https://arxiv.org/pdf/2605.06027v1
+
+Published Time: Fri, 08 May 2026 01:00:57 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+> IEEE TRANSACTIONS ON MOBILE COMPUTING 1
+
+# FluxShard: Motion-Aware Feature Cache Reuse for Collaborative Video Analytics in Mobile Edge Computing 
+
+Xiuxian Guan, Zongyuan Zhang, Zheng Lin, Zekai Sun, Tianyang Duan, Zihan Fang, Rui Wang, Heming Cui, Wei Ni, Fellow, IEEE , Jun Luo, Fellow, IEEE , and Yuanwei Liu, Fellow, IEEE 
+
+Abstract —Caching and reusing intermediate features across consecutive frames is a common technique to reduce redundant computation and transmission for edge-cloud video analytics in mobile edge computation. Existing methods manage the cache in a fixed or globally shifted coordinate system, treating it as an indivisible whole. Under the non-uniform motion patterns of mobile scenes, this whole-scene granularity invalidates large portions of the cache even when most content has merely shifted spatially, wasting computation and bandwidth. The root cause is a granularity mismatch: the cache is managed per scene, yet motion varies per region. In this paper, we present FluxShard, a motion-aware edge-cloud video analytics system that uses codec-level block motion vectors (MVs) to manage feature cache reuse and recomputation at the granularity of individual motion regions. By re-indexing cached features along per-block MVs, FluxShard separates spatial displacement from content changes, recovering reusable content that whole-scene methods would otherwise discard. To ensure correct reuse under heterogeneous motion, the Receptive Field Alignment Principle (RFAP) identifies, from the input-level MV field alone, the positions that must be recom-puted due to inconsistent spatial composition within receptive fields. To maintain cache coherence across frames, MV-guided cache remapping warps the entire feature cache to the current coordinate system each frame, sustaining a high reuse ratio over time. A profiling-driven dispatcher routes the remaining sparse workload between edge and cloud for lower latency. Evaluation across multiple vision tasks, dynamic video benchmarks, and network conditions shows that FluxShard reduces latency by 32.6–83.8% and energy by 14.9–64.0% over all baselines under the prescribed accuracy budget. 
+
+Index Terms —Edge-cloud collaborative inference, mobile com-putation offloading, video analytics, feature cache reuse. 
+
+Xiuxian Guan, Zongyuan Zhang, Zekai Sun, Tianyang Duan, and Heming Cui are with the Department of Computer Science, The University of Hong Kong, Hong Kong, China. (email: xxguan@cs.hku.hk; zyzhang2@cs.hku.hk; zksun@cs.hku.hk; tyduan@cs.hku.hk; heming@cs.hku.hk) Xiuxian Guan and Rui Wang are with the Department of Elec-tronic and Electrical Engineering, The Southern University of Science and Technology, Shenzhen, China. (email: guanxx2021@mail.sustech.edu.cn; wang.r@sustech.edu.cn) Zheng Lin and Yuanwei Liu are with the Department of Electrical and Computer Engineering, University of Hong Kong, Pok Fu Lam, Hong Kong, China (email: linzheng@eee.hku.hk; yuanwei@hku.hk). Zihan Fang is with Hong Kong JC STEM Lab of Smart City and Department of Computer Science, City University of Hong Kong, Kowloon, Hong Kong SAR, China (e-mail: zihanfang3-c@my.cityu.edu.hk). Wei Ni is with the School of Engineering, Edith Cowan University, Perth, WA 6027, Australia (email: wei.ni@ieee.org). Jun Luo is with the College of Computing and Data Science, Nanyang Technological University, Singapore (e-mail: junluo@ntu.edu.sg). 
+
+I. I NTRODUCTION 
+
+Video analytics is a core building block of intelligent edge applications in mobile edge computation: autonomous drones [1], [2], embodied robots [3], [4], augmented-reality headsets [5], and smart surveillance cameras [6] all rely on video analytics to perceive and react to their surroundings in real time. It uses deep neural networks (DNNs) [7], [8], [9], [10], [11], [12], [13], [14] to process continuous video frames and produce results such as object detections, segmentation masks, and pose estimates. Running these models directly on edge devices avoids uploading raw video and keeps la-tency predictable, but edge hardware offers limited compute and energy. A common alternative is to offload frames to a powerful cloud server; however, streaming high-resolution video over a bandwidth-constrained wireless uplink introduces transmission delay that can violate the real-time requirements. Neither naive local nor remote processing reliably meets the joint latency and accuracy demands of these applications. A natural way to reduce both transmission and computation is to exploit temporal redundancy: consecutive frames share most of their content, and this redundancy extends to intermediate feature maps. Reuse-based methods cache and reuse previ-ously computed feature maps and recompute only the changed portions, reducing both transmitted data and computation simultaneously. Existing reuse methods are designed primarily for fixed cameras and struggle with the complex motion patterns in-troduced by mobile edge devices. Some methods reuse whole intermediate feature maps only when consecutive frames ex-ceed a global similarity threshold [15], [16]. Others compute per-pixel differences and recompute only positions where the difference exceeds a threshold [17], [18], [19], [20]. Despite their different granularities, these methods share a common limitation: they treat the cached feature maps as an indivisible whole; the non-uniform motion patterns in real-world scenes invalidate large portions of the cache even when most con-tent has merely shifted spatially, wasting computation and bandwidth. A cache reuse mechanism that adapts to local, heterogeneous motion is therefore needed for mobile video analytics. Our insight is that block-level motion vectors (MVs) from standard video codecs provide exactly such a per-region mo-tion signal at no additional cost. MVs are block-level dis-placements that map each current-frame block to the reference  
+
+> arXiv:2605.06027v1 [cs.NI] 7 May 2026 IEEE TRANSACTIONS ON MOBILE COMPUTING 2
+
+frame. Because MVs capture geometric displacement rather than content change, re-indexing cached feature-map blocks along their MV trajectories recovers reusable content that whole-scene methods would otherwise discard. The remaining positions where MVs cannot account for the actual change (e.g., high difference in pixel values after alignment due to non-rigid deformation, dis-occlusion, or newly appearing con-tent) form the recomputation set : the minimal set of positions that must be freshly computed and transmitted. Realizing this idea introduces two challenges. One of the challenges is receptive field inconsistency : even when every pixel individually matches its MV-aligned counterpart, the reused output can still be wrong. Operators like convolutions compute each output from a spatial neighborhood (the recep-tive field); correctly reusing a cached output requires verifying that the entire neighborhood matches, and this check at every layer and position costs as much as recomputation, negating the latency benefit of reuse. The other challenge is cache maintenance : existing methods use in-place cache updates assuming a static coordinate system; under per-block motion the cache drifts out of alignment, and writing recomputed values back along MVs creates write conflicts (e.g., multiple blocks are mapped to a same cache position) and staleness (e.g., cache positions that no blocks are mapped to are not updated). These errors compound across frames, progressively eroding reuse opportunities until caching offers no benefit over dense execution. We propose FluxShard, a motion-aware edge-cloud video analytics system that achieves low latency and high accuracy by managing feature cache reuse at the granularity of individ-ual motion regions. FluxShard allows cached features to flow along their per-block motion trajectories to the positions where they best match the current frame; only positions whose post-alignment difference still exceeds a per-layer tolerance need recomputation. For receptive field inconsistency, FluxShard establishes geometric conditions on the MV field under which cached convolution outputs remain valid despite heterogeneous motion, replacing the expensive per-layer feature comparison with a single lightweight pass over the input-level MV field. This is referred to as the Receptive Field Alignment Princi-ple (RFAP). For cache maintenance, FluxShard borrows the backward-MV warp from video codec reference frame recon-struction and applies it at the feature level: the entire cache is realigned with the current coordinate system and merged with freshly computed values, sustaining a high reuse ratio across consecutive frames. The per-layer tolerances for cache reuse are jointly calibrated offline to find the largest values that minimize the recomputation workload while keeping accuracy within a prescribed budget. A profiling-driven dispatcher then estimates per-endpoint latency from the resulting workload size and current network conditions, routing each frame to the lower-latency endpoint. In summary, this paper makes the following contributions:  
+
+> •
+
+We identify the granularity mismatch between whole-scene cache management and local heterogeneous motion as the key limitation of existing feature reuse methods, and show that codec-level motion vectors provide a free, per-block geometric signal to overcome it.  
+
+> •
+
+We propose FluxShard, a motion-aware edge-cloud video analytics system that manages feature cache reuse at the granularity of individual motion regions and routes the resulting recomputation workload to the lower-latency endpoint.  
+
+> •
+
+We develop the RFAP to guarantee reuse correctness, motion-aware cache remapping to maintain cache validity across frames, and a profiling-driven dispatch scheduler to minimize per-frame latency.  
+
+> •
+
+Evaluation on real-world dynamic video benchmarks shows that FluxShard achieves 32.6–83.8% latency re-duction and 14.9–64.0% energy savings over all baselines while retaining 97.3–98.0% of dense-model accuracy. In the rest of this paper, §II motivates the problem of interest with empirical evidence. §III defines the system model and pipeline. §IV develops the reuse criterion, RFAP, cache remapping, and dispatch mechanisms. §V evaluates FluxShard against four baselines. §VI discusses the related work and §VII concludes. II. C HALLENGES AND MOTIVATION 
+
+A. The Edge-Cloud Dilemma 
+
+Edge-cloud video analytics faces two competing bottle-necks: local compute and network transmission. For example, running YOLO11m-pose [21] on an NVIDIA Jetson Xavier NX requires approximately 446.8 ms per 1024 × 1024 frame, far exceeding real-time requirements. Offloading every frame eliminates the compute bottleneck but introduces a transmis-sion bottleneck: an uncompressed 1024 × 1024 frame is about 3 MB; at 30 fps this sustains ∼755 Mbps, routinely exceeding edge uplink capacity. The cloud server completes inference within only about 27.6 ms, yet end-to-end offload latency reaches approximately 290.3 ms under a typical 5G uplink [22] (∼383 Mbps). Figure 1a quantifies this tension. Feature cache reuse can reduce both bottlenecks: when consecutive frames share content, cached results substitute for fresh transmission and computation. Existing mecha-nisms [15], [16], [19], [20] treat caches in a fixed, whole-scene coordinate system, whether the reuse decision is binary (reuse or recompute the entire frame) or pixel-level (propagate a dense difference map). This granularity mismatch breaks down under motion. Figure 1b shows that even modest dis-placement triggers widespread invalidation: the reuse ratio of DeltaCNN [19] and M-DeltaCNN [20] drops from over 60% on near-static sequences to below 25% once motion exceeds 20 px/frame, despite most content being merely shifted rather than changed. 
+
+Takeaway. Cache reuse is essential, but whole-scene granu-larity cannot tolerate motion. A finer-grained, motion-aware mechanism is needed. 
+
+B. Motion Vectors: Opportunity and Correctness Failure 
+
+H.264/H.265 codecs estimate a per-block displacement as part of normal encoding, providing per-region motion infor-mation at no additional cost. Although lossy codec stages (transform, quantization) can distort feature statistics [23], IEEE TRANSACTIONS ON MOBILE COMPUTING 3Edge-only Offload                 
+
+> 0
+> 200
+> 400
+> Latency (ms)  Compute Transmission
+> (a) Edge-cloud dilemma 10 20
+> MV Std (px)
+> 20
+> 40
+> 60
+> Reuse Ratio (%)  DeltaCNN M-DeltaCNN w/ MV align (b) Reuse ratio vs. motion Dense offload
+> Naive MV reuse
+> 60
+> 65
+> 70
+> 75
+> Accuracy (%)
+> (c) Accuracy under naive reuse 025 50 75 100
+> Frame index
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Ratio (%)
+> Reuse ratio Compute ratio (d) Naive cache update drift Figure 1. Motivation for FluxShard. All panels use pose estimation (YOLO11m-pose) on 3DPW under medium bandwidth with an NVIDIA Jetson Xavier NX as the edge device and an RTX 3080 as the cloud server. (a) End-to-end latency for dense local vs. dense offload inference. (b) Reuse ratio vs. per-frame motion intensity (MV standard deviation) for DeltaCNN, M-DeltaCNN, and MV-aligned reuse. (c) Accuracy of na¨ ıve MV reuse without correctness checking vs. dense offload. (d) Reuse ratio and compute ratio over the first 100 frames of a representative sequence without cache remapping.
+
+[24], [25], the motion vectors are a purely geometric signal unaffected by these stages. By shifting cached feature blocks according to these MVs, displaced content is realigned before differencing, and the remaining recomputation set concentrates on regions that MVs cannot explain: dis-occlusion, deforma-tion, and newly appearing content. As shown in Figure 1b, MV alignment recovers much of the lost reuse, maintaining over 55% even under strong motion where DeltaCNN and M-DeltaCNN fall below 25%. These results establish that MV alignment can recover most of the displaced content; the remaining question is whether the aligned features are correct 
+
+for downstream inference. Despite the improved reuse ratio, directly reusing MV-aligned features still produces severe accuracy loss. Figure 1c shows that accuracy (measured by Object Keypoint Similarity, OKS) drops from 70.95% to 67.31% under na¨ ıve MV reuse, a 5.13% relative degradation. The root cause is receptive field inconsistency: layers whose receptive field spans more than one position aggregate spatial neighborhoods. When adjacent blocks carry different MVs, re-indexing assembles patches that were never contiguous in the original frame; the cached output was computed from a different neighborhood. The resulting error compounds through cascaded layers. 
+
+Takeaway. MV alignment eliminates most false cache misses, but exploiting it requires a correctness guarantee under het-erogeneous per-block motion. This is the first challenge our design needs to address. 
+
+C. Na¨ ıve Cache Update Breaks Future Reuse 
+
+Even with a correct recomputation set, the system still faces a second problem: how to maintain the cache after sparse recomputation. Existing reuse systems simply overwrite the cache in place. This policy assumes that the cache and the current frame still share the same coordinate system. Under heterogeneous per-block motion, however, the cache remains anchored to the previous frame while the current content has moved to new locations. A straightforward extension is to write each newly recom-puted recomputed block back to the cache location indicated by its MV. This also fails: the mapping from current blocks to cached locations is many-to-one and incomplete, creating write conflicts at overlapping targets and leaving stale content at unmapped locations. Positions that should remain reusable cannot find a valid history entry, while positions declared reusable may read an incorrect value. Once written into the history, these errors accumulate. Figure 1d tracks this on a representative 1660-frame pose estimation sequence. Without proper cache realignment, the reuse ratio drops from over 70% to below 15% and the compute ratio rises from 13% to over 80%, approaching dense execution cost. Genuinely reusable content persists but no longer aligns with the current coordinate system. 
+
+Takeaway. Correct recomputation set extraction is not enough. MV alignment can isolate a small recomputation set. However, without first realigning the cache to the current frame layout, sparse updates leave behind stale or conflicting history. The broken history enlarges the next recomputation set and cor-rupts nominal reuse. Cache maintenance under heterogeneous motion is therefore the second challenge that our design needs to address. III. S YSTEM OVERVIEW 
+
+This section first defines the system model and optimization objective (§III-A), and then describes the end-to-end pipeline (§III-B). 
+
+A. System Model 
+
+We consider an edge-cloud video analytics system in which an edge device (e.g., an NVIDIA Jetson) receives a live video stream {It}Tt=1 from a co-located camera, and a remote cloud server provides additional compute capacity. The two endpoints communicate over a time-varying bandwidth-limited uplink. A block-level MV field mt is extracted from the video stream for each frame It. For every pixel position (i, j ) in It,
+
+mt(i, j ) gives the displacement to its corresponding position 
+
+(ˆ ı, ˆȷ) = ( i, j ) − mt(i, j ) in the reference frame It−1; all pixels within the same 16 ×16 block share one displacement. Each endpoint hosts an identical copy of the inference model and maintains a per-layer feature cache of intermediate features from its most recent inference. For each incoming frame 
+
+It, FluxShard executes the recomputation workload at one endpoint: either locally at the edge or remotely at the cloud. 
+
+Inference and feature cache. The DNN N comprises L lay-ers indexed by l ∈ { 1, . . . , L }. Layer l takes an input feature map Fl ∈ RH′    
+
+> l×W′
+> l×C′
+> l
+
+and produces an output feature map IEEE TRANSACTIONS ON MOBILE COMPUTING 4
+
+Ol ∈ RHl×Wl×Cl ; by convention F1 = It. The output at spa-tial position (i, j ) depends on a set of input positions called its receptive field, denoted Rl(i, j ) ⊆ { 1, . . . , H ′ 
+
+> l
+
+}×{ 1, . . . , W ′ 
+
+> l
+
+},with radius rl. For convolutional and linear layers, wl denotes the weight tensor applied over this receptive field, and sl
+
+denotes the spatial stride. Because our analysis only concerns spatial positions, we omit the channel dimension hereafter. A contiguous group of feature-map positions (e.g., 16 ×16 pixels at the input) that correspond to a single MV entry is called a 
+
+shard .At layer l, ˆFl and ˆOl denote the cached input and output features; since ˆOl ≡ ˆFl+1 , we use whichever is more natural in context. At deeper layers, FluxShard downsamples the MV field from ˆm0 to match each layer’s spatial resolution. At each layer, FluxShard forms an assembled output ˜Ol by combining MV-aligned cached values with freshly computed ones. Positions whose output discrepancy exceeds a per-layer tolerance τl require fresh computation and form the recompu-tation set Sl. The thresholds τ = {τl}Ll=0 are calibrated offline, where l = 0 denotes a virtual layer that FluxShard prepends to the DNN for estimating the per-endpoint recomputation workload; the exact reuse criterion and calibration procedure are developed in the next section. Because both endpoints execute the same inference logic, we present the reuse criterion and cache update rules without endpoint superscripts; Sl, ˆFl, and ˆOl refer to the selected endpoint’s state. Superscripts e or c appear only when the dispatch scheduler compares both endpoints. 
+
+Optimization objective. Edge intelligence applications such as autonomous navigation, robotic manipulation, and augmented-reality interaction often require both real-time re-sponsiveness and high perception accuracy; neither can be sacrificed for the other. Let At denote the task accuracy (e.g., mAP) achieved on frame It under the realized reuse and end-point selection; A∗ 
+
+> t
+
+denotes the accuracy of full recomputation without caching; Tt denotes the corresponding per-frame end-to-end latency, comprising local computation, data transmis-sion, and remote computation as applicable. We define the sequence-level averages: ¯A = 1
+
+> T
+
+PTt=1 At, ¯A∗ = 1
+
+> T
+
+PTt=1 A∗ 
+
+> t
+
+,and ¯T = 1
+
+> T
+
+PTt=1 Tt. This leads to the following optimization objective: 
+
+min 
+
+> {dt}
+
+¯T s.t. ¯A ≥ α ¯A∗, (1) where dt ∈ { edge, cloud } is the per-frame dispatch decision and α ∈ (0 , 1] is a user-specified accuracy retention ratio. The objective minimizes average latency over the video sequence while keeping the accuracy loss within a user-specified budget. 
+
+B. Pipeline 
+
+Figure 2 illustrates the pipeline. FluxShard introduces a dispatch layer (virtual layer 0) preceding the DNN. This layer applies the identity operator to the raw input, so its reuse criterion reduces to a direct per-position comparison between the current frame and the MV-aligned cached input. For both endpoints, it stores a cached input ( ˆFe
+
+> 0
+
+, ˆFc
+
+> 0
+
+) and an accumu-lated MV field ( ˆme
+
+> 0
+
+, ˆmc
+
+> 0
+
+) that tracks the total displacement from the cached input to the present frame. When an encoded  
+
+> Figure 2. Overview of the FluxShard pipeline.
+
+frame arrives at the edge, FluxShard proceeds in the following four stages. 
+
+Stage 1: MV extraction. Block-level motion vectors mt
+
+are extracted from the codec during decoding at negligible cost. Both dispatch states update their accumulated MV fields by warping the old accumulator along the new MV and adding the new displacement. When an endpoint performs inference, its accumulated field is reset; the other endpoint’s field continues to accumulate. At deeper DNN layers, the MV field is downsampled from ˆm0 to match each layer’s spatial resolution; we write ˆml for the field on the grid of layer l’s output (equivalently, layer l+1 ’s input). 
+
+Stage 2: Recomputation workload estimation. Each dispatch state uses its accumulated MV field to shift the cached input shard by shard, aligning each shard to its current-frame position. A per-position comparison within each aligned shard identifies positions whose content differs from the cache by more than the dispatch threshold τ0; these positions form the candidate input recomputation sets Se 
+
+> 0
+
+and Sc 
+
+> 0
+
+. From their sizes, the edge state estimates local sparse inference latency, while the cloud state estimates the cost of transmitting the MV field and recomputation pixels plus remote inference under current network conditions. 
+
+Stage 3: Dispatch decision. The frame is assigned to the endpoint with the lower estimated latency; the accuracy con-straint in Eq. (1) is enforced by the profiled thresholds τ rather than by the routing step itself. 
+
+Stage 4: Inference and cache update. After dispatch, only the selected endpoint continues sparse inference. The selected endpoint begins from the layer-0 recomputation set and prop-agates it through the DNN one layer at a time. At each layer, the system remaps the cached features to the current-frame coordinate system, identifies which positions can be safely reused and which must be recomputed, and sparsely evaluates only the latter. Freshly computed and cached values are assembled into a result that serves as both the next layer’s input and the updated cache. After the final layer, the endpoint resets its accumulated MV field. The non-selected endpoint retains its accumulated MV field for future reuse. When the cloud is selected, the edge transmits only ˆmc 
+
+> 0
+
+and the content-change recomputation pixels in Sc 
+
+> 0
+
+;IEEE TRANSACTIONS ON MOBILE COMPUTING 5
+
+the cloud applies the RFAP check from the MV field before starting DNN inference. These four stages rely on three mechanisms developed in the next section: per-layer thresholds τ that control the accuracy-latency tradeoff by determining the recomputation set size, RFAP that ensures reuse correctness under heterogeneous motion, and cache remapping that keeps the reference aligned across frames. IV. S YSTEM DESIGN 
+
+This section describes how FluxShard realizes the opti-mization objective in Eq. (1). We first reduce it to a per-frame recomputation minimization problem based on cache reuse (§IV-A). We then formalize the per-position reuse cri-terion (§IV-B) and present RFAP, which makes MV-aligned reuse correct under heterogeneous motion (§IV-C). Next, we describe threshold calibration and cache remapping, which shrink the recomputation workload and preserve a valid cache reference respectively (§IV-D). Finally, we integrate these mechanisms into a per-frame pipeline with dispatch (§IV-E). 
+
+A. From Design Goal to Minimal Feasible Recomputation Set 
+
+The optimization objective (Eq. (1)) minimizes average la-tency ¯T , subject to ¯A ≥ α ¯A∗. In principle, the optimal solution would couple all frames: each frame’s reuse and dispatch decisions determine the cache state inherited by subsequent frames, so minimizing ¯T globally requires knowledge of future motion and content. Since in an online streaming setting this knowledge is unavailable, FluxShard relaxes Eq. (1) into a per-frame greedy formulation. Requiring At ≥ α A ∗ 
+
+> t
+
+at every frame is a sufficient condition for the sequence-level accuracy constraint, and minimizing Tt per frame yields: 
+
+min   
+
+> Se,Sc
+
+min T et (Se), T ct (Sc, ˆB) s.t. At ≥ α A ∗ 
+
+> t
+
+, (2) where Se = {S el }Ll=0 and Sc = {S cl }Ll=0 are the collections of per-layer recomputation sets on each endpoint, computed over independent cache states, and ˆB is the current uplink bandwidth estimate. The inner min is the dispatch decision: the frame is routed to the faster endpoint. The outer min-imization requires each endpoint to minimize its own Tt.Since per-endpoint latency is monotonically non-decreasing in the recomputation set size (i.e., the edge path incurs sparse computation determined by {S el }, while the cloud path additionally incurs transmission of Sc 
+
+> 0
+
+), minimizing T et and 
+
+T ct each reduces to minimizing the recomputation sets: 
+
+min   
+
+> S0,{S l}
+
+|S 0| + P 
+
+> l
+
+|S l| s.t. At ≥ α A ∗ 
+
+> t
+
+. (3) Because both endpoints execute the same reuse logic, Eq. (3) applies to each independently; the system constructs the small-est feasible recomputation workload on each endpoint and routes the frame to the lower-latency one. 
+
+B. Reuse Criterion 
+
+The core of Eq. (3) is deciding, at each layer and each position, whether the cached value can substitute for fresh computation without violating the accuracy constraint. As shown in §II-B, MV alignment removes displacement-induced false changes and improves cache reuse, but na¨ ıve reuse of MV-aligned features still degrades accuracy. This subsection establishes a per-position reuse criterion that formalizes when reuse is safe and identifies the source of the accuracy loss. As introduced in §III-A, three quantities coexist at every output position (i, j ) of layer l: the ground-truth output 
+
+Ol(i, j ), obtained by applying layer l to the current input 
+
+Fl (or, in practice, to the assembled input ˜Ol−1); the cached output ˆOl(ˆ ı, ˆȷ) from a previous frame, computed from Rl(ˆ ı, ˆȷ)
+
+in the cached input; and the assembled output ˜Ol(i, j ) is consumed by layer l+1 . Reuse at position (i, j ) is valid when substituting the cached value introduces bounded error: 
+
+Ol(i, j ) − ˆOl(ˆ ı, ˆȷ) ≤ τl, (4) where setting τl = 0 reduces the criterion to exact output equality. Based on this criterion, FluxShard assembles the output of layer l as 
+
+˜Ol(i, j ) = 
+
+( ˆOl(ˆ ı, ˆȷ), if Eq. (4) holds; 
+
+Ol(i, j ), otherwise. (5) The assembled output serves as the input to layer l+1 . Positions assigned to the “otherwise” branch form the recomputation set 
+
+Sl.Eq. (4) cannot be checked directly without computing 
+
+Ol(i, j ), which defeats the purpose of reuse. Because the cached output at (ˆ ı, ˆȷ) was produced from Rl(ˆ ı, ˆȷ) in the cached input, reuse is safe whenever the current input within 
+
+Rl(i, j ) matches that cached patch. For each (p, q ) ∈ R l(i, j ),let (ˆ p, ˆq) denote the corresponding position in Rl(ˆ ı, ˆȷ) (i.e., at the same kernel offset). We denote the maximum absolute input perturbation over all spatial positions in the receptive field at output position (i, j ) as 
+
+∆l
+
+> max
+
+(i, j ) = max  
+
+> (p,q )∈ R l(i,j )
+
+Fl(p, q ) − ˆFl(ˆ p, ˆq) . (6) For a linear layer with weight vector wl (the kernel flattened over all N input elements in the receptive field), linearity yields 
+
+Ol(i, j ) − ˆOl(ˆ ı, ˆȷ) ≤ ∥ wl∥1 · ∆l
+
+> max
+
+(i, j ), (7) so Eq. (4) is guaranteed whenever the input patch satisfies 
+
+∆l
+
+> max
+
+(i, j ) ≤ τl
+
+∥wl∥1
+
+. (8) For element-wise activations with Lipschitz constant at most 1
+
+(ReLU, sigmoid, etc.), the input-side bound directly implies the output-side one. Batch normalization layers are affine at inference time, so Eq. (7) applies directly. Each layer’s τl
+
+bounds the single-layer error independently; the cumulative effect of cascaded approximations is controlled by the offline profiling that jointly calibrates all τl over complete forward passes (discussed in §IV-D). Evaluating Eq. (8) over the full receptive field at every output position and every layer costs as much as executing the layer itself. Per-position reuse from the previous layer can reduce this cost: for (p, q ) /∈ S l−1, the assembled value IEEE TRANSACTIONS ON MOBILE COMPUTING 6
+
+equals the cached value at the position indicated by the input MV ˆml−1(p, q ), contributing zero to ∆l
+
+> max
+
+. We call reuse propagation the practice of treating a position as reusable whenever its entire receptive field falls outside Sl−1, which confines the evaluation of Eq. (8) to the neighborhood of recomputation positions. For layers with receptive field size one (pointwise convolutions, element-wise activations), this per-position check is sufficient: each output depends on exactly one input, so reuse at a position in the previous layer directly carries over to the same position at the current layer. For layers with receptive field size greater than one (e.g., 3 × 3
+
+convolutions), however, output reuse at (i, j ) requires the current receptive field Rl(i, j ) to match the cached receptive field Rl(ˆ ı, ˆȷ), and zero per-position input difference can only imply zero receptive field level difference if the input MV is uniform within the receptive field and geometrically coherent with the output MV. 
+
+C. Receptive Field Alignment Principle 
+
+Under heterogeneous per-block MVs, the above MV con-ditions are frequently violated, preventing reuse from propa-gating across layers with receptive field size greater than one. As shown in §II-B, ignoring such violations causes significant accuracy loss. To restore safe reuse propagation, the system must identify positions that violate the MV conditions and force them into the recomputation set. RFAP provides two sufficient conditions on the input-level MV field ˆm0 that identify all such positions in a single pass. The first condition, intra-receptive-field uniformity , requires all input positions within the receptive field to share a single displacement: 
+
+ˆml−1(p, q ) = ˆ ml−1(p′, q ′), ∀ (p, q ), (p′, q ′) ∈ R l(i, j ).
+
+(9) A uniform shift ensures that the per-position cached values form the same contiguous patch Rl(ˆ ı, ˆȷ) that produced the cached output. The second condition, input-output geometric coherence ,requires 
+
+ˆml = ˆ ml−1/s l, (10) where sl is the stride of layer l (assuming uniform stride in both dimensions). This ensures that the output MV and the (uniform) input MV point to the same cached content. When the displacement value is not divisible by the stride, the two MV fields point to different cached positions, and the output must be recomputed. When both conditions hold at a given output position, per-position reuse from the previous layer directly implies receptive field level correctness, and no further check is needed. Positions that violate either condition are forced into the recomputation set for recomputation, preserving accuracy. We then compact the evaluation of both conditions to the input level. Both conditions can be evaluated from the input-level MV field ˆm0 alone, because deeper-layer fields are obtained by downsampling ˆm0. For Condition 1, checking MV uniformity within the largest effective receptive field Rmax 
+
+(measured at the input grid) covers all layers: uniformity within Rmax positions implies uniformity within any smaller receptive field at any intermediate layer. For Condition 2, checking that the displacement is divisible by the largest cumulative stride Smax = max l
+
+Qlk=1 sk covers all individual strides. At the shard level, Condition 1 violations arise near shard boundaries where the Rmax -neighborhood spans multi-ple shards with different displacements; Condition 2 violations occur at shards whose displacement is indivisible by Smax .Input-level positions that fail either condition are merged into the recomputation set at the first DNN layer whose receptive field exceeds one. Because the dispatch layer is an identity operator with receptive field size one, these positions do not affect S0. At downstream layers, no separate MV check is needed: flagged positions are recomputed, and their fresh values propagate through the network via Eq. (8). With τl = 0 at all layers, the compacted check is provably correct: every structurally inconsistent position is recomputed. With profiled τl > 0, some deeper-layer positions affected by resolved inconsistencies may exhibit small activation differ-ences that truncation absorbs, avoiding unnecessary recompu-tation while staying within the calibrated accuracy budget. 
+
+D. Minimizing the Recomputation Set 
+
+The reuse criterion and RFAP establish how to efficiently determine reusable positions given a per-layer output discrep-ancy bound τl under heterogeneous motion. However, the relationship between τl and task accuracy At has not yet been established: larger thresholds yield smaller recomputation sets but risk violating the accuracy constraint in Eq. (3). This subsection addresses this gap: threshold calibration finds the largest feasible τl that keeps accuracy within budget, thereby minimizing the recomputation set; cache remapping then keeps the cache aligned so that subsequent frames also start from a valid reference cache. 
+
+1) Profiling-Driven Truncation: Even with RFAP and MV alignment, exact reuse ( τl = 0 ) leaves many low-magnitude discrepancies with negligible task impact. FluxShard assigns a nonzero τl to each profiled layer, truncating these discrep-ancies and reusing the cached value instead. A recomputation position is truncated whenever it satisfies the same input-side bound as Eq. (8) with the calibrated τl. In practice, nonzero thresholds are profiled only for the dispatch layer and a subset of DNN layers Ltr (selected activation layers); all other layers use τl = 0 . At layers with τl = 0 , only positions whose MV-aligned input has actually changed enter the recomputation set; the threshold merely forgoes the additional truncation of small changes, so sparsity remains high whenever the MV alignment successfully recovers displaced content. At the dispatch layer, the same rule uses the identity operator, i.e., ∥w∥1 = 1 , to form the input recomputation set S0.The thresholds are jointly calibrated offline on the training set of each task. Let Ltr ⊆ { 1, . . . , L } denote the set of profiled DNN layers, and K = |L tr |. The total admissible accuracy drop relative to the dense baseline is 
+
+∆A = (1 − α) ¯A∗. (11) Because the dispatch layer determines the input recomputation set and therefore all downstream workload—including the re-IEEE TRANSACTIONS ON MOBILE COMPUTING 7
+
+computation pixels transmitted when inference is offloaded— it has the greatest impact on latency and receives the larger share. The 2:1 ratio is empirically tuned on the training set. In other words, we reserve 23 of the budget for τ0 and split the remaining 13 evenly across the profiled DNN layers: 
+
+b0 = 23 ∆A, bl = 13K ∆A, l ∈ L tr . (12) The dispatch layer is first processed, followed by the profiled DNN layers in the network order. For each profiled stage u ∈{0} ∪ L tr , we search a discrete candidate set Cu and choose the largest threshold whose cumulative accuracy drop remains within the cumulative budget assigned up to that stage. This greedy search returns one calibrated τ0 for input recomputation extraction and one τl for each profiled DNN layer. At runtime, the dispatch layer applies τ0 to form S0, and each profiled DNN layer applies its calibrated τl using the same criterion. 
+
+2) Motion-Aware Cache Remapping: Threshold calibration minimizes the current frame’s recomputation set, but subse-quent frames depend on how well the cache reflects the current frame. Without realignment after each inference, the cache becomes stale: reusable positions no longer align with valid history, inflating the recomputation set, and positions declared reusable may consume corrupted cached features. As shown in §II-C, this drift causes the recomputation set to inflate over time, eventually exceeding the cost of dense recomputation. In video codecs, a reference frame is reconstructed by warping the previous reference along backward MVs and then merging newly decoded residuals; each position maps to exactly one source, so the warp is conflict-free. FluxShard applies this principle at the feature level: each current-frame shard looks up its source region in the cached features via backward MVs, then merges freshly computed values. At layer 
+
+l+1 , the cache update proceeds in two steps. First, the cached input ˆFl+1 is warped to the current-frame coordinate system using the accumulated MV field: 
+
+ˆFl+1 ,remap (i, j ) = ˆFl+1 
+
+ (i, j ) − ˆml(i, j ). (13) Because the backward MV assigns each position to exactly one source, the warp is conflict-free with no unwritten holes. Second, the remapped cache is merged with the freshly com-puted outputs from layer l:
+
+ˆFl+1 (i, j ) = 
+
+(Ol(i, j ), (i, j ) ∈ S l,
+
+ˆFl+1 ,remap (i, j ), otherwise. (14) Recomputation positions receive freshly computed values; reusable positions retain the warped cache. The resulting tensor replaces ˆFl+1 (equivalently ˆOl) as the new cached state. After the update, the cache resides in the current-frame coordinate system, and the endpoint resets its accumulated MV field. Subsequent lookups start from identity alignment, avoid-ing double-shifting the remapped cache. The same remap-then-update rule applies to the input cache and to all intermediate layer caches maintained by the sparse runtime. 
+
+E. Per-Frame Pipeline and Dispatch 
+
+The preceding subsections solve Eq. (3) on each endpoint: the reuse criterion and RFAP enforce correctness, threshold 
+
+Algorithm 1: FluxShard Per-Frame Pipeline 
+
+Input: It; ( ˆFe
+
+> 0
+
+, ˆme
+
+> 0
+
+); ( ˆFc
+
+> 0
+
+, ˆmc
+
+> 0
+
+); τ0, τ ; fedge , fcloud 
+
+Output: Inference result yt
+
+// Stage 1: MV extraction  
+
+> 1
+
+Extract MV field mt from codec for frame It; 
+
+> 2
+
+ˆme 
+
+> 0
+
+← Accumulate ( ˆ me
+
+> 0
+
+, mt); 
+
+> 3
+
+ˆmc 
+
+> 0
+
+← Accumulate ( ˆ mc
+
+> 0
+
+, mt);
+
+// Stage 2: Recomputation workload estimation  
+
+> 4
+
+Se 
+
+> 0
+
+← RecomputeSet (It, ˆFe
+
+> 0
+
+, ˆme
+
+> 0
+
+, τ 0) ;
+
+// Eq. (16)  
+
+> 5
+
+Sc 
+
+> 0
+
+← RecomputeSet (It, ˆFc
+
+> 0
+
+, ˆmc
+
+> 0
+
+, τ 0); 
+
+> 6
+
+ρe ← |S e 
+
+> 0
+
+|/|It|; ρc ← |S c 
+
+> 0
+
+|/|It|; 
+
+> 7
+
+Tedge ← fedge (ρe); Tcloud ← fcloud (ρc) + |S c 
+
+> 0
+
+| / ˆB;
+
+// Stage 3: Dispatch decision  
+
+> 8
+
+if Tedge < T cloud − ϵ then 
+
+// Stage 4: Inference and cache update (edge)  
+
+> 9
+
+Srfap ← RFAP ( ˆ me
+
+> 0
+
+) ; // Eq. (9)  
+
+> 10
+
+yt ← SparseInfer edge (Se 
+
+> 0
+
+∪ S rfap , τ ); 
+
+> 11
+
+Update edge cache via Eqs. (13)–(14); reset ˆme
+
+> 0
+
+; 
+
+> 12
+
+else 
+
+// Stage 4: Inference and cache update (cloud)  
+
+> 13
+
+Transmit Sc 
+
+> 0
+
+and ˆmc 
+
+> 0
+
+to cloud;  
+
+> 14
+
+Srfap ← RFAP ( ˆ mc
+
+> 0
+
+); 
+
+> 15
+
+yt ← SparseInfer cloud (Sc 
+
+> 0
+
+∪ S rfap , τ ); 
+
+> 16
+
+Update cloud cache via Eqs. (13)–(14); reset ˆmc
+
+> 0
+
+; 
+
+> 17
+
+return yt;calibration minimizes the recomputation sets under the accu-racy constraint, and cache remapping maintains validity across frames. The remaining step in Eq. (2) is the dispatch: selecting the endpoint with lower Tt.For each incoming frame, both dispatch-layer states (§III-B) incorporate the new MV field mt into their accumulated fields: 
+
+ˆm0(i, j ) = ˆm0
+
+ (i, j ) − mt(i, j ) + mt(i, j ), (15) where the composition warps the old accumulator to the current coordinate system before adding the new displacement. Each state then extracts its recomputation set by applying the reuse criterion with the dispatch-layer threshold τ0 and the identity operator ( ∥w∥1 = 1 ): 
+
+S0 = (i, j ) : | It(i, j ) − ˆF0
+
+ (i, j ) − ˆm0(i, j )| > τ 0 . (16) Let ρe = |S e 
+
+> 0
+
+|/N px and ρc = |S c 
+
+> 0
+
+|/N px denote the nor-malized recomputation set sizes. The bandwidth estimate ˆB is maintained as an exponentially weighted moving average of recent uplink measurements. FluxShard profiles the latency-vs-sparsity relationship offline on each endpoint, yielding: 
+
+Tedge = fedge (ρe), (17) 
+
+Tcloud = fcloud (ρc) + |S c 
+
+> 0
+
+| / ˆB, (18) where fedge and fcloud are the profiled curves. The scheduler selects the endpoint with lower total latency; when the two IEEE TRANSACTIONS ON MOBILE COMPUTING 8 
+
+> Figure 3. Testbed. Left: three mobile robots with embedded Jetson Xavier NX boards. Right: cloud server with RTX 3080.
+
+estimates are within a margin ϵ, it prefers cloud offload to reduce edge energy. After dispatch, only the selected endpoint runs inference. The RFAP check is applied on the selected endpoint’s MV field to identify structurally inconsistent positions, which are merged with S0 before sparse inference begins. Because the dispatch layer has receptive field size one, RFAP-flagged positions are pixel-level correct after MV alignment and need not be transmitted; when inference is offloaded, only Sc 
+
+> 0
+
+and 
+
+ˆmc 
+
+> 0
+
+are sent to the cloud, and the cloud applies the RFAP check locally from the received MV field. After inference, the cache is updated via Eqs. (13)–(14) and the accumulated MV field is reset. Algorithm 1 summarizes the complete per-frame pipeline, integrating MV extraction, workload estimation, dispatch, in-ference, and cache update into the four stages described in §III-B. Lines 1–3 extract and accumulate the MV field into both endpoint states. Lines 4–7 compute the content-change recomputation sets and estimate per-endpoint latency. Lines 8– 16 dispatch to the cheaper endpoint, apply the RFAP check (line 9, 14), run sparse inference with profiled thresholds τ
+
+(line 10, 15), and update the cache (line 11, 16). V. E VALUATION 
+
+A. Experimental Setup a) Implementation and testbed: FluxShard is imple-mented in Python and PyTorch, with custom CUDA kernels for sparse convolution, pooling, the RFAP consistency check, and activation with fused cache maintenance (truncation, MV-guided history lookup, and MV-guided cache remapping and updating in a single pass). All feature tensors use channel-last (NHWC) layout to match the per-position sparse access pattern. The edge client and cloud server communicate over a TCP socket; when a frame is offloaded, the client sends the accumulated MV field, a bitwise-packed and downsampled (2×2) recomputation mask, and the recomputation RGB pixels. The MV field ( 16 × 16 block size) occupies approximately 0.52% of the full RGB input, and the recomputation mask adds 1.04%, totaling 1.56% metadata overhead independent of input resolution. Figure 3 shows the testbed. The edge devices are NVIDIA Jetson Xavier NX with 384 CUDA cores and 8 GB LPDDR4x memory, embedded in mobile robots. The cloud server hosts an NVIDIA RTX 3080 GPU with 10 GB GDDR6X memory. All machines run Ubuntu 20.04 with CUDA 11.4. They are                                      
+
+> Table I WORKLOAD PROFILE .Seg (YOLO11m-seg) Pose (YOLO11m-pose) Dataset DAVIS 3DPW Input resolution 1024 ×1024 1024 ×1024
+> Parameters (M) 22.4 20.9 Edge latency (ms) 537 .5±41 .2446 .8±16 .4
+> Edge energy (J) 7.61 6.86 Server latency (ms) 35 .7±3.727 .6±3.1
+> MV std (px) 23.5 10.7 Edge and server latency are dense execution times. Edge energy is measured per frame via INA3221 power integration. MV std measures motion intensity.
+
+connected through a 1 Gbps Ethernet switch, while the wireless uplink is emulated with Linux tc .We replay client-to-server bandwidth traces from a public 4G/5G measurement dataset [22] and group them into three tiers: low , medium , and high . The low tier uses 4G/LTE traces ( 40 .4 ± 36 .6 Mbps); the medium and high tiers are obtained by splitting the 5G traces at the median throughput into a lower half ( 382 .8 ± 419 .1 Mbps) and an upper half (596 .9 ± 467 .9 Mbps). The emulated link also adds a fixed 20 ms one-way propagation delay. Unless otherwise noted, we report results under the medium tier. 
+
+b) Workloads and datasets: We evaluate two real-time dense prediction workloads with the YOLO11 family [21]. We choose YOLO11 as a representative evaluation model because its backbone subsumes the spatial operation patterns of most convolutional architectures [21], including depth-wise separable convolutions, residual blocks, etc. The two workloads are: instance segmentation (Seg) with YOLO11m-seg on DAVIS [26], a video object segmentation benchmark containing 90 sequences (25–104 frames each) with varied camera motion, and pose estimation (Pose) with YOLO11m-pose on 3DPW [27], an outdoor human activity dataset from a handheld camera, containing 61 sequences (273–2178 frames each). All inputs are resized to 1024 ×1024 and evaluated with official checkpoints without fine-tuning. Because the datasets are distributed as image sequences, we encode each with x264 in all-P-frame mode and extract block-level MVs at the standard 16 × 16 macroblock granularity. DAVIS exhibits substantially stronger motion than 3DPW (MV std 23.5 vs. 10.7 px), making it a more challenging setting for cache reuse; together, the two datasets cover complementary regimes of rapid motion and long-term stability. Table I summarizes the two workloads. 
+
+c) Ground truth and metrics: For DAVIS segmentation, we generate pseudo ground truth by running dense YOLO11x-seg on every frame, since the native annotations do not match the YOLO label set; all methods are compared against the same pseudo-GT, so the reported mIoU measures relative accu-racy retention. For 3DPW pose estimation, we use the dataset ground truth directly and report Object Keypoint Similarity (OKS). End-to-end latency includes preprocessing, dispatch, transmission, inference, and cache maintenance. Edge energy is measured by integrating board-level power over each frame interval; the reported value is the per-frame average over the IEEE TRANSACTIONS ON MOBILE COMPUTING 9
+
+mixed online execution path. 
+
+d) Baselines: We compare FluxShard with the following four baselines.  
+
+> •
+
+Offload sends every full frame to the cloud server for dense inference, representing the pure-offload upper bound on network cost.  
+
+> •
+
+COACH [16] performs a whole-frame SSIM check: if similarity is high the entire output is reused; otherwise, the full frame is recomputed or transmitted. The frame is quantized to 1/4 size during transmission for bandwidth reduction.  
+
+> •
+
+DeltaCNN [19] propagates only the per-pixel differ-ence between consecutive frames through the network, skipping positions whose activation change is below a fixed threshold; it maintains the feature cache in a fixed coordinate system without motion compensation.  
+
+> •
+
+MotionDeltaCNN [20] (referred to as M-DeltaCNN) extends DeltaCNN by estimating a single global homog-raphy from the frame pair and shifting the entire cache accordingly before computing deltas; it still treats the cache as a rigid whole, so heterogeneous local motion is not handled at the shard level. DeltaCNN uses the original open-sourced CUDA implemen-tation [19]; M-DeltaCNN is not open-sourced and is therefore re-implemented on our sparse backend, making its comparison with FluxShard the most direct. All baselines (except Offload) share the same profiling-driven dispatch logic as FluxShard to isolate reuse semantics from transport or scheduling differ-ences. Statistics exclude the first (initialization) frame of each sequence. 
+
+B. End-to-End Performance a) Latency and energy under dynamic bandwidth: Fig-ure 4 compares the realized online latency and edge energy across bandwidth tiers. FluxShard achieves the lowest latency and energy across both workloads and all tiers. Motion-aligned cache remapping keeps the recomputation set small, which simultaneously reduces the transmitted payload and the computation on both endpoints; the dispatcher then routes the smaller workload to the endpoint with lower latency. For segmentation, FluxShard delivers 33.0–80.4% latency reduction and 23.7–64.0% energy savings across the three tiers; under low bandwidth, latency drops from 955 ms (Of-fload) to 187 ms and energy from 4.43 J to 1.59 J. For pose estimation, the gains persist: 32.6–83.8% latency reduction and 14.9–59.2% energy savings, with latency dropped from 832 ms to 134 ms under low bandwidth. The advantage is the widest under low bandwidth, where transmission dominates and FluxShard’s small recomputation payload cuts the bottle-neck directly. Among the reuse baselines, the relative ranking between COACH and the DeltaCNN variants shifts with bandwidth. Under low bandwidth, COACH’s quantization compresses the full-frame payload enough to beat DeltaCNN on segmentation (312 ms vs. 525 ms), because both DeltaCNN variants lose sparsity under strong motion and their recomputation payloads 0   
+
+> 250
+> 500
+> 750
+> 1000
+> Latency (ms)
+> (a)
+> Segmentation
+> (b)
+> Pose Estimation
+> 0
+> 200
+> 400
+> 600
+> Latency (ms)
+> (c) (d)
+> FluxShard Offload COACH DeltaCNN M-DeltaCNN
+> 0
+> 100
+> 200
+> 300
+> Latency (ms)
+> (e)
+> FluxShard Offload COACH DeltaCNN M-DeltaCNN
+> (f)
+> 0246
+> Energy (J)
+> 0123
+> Energy (J)
+> 012
+> Energy (J)
+> Low Bandwidth Medium Bandwidth High Bandwidth
+> Latency Energy
+> Figure 4. End-to-end latency (solid bars, left axis) and edge energy (hatched bars, right axis) under three bandwidth tiers. Within each row, the two panels share the same axis range for direct comparison. Error bars show one standard deviation; break markers indicate clipped bars.
+
+saturate the link. Under medium and high bandwidth, M-DeltaCNN’s motion-compensated sparsity helps it overtake COACH under both workloads, while DeltaCNN sometimes still trails COACH on segmentation where camera motion is more diverse. FluxShard’s advantage holds across all settings because its shard-level MV alignment preserves reuse under motion that invalidates fixed-coordinate or whole-frame ap-proaches. 
+
+b) Accuracy: Table II reports accuracy across all settings. Our profiling-based configuration targets at most 3% accuracy loss relative to dense offload (the constraint ¯A ≥ α ¯A∗ in Eq. (1)). FluxShard stays within 2.0–2.7% across both work-loads and all tiers, meeting the budget with margin. DeltaCNN and M-DeltaCNN lose 1.6–2.9%; DeltaCNN retains slightly higher accuracy on segmentation (1.6–1.7% vs. FluxShard’s 2.0–2.7%) because its fixed-coordinate cache avoids the addi-tional approximation introduced by MV alignment and trunca-tion, at the cost of substantially higher latency. COACH incurs the largest drop (5.4–7.2%): whole-frame similarity does not ensure accurate dense predictions, and quantization of the IEEE TRANSACTIONS ON MOBILE COMPUTING 10 
+
+Table II END -TO -END ACCURACY UNDER TRACE -DRIVEN BANDWIDTH REPLAY .Workload Method Low Medium High Seg (mIoU) Offload 69.15 69.15 69.15 FluxShard 67.75 (-2.02%) 67.71 (-2.08%) 67.30 (-2.68%) COACH 65.42 (-5.40%) 65.18 (-5.74%) 64.87 (-6.19%) DeltaCNN 68.06 (-1.58%) 68.07 (-1.57%) 67.99 (-1.68%) M-DeltaCNN 67.25 (-2.75%) 67.19 (-2.84%) 67.17 (-2.86%) Pose (OKS) Offload 70.95 70.95 70.95 FluxShard 69.21 (-2.45%) 69.13 (-2.56%) 69.02 (-2.72%) COACH 67.14 (-5.37%) 66.19 (-6.71%) 65.85 (-7.19%) DeltaCNN 69.00 (-2.75%) 69.02 (-2.72%) 69.00 (-2.75%) M-DeltaCNN 69.22 (-2.44%) 69.03 (-2.71%) 68.93 (-2.84%) Parenthesized values show the percentage accuracy drop relative to dense offload. Table III RATIO STATISTICS OF DIFFERENT METHODS UNDER MEDIUM BANDWIDTH .Method Seg Pose Tx (%) Comp (%) Cloud (%) Tx (%) Comp (%) Cloud (%) FluxShard 17.1 47.9 98.1 8.9 40.7 95.6 Offload 100.0 100.0 100.0 100.0 100.0 100.0 COACH 24.0 96.0 97.5 24.1 96.5 93.4 DeltaCNN 56.9 66.8 98.4 31.7 54.6 96.4 M-DeltaCNN 45.5 65.7 98.0 28.9 58.5 93.7 Transmission ratio (Tx) is the fraction of full frame transmitted. Computa-tion ratio (Comp) is the fraction of dense FLOPs executed. Cloud dispatch ratio (Cloud) is the fraction of frames routed to cloud. 
+
+transmitted frames further compounds the loss. 
+
+C. Microbenchmark 
+
+To understand where the end-to-end gains come from, we examine per-frame component statistics under medium bandwidth. 
+
+a) Ratio breakdown: Table III reports the transmission ratio (proportion of full frame transmitted), the computation ratio (proportion of dense FLOPs executed), and the cloud dispatch ratio (proportion of frames routed to cloud) under medium bandwidth for both workloads. Across all methods, segmentation transmission and computation ratios are con-sistently higher than pose, reflecting the stronger motion in DAVIS (MV std 23.5 vs. 10.7 px, Table I): more motion invalidates more cached positions, increasing both transmitted payload and computation. FluxShard transmits only 8.9–17.1% of the full frame and executes 40.7–47.9% of dense FLOPs, compared with 28.9– 56.9% and 54.6–66.8% for the DeltaCNN variants. COACH transmits 24% owing to 4× quantization, but computes over 96% of dense FLOPs because its whole-frame SSIM check rarely triggers reuse on dynamic video. In contrast, FluxShard achieves a lower transmission ratio while halfing computation, with only 2.0–2.7% accuracy loss (Table II). The cloud dis-patch ratio is high for all methods (93–100%) due to the large compute gap between the two endpoints. Peak GPU mem-ory stays below 2.3 GB for all methods; FluxShard’s feature caches add 72–136 MB over dense inference, comparable to DeltaCNN. FluxShard COACH DeltaCNN M-DeltaCNN 
+
+> 0
+> 100
+> 200
+> Latency (ms)
+
+(a) Segmentation 
+
+> FluxShard COACH DeltaCNN M-DeltaCNN
+> 0
+> 100
+> 200
+
+(b) Pose Estimation Preprocess Transmission Inference 
+
+Figure 5. Mean per-frame latency breakdown under medium bandwidth. Pre-processing includes both edge-side and server-side preprocessing. DeltaCNN uses its open-sourced CUDA engine; M-DeltaCNN uses our backend. 0.0 0.5 1.0
+
+Compute Ratio 
+
+> 200
+> 400
+> 600
+> Inference (ms)
+
+(a) Edge-Dispatch   
+
+> 0.00.51.0
+
+Compute Ratio 
+
+> 10
+> 20
+> 30
+> 40
+
+(b) Cloud-Dispatch FluxShard DeltaCNN M-DeltaCNN Dense 
+
+Figure 6. Inference latency vs. compute ratio for pose estimation under medium bandwidth, split by dispatch path. Dashed lines show dense inference latency on each endpoint. FluxShard and M-DeltaCNN share our sparse execution backend (overlapping trends); DeltaCNN uses its original open-sourced CUDA implementation (different absolute level but similar slope). 
+
+b) Latency breakdown: Figure 5 decomposes mean per-frame latency into preprocessing, transmission, and inference. FluxShard has the smallest total bar on both workloads: its low transmission and computation ratios jointly shrink both net-work and compute components. Despite similar computation ratios (Table III), DeltaCNN and M-DeltaCNN show different inference latencies due to their different execution backends; we explain this gap below. 
+
+c) Sparsity-to-latency relationship: Figure 6 plots in-ference latency against compute ratio for pose estimation under medium bandwidth, split by dispatch path. FluxShard and M-DeltaCNN share our sparse backend, so their trends overlap; the latency difference comes from the compute ratio each achieves. DeltaCNN’s original engine follows a similar near-linear trend at a different absolute level, explaining the latency gap in Figure 5. The near-linear trend confirms that FluxShard’s low compute ratio translates into proportionally low inference latency, which is particularly important under high bandwidth where computation rather than transmission is the bottleneck. 
+
+D. Ablation Study 
+
+Table IV ablates key FluxShard components under medium bandwidth. The default FluxShard uses the compacted input-IEEE TRANSACTIONS ON MOBILE COMPUTING 11 
+
+level RFAP check; we compare against four variants. 
+
+a) RFAP variants: We compare three RFAP configu-rations: disabled, compacted input-level (default), and per-layer. Disabling RFAP entirely (w/o RFAP) yields the lowest compute ratio (Seg 45.0%, Pose 38.7%) because no positions are forcibly invalidated, but accuracy degrades substantially (Seg −3.29% , Pose −5.13% ), with Pose exceeding the 3% budget. Without RFAP, positions where the input and output MV correspondences disagree are silently reused, and the resulting errors accumulate through the network. The impact is smaller on Seg because its stronger motion already produces a larger input-level active set (Seg tx ratio 17.1% vs. Pose 8.9%, Table III), which is more likely to overlap with the positions RFAP would have invalidated. Per-layer RFAP checks MV consistency at every layer independently, achieving the highest accuracy among the three variants (Seg −1.75% , Pose −1.87% ) but inflating the com-pute ratio to Seg 61.9% and Pose 48.8%, with latency also rising to Seg 117.1 ms and Pose 75.6 ms. The redundant per-layer checks force recomputation at deeper-layer positions whose actual discrepancy magnitude is small enough for truncation to handle. The compacted input-level check (default) strikes the best trade-off: it captures all structurally inconsistent positions at the input level where MV heterogeneity is explicit, and lets the profiled thresholds {τl} absorb small discrepancies at deeper layers. This keeps the compute ratio at Seg 47.9% and Pose 40.7% with accuracy drop of Seg −2.08% and Pose −2.56% .
+
+b) w/o offload: Restricting all inference to the edge device (w/o offload) yields Seg −0.30% and Pose −2.94% 
+
+accuracy drop. Latency, however, increases dramatically: Seg rises to 433.9 ms and Pose to 252.4 ms, a 3.4–3.9 × slowdown, confirming that sparse reuse alone cannot compensate for the loss of cloud compute capacity. 
+
+c) w/o sparse: Disabling sparse computation while keep-ing the original transmission logic (w/o sparse) yields Seg 
+
+−1.90% and Pose −0.23% accuracy drop. Latency rises to Seg 124.9 ms and Pose 92.0 ms, a 1.1–1.2 × increase over the full system, because the server executes dense inference on every offloaded frame, instead of reusing cached features. 
+
+d) w/o remap: Removing MV-guided cache remapping (w/o remap) causes the feature cache to drift out of alignment with the current frame over time. As the accumulated dis-placement grows, RFAP and truncation detect an increasing number of inconsistent positions and force recomputation, driving compute ratio to Seg 77.1% and Pose 77.3%. The same drift degrades the sparsity estimate used by the dispatcher, increasing the transmitted payload per frame; together, latency climbs to Seg 226.4 ms and Pose 198.1 ms—roughly 2× the default and exceeding even the w/o sparse baseline. Accuracy manifests an asymmetric effect: Pose degrades to −10 .61% be-cause keypoint localization is susceptible to coordinate-system misalignment, while Seg shows only −1.07% , marginally better than the default ( −2.08% ). At a compute ratio of 77.1%, the system recomputes the vast majority of positions, leaving nearly no room for reuse errors to manifest; the near-dense ex-ecution incidentally eliminates the small approximation errors that the default’s aggressive reuse introduces. The marginal                                         
+
+> Table IV ABLATION STUDY UNDER MEDIUM BANDWIDTH .Workload Variant Acc (%) Comp (%) Lat (ms) Seg (mIoU) FluxShard 67.71 (-2.08%) 47.9 111.7 w/o RFAP 66.87 (-3.29%) 45.0 115.0 Per-layer RFAP 67.94 (-1.75%) 61.9 117.1 w/o offload 68.94 (-0.30%) 45.4 433.9 w/o sparse 67.84 (-1.90%) 100.0 124.9 w/o remap 68.41 (-1.07%) 77.1 226.4 Pose (OKS) FluxShard 69.13 (-2.56%) 40.7 74.1 w/o RFAP 67.31 (-5.13%) 38.7 77.6 Per-layer RFAP 69.62 (-1.87%) 48.8 75.6 w/o offload 68.87 (-2.94%) 41.1 252.4 w/o sparse 70.79 (-0.23%) 100.0 92.0 w/o remap 63.42 (-10.61%) 77.3 198.1 FluxShard uses compacted input-level RFAP as the default configuration. Parenthesized values show the percentage accuracy drop relative to dense offload.
+
+accuracy difference (1%) is well within the noise floor of the 3% budget and comes at the cost of 2× latency, confirming that cache remapping is essential for efficiency. 
+
+E. Scalability 
+
+To evaluate how FluxShard scales when multiple edge devices share the same cloud server, we run 1, 2, and 3 concurrent edges under medium bandwidth. Each additional edge runs as an independent client process on a separate Jetson Xavier NX; all clients share the same cloud server and the same tc -shaped uplink. Because each client maintains its own cache state and accuracy is determined by the per-client reuse policy (which is unchanged), we focus on latency and energy. Figure 7 compares latency and energy as the number of active edges increases. FluxShard’s latency rises by only 28% from 1 to 3 edges on pose estimation (74.1 ms to 95.2 ms), while Offload degrades by 82% (289.8 ms to 526.6 ms); seg-mentation follows a similar pattern. Among the reuse base-lines, M-DeltaCNN and DeltaCNN rise by 37% and 42% respectively on pose, both larger than FluxShard. FluxShard’s advantage widens with more clients because its small trans-mission and recomputation payload imposes less load on the shared server. Edge energy follows the same trend: FluxShard rises by only 11% on pose, while Offload nearly doubles. 
+
+F. Sensitivity 
+
+Table V reports pose estimation under medium bandwidth as we vary the accuracy budget α and the budget split ratio r
+
+reserved for τ0 in Eq. (12). We omit segmentation as it exhibits similar trends. All configurations keep accuracy within their respective budgets. Tightening α from 0.03 to 0.01 raises the compute ratio from 40.7% to 52.0%, and transmission ratio from 8.9% to 12.4%, increasing latency by 28%, while relaxing α to 0.05 reduces all these metrics. Increasing r from 0.50 to 0.90 allocates more budget to the dispatch layer. A larger τ0 admits more input positions as reusable, reducing the transmission ratio from 9.0% to 6.9%; the remaining DNN layers receive less budget, so their thresholds tighten and the compute ratio rises from 39.0% to 45.1%. Under medium IEEE TRANSACTIONS ON MOBILE COMPUTING 12 0   
+
+> 200
+> 400
+> 600
+> Latency (ms)
+> (a)
+> Segmentation
+> (b)
+> Pose Estimation
+> 0
+> 200
+> 400
+> 600
+> Latency (ms)
+> (c) (d)
+> FluxShard Offload COACH DeltaCNN M-DeltaCNN
+> 0
+> 200
+> 400
+> 600
+> Latency (ms)
+> (e)
+> FluxShard Offload COACH DeltaCNN M-DeltaCNN
+> (f)
+> 0123
+> Energy (J)
+> 01234
+> Energy (J)
+> 01234
+> Energy (J)
+> 1 Edge 2 Edges 3 Edges
+> Latency Energy
+> Figure 7. End-to-end latency (solid bars, left axis) and edge energy (hatched bars, right axis) under 1, 2, and 3 concurrent edge devices under medium bandwidth.
+
+bandwidth where transmission is the bottleneck, the net effect is a latency reduction from 75.3 ms to 71.5 ms with accuracy stable around −2.6% , illustrating that tuning the budget split to match the deployment bottleneck can yield meaningful gains. 
+
+G. Discussion 
+
+When the camera is static, per-block MVs are near zero and cache remapping becomes a no-op; FluxShard degrades gracefully to behavior similar to DeltaCNN. Under extreme motion such as scene cuts, the reuse ratio approaches zero and FluxShard falls back to full recomputation; this is the expected lower bound, as no temporal reuse method can exploit non-existent temporal redundancy. 
+
+a) MV quality: Codec MVs are the output of block matching during encoding, not optical flow; in texture-flat regions or under occlusion, the encoder may select a displace-ment that does not reflect the true motion. Inaccurate MVs do not cause silent accuracy degradation, however, because FluxShard’s correctness relies on two independent checks: RFAP detects structural inconsistency within the receptive                                                
+
+> Table V SENSITIVITY TO DIFFERENT CONFIGURATIONS
+> (P OSE ,MEDIUM BANDWIDTH ). Config Accuracy Ratio (%) Lat Energy
+> αrOKS (%) Tx Comp (ms) (mJ) 0.03 0.67 69.13 (-2.58%) 8.9 40.7 74.8 891 0.03 0.50 69.01 (-2.75%) 9.0 39.0 75.3 899 0.03 0.90 69.08 (-2.65%) 6.9 45.1 71.5 874 0.01 0.67 70.31 (-0.92%) 12.4 52.0 96.1 1111 0.05 0.67 67.55 (-4.81%) 6.9 34.0 72.8 873 Default: α=0 .03 ,r=0 .67 .α: accuracy retention budget in Eq. (1). r:fraction of the accuracy budget reserved for τ0(Eq. (12)). Parenthesized values show accuracy change relative to dense offload (OKS 70.96).
+
+field, and the content-change threshold τ0 detects value mis-matches after MV alignment. If an MV points to the wrong source, the aligned pixel value will differ from the current frame, and the position will enter the recomputation set and be recomputed. The only consequence of inaccurate MVs is a lower reuse ratio, which increases latency but never compromises accuracy. FluxShard’s mechanisms are defined for convolutional ar-chitectures with fixed receptive fields and spatial strides. RFAP’s two conditions depend only on receptive field ge-ometry and layer strides, properties shared by all standard convolutional layers (regular, depthwise separable, dilated, and grouped convolutions) regardless of the surrounding network topology. Cache remapping relies solely on the MV field and backward warping, which operate on spatial grids independent of layer type. Because YOLO11’s backbone subsumes the spatial operation patterns of most CNN-based detection and segmentation architectures [21], the evaluation spans sufficient structural diversity. Attention-based layers, however, aggre-gate information from data-dependent positions rather than a fixed spatial neighborhood, so Condition 1 (intra-receptive-field uniformity) does not directly apply. Extending RFAP to architectures with dynamic receptive fields is an open direction for future work. VI. R ELATED WORK 
+
+Edge intelligence workloads. Edge intelligence deploys DNN inference on resource-constrained devices, demanding real-time perception and decision-making at the point of data generation. Representative workloads span a wide range of visual tasks: UAV delivery systems rely on on-board visual positioning for autonomous navigation [1], [2], [28]; mobile robots use visual SLAM to build maps and localize in real time [3], [4], [29]; augmented-reality applications require low-latency scene understanding to overlay virtual content [5], [30]; edge video analytics pipelines perform continuous object detection [6], [31] and multi-object tracking [32], [33] under strict latency budgets. These tasks all require dense predictions on every frame of a continuous video stream, where both latency and accuracy are critical. Consecutive frames share substantial visual content, and this redundancy extends to intermediate feature maps; caching and reusing these features across frames reduces both computation IEEE TRANSACTIONS ON MOBILE COMPUTING 13 
+
+and transmission. Existing approaches fall into two broad cate-gories: pipeline-level caching and delta-based sparse inference. 
+
+Pipeline-level caching. Methods, such as SPINN [15] and COACH [16], cache intermediate feature maps or predictions and reuse them when successive inputs are globally similar, making a binary, whole-input reuse decision. This coarse granularity suits classification but cannot approximate the spatially dense outputs required by segmentation or detection. 
+
+Delta-based sparse inference. A second line of work, including RRM [34], CBinfer [17], Skip-Convolution [35], and DeltaCNN [19], maintains a pixel-level reference cache and propagates only the difference (delta) between the current frame and the reference through the network, computing only at affected output locations and reusing cached values else-where. Among these, DeltaCNN represents the most complete realization: it achieves end-to-end sparse propagation with truncation buffers that prevent error accumulation, enabling unbounded-length sequences without dense resets and pushing the efficiency of static-camera settings to its practical limit. MotionDeltaCNN [20] extends DeltaCNN to moving cameras by warping the cache with a single global homography before computing the delta. 
+
+Shared limitation. Across both categories, the cache is managed in a fixed or globally shifted coordinate system without per-region motion handling. Real-world mobile video, however, exhibits spatially non-uniform motion: a camera pan shifts the background uniformly while foreground objects move independently, and depth discontinuities create parallax that no single warp can reconcile. The result is a granularity mismatch : the cache granularity is the whole scene, but motion granularity is per-region. This mismatch forces existing meth-ods to either waste computation re-deriving content that has merely shifted, or sacrifice correctness by reusing misaligned features. Note that several other techniques also reduce the cost of video analytics, including ROI filtering [36], [37], input resolution adaptation [38], [39], frame sampling that skips inference on selected frames [36], [37], and model com-pression via quantization or pruning [40], [41]. Split-point inference methods partition a DNN at an intermediate layer and transmit compressed features rather than raw pixels [42], [43], while multi-exit architectures allow early termination to reduce latency [44]. Edge-cloud scheduling and offload-ing strategies further optimize where and when to execute inference under dynamic network conditions [45], [46]. These strategies are orthogonal to feature cache reuse: they reduce the cost of a single frame by compressing its representation or optimizing its placement, whereas caching exploits temporal 
+
+redundancy across frames to avoid redundant computation and transmission altogether. FluxShard can be composed with any of them; this work focuses exclusively on the cache reuse axis. VII. C ONCLUSION 
+
+We have presented FluxShard, a motion-aware edge-cloud video analytics system that uses codec-level motion vectors to manage feature cache reuse and recomputation at the granularity of individual motion regions, achieving low latency and high accuracy on resource-constrained edge devices. In FluxShard, RFAP identifies additional positions that must be recomputed due to heterogeneous motion, recovering accu-racy and resolving the receptive field inconsistency problem; MV-guided cache remapping keeps the feature cache closely aligned with the evolving scene, improving the reuse ratio and addressing the cache maintenance problem; a profiling-driven dispatcher routes the remaining sparse workload to the faster endpoint. By enabling real-time, high-accuracy video analytics on resource-constrained mobile platforms, FluxShard can serve as an inference infrastructure for latency-sensitive edge intelligence applications, such as autonomous drones, embodied robots, and augmented-reality devices. As a poten-tial future direction, we are looking forward to extending our method to improve the performance of various applications, such as large language models [47], [48], [49], [50], [51] and distributed learning system [52], [53], [54], [55], [56], [57], [58], [59]. REFERENCES [1] H. J. Al Dawasari, M. Bilal, M. Moinuddin, K. Arshad, and K. Assaleh, “Deepvision: Enhanced drone detection and recognition in visible im-agery through deep learning networks,” Sensors , vol. 23, 2023. [2] K. Nguyen, F. Liu, C. Fookes, S. Sridharan, X. Liu, and A. Ross, “Person recognition in aerial surveillance: A decade survey,” IEEE Transactions on Biometrics, Behavior, and Identity Science , 2025. [3] Q. Wu, Z. Fu, X. Cheng, X. Wang, and C. Finn, “Helpful DoggyBot: Open-world object fetching using legged robots and vision-language models,” arXiv:2410.00231 , 2024. [4] B. Han, M. Parakh, D. Geng, J. A. Defay, L. Gan, and J. Deng, “Fetchbench: A simulation benchmark for robot fetching,” in Proc. CoRL , 2024, pp. 3053–3071. [5] J. Zhang, M. Henein, R. Mahony, and V. Ila, “VDO-SLAM: A visual dynamic object-aware SLAM system,” arXiv:2005.11052 , 2021. [6] F. Jalali, M. Khademi, A. E. Moghadam, and H. S. Yazdi, “Robust scene aware multi-object tracking for surveillance videos,” Neurocomputing ,vol. 638, p. 130114, 2025. [7] Z. Lin, G. Zhu, Y. Deng, X. Chen, Y. Gao, K. Huang, and Y. Fang, “Efficient Parallel Split Learning over Resource-Constrained Wireless Edge Networks,” IEEE Trans. Mobile Comput. , vol. 23, no. 10, pp. 9224–9239, 2024. [8] Z. Fang, Z. Lin, S. Hu, H. Cao, Y. Deng, X. Chen, and Y. Fang, “IC3M: In-Car Multimodal Multi-Object Monitoring for Abnormal Status of Both Driver and Passengers,” arXiv preprint arXiv:2410.02592 , 2024. [9] H. Yuan, Z. Chen, Z. Lin, J. Peng, Z. Fang, Y. Zhong, Z. Song, and Y. Gao, “SatSense: Multi-Satellite Collaborative Framework for Spectrum Sensing,” IEEE Trans. Cogn. Commun. Netw. , 2025. [10] Z. Lin, O. Aouedi, W. Ni, S. Chatzinotas, and X. Chen, “Gapsl: A gradient-aligned parallel split learning on heterogeneous data,” arXiv preprint arXiv:2603.18540 , 2026. [11] M. Hong, Z. Lin, Z. Lin, L. Li, M. Yang, X. Du, Z. Fang, Z. Kang, D. Luan, and S. Zhu, “Conflict-aware client selection for multi-server federated learning,” arXiv preprint arXiv:2602.02458 , 2026. [12] J. Peng, Z. Chen, Z. Lin, H. Yuan, Z. Fang, L. Bao, Z. Song, Y. Li, J. Ren, and Y. Gao, “SUMS: Sniffing Unknown Multiband Signals under Low Sampling Rates,” IEEE Trans. Mobile Comput. , 2024. [13] Y. Zhang, Z. Lin, Z. Chen, Z. Fang, W. Zhu, X. Chen, J. Zhao, and Y. Gao, “Satfed: A resource-efficient leo satellite-assisted heterogeneous federated learning framework,” Engineering , 2024. [14] Z. Lin, Z. Chen, Z. Fang, X. Chen, X. Wang, and Y. Gao, “Fedsn: A federated learning framework over heterogeneous leo satellite networks,”      
+
+> IEEE Transactions on Mobile Computing , vol. 24, no. 3, pp. 1293–1307, 2024. [15] S. Laskaridis, S. I. Venieris, M. Almeida, I. Leontiadis, and N. D. Lane, “Spinn: synergistic progressive inference of neural networks over device and cloud,” in Proc. ACM MobiCom , 2020, pp. 1–15. [16] L. Gao, J. Liu, H. Xu, S. Xu, Q. Ma, and L. Huang, “Accelerating end-cloud collaborative inference via near bubble-free pipeline optimization,” in Proc. IEEE INFOCOM , 2025, pp. 1–10. IEEE TRANSACTIONS ON MOBILE COMPUTING 14
+
+[17] L. Cavigelli, P. Degen, and L. Benini, “Cbinfer: Change-based inference for convolutional neural networks on video data,” in Proc. ICDSC , 2017, p. 1–8. [18] M. Mahmoud, K. Siu, and A. Moshovos, “Diffy: a d´ ej` a vu-free differ-ential deep neural network accelerator,” in Proc. IEEE/ACM MICRO ,2018, pp. 134–147. [19] M. Parger, C. Tang, C. D. Twigg, C. Keskin, R. Wang, and M. Stein-berger, “Deltacnn: End-to-end cnn inference of sparse frame differences in videos,” in Proc. IEEE/CVF CVPR , 2022, pp. 12 497–12 506. [20] M. Parger, C. Tang, T. Neff, C. D. Twigg, C. Keskin, R. Wang, and M. Steinberger, “MotionDeltaCNN: Sparse CNN inference of frame differences in moving camera videos with spherical buffers and padded convolutions,” in Proc. IEEE/CVF ICCV , 2023, pp. 17 292–17 301. [21] R. Khanam and M. Hussain, “Yolov11: An overview of the key architectural enhancements,” arXiv:2410.17725 , 2024. [22] A. Narayanan, X. Zhang, R. Zhu, A. Hassan, S. Jin, X. Zhu, X. Zhang, D. Rybkin, Z. Yang, Z. M. Mao, F. Qian, and Z.-L. Zhang, “A variegated look at 5g in the wild: performance, power, and QoE implications,” in 
+
+Proc. ACM SIGCOMM , 2021, pp. 610–625. [23] L. Galteri, L. Seidenari, M. Bertini, and A. D. Bimbo, “Deep generative adversarial compression artifact removal,” in Proc. IEEE ICCV , 2017, pp. 4836–4845, ISSN: 2380-7504. [24] L. Duan, J. Liu, W. Yang, T. Huang, and W. Gao, “Video coding for machines: A paradigm of collaborative compression and intelligent analytics,” IEEE Transactions on Image Processing , vol. 29, pp. 8680– 8695, 2020. [25] H. Choi and I. V. Baji´ c, “Scalable image coding for humans and machines,” IEEE Transactions on Image Processing , vol. 31, pp. 2739– 2754, 2022. [26] J. Pont-Tuset, F. Perazzi, S. Caelles, P. Arbel´ aez, A. Sorkine-Hornung, and L. Van Gool, “The 2017 davis challenge on video object segmen-tation,” arXiv:1704.00675 , 2017. [27] T. von Marcard, R. Henschel, M. Black, B. Rosenhahn, and G. Pons-Moll, “Recovering accurate 3d human pose in the wild using imus and a moving camera,” in Proc. ECCV , sep 2018. [28] H. Luo, T. Chen, X. Li, S. Li, C. Zhang, G. Zhao, and X. Liu, “Keepedge: A knowledge distillation empowered edge intelligence framework for visual assisted positioning in UAV delivery,” IEEE Trans. Mob. Comput. , vol. 22, pp. 4729–4741, 2023. [29] D. Li, Y. Zhao, J. Xu, S. Zhang, L. Shangguan, Q. Ma, X. Ding, and Z. Yang, “Reshaping edge-assisted visual SLAM by embracing on-chip intelligence,” IEEE Trans. Mob. Comput. , vol. 23, pp. 12 983–12 997, 2024. [30] S. Cheng, Z. Wang, F. Feng, Y. Zhang, T. Bi, and T. Jiang, “Ifresher: Information freshening for mobile augmented reality with multi-agent reinforcement learning in edge computing,” IEEE Trans. Mob. Comput. ,vol. 24, pp. 11 703–11 716, 2025. [31] Z. Liu, Y. Wang, Y. Zhao, C. Qiu, C. Zhang, X. Wang, and M. Dong, “Enabling real-time video detection with adaptive and distributed scheduling in mobile edge computing,” IEEE Trans. Mob. Comput. ,vol. 24, pp. 12 784–12 801, 2025. [32] R. Xu, K. Nalaie, and R. Zheng, “Fasttuner: Fast resolution and model tuning for multi-object tracking in edge video analytics,” IEEE Trans. Mob. Comput. , vol. 24, pp. 4747–4761, 2025. [33] X. Shi, S. Zhang, M. Liu, L. Meng, L. Wei, Y. Gu, K. Liu, H. Cheng, Y. Song, L. Tang, A. Zhu, N. Chen, and Z. Qian, “Mystique: User-level adaptation for real-time video analytics in edge networks via meta-rl,” 
+
+IEEE Trans. Mob. Comput. , vol. 24, pp. 3615–3632, 2025. [34] B. Pan, W. Lin, X. Fang, C. Huang, B. Zhou, and C. Lu, “Recurrent residual module for fast inference in videos,” in Proc. IEEE/CVF CVPR ,2018, pp. 1536–1545, ISSN: 2575-7075. [35] A. Habibian, D. Abati, T. S. Cohen, and B. Ehteshami Bejnordi, “Skip-convolutions for efficient video processing,” in Proc. IEEE/CVF CVPR ,2021, pp. 2694–2703, ISSN: 2575-7075. [36] T. Y.-H. Chen, L. Ravindranath, S. Deng, P. Bahl, and H. Balakrishnan, “Glimpse: Continuous, real-time object recognition on mobile devices,” in Proc. ACM SenSys , 2015, pp. 155–168. [37] Y. Li, A. Padmanabhan, P. Zhao, Y. Wang, G. H. Xu, and R. Netravali, “Reducto: On-camera filtering for resource-efficient real-time video analytics,” in Proc. ACM SIGCOMM , 2020, pp. 359–376. [38] J. Jiang, G. Ananthanarayanan, P. Bodik, S. Sen, and I. Stoica, “Chameleon: scalable adaptation of video analytics,” in Proc. ACM SIGCOMM , 2018, pp. 253–266. [39] K. Du, Q. Zhang, A. Arapin, H. Wang, Z. Xia, and J. Jiang, “Accmpeg: Optimizing video encoding for accurate video analytics,” in Proc. MLSys , 2022. [40] B. Jacob, S. Kligys, B. Chen, M. Zhu, M. Tang, A. Howard, H. Adam, and D. Kalenichenko, “Quantization and training of neural networks for efficient integer-arithmetic-only inference,” in Proc. IEEE/CVF CVPR ,2018, pp. 2704–2713. [41] S. Han, J. Pool, J. Tran, and W. J. Dally, “Learning both weights and connections for efficient neural networks,” in Proc. NeurIPS , vol. 1, 2015, pp. 1135–1143. [42] Y. Kang, J. Hauswald, C. Gao, A. Rovinski, T. Mudge, J. Mars, and L. Tang, “Neurosurgeon: Collaborative intelligence between the cloud and mobile edge,” in Proc. ACM ASPLOS , 2017, pp. 615–629. [43] H. Li, X. Li, Q. Fan, Q. He, X. Wang, and V. C. M. Leung, “Distributed DNN inference with fine-grained model partitioning in mobile edge computing networks,” IEEE Trans. Mob. Comput. , vol. 23, pp. 9060– 9074, 2024. [44] Z. Liu, J. Song, C. Qiu, X. Wang, X. Chen, Q. He, and H. Sheng, “Hastening stream offloading of inference via multi-exit dnns in mobile edge computing,” IEEE Trans. Mob. Comput. , vol. 23, pp. 535–548, 2024. [45] H. Huang, J. Liang, and G. Min, “Joint DNN model deployment, selection, and configuration for heterogeneous inference services toward edge intelligence,” IEEE Trans. Mob. Comput. , vol. 24, pp. 12 726– 12 741, 2025. [46] W. Ma and L. Mashayekhy, “Video offloading in mobile edge comput-ing: Dealing with uncertainty,” IEEE Trans. Mob. Comput. , vol. 23, pp. 10 251–10 264, 2024. [47] Z. Lin, X. Hu, Y. Zhang, Z. Chen, Z. Fang, X. Chen, A. Li, P. Vepakomma, and Y. Gao, “SplitLoRA: A Split Parameter-Efficient Fine-Tuning Framework for Large Language Models,” arXiv preprint arXiv:2407.00952 , 2024. [48] Z. Fang, Z. Lin, S. Hu, Y. Ma, Y. Tao, Y. Deng, X. Chen, and Y. Fang, “Hfedmoe: Resource-aware heterogeneous federated learning with mixture-of-experts,” arXiv preprint arXiv:2601.00583 , 2026. [49] Z. Lin, G. Qu, X. Chen, and K. Huang, “Split Learning in 6G Edge Networks,” IEEE Wirel. Commun. , 2024. [50] G. Qu, Q. Chen, W. Wei, Z. Lin, X. Chen, and K. Huang, “Mobile edge intelligence for large language models: A contemporary survey,” IEEE Communications Surveys & Tutorials , 2025. [51] Z. Fang, Z. Lin, Z. Chen, X. Chen, Y. Gao, and Y. Fang, “Automated Federated Pipeline for Parameter-Efficient Fine-Tuning of Large Lan-guage Models,” IEEE Trans. Mobile Comput. , 2025. [52] Z. Lin, W. Wei, Z. Chen, C.-T. Lam, X. Chen, Y. Gao, and J. Luo, “Hi-erarchical Split Federated Learning: Convergence Analysis and System Optimization,” IEEE Trans. Mobile Comput. , 2025. [53] W. Wei, Z. Lin, X. Liu, H. Du, D. Niyato, and X. Chen, “Optimizing split federated learning with unstable client participation,” arXiv preprint arXiv:2509.17398 , 2025. [54] Z. Fang, M. Yang, Z. Lin, Z. Lin, Z. Fang, Z. Zhang, T. Duan, D. Huang, and S. Zhu, “Nsc-sl: A bandwidth-aware neural subspace compression for communication-efficient split learning,” arXiv preprint arXiv:2602.02696 , 2026. [55] Z. Lin, Z. Chen, X. Chen, W. Ni, and Y. Gao, “HASFL: Heterogeneity-aware Split Federated Learning over Edge Computing Systems,” IEEE Trans. Mobile Comput. , 2026. [56] M. Hu, J. Zhang, X. Wang, S. Liu, and Z. Lin, “Accelerating Federated Learning with Model Segmentation for Edge Networks,” IEEE Trans. Green Commun. Netw. , 2024. [57] Z. Fang, Q. Wang, H. An, Z. Lin, Y. Deng, X. Chen, and Y. Fang, “Aggregation alignment for federated learning with mixture-of-experts under data heterogeneity,” arXiv preprint arXiv:2603.21276 , 2026. [58] S. Lyu, Z. Lin, G. Qu, X. Chen, X. Huang, and P. Li, “Optimal resource allocation for u-shaped parallel split learning,” in 2023 IEEE Globecom Workshops (GC Wkshps) , 2023, pp. 197–202. [59] Z. Lin, G. Qu, W. Wei, X. Chen, and K. K. Leung, “Adaptsfl: Adaptive Split Federated Learning in Resource-Constrained Edge Networks,” 
+
+IEEE Trans. Netw. , 2025.
