@@ -1,0 +1,994 @@
+Title: SWIFT: Prompt-Adaptive Memory for Efficient Interactive Long Video Generation
+
+URL Source: https://arxiv.org/pdf/2605.09442v1
+
+Published Time: Tue, 12 May 2026 01:53:06 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# SWIFT: Prompt-Adaptive Memory for Efficient Interactive Long Video Generation 
+
+Shanwen Tan 1 Hao Li 2 Jingtao Zhang 3 Xiaosong Jia 2
+
+Xue Yang 4 Shaofeng Zhang 1∗ Yanyong Zhang 11University of Science and Technology of China 2Fudan University 
+
+> 3
+
+Georgia Institute of Technology 4Shanghai Jiao Tong University 
+
+Abstract 
+
+Streaming long-video generation faces a central challenge in continuous semantic switching, requiring adaptive memory to preserve coherent visual evolution. Cur-rent approaches rely on cache rebuilding at prompt boundaries or fixed memory budgets, but they introduce redundant computation and limit flexible semantic adaptation. This limitation arises from a mismatch between cached video his-tory and prompt updates, as memory preserves visual continuity while prompt switches demand rapid semantic adaptation. Motivated by this observation, we present SWIFT ( Semantic W indowing and I njection for Flexible Transitions), a training-free framework for multi-prompt long-video generation that enables efficient semantic switching while preserving temporal coherence in causal video diffusion models. SWIFT introduces a lightweight Semantic Injection Cache 
+
+that augments cached video memory rather than reconstructing it from scratch at every prompt boundary. To avoid uniformly perturbing all attention channels, we further perform head-wise semantic injection, so that each attention head re-ceives a prompt update proportional to its alignment with the current video state. In addition, we introduce an Adaptive Dynamic Window that allocates temporal memory according to prompt phase, using larger local context near switching boundaries and smaller windows during stable segments to reduce average infer-ence cost. To preserve long-range semantic consistency under compressed local attention, we further maintain segment-level semantic anchors that summarize prompt-conditioned video history and reintroduce it as compact memory tokens. Compared with current state-of-the-art methods, SWIFT preserves generation quality while achieving 22.6 FPS on a single H100 GPU, establishing a substan-tially more efficient solution for multi-prompt long-video generation. Our code is available at https://github.com/ShanwenTan/SWIFT .
+
+1 Introduction 
+
+Video generation delivers strong visual realism and temporal stability [ 20 , 1 , 36 , 8], with broad relevance to filmmaking [ 38 ], digital content creation [ 12 ], and immersive media [ 42 ]. Autoregressive video diffusion [ 7] extends this progress by rolling out frames sequentially for variable-length synthesis [ 9, 43 , 34 ]. Representative efforts include constant memory inference in FIFO-Diffusion [ 13 ], training-free long-horizon extension in LongDiff [ 17 ], and supervised causal generation with autoregressive Transformers [ 35 ]. Beyond length extension, semantic control throughout generation is equally important, rather than only conditioning at initialization [31, 5]. Multi-prompt video generation is more challenging than single-prompt synthesis, as the model must adapt to prompt updates while ensuring visual coherence, stable transitions, and consistent dynamics. Existing memory-based pipelines struggle with balancing semantic adaptation and temporal preser-          
+
+> ∗Corresponding author. Preprint.
+> arXiv:2605.09442v1 [cs.CV] 10 May 2026 A Roman legionary in
+> full armor, including
+> a helmet and shield,
+> is patrolling a stone
+> path at the edge of
+> a dense forest...
+> A small, lost-looking
+> girl with tangled hair
+> and a simple tunic
+> emerges from behind
+> a tree, her eyes
+> wide with fear...
+> The Roman legionary
+> in full armor and the
+> small, lost girl stand
+> on the stone path at
+> the edge of the
+> forest...
+> The Roman legionary
+> in full armor on the
+> stone path offers the
+> small, lost girl a piece
+> of bread from his
+> satchel...
+> The Roman legionary
+> in full armor on the
+> stone path gently
+> takes the small, lost
+> girl's hand. He helps
+> her to her feet...
+> The Roman legionary
+> in full armor and the
+> small girl walk hand-
+> in-hand down the
+> stone path, away
+> from the dense forest.
+> 0s 12s 24s 36s 48s 60s
+> 0s 12s 24s 36s 48s 60s
+> Semantic Transition Error
+> Continuous Semantic Transformation SWIFT
+> LongLive
+
+Interactive Reasoning to Generate Video      
+
+> Prompt 1 Prompt 2 Prompt 3 Prompt 4 Prompt 5 Prompt 6
+> Quick Generation
+> ReCache Required
+
+Figure 1: Streaming interactive T2V models, e.g., LongLive [ 33 ], face unstable prompt transitions and recaching overhead. SWIFT addresses both with Semantic Injection Cache and Adaptive Dynamic Window, improving transition smoothness, long-range consistency, and inference efficiency. vation [ 28 , 19 ]. Several recent studies have started to explore multi-prompt long video generation through distinct control and memory paradigms [ 4 , 27 ]. DiTCtrl [ 2] addresses sequential prompt control through attention level modulation, while LongLive [ 33 ] resolves prompt switching by re-caching memory at semantic boundaries. SynCoS [ 14 ] extends pretrained text-to-video models for multi-event long video generation by synchronizing local smoothness and global coherence. However, limited responsiveness to newly activated prompts or the additional cost of memory reconstruction still constrains their scalability in long-horizon interactive generation [ 18 , 29 ]. This exposes a cen-tral requirement for multi-prompt long-video generation: an efficient memory mechanism must accommodate continuous prompt shifts while supporting coherent long-range generation. 
+
+Motivated by these challenges, we propose SWIFT ( Semantic W indowing and Injection for Flexible Transitions), an inference-time memory framework for multi-prompt long-video generation. SWIFT enables efficient adaptation to continuous prompt transitions while preserving coherent long-range visual evolution (Figure 1). SWIFT integrates two complementary components: (i) Semantic Injection Cache , which injects transition-aware semantic signals into memory at prompt boundaries to improve adaptation without full cache reconstruction; and (ii) Adaptive Dynamic Window , which allocates the temporal read budget according to the current generation phase to balance long-range coherence and inference efficiency. By combining Semantic Injection Cache with Adaptive Dynamic Window, SWIFT improves prompt responsiveness, visual coherence, and efficiency in multi-prompt long-video generation. The main contributions of this paper can be summarized in three parts. • New Perspective. Multi-prompt long-video generation is studied from the perspective of continuous memory adaptation. Prompt switching is addressed through efficient historical-memory updating rather than repeated scratch reconstruction. • Unified Method. We propose SWIFT, an inference-time memory framework for multi-prompt long-video generation. SWIFT couples transition-aware semantic memory refinement with prompt-phase adaptive temporal budgeting, enabling efficient multi-prompt long-video generation with strong controllability and coherence. • Empirical Validation. Extensive experiments are conducted under multi-prompt long-video generation settings. SWIFT achieves strong visual quality and semantic alignment while reaching 22.6 FPS on a single H100 GPU under the multi-prompt setting. 
+
+2 Related Works 
+
+Long Video Generation. Recent progress in video generation [ 15 ] has extended synthesis from short clips to longer and more coherent sequences through autoregressive diffusion [ 35 , 6 ], diffusion 2forcing [ 22 ], and memory-based streaming inference [ 44 ]. Autoregressive and hybrid autoregressive-diffusion methods generate long videos by iteratively rolling out future chunks while reusing historical context [ 30 ], achieving strong temporal continuity and efficient causal generation. Diffusion-forcing methods improve long-horizon rollout by aligning training and inference under partially generated contexts. VideoTetris [ 23 ] enables compositional text-to-video generation by spatially and temporally composing attention maps to better follow complex textual semantics. 
+
+Interactive and Multi-Prompt Video Generation. Interactive and multi-prompt video generation [ 2, 28 ] requires the model to adapt to changing text conditions while preserving visual continuity across prompt boundaries. Existing approaches commonly decompose the task into multiple short clips [ 24 ] and then apply stitching, interpolation, or segment-wise generation, which often weakens temporal coherence over long horizons. StoryMem [ 39 ] further explores multi-shot long video storytelling by maintaining an explicit visual memory bank to improve cross-shot consistency across sequential video segments. 
+
+Memory-Efficient Inference for Long-Horizon Generation. To improve the efficiency of long-horizon inference, existing methods commonly restrict attention to local windows [ 30 , 33 ] or compact memory states [ 3] instead of reading the full history densely. These designs provide an effective trade-off between efficiency and long-range context, although most of them rely on fixed memory budgets across different generation stages. SWIFT addresses this challenge with a continuous and dynamic memory mechanism for semantic transition and temporal memory allocation. 
+
+3 Method 
+
+SWIFT ( Semantic W indowing and Injection for Flexible T ransitions) is an inference-time mechanism for efficient semantic transition and memory cache management in interactive long-video generation under sequential prompt control. Built upon causal autoregressive video diffusion, the method combines two coupled designs: a Semantic Injection Cache (section 3.1) for memory updates at prompt transitions via lightweight semantic bridging rather than expensive cache reconstruction, and an Adaptive Dynamic Window (section 3.2) for phase-aware control of the effective temporal memory span with segment-level semantic anchors augmenting compressed local context. These designs preserve temporal continuity, improve semantic responsiveness at prompt boundaries, and reduce the average attention cost during long-horizon rollout. 
+
+3.1 Semantic Injection Cache 
+
+Prompt transitions introduce a mismatch between the newly activated prompt semantics and the historical video memory accumulated under earlier prompts [ 37 ]. Existing methods typically address this issue by recomputing the cache at prompt boundaries [ 33 ], which improves semantic alignment but incurs substantial additional computation. We introduce a Semantic Injection Cache (Figure 2) that updates memory through the detected semantic transition, enabling prompt adaptation without recomputing the full cache while preserving the visual history accumulated in prior memory states. 
+
+Prompt Transition Signatures. For each prompt segment, we first compute a projected prompt signature by aggregating the prompt embeddings after projection into the generator hidden space. Let 
+
+p(m−1) and p(m) denote the projected signatures of the previous and current prompts, represented in the same head-wise value-cache space as the cached visual summaries. We define the prompt transition signal as: 
+
+∆p(m) = p(m) − p(m−1) . (1) This difference vector captures the semantic displacement induced by the prompt switch. We further quantify the switch magnitude through the cosine-based transition strength 
+
+ρ(m) = 1 − cos 
+
+
+
+p(m−1) , p (m)
+
+, (2) which is later used to modulate the amount of semantic injection. We decompose ∆p(m) along the local cache tangent m. Under a first-order cache response model, its orthogonal component is motion-neutral, yielding the following projection: 
+
+Theorem 1 (Motion-neutral semantic projection ). Let H denote the value-cache representation space. At a prompt switch, ∆p(m) = p(m) − p(m−1) represents the prompt displacement, while 
+
+m = vt − vt−1 denotes the local cache tangent estimated from recent value-cache summaries. Under a local first-order cache response assumption, motion-neutral injection requires removing the 
+
+3Semantic Injection Cache 
+
+Clip1 
+
+Clip2 
+
+Clip3 
+
+Prompt 1 Prompt 2 Prompt 3 
+
+...     
+
+> Previous Prompt 𝐀 (𝐀 −𝐀 )
+> New Prompt 𝐀 𝐀
+
+... 
+
+... 
+
+∆𝐀 = 𝐀 (𝐀 ) − 𝐀 (𝐀 − 𝐀 )     
+
+> Recent Frames
+> (from value cache)
+> Mean Direction
+> 𝐀 =𝐀 𝐀𳐀𝐀𝐀 −𝐀 𝐀𴐀𝐀𝐀
+> Projection to Motion
+> Orthogonal Space
+
+∆𝐀 ⊥ = ∆ 𝐀 − < ∆ 𝐀 , 𝐀 >
+
+|| 𝐀 || 𝐀  
+
+> 𝐀
+
++ 𝐀 
+
+Head-wise Injection                  
+
+> Head 1
+> Head 2
+> Head 3
+> 𝐀𱀀𝐀 (𴐀 𝐀 ,∆𝐀 ⊥)×𝐀
+> 𝐀𱀀𝐀 (𴐀 𝐀 ,∆𝐀 ⊥)×𝐀
+> 𝐀𱀀𝐀 (𴐀 𝐀 ,∆𝐀 ⊥)×𝐀
+> 𝐀 ∈ ( 𝐀 ,𝐀 )switch strength 𝐀 𝐀 =𝐀 ∗𝐀𱀀𝐀 (𴐀 𝐀 , ∆ 𝐀 ⊥)
+> Sink Memory
+> Semantic Bridge
+> (Injected )
+
+Local Window 
+
+𝐀 𝐀 = [ 𝐀 𝐀 
+
+> 𝐀𵀀𝐀𲠀
+
+; 𝐀 𝐀 
+
+> 𴐀𝐀𝐀𝐀𝐀𝐀
+
+]
+
+𝐀 𝐀 = ( 𝐀 − 𝐀 𝐀 )𴐀 𝐀 + 𝐀 𝐀 ∆𝐀 ⊥
+
+Continuous Video Memory with Lightweight 
+
+Semantic Bridging 
+
+Semantic Bridge 
+
+> Decay over time
+
+𝐀 𝐀  
+
+> 𝐀 +𝐀
+
+= 𝐀 𝐀 𝐀 
+
+> 𝐀
+
+(𝐀 < 𝐀 < 𝐀 )
+
+Differential semantics 
+
+> Inject semantic cache at the
+> prompt switching point
+
+𝐀 𝐀𳐀𝐀𝐀 𝐀 𝐀𴐀𝐀𝐀 
+
+> motion direction
+> Prompt Switching
+> Sink Bridge
+> Recent Bridge
+
+Figure 2: Illustration of Semantic Injection Cache . Instead of rebuilding the full video cache at every prompt boundary, SWIFT constructs a lightweight semantic bridge from the prompt transition signal. The transition is first projected onto a motion-orthogonal subspace to avoid interfering with local temporal dynamics, and is then injected into memory through head-wise alignment with recent and sink summaries. The injected bridge is read together with continuous video memory, providing efficient semantic switching while preserving motion continuity. 
+
+component of ∆p(m) parallel to m. The resulting update is the closest prompt-preserving vector in the motion-neutral subspace: 
+
+∆p(m) 
+
+> ⊥
+
+= arg min  
+
+> ∆x∈H
+
+∥∆x − ∆p(m)∥22 s.t. ⟨∆x, m ⟩ = 0 , (3) 
+
+which admits the closed-form solution 
+
+∆p(m) 
+
+> ⊥
+
+= ∆ p(m) − ∆p(m), m 
+
+∥m∥22
+
+m. (4) 
+
+Proof is provided in Appendix D. Thus, semantic injection preserves the largest first-order motion-neutral prompt component while avoiding direct perturbation of short-term dynamics. 
+
+In practice, we use the stabilized form (where ϵ > 0 prevents numerical amplification when the estimated motion magnitude is small). 
+
+∆p(m) 
+
+> ⊥
+
+= ∆ p(m) − ∆p(m), m 
+
+∥m∥22 + ϵ m. (5) 
+
+Head-wise Semantic Injection. We construct the semantic bridge head-wise to reflect heterogeneous memory reading patterns across attention heads, from local dynamics to long-range contextual anchors. For each layer, we extract two summaries from the value cache: a recent summary r from the most recent frames and a sink summary s from the persistent sink region. We measure their alignment with the projected semantic transition by clipped cosine similarity and use the switch strength ρ(m) to define bounded head-wise gates: 
+
+gr = ρ(m) h
+
+cos 
+
+
+
+r, ∆p(m)
+
+> ⊥
+
+i 10
+
+, gs = ρ(m) h
+
+cos 
+
+
+
+s, ∆p(m)
+
+> ⊥
+
+i 10
+
+. (6) Here, [·]10 denotes clipping to [0 , 1] , so gr and gs act as bounded interpolation gates that control how much semantic transition is injected into the recent and sink-aligned summaries. We then construct two bridge components: 
+
+Br = (1 − gr ) r + gr ∆p(m) 
+
+> ⊥
+
+, Bs = (1 − gs) s + gs ∆p(m) 
+
+> ⊥
+
+. (7) 4Frame Index 0 𝐀 𝐀 𝐀 𝐀  
+
+> Prompt 1: A tailor in a classic,
+> well-lit shop is carefully measuring
+> the inseam of a customer's ...
+> Prompt 2 : The tailor measuring
+> trousers in the classic shop is
+> assisted by his young apprentice...
+> Prompt 3 : The tailor and his
+> young apprentice in the classic
+> shop move to a sewing machine...
+
+Generated 
+
+Frames 
+
+Active Prompt 
+
+Prompt 
+
+Phase        
+
+> Post-switch
+> (switched to 𝐀 𝐀 )
+> Stable
+> (inside 𝐀 𝐀 )
+> Pre-switch
+> (approaching 𝐀 𝐀 )
+> Post-switch
+> (switched to 𝐀 𝐀 )
+> Stable
+> (inside 𝐀 𝐀 )
+> Pre-switch
+> (approaching 𝐀 𝐀 )
+> Post-switch
+> (switched to 𝐀 𝐀 )
+
+Adaptive 
+
+Window Size Small 
+
+> (𝐀 𝐀𳠀𝐀 )
+> Large
+> (𝐀 𝐀𳠀𝐀 )
+
+Sink(global) Long-Term Semantic Bridge Local Window(adaptive) Figure 3: Illustration of Adaptive Dynamic Window . SWIFT allocates temporal memory according to prompt phase rather than using a fixed local attention span throughout generation. The effective window expands around prompt transitions for stable semantic handover and shrinks inside stable intervals for efficient rollout. Segment-level semantic anchors compensate for the reduced local context by preserving compact prompt-conditioned summaries of previous segments, thereby lowering average attention cost without sacrificing long-range coherence. The two bridge components are concatenated as a transient bridge memory Bh = [ Bs; Br ], which is written into the bridge slots of the key-value attention cache. During self-attention, these bridge cache entries are read together with sink memory, segment anchors, and the adaptive local window, providing prompt-transition guidance without rebuilding the full historical cache. After each generated block, the bridge contribution is decayed by Bt+1  
+
+> h
+
+= λB th, allowing newly generated video evidence to gradually dominate once the prompt transition has been absorbed. 
+
+3.2 Adaptive Dynamic Window 
+
+In long-video generation, the inference cost of causal attention increases with sequence length [ 26 , 29 ], while recent frames usually contribute more to the next prediction than distant history. Existing local-attention methods therefore use a fixed temporal window for efficiency [ 41 , 33 ], but different inference phases favor different window sizes. To address this issue, an adaptive dynamic window (Figure 3) is introduced to allocate different temporal read budgets across multi-prompt generation phases, improving efficiency in semantically stable intervals and preserving sufficient context around prompt transitions. 
+
+Prompt-Phase Window Scheduling. Let t denote the current block position, let sm denote the start of the active prompt segment, and let sm+1 denote the next switch boundary. We define the segment age 
+
+at = max(0 , t − sm), (8) and the distance to the next switch 
+
+dt =
+
+(max(0 , s m+1 − t), if the next switch exists ,
+
++∞, otherwise . (9) The prompt phase of the current generation step is determined by at and dt. Early after a prompt switch, the model requires a larger local window to maintain stable semantic transition. In the stable portion of a prompt segment, the local context demand becomes weaker and the window can be reduced. As generation approaches the next switch, the window expands again to prepare for the upcoming semantic transition. To realize this phase-dependent scheduling, we define a post-switch decay factor and a pre-switch expansion factor 
+
+wpost (t) = exp 
+
+
+
+− at
+
+τpost 
+
+
+
+, wpre (t) = exp 
+
+
+
+− dt
+
+τpre 
+
+
+
+. (10) 5The effective phase weight is 
+
+wt = max {wpost (t), w pre (t)} . (11) Given a maximum window size Wmax and a minimum window size Wmin , the adaptive window is defined as 
+
+Wt = Wmin + ( Wmax − Wmin ) wt. (12) The physical cache budget remains fixed, and the adaptive mechanism only modulates the effective temporal read range at each step. This design avoids cache reallocation overhead while reducing the average attention cost over long-horizon generation. 
+
+Segment-Level Semantic Anchors. A small local window improves efficiency, but it also reduces direct access to long-range semantic context [ 41 ]. To compensate for this loss, we introduce segment-level semantic anchors. At the end of each prompt segment, we summarize the recent value cache and combine this visual summary with the projected prompt signature of the same segment. Let u(m)
+
+denote the summary of the recent value cache from the completed segment, and let p(m) denote the semantic prompt signature obtained by projecting the prompt into the generator hidden space. We define the segment anchor as 
+
+A(m) = (1 − α) u(m) + α p (m), (13) where α controls the balance between visual memory and semantic identity. This anchor provides a compact prompt-conditioned summary of the segment and is injected into attention together with sink memory, semantic bridge entries, and the current local window. Long-range semantic context is therefore preserved without incurring the full cost of dense historical attention. 
+
+Unified Memory View. Under the proposed design, the memory used by the generator is no longer a single fixed-size local cache. Instead, it becomes a structured memory system composed of continuous video history, transient semantic bridges, compact segment anchors, and a prompt-phase adaptive local window. The semantic injection cache governs how the model changes its interpretation of history at prompt transitions. The adaptive dynamic window governs where computation is spent over time. The segment anchors preserve long-range semantic context when the local window is compressed. Together, these components enable efficient and coherent multi-prompt long-video generation without relying on repeated full memory reconstruction. The detailed procedures for semantic injection and adaptive window scheduling are summarized in Algorithm 1 and Algorithm 2. 
+
+4 Experiments 
+
+4.1 Experimental Setup Implementation Details. SWIFT is instantiated on top of Wan2.1-T2V-1.3B [ 25 ], inherits the inference protocol of LongLive [ 33 ], and extends the backbone with our semantic injection and adaptive memory design. SWIFT is compatible with autoregressive video diffusion models that expose reusable attention memory value cache and support blockwise causal rollout. 
+
+Evaluation protocol. Following the same setting as LongLive [ 33 ] and Self-Forcing [ 9], we use Qwen2-72B-Instruct [ 32 ] to generate the switched-prompt dataset. Each script set contains 6 consecutive 10-second cue sequences, for a total of 100 videos. Each video lasts 60 seconds. We use VBench-Long [ 10 ] to evaluate the visual quality of all generated videos, focusing on image quality, subject consistency and aesthetics, to compare long-range consistency and visual effects in terms of subject, background and visual aesthetics. For semantic alignment evaluation under sequential prompt control, each generated video is partitioned into 10-second segments according to the prompt schedule, and the CLIP [ 21 ] score is computed between each segment and its corresponding prompt. 
+
+Baselines. We compare SWIFT with several representative state-of-the-art long video generation methods under prompt switching at inference time. The compared methods include MemFlow [11], FramePack [ 40 ], Self Forcing [ 9], CausVid [ 35 ], and LongLive [ 33 ]. Each script contains 6 con-secutive 10-second prompts, yielding 100 generated videos totaling 60 seconds each. Appendix C provides detailed information on SWIFT settings. 
+
+4.2 Multi-prompt Generation Results 
+
+We first compare SWIFT with representative existing methods under the multi-prompt setting to evaluate its performance on long-horizon interactive video generation. 6Table 1: CLIP score and FPS comparison under the multi-prompt 60-second setting. CLIP scores are computed at prompt-aligned intervals. 
+
+Method #Params Throughput (FPS) ↑
+
+CLIP Score ↑
+
+0–10 s 10–20 s 20–30 s 30–40 s 40–50 s 50–60 s MemFlow [11] 1.3B 18.7 26.29 24.64 23.85 23.53 24.27 23.73 Self Forcing [9] 1.3B 17.0 26.24 24.87 23.46 21.92 22.05 21.07 LongLive [33] 1.3B 20.7 26.63 25.47 24.65 23.69 24.52 23.61 CausVid [35] 1.3B 17.0 26.55 24.93 23.82 22.74 23.16 22.68 FramePack [40] 13B 6.7 26.51 22.60 22.18 21.53 21.98 21.62 
+
+SWIFT 1.3B 22.6 26.53 25.86 24.71 24.04 24.68 24.13 
+
+Table 2: Quantitative comparison under multi-prompt 60-second setting with representative long video generation models.                                            
+
+> Method Resolution Aesthetic Quality ↑
+> Background Consistency ↑
+> Imaging Quality ↑
+> Motion Smoothness ↑
+> Subject Consistency ↑
+> Temporal Flickering ↑
+> MemFlow [11] 832 ×480 60.02 96.21 71.69 98.83 97.63 97.67 Self Forcing [9] 832 ×480 58.45 95.74 71.33 98.56 95.35 97.52 LongLive [33] 832 ×480 59.89 96.05 71.74 99.14 97.32 98.46
+> CausVid [35] 832 ×480 59.77 95.42 71.73 99.02 96.15 98.02 FramePack [40] 832 ×480 59.68 96.77 71.71 98.87 97.86 97.41
+> SWIFT 832 ×480 60.23 96.28 72.32 99.19 97.34 98.35
+
+Text-video alignment and efficiency. Table 1 further reports clip-wise CLIP scores and inference throughput. SWIFT achieves the highest CLIP scores in five out of six prompt intervals and remains very close to the best result in the first interval, showing consistently stronger semantic alignment immediately after prompt transitions. The semantic injection cache enables SWIFT to reliably sustain strong prompt alignment throughout successive prompt changes by continuously correcting residual semantics in historical memory. At the same time, SWIFT reaches the highest throughput of 22.6 FPS, outperforming LongLive at 20.7 FPS and substantially exceeding the other baselines. 
+
+Video quality. Visual quality is comprehensively evaluated using multiple metrics from VBench [ 10 ], including aesthetic quality, background consistency, imaging quality, motion smoothness, subject consistency, and temporal flickering. These metrics provide a broad assessment of visual fidelity, long range coherence, and temporal stability in generated videos. As shown in Table 2, SWIFT delivers strong overall visual quality under the multi-prompt setting. It achieves the best results in aesthetic quality, imaging quality, and motion smoothness, while remaining competitive in background consistency, subject consistency, and temporal flickering. These results indicate that SWIFT improves visual fidelity and temporal stability without compromising long-range consistency. We attribute this improvement to the proposed memory design, which facilitates semantic transitions while retaining useful historical context. The results demonstrate that SWIFT improves prompt-following ability under sequential prompt control while also providing higher inference efficiency. 
+
+4.3 Ablation Studies 
+
+We conduct ablation studies on the two core components of the framework, namely the Semantic Injection Cache and the Adaptive Dynamic Window, under the 60-second interactive multi-prompt video generation setting with six consecutive prompts. 
+
+Memory Variants. Specifically, variants with different memory mechanisms are constructed based on the design in Section 3.1. No-Memory removes the proposed memory augmentation and performs generation without additional transition-aware memory. Sink retains only the sink memory for long-range context preservation. Sink+SIC further introduces the Semantic Injection Cache on top of sink memory to support semantic adaptation across prompt transitions. 
+
+Window Variants. Following the design in Section 3.2, we further compare different cache capacity strategies. Here, Fixed uses a constant static local window with size 12 throughout the entire generation process, without adaptive adjustment across prompt phases. Empirical results across 7Table 3: Ablation study under the multi-prompt 60-second setting . The CLIP score is computed at intervals aligned with the prompt switching. 
+
+Variant Quality Score ↑
+
+Consistency Score ↑
+
+Throughput (FPS) ↑
+
+CLIP Score ↑
+
+0–10 s 10–20 s 20–30 s 30–40 s 40–50 s 50–60 s No-Memory 80.94 90.87 25.1 24.83 22.74 21.68 21.35 21.12 20.94 Sink 82.19 92.52 24.5 25.58 23.40 22.45 22.67 22.59 22.82 Sink+SIC 84.26 95.74 20.5 26.11 25.12 23.98 23.77 23.95 23.84 Fixed 83.71 94.96 20.9 26.67 24.96 23.81 23.58 23.64 23.42 
+
+SWIFT 84.97 96.62 22.6 26.53 25.86 24.71 24.04 24.68 24.13 Fixed 
+
+> No-Memory
+> Ours
+> Sink
+> Sink+SIC
+
+Figure 4: Qualitative comparison of different memory variants under the multi-prompt 60-second setting. Fixed uses a constant local window. No-Memory removes additional transition-aware memory. Sink retains only sink memory. Sink+SIC adds the Semantic Injection Cache on top of sink memory. Ours denotes the full SWIFT model, which achieves more coherent prompt transitions and better long-range visual consistency. all variants collectively underscore the necessity of our integrated memory design in effectively mitigating semantic drift while preserving long-range structural integrity. Table 3 reports inference throughput together with clip-wise CLIP scores over all six prompt intervals. The full SWIFT achieves the strongest overall semantic alignment performance, which further verifies the effectiveness of combining Semantic Injection Cache with adaptive temporal memory allocation for sustained prompt following under long-horizon multi-prompt generation. High throughput in No-Memory and Sink is offset by significant degradation in video quality and consistency metrics. Such performance gaps underscore the insufficiency of raw efficiency for sustaining coherent multi-prompt generation over long horizons. Meanwhile, Sink+SIC yields performance competitive with SWIFT in visual metrics but exhibits a trade-off through noticeably lower inference throughput. Compared with Fixed , SWIFT achieves higher throughput and better overall generation quality, showing the advantage of adaptive temporal memory allocation over a constant window strategy. As shown in Figure 4, across the visualized frame sequences, the full SWIFT produces more coherent semantic transitions and more stable long-range visual continuation than the ablated variants. This highlights the importance of coupling semantic memory refinement with phase-aware temporal allocation in multi-prompt long-video generation. 84 5 6 7 8 9                  
+
+> Wmin
+> 0.960
+> 0.970
+> 0.980
+> 0.990
+> Score
+> 12 14 16 18 20 22
+> τpost
+> 0.960
+> 0.970
+> 0.980
+> 0.990
+> 456789
+> τpre
+> 0.960
+> 0.970
+> 0.980
+> 0.990
+> 0.2 0.25 0.3 0.35 0.4 0.45
+> α
+> 0.960
+> 0.970
+> 0.980
+> 0.990
+> 0.700
+> 0.705
+> 0.710
+> 0.715
+> 0.720
+> 0.725
+> 0.730
+> 0.700
+> 0.705
+> 0.710
+> 0.715
+> 0.720
+> 0.725
+> 0.730
+> 0.700
+> 0.705
+> 0.710
+> 0.715
+> 0.720
+> 0.725
+> 0.730
+> 0.700
+> 0.705
+> 0.710
+> 0.715
+> 0.720
+> 0.725
+> 0.730
+> Imaging Quality
+> Subject Consistency Motion Smoothness Temporal Flickering Imaging Quality
+
+Figure 5: Sensitivity analysis of the adaptive dynamic window. The figure reports the variation of representative visual quality metrics under different hyperparameter settings of the adaptive window, including the minimum window size and the phase scheduling factors. 
+
+4.4 Sensitivity Analysis 
+
+Long-horizon video generation requires the model to balance temporal coherence and computational efficiency under constrained attention budgets [ 17 , 16 ]. Sensitivity analyses are conducted on key hyperparameters of both the Semantic Injection Cache and the Adaptive Dynamic Window, described in Section 3.1 and Section 3.2, respectively. All other hyperparameters remain the same as the default settings. Figure 5 illustrates the sensitivity of representative visual quality metrics to adaptive window hyperparameter settings, including the minimum window size and the phase scheduling factors. 
+
+Minimum window size Wmin . The minimum window size Wmin determines the lower bound of the temporal read budget in stable prompt phases. Its value affects the trade-off between inference efficiency and local temporal context preservation. A very small Wmin leads to clear degradation in generation quality, while an excessively large Wmin reduces the efficiency gain of adaptive memory allocation and yields limited additional benefit. 
+
+Phase scheduling factors τpost and τpre . The parameters τpost and τpre control how fast the temporal window shrinks after a prompt switch and how early it expands before the next boundary. Across a broad range of τpost and τpre values, the visual quality metrics remain largely stable, indicating that SWIFT is robust to moderate changes in phase scheduling. The result indicates that effective multi-prompt generation can be maintained without highly sensitive hyperparameter tuning. 
+
+Semantic mixing coefficient α. The coefficient α controls the balance between visual memory and semantic identity in the segment-level semantic anchor. Across different α values, the representative quality metrics remain consistently stable. The stable trend across different α values shows that the segment anchor can maintain an effective balance between semantic identity and visual memory over a broad mixing range. These trends motivate the default setting by favoring stable quality under a reduced average memory budget. 
+
+4.5 Additional Experiments 
+
+Appendix E.1 further analyzes the temporal injection pattern of Semantic Injection Cache by compar-ing one-shot injection at prompt boundaries, continuously decayed injection, and constant injection throughout generation. Per-block efficiency traces are provided in Appendix E.2 to examine latency, memory read budget, and GPU memory usage across prompt-switch boundaries and stable genera-tion segments. We further discuss multi-prompt video generation under different video lengths in Appendix E.3 to evaluate the scalability of SWIFT across varying temporal horizons. 
+
+5 Conclusion 
+
+In this work, we introduce SWIFT, a training-free memory framework for efficient multi prompt long video generation. SWIFT enables prompt transitions through lightweight semantic injection instead of repeated cache reconstruction. Semantic Injection Cache updates historical video memory with transition-aware prompt signals and preserves motion continuity and scene structure. Adaptive Dynamic Window allocates temporal memory according to prompt phase, using larger context around prompt switches and compact context during stable generation. Segment-level semantic anchors preserve long range prompt conditioned history under reduced local attention. The proposed design avoids expensive full memory rebuilding and provides a more practical path toward scalable interactive long video generation. Extensive experiments show that SWIFT improves prompt responsiveness, temporal coherence, and visual quality under sequential prompt control, and achieves 22.6 FPS on a single H100 GPU in the multi-prompt setting. 9References 
+
+[1] T. Brooks, J. Hellsten, M. Aittala, T.-C. Wang, T. Aila, J. Lehtinen, M.-Y. Liu, A. Efros, and T. Karras. Generating long videos of dynamic scenes. Advances in Neural Information Processing Systems , 35:31769–31781, 2022. [2] M. Cai, X. Cun, X. Li, W. Liu, Z. Zhang, Y. Zhang, Y. Shan, and X. Yue. Ditctrl: Exploring attention control in multi-modal diffusion transformer for tuning-free multi-prompt longer video generation. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 7763–7772, 2025. [3] S. Cai, C. Yang, L. Zhang, Y. Guo, J. Xiao, Z. Yang, Y. Xu, Z. Yang, A. Yuille, L. Guibas, et al. Mixture of contexts for long video generation. arXiv preprint arXiv:2508.21058 , 2025. [4] J. Cui, J. Wu, M. Li, T. Yang, X. Li, R. Wang, A. Bai, Y. Ban, and C.-J. Hsieh. Self-forcing++: Towards minute-scale high-quality video generation. In The Fourteenth International Confer-ence on Learning Representations , 2026. [5] W. Feng, C. Liu, S. Liu, W. Y. Wang, A. Vahdat, and W. Nie. Blobgen-vid: Compositional text-to-video generation with blob video representations. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 12989–12998, 2025. [6] K. Gao, J. Shi, H. Zhang, C. Wang, J. Xiao, and L. Chen. Ca2-vdm: Efficient autoregressive video diffusion model with causal generation and cache sharing. In International Conference on Machine Learning , pages 18550–18565. PMLR, 2025. [7] Y. Gu, W. Mao, and M. Z. Shou. Long-context autoregressive video modeling with next-frame prediction. arXiv preprint arXiv:2503.19325 , 2025. [8] Y. He, T. Yang, Y. Zhang, Y. Shan, and Q. Chen. Latent video diffusion models for high-fidelity long video generation. arXiv preprint arXiv:2211.13221 , 2022. [9] X. Huang, Z. Li, G. He, M. Zhou, and E. Shechtman. Self forcing: Bridging the train-test gap in autoregressive video diffusion. arXiv preprint arXiv:2506.08009 , 2025. [10] Z. Huang, Y. He, J. Yu, F. Zhang, C. Si, Y. Jiang, Y. Zhang, T. Wu, Q. Jin, N. Chanpaisit, et al. Vbench: Comprehensive benchmark suite for video generative models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 21807–21818, 2024. [11] S. Ji, X. Chen, S. Yang, X. Tao, P. Wan, and H. Zhao. Memflow: Flowing adaptive memory for consistent and efficient long video narratives. arXiv preprint arXiv:2512.14699 , 2025. [12] X. Ju, W. Ye, Q. Liu, Q. Wang, X. Wang, P. Wan, D. Zhang, K. Gai, and Q. Xu. Fulldit: Multi-task video generative foundation model with full attention. arXiv preprint arXiv:2503.19907 ,2025. [13] J. Kim, J. Kang, J. Choi, and B. Han. Fifo-diffusion: Generating infinite videos from text without training. Advances in Neural Information Processing Systems , 37:89834–89868, 2024. [14] S. Kim, S. W. Oh, J.-H. Wang, J.-Y. Lee, and J. Shin. Tuning-free multi-event long video generation via synchronized coupled sampling. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 6418–6429, 2025. [15] T. Lee, S. Kwon, and T. Kim. Grid diffusion models for text-to-video generation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 8734–8743, 2024. [16] R. Li, T. Yang, F. Ai, T. Wu, S. Wen, B. Peng, and L. Zhang. Long-horizon streaming video generation via hybrid attention with decoupled distillation. arXiv preprint arXiv:2604.10103 ,2026. [17] Z. Li, H. Rahmani, Q. Ke, and J. Liu. Longdiff: Training-free long video generation in one go. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,pages 17789–17798, 2025. 10 [18] S. Lin, C. Yang, H. He, J. Jiang, Y. Ren, X. Xia, Y. Zhao, X. Xiao, and L. Jiang. Autoregressive adversarial post-training for real-time interactive video generation. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2026. [19] Z. Liu, X. Deng, S. Chen, A. Wang, Q. Guo, M. Han, Z. Xue, M. Chen, P. Luo, and L. Yang. Worldweaver: Generating long-horizon video worlds via rich perception. arXiv preprint arXiv:2508.15720 , 2025. [20] Z. Qing, S. Zhang, J. Wang, X. Wang, Y. Wei, Y. Zhang, C. Gao, and N. Sang. Hierarchical spatio-temporal decoupling for text-to-video generation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 6635–6645, 2024. [21] A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark, et al. Learning transferable visual models from natural language supervision. In International conference on machine learning , pages 8748–8763. PmLR, 2021. [22] K. Song, B. Chen, M. Simchowitz, Y. Du, R. Tedrake, and V. Sitzmann. History-guided video diffusion. arXiv preprint arXiv:2502.06764 , 2025. [23] Y. Tian, L. Yang, H. Yang, Y. Gao, Y. Deng, J. Chen, X. Wang, Z. Yu, X. Tao, P. Wan, et al. Videotetris: Towards compositional text-to-video generation. Advances in Neural Information Processing Systems , 37:29489–29513, 2024. [24] R. Villegas, M. Babaeizadeh, P.-J. Kindermans, H. Moraldo, H. Zhang, M. T. Saffar, S. Castro, J. Kunze, and D. Erhan. Phenaki: Variable length video generation from open domain textual description. arXiv preprint arXiv:2210.02399 , 2022. [25] T. Wan, A. Wang, B. Ai, B. Wen, C. Mao, C.-W. Xie, D. Chen, F. Yu, H. Zhao, J. Yang, et al. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 ,2025. [26] H. Wang, C.-Y. Ma, Y.-C. Liu, J. Hou, T. Xu, J. Wang, F. Juefei-Xu, Y. Luo, P. Zhang, T. Hou, et al. Lingen: Towards high-resolution minute-length text-to-video generation with linear computational complexity. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 2578–2588, 2025. [27] T. Wu, S. Yang, R. Po, Y. Xu, Z. Liu, D. Lin, and G. Wetzstein. Video world models with long-term spatial memory. arXiv preprint arXiv:2506.05284 , 2025. [28] Z. Wu, A. Siarohin, W. Menapace, I. Skorokhodov, Y. Fang, V. Chordia, I. Gilitschenski, and S. Tulyakov. Mind the time: Temporally-controlled multi-event video generation. In 
+
+Proceedings of the Computer Vision and Pattern Recognition Conference , pages 23989–24000, 2025. [29] H. Xi, S. Yang, Y. Zhao, C. Xu, M. Li, X. Li, Y. Lin, H. Cai, J. Zhang, D. Li, et al. Sparse video-gen: Accelerating video diffusion transformers with spatial-temporal sparsity. In International Conference on Machine Learning , pages 68208–68224. PMLR, 2025. [30] D. Xie, Z. Xu, Y. Hong, H. Tan, D. Liu, F. Liu, A. Kaufman, and Y. Zhou. Progressive autoregressive video diffusion models. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 6322–6332, 2025. [31] F. Xie, D. Zeng, Q. Shen, and B. Tang. A comprehensive survey on text-to-video generation. 
+
+Chinese Journal of Electronics , 34(4):1009–1036, 2025. [32] A. Yang, B. Yang, B. Hui, B. Zheng, B. Yu, C. Zhou, C. Li, C. Li, D. Liu, F. Huang, G. Dong, H. Wei, H. Lin, J. Tang, J. Wang, J. Yang, J. Tu, J. Zhang, J. Ma, J. Yang, J. Xu, J. Zhou, J. Bai, J. He, J. Lin, K. Dang, K. Lu, K. Chen, K. Yang, M. Li, M. Xue, N. Ni, P. Zhang, P. Wang, R. Peng, R. Men, R. Gao, R. Lin, S. Wang, S. Bai, S. Tan, T. Zhu, T. Li, T. Liu, W. Ge, X. Deng, X. Zhou, X. Ren, X. Zhang, X. Wei, X. Ren, X. Liu, Y. Fan, Y. Yao, Y. Zhang, Y. Wan, Y. Chu, Y. Liu, Z. Cui, Z. Zhang, Z. Guo, and Z. Fan. Qwen2 technical report, 2024. 11 [33] S. Yang, W. Huang, R. Chu, Y. Xiao, Y. Zhao, X. Wang, M. Li, E. Xie, Y.-C. Chen, Y. Lu, S. Han, and Y. Chen. Longlive: Real-time interactive long video generation. In The Fourteenth International Conference on Learning Representations , 2026. [34] T. Yin, M. Gharbi, R. Zhang, E. Shechtman, F. Durand, W. T. Freeman, and T. Park. One-step diffusion with distribution matching distillation. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 6613–6623, 2024. [35] T. Yin, Q. Zhang, R. Zhang, W. T. Freeman, F. Durand, E. Shechtman, and X. Huang. From slow bidirectional to fast autoregressive video diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 22963–22974, 2025. [36] Z. Yin, K. Chen, X. Bai, R. Jiang, J. Li, H. Li, J. Liu, Y. Xiang, J. Yu, and M. Zhang. A survey: spatiotemporal consistency in video generation. ACM Computing Surveys , 2025. [37] J. Yu, J. Bai, Y. Qin, Q. Liu, X. Wang, P. Wan, D. Zhang, and X. Liu. Context as memory: Scene-consistent interactive long video generation with memory retrieval. In Proceedings of the SIGGRAPH Asia 2025 Conference Papers , pages 1–11, 2025. [38] Z. Yuan, Y. Liu, Y. Cao, W. Sun, H. Jia, R. Chen, Z. Li, B. Lin, L. Yuan, L. He, et al. Mora: Enabling generalist video generation via a multi-agent framework. arXiv preprint arXiv:2403.13248 , 2024. [39] K. Zhang, L. Jiang, A. Wang, J. Z. Fang, T. Zhi, Q. Yan, H. Kang, X. Lu, and X. Pan. Storymem: Multi-shot long video storytelling with memory. arXiv preprint arXiv:2512.19539 , 2025. [40] L. Zhang, S. Cai, M. Li, G. Wetzstein, and M. Agrawala. Frame context packing and drift pre-vention in next-frame-prediction video diffusion models. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [41] P. Zhang, Y. Chen, R. Su, H. Ding, I. Stoica, Z. Liu, and H. Zhang. Fast video generation with sliding tile attention. In International Conference on Machine Learning , pages 74714–74731. PMLR, 2025. [42] S. Zhou, P. Yang, J. Wang, Y. Luo, and C. C. Loy. Upscale-a-video: Temporal-consistent diffu-sion model for real-world video super-resolution. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 2535–2545, 2024. [43] Y. Zhou, D. Zhou, M.-M. Cheng, J. Feng, and Q. Hou. Storydiffusion: Consistent self-attention for long-range image and video generation. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. [44] T. Zhu, S. Zhang, Z. Sun, J. Tian, and Y. Tang. Memorize-and-generate: Towards long-term consistency in real-time video generation. arXiv preprint arXiv:2512.18741 , 2025. 12 A Use of Large Language Models 
+
+Large language models were used only as auxiliary writing tools during the preparation of this manuscript. Their use was limited to improving grammar, readability, and stylistic consistency of author-written text. They were not used to formulate the research idea, design the method, conduct experiments, analyze results, or derive conclusions. All technical content, experimental settings, reported results, and interpretations were produced and checked by the authors. The authors remain fully responsible for the correctness, integrity, and final content of the manuscript. 
+
+B Broader Impacts 
+
+SWIFT improves efficient and controllable long-video generation. This capability can support film production, digital content creation, education, and interactive media. The training-free design also reduces extra training cost and lowers the barrier for adapting long-video generators to sequential user prompts. The same capability may also increase risks from synthetic media. Possible misuse includes mis-leading video generation, impersonation, and harmful content creation. These risks are shared by many generative video systems. Responsible deployment should include watermarking, provenance tracking, content moderation, and user-facing disclosure. SWIFT is an inference-time method and does not introduce new training data or personal data collection. All text prompts used to generate reasoning were generated by Qwen2-72B-Instruct [ 32 ], and are harmless, safe, and intended for academic research purposes only. 
+
+C Detailed Experimental Setup 
+
+C.1 Compute Resources 
+
+SWIFT is an inference-time framework and requires no additional training for deployment on autoregressive diffusion video generation models. All experiments in this paper are conducted on a single H100 GPU with 80GB memory for inference, which does not impose a high computational requirement in the context of long-video generation. 
+
+C.2 SWIFT Settings Autoregressive generation. All experiments follow the autoregressive inference protocol of LongLive with Wan2.1-T2V-1.3B as the backbone. Each video is generated block by block with B = 3 frames per block and T = 240 output frames in total. The multi-prompt schedule contains six prompt segments, with switching boundaries at S = {40 , 80 , 120 , 160 , 200 }.
+
+Diffusion inference. The denoising process uses four inference steps, D = {1000 , 750 , 500 , 250 },with warped denoising enabled. The timestep shift of the backbone diffusion model is fixed to 
+
+λts = 5 .0 for all experiments. 
+
+Memory configuration. The persistent sink size is set to Nsink = 3 , and the maximum local attention window is set to Wmax = 12 , corresponding to the local_attn_size used in the implementation. For the adaptive dynamic window, we use Wmin = 7 , τpost = 18 , and τpre = 9 , while the fixed-window ablation uses W = 12 throughout generation. Segment-level semantic anchors are enabled by default: the visual summary for each completed segment is computed from the most recent 
+
+Ranchor = 6 frames, and at most Manchor = 4 historical anchors are retained. The semantic mixing coefficient is set to α = 0 .35 , and the anchor injection scale is set to γanchor = 0 .8. At each switching boundary sm ∈ S , the Semantic Injection Cache constructs transient bridge tokens from ∆p(m) 
+
+> ⊥
+
+,which are inserted into memory and decayed during subsequent generation steps. The semantic bridge decay factor is set to λ = 0 .85 
+
+13 Algorithm 1: Semantic Injection Cache 
+
+Input :Previous prompt signature p(m−1) ,current prompt signature p(m); value cache of the current layer; recent summary r; sink summary s
+
+Output : Transient semantic bridge entries Bs
+
+and Br 
+
+> 1
+
+∆p(m) ← Eq. (1)  
+
+> 2
+
+ρ(m) ← Eq. (2)  
+
+> 3
+
+for each layer do  
+
+> 4
+
+Estimate local motion direction m from value cache  
+
+> 5
+
+∆p(m) 
+
+> ⊥
+
+← Eq. (5)  
+
+> 6
+
+Extract recent summary r and sink summary 
+
+s 
+
+> 7
+
+for each head do  
+
+> 8
+
+(gr , g s) ← Eq. (6)  
+
+> 9
+
+(Br , B s) ← Eq. (7)  
+
+> 10
+
+Append Bs and Br as transient semantic entries  
+
+> 11
+
+Read from sink memory, segment anchors, bridge entries, and local window  
+
+> 12
+
+return Bs, B r
+
+Algorithm 2: Adaptive Dynamic Window 
+
+Input :Current block position t; active segment start sm; next switch boundary 
+
+sm+1 ; window limits Wmin , W max ;recent value summary u(m); prompt signature p(m)
+
+Output : Adaptive window size Wt and segment anchor A(m) 
+
+> 1
+
+Determine active prompt segment for t 
+
+> 2
+
+at ← max(0 , t − sm) 
+
+> 3
+
+Compute distance dt to next switch boundary 
+
+sm+1  
+
+> 4
+
+Compute wpost (t) and wpre (t) 
+
+> 5
+
+wt ← Eq. (11)  
+
+> 6
+
+Wt ← Eq. (12)  
+
+> 7
+
+Select effective local window according to Wt 
+
+> 8
+
+if current prompt segment ends then  
+
+> 9
+
+Summarize recent value cache as u(m) 
+
+> 10
+
+A(m) ← Eq. (13)  
+
+> 11
+
+Append A(m) into structured memory  
+
+> 12
+
+Read from sink memory, bridge entries, anchors, and adaptive local window  
+
+> 13
+
+return Wt, A (m)
+
+C.3 Baselines 
+
+We compare SWIFT with several state-of-the-art inference-time methods for interactive long-video generation. For a fair comparison, all baseline hyperparameters are kept consistent with the default configurations reported in their original papers. 
+
+MemFlow [11 ] is a dynamic memory-retrieval framework for efficient long-context video generation. It retrieves prompt-relevant historical frames to update the memory bank before each generation chunk, and activates only the most relevant memory tokens during attention, thereby enabling consistent long-video generation with limited computational overhead. 
+
+FramePack [ 40 ] is a context-packing framework designed for efficient long video generation that optimizes computational throughput and memory usage by packing multiple video frames into a unified context representation. 
+
+CausVid [35 ] is a causal autoregressive video diffusion framework for fast streaming generation. It converts a pretrained bidirectional diffusion transformer into an autoregressive generator and applies video distribution matching distillation to obtain a few-step causal student. 
+
+Self-Forcing [ 9] is an autoregressive video diffusion training paradigm that mitigates the exposure bias (train-test gap) by training the model on its own generated outputs using key-value (KV) caching and holistic video-level supervision. 
+
+LongLive [ 33 ] is a real-time interactive video generation framework that introduces a KV-recache 
+
+mechanism to recalculate cached states during prompt transitions, ensuring semantic adherence to new instructions while preserving temporal motion continuity. 
+
+D Proof of Theorem 1 
+
+This appendix provides the full proof of Theorem 1. We first formalize the local cache response model used to define motion-neutral semantic injection, and then derive the closed-form projection as the locally optimal prompt-preserving update. 
+
+D.1 Setup and Assumptions 
+
+Let H be the Hilbert space of value-cache representations, equipped with inner product ⟨· , ·⟩ and induced norm ∥ · ∥ 2. During autoregressive generation, the cached video representation evolves as 
+
+v1, v 2, . . . , v t ∈ H . (14) 14 At a prompt switch from segment m − 1 to segment m, the projected prompt displacement is 
+
+∆p(m) = p(m) − p(m−1) ∈ H . (15) The local cache tangent is estimated from consecutive value-cache summaries: 
+
+m = vt − vt−1, m̸ = 0 . (16) 
+
+Local cache tangent. We assume the cache trajectory is locally first-order smooth around the current state. For a small temporal step ∆t, this gives 
+
+vt = vt−1 + ˙ vt−1∆t + O(∆ t2). (17) Thus, m = vt − vt−1 provides a finite-difference estimate of the dominant local tangent direction of short-term cache dynamics. We denote the corresponding motion tangent subspace by 
+
+Tt = span {m}, (18) and its orthogonal complement by 
+
+Nt = T ⊥ 
+
+> t
+
+= {z ∈ H : ⟨z, m ⟩ = 0 }. (19) 
+
+First-order motion response. For a small semantic injection vt 7 → vt + η∆x, its tangential effect on the local cache trajectory is measured by the projection onto Tt. The orthogonal projection onto 
+
+Tt is 
+
+ΠTt (z) = ⟨z, m ⟩∥m∥22
+
+m. (20) Therefore, the first-order tangential variation caused by the injection is 
+
+ΠTt (vt + η∆x) − ΠTt (vt) = ηΠTt (∆ x)= η ⟨∆x, m ⟩∥m∥22
+
+m. (21) Its magnitude is proportional to |⟨ ∆x, m ⟩| . Hence, an update does not perturb the local motion tangent to first order if and only if 
+
+ΠTt (∆ x) = 0 ⇐⇒ ⟨∆x, m ⟩ = 0 . (22) This defines the admissible motion-neutral subspace Nt.
+
+Prompt-preserving semantic injection. The raw prompt displacement ∆p(m) represents the desired semantic change at the prompt boundary. Since only updates in Nt are motion-neutral to first order, the injected semantic update should retain as much of ∆p(m) as possible while remaining in 
+
+Nt. This leads to the minimum-distortion problem 
+
+∆p(m) 
+
+> ⊥
+
+= arg min  
+
+> ∆x∈H
+
+∥∆x − ∆p(m)∥22 s.t. ⟨∆x, m ⟩ = 0 . (23) Equivalently, the solution is the motion-neutral component of ∆p(m) that maximally preserves the prompt displacement under the first-order motion-neutrality constraint. 
+
+D.2 Proof 
+
+Proof of Theorem 1. For compactness, denote 
+
+q := ∆ p(m). (24) The feasible set of Eq. (23) is 
+
+C := {z ∈ H : ⟨z, m ⟩ = 0 } = Nt = m⊥. (25) Since m̸ = 0 , C is a closed linear subspace of the Hilbert space H. By the Hilbert projection theorem, every q ∈ H admits a unique closest point in C. Hence the minimizer of Eq. (23) exists and is unique, and is the orthogonal projection of q onto C.15 It remains to compute this projection. Since 
+
+C⊥ = span {m}, (26) there exists a unique orthogonal decomposition 
+
+q = z⊥ + αm, z⊥ ∈ C , αm ∈ C ⊥. (27) Taking the inner product of Eq. (27) with m gives 
+
+⟨q, m ⟩ = ⟨z⊥, m ⟩ + α∥m∥22. (28) Because z⊥ ∈ C , we have ⟨z⊥, m ⟩ = 0 . Therefore, 
+
+α = ⟨q, m ⟩∥m∥22
+
+. (29) Substituting this value back into Eq. (27) yields 
+
+z⊥ = q − ⟨q, m ⟩∥m∥22
+
+m. (30) Returning to q = ∆ p(m), we obtain 
+
+∆p(m) 
+
+> ⊥
+
+= ∆ p(m) − ⟨∆p(m), m ⟩∥m∥22
+
+m. (31) We next verify the minimum-distortion optimality. For any feasible ∆x ∈ C , since q − z⊥ ∈ C ⊥ and 
+
+∆x − z⊥ ∈ C , the two terms are orthogonal: 
+
+⟨∆x − z⊥, q − z⊥⟩ = 0 . (32) Hence the Pythagorean identity gives 
+
+∥∆x − q∥22 = ∥(∆ x − z⊥) − (q − z⊥)∥22
+
+= ∥∆x − z⊥∥22 + ∥q − z⊥∥22
+
+≥ ∥ q − z⊥∥22.
+
+(33) Equality holds if and only if ∆x = z⊥. Therefore, z⊥ is the unique minimum-distortion update satisfying ⟨∆x, m ⟩ = 0 .Finally, we show that the same solution also maximally preserves the prompt transition within the motion-neutral subspace. For any ∆x ∈ C , using q = z⊥ + αm and ⟨∆x, m ⟩ = 0 , we have 
+
+⟨∆x, q ⟩ = ⟨∆x, z ⊥⟩. (34) Thus, by the Cauchy–Schwarz inequality, any motion-neutral update with no larger energy than z⊥
+
+satisfies 
+
+⟨∆x, q ⟩ = ⟨∆x, z ⊥⟩ ≤ ∥ ∆x∥2∥z⊥∥2 ≤ ∥ z⊥∥22 = ⟨z⊥, q ⟩. (35) The upper bound is achieved by ∆x = z⊥. Hence z⊥ = ∆ p(m) 
+
+> ⊥
+
+is not only the closest admissible vector to the raw prompt displacement, but also the locally optimal motion-neutral update that preserves the largest first-order prompt component under the same energy budget. This proves Eq. (31) and completes the proof. 
+
+D.3 Stabilized Implementation 
+
+The exact projection in Eq. (31) requires division by ∥m∥22. When the finite-difference motion estimate has very small magnitude, this denominator may become numerically unstable. We therefore use the stabilized implementation 
+
+c∆p(m) 
+
+> ⊥
+
+= ∆ p(m) − ⟨∆p(m), m ⟩∥m∥22 + ϵ m, ϵ > 0. (36) This update converges to the exact projection as ϵ → 0:
+
+lim 
+
+> ϵ→0
+
+c∆p(m) 
+
+> ⊥
+
+= ∆ p(m) 
+
+> ⊥
+
+. (37) 16 Its residual first-order motion response is 
+
+c∆p(m) 
+
+> ⊥
+
+, m 
+
+
+
+=
+
+
+
+∆p(m) − ⟨∆p(m), m ⟩∥m∥22 + ϵ m, m 
+
+
+
+= ϵ
+
+∥m∥22 + ϵ ⟨∆p(m), m ⟩.
+
+(38) Thus, the stabilized update preserves the same projection principle, approaches exact motion orthogo-nality as ϵ decreases, and avoids numerical amplification when the estimated local motion direction is unreliable. 
+
+E Further Experiments 
+
+This section provides supplementary ablation studies and detailed analyses regarding the architectural components of SWIFT. These evaluations offer further insights into the system’s performance across various interactive generation scenarios. 
+
+E.1 Temporal Injection Patterns 
+
+We investigate the influence of different injection schedules for the Semantic Injection Cache detailed in Section 3.1 by comparing one-shot, continuously decayed, and constant injection modes. Specifi-cally, one-shot injection inserts the full semantic update at the switching boundary without decay, continuously decayed injection denotes the default semantic injection strategy, and constant injection progressively inserts a fixed proportion of the semantic update over time. This analysis quantifies the trade-off between immediate semantic adaptation and the preservation of long-term temporal stability. Experiments are conducted in the multi-prompt setting by generating 100 videos of 60 seconds, and the results are evaluated using VBench [10]. Table 4 shows the quantitative results in terms of aesthetic quality, background consistency, imaging quality, motion smoothness, subject consistency, and temporal flickering. Compared with one-shot injection and constant injection, the continuously decayed injection strategy achieves the best overall visual quality, as it provides sufficient semantic guidance immediately after each prompt transition while gradually reducing the strength of injected bridge tokens in subsequent steps. This design prevents abrupt semantic overwriting caused by constant injection and avoids the insufficient long-range adaptation of one-shot injection, thereby yielding more coherent subject appearance, smoother motion, and reduced temporal flickering across prompt switches. Table 5 reports the segment-wise CLIP scores under different temporal injection schedules. The results show that continuously decayed injection maintains stronger prompt alignment after semantic transitions, indicating that gradual decay enables more effective semantic adaptation than one-shot or constant injection. Figure 6 presents representative generated frames for the one-shot, constant, and continuously decayed injection schedules under the same multi-prompt sequence. Table 4: Quantitative comparison under multi-prompt 60-second setting with different injection schedules for the Semantic Injection Cache detailed in Section 3.1, including one-shot, continuously decayed, and constant injection modes.                    
+
+> Injection Schedule Aesthetic Quality ↑
+> Background Consistency ↑
+> Imaging Quality ↑
+> Motion Smoothness ↑
+> Subject Consistency ↑
+> Temporal Flickering ↑
+> One-shot Injection 59.96 96.01 71.61 99.06 97.03 98.28 Constant Injection 60.03 95.95 71.59 99.09 96.91 98.31 Continuously Decayed Injection 60.23 96.28 72.32 99.19 97.34 98.35
+
+E.2 Per Block Efficiency Trace 
+
+We further analyze the runtime behavior of SWIFT at the autoregressive block level. The profiler records block latency, effective memory read budget, active window size, allocated GPU memory, and peak allocated GPU memory. Prompt switch boundaries are also logged. These metrics measure 17 Table 5: Quantitative comparison of temporal injection schedules. We evaluate one-shot, constant, and continuously decayed injection under the multi-prompt 60-second setting. The CLIP [ 21 ] score is computed for each 10-second segment according to the corresponding prompt semantics, where continuously decayed injection achieves the best overall alignment across prompt transitions.                    
+
+> Injection Schedule CLIP Score ↑
+> 0–10 s 10–20 s 20–30 s 30–40 s 40–50 s 50–60 s One-shot Injection 26.60 25.42 23.74 23.85 24.18 23.67 Constant Injection 26.32 25.77 23.18 23.76 24.25 23.89 Continuously Decayed Injection 26.53 25.86 24.71 24.04 24.68 24.13 One-shot
+> Constant
+> Injection
+> Continuously
+> Decayed
+
+Figure 6: Qualitative examples of temporal injection schedules. We visualize generated frames from one-shot, constant, and continuously decayed injection under the same multi-prompt sequence. One-shot injection causes abrupt semantic changes, constant injection shows weaker adaptation after prompt switches, and continuously decayed injection provides smoother semantic transitions while preserving temporal consistency. the local cost of semantic transition and the memory budget used during stable rollout. We use an autoregressive generation baseline with a fixed window size and ReCache at prompt boundaries as the comparison setting. Figure 7 shows the efficiency trace per block. SWIFT shows mild latency increases near prompt switch boundaries. The average latency is 132.7 ms, and the average boundary latency is 144.8 ms. The result indicates stable prompt switching without severe runtime spikes. The fixed window reference uses a constant large local window across all blocks. This strategy keeps a high read budget during both transition phases and stable phases. In contrast, SWIFT increases the read budget near prompt boundaries and reduces it during stable segments. The effective read budget averages 15.1K tokens and ranges from 12.5K to 18.7K tokens. GPU memory remains nearly constant, with 17.56 GiB average usage and 18.70 GiB peak usage. The efficiency advantage of SWIFT comes from prompt phase aware memory allocation. A larger window supplies sufficient context for semantic handover near prompt switches. A smaller window reduces redundant attention computation during stable generation. Segment anchors preserve compact long range semantics under the reduced local window. This design improves runtime efficiency over the fixed window setting while retaining stable memory usage. 
+
+E.3 Multi-Prompt Generation with Different Video Lengths 
+
+We further evaluate SWIFT under different generation lengths to examine its scalability in multi-prompt long-video generation. Specifically, we vary the target video duration across 30, 45, 60, 75, and 90 seconds while keeping the six-prompt interactive setting. The prompt switching boundaries are uniformly scaled according to the target duration, and all remaining model configurations, inference hyperparameters, and evaluation protocols are kept unchanged. Table 6 reports the video quality metrics on the VBench benchmark across different generation lengths. Compared with LongLive, SWIFT consistently maintains better overall visual quality across varying temporal horizons, demonstrating the scalability and robustness of the proposed memory 18 0 10 20 30 40 50 60 70                             
+
+> Autoregressive block index
+> 110
+> 115
+> 120
+> 125
+> 130
+> 135
+> 140
+> 145
+> 150
+> Latency (ms) ↓
+> mean=132.7 ms boundary=144.8 ms, +10.4%
+> S0 S1 S2 S3 S4 S5
+> (a) Per-block latency
+> Prompt boundary Adaptive latency MA-3 Fixed (148.94) Prompt boundary Adaptive latency MA-3 Fixed (148.94)
+> 010 20 30 40 50 60 70
+> Autoregressive block index
+> 8
+> 10
+> 12
+> 14
+> 16
+> 18
+> Read tokens (K) / window
+> read=15.1K avg (12.5-18.7K) mem=17.56 GiB avg, peak=18.70 GiB
+> (b) Adaptive memory read budget
+> Adaptive read Active window Fixed (17.16) Alloc. mem. Peak mem. Adaptive read Active window Fixed (17.16) Alloc. mem. Peak mem.
+> 17.6
+> 17.8
+> 18.0
+> 18.2
+> 18.4
+> 18.6
+> GPU memory (GiB)
+
+Figure 7: Per-block efficiency of SWIFT. Gray bands mark prompt-switch boundaries, and dashed lines denote fixed-window references. SWIFT shows only mild latency increases at prompt transitions, while its adaptive memory schedule expands the read budget near boundaries and contracts it in stable segments, with nearly constant GPU memory usage. Table 6: Quantitative comparison under different multi-prompt video lengths. We compare SWIFT with LongLive across 30, 45, 60, 75, and 90 seconds using VBench quality and consistency scores. 
+
+Method 30s 45s 60s 75s 90s 
+
+Quality Score ↑
+
+Consistency Score ↑
+
+Quality Score ↑
+
+Consistency Score ↑
+
+Quality Score ↑
+
+Consistency Score ↑
+
+Quality Score ↑
+
+Consistency Score ↑
+
+Quality Score ↑
+
+Consistency Score ↑
+
+LongLive [33] 83.64 96.08 83.76 96.31 83.88 96.48 84.47 96.56 84.58 96.67 
+
+SWIFT 84.72 96.43 84.83 96.51 84.97 96.62 85.01 96.74 85.06 96.89 
+
+mechanism for multi-prompt long-video generation. Figure 8 shows representative frames from the 30-second six-prompt setting, where SWIFT preserves the main subject and interaction structure more consistently across prompt transitions. Under the shorter 30-second generation setting, rapid semantic injection enables SWIFT to respond more effectively to dense prompt switches while maintaining coherent subject appearance and scene continuity. SWIFT 
+
+LongLive 
+
+Figure 8: Qualitative example of 30-second multi-prompt video generation. We visualize representative frames generated by SWIFT and LongLive under the same six-prompt sequence. 
+
+E.4 Case Study 
+
+We present additional qualitative results in Figure 9 and Figure 10 to illustrate the videos generated by SWIFT from multi-prompt inputs. These examples show that SWIFT can follow sequential prompt changes while preserving coherent visual progression across long video generation. 
+
+F Limitation Analysis 
+
+SWIFT is a training-free inference-time framework built upon a pretrained causal video diffusion backbone. Its generation quality therefore remains bounded by the visual fidelity, motion prior, and instruction-following ability of the underlying base model. SWIFT improves semantic transition and memory utilization through lightweight cache injection and prompt-phase adaptive memory allocation, but it does not introduce new visual concepts or correct intrinsic failure modes of the 19 A dog groomer is giving a large, fluffy poodle a bath in a professional grooming salon. The poodle is covered in soap 
+
+suds. The salon is clean and filled with grooming tools. 
+
+The dog groomer bathing the poodle in the grooming salon is assisted by a new trainee, who is nervously holding the 
+
+spray nozzle. The poodle looks unimpressed by the situation. 
+
+The dog groomer and the new trainee work together in the grooming salon. The groomer patiently shows the trainee 
+
+the best way to rinse the soap from the poodle's thick fur. The poodle stands patiently. 
+
+The dog groomer in the grooming salon lets the trainee try blow-drying the poodle. The trainee cautiously holds the 
+
+dryer while the groomer uses a brush to fluff the poodle's fur. The salon is filled with the sound of the dryer. Figure 9: Qualitative example of 60-second multi-prompt video generation. We visualize representative frames generated by SWIFT under a six-prompt sequence. A woman is writing in a journal at a cafe table by a window. It is raining outside, and the window is streaked with 
+
+water. 
+
+The woman writing in her journal at the cafe is approached by a waiter who brings her a steaming cup of hot 
+
+chocolate. The rain is coming down harder. 
+
+The woman and the waiter are at the cafe table. She thanks him with a warm smile. He gives a nod and leaves. The 
+
+hot chocolate looks inviting. 
+
+The woman at the cafe table pauses her writing to take a sip of the hot chocolate. She looks out the rainy window, 
+
+a thoughtful expression on her face. 
+
+The woman at the cafe table, with her journal and her hot chocolate, is now joined by a friend who rushes in from 
+
+the rain, shaking out a wet umbrella. 
+
+Figure 10: Qualitative example of 60-second multi-prompt video generation. We visualize representative frames generated by SWIFT under a six-prompt sequence. 20 A scientist is looking into a microscope in a modern laboratory. The lab is clean and filled with scientific equipment. 
+
+> The scientist looking into the microscope in the lab is joined by her research partner, who is holding a tablet
+> displaying some surprising data.
+> The scientist and her research partner are in the lab. She looks up from the microscope to look at the data on the
+> tablet, her expression turning to one of excitement.
+
+Figure 11: Failure case of SWIFT under complex multi-prompt generation. Although SWIFT preserves the laboratory scene and maintains a coherent visual layout across prompt transitions, it can still inherit limitations from the pretrained video diffusion backbone. backbone. As a result, difficult cases involving rare objects, fine-grained physical interactions, crowded scenes, or large camera motion may still produce artifacts or inconsistent details. Future work can combine SWIFT with supervised transition data, stronger base video generators, and learned memory scheduling to further improve robustness under complex interactive generation scenarios. As shown in Figure 11, the method responds to the newly introduced research partner, but fine-grained facial structure and identity consistency degrade in several frames, as highlighted by the red boxes. This case illustrates that training-free semantic memory adaptation improves prompt transition and temporal continuity, but cannot fully eliminate backbone-level artifacts under detailed human interaction and compositional prompt changes. 21

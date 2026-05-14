@@ -1,0 +1,331 @@
+Title: Set-Based Groupwise Registration for Variable-Length, Variable-Contrast Cardiac MRI
+
+URL Source: https://arxiv.org/pdf/2605.10571v1
+
+Published Time: Tue, 12 May 2026 02:47:43 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+# Set-Based Groupwise Registration for Variable-Length, Variable-Contrast Cardiac MRI 
+
+Yi Zhang 1, Yidong Zhao 1, Tijmen Toxopeus 1, Maša Božić-Iven 1, Sebastian Weingärtner 1, and Qian Tao 1
+
+Department of Imaging Physics, Delft University of Technology, The Netherlands 
+
+Abstract. Quantitative cardiac magnetic resonance imaging (MRI) en-ables non-invasive myocardial tissue characterization but relies on robust motion correction within these variable-length, variable-contrast image sequences. Groupwise registration, which simultaneously aligns all im-ages, has shown greater robustness than pairwise registration for motion correction. However, current deep-learning-based groupwise registration methods cannot generalize across MRI sequences: the architecture typ-ically encodes input data as a fixed-length channel stack, which rigidly couples network design to protocol-specific sequence length, input order-ing, and contrast dynamics. At inference time, any change in imaging protocols will render the network unusable. In this work, we introduce 
+
+Any 2Reg , a new set-based groupwise registration framework that takes a quantitative MRI sequence as an unordered set. This set formulation fundamentally decouples network design from sequence length and input ordering. By utilizing a shared encoder and correlation-guided feature ag-gregation, Any 2Reg constructs a permutation-invariant canonical refer-ence for registration, and learns a permutation-equivariant mapping from images to deformation fields. Additionally, we extract contrast-insensitive image features from an existing foundation model to handle extreme contrast variations. Trained exclusively on a single public T1 mapping dataset (STONE, sequence length L = 11 ), Any 2Reg generalizes to two unseen quantitative MRI datasets (MOLLI, ASL) with variable lengths (L ∈ [11 , 60] ) and different contrast dynamics. It achieves strong cross-protocol generalization in a zero-shot manner, and consistently improves downstream quantitative mapping quality. Notably, while designed for quantitative MRI sequences, our framework is directly applicable to Cine MRI sequences for inter-cardiac-phase registration. 
+
+Keywords: Cardiac MRI · Image Registration · Set-based Methods 
+
+## 1 Introduction 
+
+Cardiac magnetic resonance imaging (MRI) is essential for diagnosing and mon-itoring cardiovascular diseases. Modern examinations typically include quantita-tive mapping, such as the widely used T1 mapping [6,4,22,5], for non-invasive my-ocardial tissue assessment. Quantitative sequences estimate parameters by fitting signal models voxel-wise, assuming strict anatomical alignment across images.  
+
+> arXiv:2605.10571v1 [eess.IV] 11 May 2026 2Y. Zhang et al.
+
+However, cardiac and respiratory motion cause misalignment, introducing spa-tial blurring, biased parameter estimates, and increased map uncertainty [14,15]. Motion correction is a prerequisite for reliable quantitative cardiac MRI [25,27]. Quantitative cardiac MRI sequences are challenging to register. Their imag-ing protocols have variable sequence lengths L, specific sampling orders, and different contrast evolution governed by different physical processes [19,8]. Inter-frame differences reflect an entangled combination of true motion and physio-logical signal evolution. This poses significant challenges for traditional pairwise image registration, which requires a predefined reference image and fails for poor-contrast images [2,18]. Therefore, groupwise registration is methodologically pre-ferred, which aligns all images simultaneously to an implicit reference [12,29,28]. Classical groupwise registration performs optimization per sequence [12], and is computationally expensive. Importantly, the optimization scales poorly to se-quence length and can take minutes to hours for long sequences. Deep learning provides an amortized alternative to per-sequence optimiza-tion, significantly accelerating inference [3]. Recent works leverage deep learn-ing to speed up groupwise registration for practical use [3,20,29,18]. However, existing works predominantly use U-Net-style backbones [24], which hardcode the input image sequence as a fixed-length, ordered channel stack [17,28,9,10]. Such hard-coding of sequence length and order imposes a rigid prior, preclud-ing generalization to other quantitative sequences with different lengths or con-trasts. Though some recent works have explored variable-size group modelling for inter-subject brain MRI atlas construction [11,1], they primarily focus on ho-mogeneous image contrasts and cannot address the dramatic contrast changes in cardiac MRI (e.g. contrast nulling, flipping, etc. as shown in Fig. 1). In principle, a quantitative MRI acquisition can be viewed as an observa-tion set, each element being an image, sampled from a physical process (e.g., T1
+
+relaxation). Quantitative mapping operates on the set, where standard fitting (least-squares minimization) is invariant to permutations in the set. Ideally, mo-tion correction models should also respect this set symmetry, but most groupwise registration methods use fixed-channel models [17,28,9,10], where the sequence length and frame order critically determine learning, contradicting set symmetry. LL             
+
+> LL
+> Fig. 1. Cardiac MRI sequences exhibit high heterogeneity across imaging protocols with different mechanisms ( Mi) and sequence lengths ( L). Analytical models are ex-pressed by external parameters (red; e.g., inversion times T I i, preparation P rep i, or phases ti) and internal properties (dark blue; e.g., T1, T ∗
+> 1,M BF ,M0,A, or B). Any 2Reg for Variable-Length and Contrast-Diverse Cardiac MRI 3
+
+Motivated by this critical gap, we propose Any 2Reg, a set-based groupwise registration framework that treats cardiac MRI sequences as unordered sets. In-stead of fixed-length channel stacking, Any 2Reg uses a shared encoder to extract features per image. It uses correlation-guided aggregation to construct a canon-ical reference, which is strictly permutation-invariant. Any 2Reg enables a new way of groupwise registration, generalizable to variable-length, variable contrast cardiac MRI sequences. Our contributions are threefold: 
+
+– We introduce Any 2Reg, a set-based groupwise registration architecture that models quantitative MRI sequences as unordered sets. Any 2Reg fundamen-tally decouples network design from sequence length L and acquisition order, enabling highly efficient and scalable registration of variable-length sequences with near-linear time complexity w.r.t. L in practice. 
+
+– We propose a correlation-guided aggregation module to construct a canonical reference, and an optional module for contrast-insensitive feature fusion. This makes Any 2Reg applicable to variable-contrast sequences. 
+
+– We demonstrate that Any 2Reg, trained exclusively on a public T1 database, achieves strong zero-shot generalization on three unseen cardiac MRI datasets with varying sequence lengths and image contrasts. It consistently outper-forms state-of-the-art baselines in registration and downstream mapping. 
+
+## 2 Method 
+
+2.1 Problem formulation and set symmetry for registration 
+
+Let Ω ⊂ R2 denote the image domain. A quantitative cardiac MRI baseline sequence consists of L frames acquired under different settings, represented as a set I = {I1, . . . , I L} with Ii : Ω → R. Groupwise registration estimates dense displacement fields {ui}Li=1 and transformations ϕi : Ω → Ω defined by ϕi(x) = 
+
+x + ui(x), x ∈ Ω, mapping all frames to a shared canonical coordinate system. Let Φ = {ϕ1, . . . , ϕ L} and ˆIi = Ii ◦ ϕi denote the transformation set and aligned images, respectively. The alignment facilitates downstream voxel-wise quantitative mapping. Un-der ideal alignment, tissue properties ψ(x) at location x are estimated by 
+
+ˆψ(x) = arg min 
+
+> ψL
+
+X
+
+> i=1
+
+ℓ  ˆIi(x), Mi(ψ(x)) , x ∈ Ω, (1) where Mi is the signal model for the i-th frame under its acquisition settings (Fig. 1), and ℓ is a pointwise loss. Eq. 1 suggests two structural requirements for registration: it should generalize across varying L, and respect permutation symmetry over frame indices {1, . . . , L }.
+
+2.2 Permutation-equivariant registration network 
+
+To handle varying L and frame-index symmetry, the registration operator R :
+
+I 7 → Φ should be permutation-equivariant: 
+
+R(π · I ) = π · R (I), ∀π ∈ SL. (2) 4 Y. Zhang et al. {{, ,, ,b) Weight-shared Conv Encoder {{, ,, ,, ,, ,{{Weight-shared MLP Decoder {{, ,, ,a)    
+
+> ,,,,{
+> Concat
+
+# [[[[[[Channel-Stack Network [ ? ? ? ?[{Equivariant Permuted Input Invariant Correlation Aggregation 
+
+Fig. 2. Comparison of two learning-based groupwise registration designs: (a) The con-ventional channel stacking design concatenates frames; it is order-sensitive ( fθ (π ·Iseq )̸ = π · fθ (Iseq )) and tied to a fixed length L. (b) Set-based design (Any 2Reg) uses shared encoders and a canonical reference T = Γ (I) broadcasted to all frames; it enables permutation-equivariant registration ( R(π · I ) = π · R (I)) for an arbitrary L.
+
+That is, permuting the input frames should only permute the predicted trans-formations. In groupwise registration, this calls for an order-invariant canon-ical context to which all frames align. We enforce this with an invariant-to-equivariant design: a set operator Γ constructs a reference, Γ (π · I ) = Γ (I),which is broadcast to all framewise weight-shared branches, thus permutation-equivariant. Based on this principle, we propose Any 2Reg (Fig. 2b), a set-based multi-scale registration network with K scales ( k = 1 the finest). At scale k, a frame-shared encoder extracts per-frame features {z(k) 
+
+> i
+
+}Li=1 . An invariant operator Γ (k)
+
+aggregates a canonical feature T (k) from {z(k) 
+
+> i
+
+} and broadcasts it to all frames. The concatenated features [z(k) 
+
+> i
+
+, T (k)] update the next-scale features and drive a shared CorrMLP-style decoder [21] to predict incremental transformations ϕ(k) 
+
+> i
+
+.The final transformation composes predictions from coarse to fine: 
+
+ϕi = ϕ(1)  
+
+> i
+
+◦ ↑  ϕ(2) 
+
+> i
+
+ ◦ · · · ◦ ↑  ϕ(K)
+
+> i
+
+, (3) where ↑ (·) upsamples to the finest grid. Sec. 2.3 details our instantiation of Γ (k).
+
+2.3 Correlation-guided set aggregation 
+
+We instantiate the scale-specific invariant operator Γ (k) using a correlation-guided principal component (PC) aggregation as in [12,23]. Given scale-k features z(k) 
+
+> i
+
+∈ RCk ×Hk ×Wk , we form vectorized ℓ2-normalized representations ˜z(k) 
+
+> i
+
+and compute the frame-wise correlation matrix C(k) ∈Any 2Reg for Variable-Length and Contrast-Diverse Cardiac MRI 5
+
+RL×L. Let v(k) be the leading eigenvector (first PC) of C(k), which captures the principal mode of variation across the sequence. We then aggregate the canonical feature using the entries v(k) 
+
+> i
+
+of the v(k):
+
+T (k) =
+
+> L
+
+X
+
+> i=1
+
+w(k) 
+
+> i
+
+z(k) 
+
+> i
+
+, w(k) 
+
+> i
+
+= v(k)
+
+> i
+
+PLj=1 v(k)
+
+> j
+
+. (4) Under a frame-wise index permutation, v(k) 
+
+> i
+
+(and thus w(k) 
+
+> i
+
+) permutes accord-ingly. Therefore, with a deterministic eigenvector sign convention of PLj=1 v(k) 
+
+> j
+
+>
+
+0 is permutation-invariant, leading to Γ (k)
+
+
+
+{z(k) 
+
+> i
+
+}Li=1 
+
+
+
+.To inject this canonical context back to each frame, we broadcast T (k) and apply a shared update: 
+
+z(k+1)  
+
+> i
+
+= σ
+
+
+
+Conv (k)
+
+[z(k) 
+
+> i
+
+, T (k)]
+
+ 
+
+, (5) which preserves permutation equivariance since T (k) is shared across frames and 
+
+Conv (k) uses shared weights. The set aggregation operates on a relatively small 
+
+L × L matrix, and therefore adds negligible overhead compared with per-frame convolutions. This is further empirically validated in Sec. 4. 
+
+2.4 Auxiliary anatomy-driven feature stream 
+
+Anatomy-driven, contrast-agnostic features have been shown to improve learning-based registration [3,9]; when available from a pretrained model (e.g., a segmen-tation foundation model), they can be optionally incorporated as an auxiliary stream. Let g(·) be a frozen feature extractor. For each frame Ii, we extract 
+
+Fi = g(Ii), Fi ∈ RCf ×Hf ×Wf . (6) Applying g independently to each frame yields a feature set F = {F1, . . . , F L}
+
+that preserves the set structure and permutation equivariance. The auxiliary stream is encoded in parallel by a frame-shared multi-scale en-coder h′(k) 
+
+> θ
+
+. At each scale, we fuse pretrained features with image-branch features via a lightweight convolution before applying Γ (k). This leads to set aggregation without altering the permutation-equivariant formulation. 
+
+2.5 Loss functions 
+
+Using the final warped images ˆIi = Ii ◦ ϕi, a correlation-weighted template is constructed as TI = PLi=1 wi ˆIi where weights {wi} are computed via the correlation-guided weighting scheme (Sec. 2.3). We use conditional template en-tropy (CTE) [23] for multi-contrast registration as the dissimilarity function: 
+
+LCTE (ˆI, T I ) = 1
+
+L
+
+> L
+
+X
+
+> i=1
+
+H
+
+
+
+TI | ˆIi
+
+
+
+, H(T | I) = H(T, I ) − H(I). (7) 6 Y. Zhang et al. 
+
+When the auxiliary feature stream is utilized, the warped feature maps ˆFi =
+
+Fi ◦ ϕi yield the feature template TF = P 
+
+> i
+
+wf,i ˆFi. The weights {wf,i } are inde-pendently computed via correlation in the feature space. The total loss is: 
+
+L = LCTE (ˆI, T I ) + λf LCTE ( ˆF, T F ) + λsLsmooth (Φ) + λcLcyclic (Φ), (8) where Lsmooth penalizes displacement gradients to ensure deformation regularity and Lcyclic [29] suppresses non-zero group motion to prevent spatial drift. 
+
+## 3 Experiments 
+
+Data. We evaluate four heterogeneous cardiac MRI datasets comprising 2D short-axis slices (Fig. 1). In-domain training uses the public STONE dataset (free-breathing slice-interleaved T1 mapping; 210 subjects; 1050 slices, 150/30/30 train/val/test subject-wise split, L = 11 ) [26,7]. For zero-shot evaluation, we use an in-house MOLLI dataset (modified Look-Locker T1 mapping; 10 subjects, 60 slices, pre-/post-contrast, L = 11 ) [22] and an in-house ASL dataset (myocar-dial arterial spin labeling; 6 subjects; L = 60 via 12 images ×5 repetitions) [5]. Additionally, we include the public ACDC dataset (bSSFP Cine; test split; 25 subjects, 256 slices; L ∈ [10 , 30] ) [4], which is not a quantitative sequence and contains regular cardiac motion, for an out-of-distribution stress test. 
+
+Evaluation metrics. We report slice-wise all-pair Dice for left ventricle (LV) and myocardium (Myo) on STONE (expert annotations), and for LV, right ven-tricle (RV), and Myo on MOLLI, ASL, and Cine using ACDC-trained nnU-Net predictions [13] independent of the feature stream. We manually annotate RV insertion points on STONE and MOLLI to measure target registration error (TRE). On STONE, we further assess T1 mapping quality via per-pixel curve-fitting R2 and deformation regularity via std(log det J).
+
+Baselines and ablations. We compare with Elastix [16] (optimization-based; PCA2 similarity [12]; B-spline; 4-pixel spacing), GroupRegNet [29] (channel-stacked, one-shot), PCA-Relax [28] (channel-stacked learning with PCA2), and MultiMorph [1] adapted to groupwise registration, including its segmentation-guided variant (MultiMorph-Seg). We also evaluate Any 2Reg without foundation model features, replace correlation with mean aggregation for ablation. We in-clude an instance-optimization (IO) [28] variant that refines test cases for 30 inference steps. 
+
+Implementation. Images are center-cropped to 192 × 192 . The encoder utilizes 
+
+K = 4 scales with 16 channels. Auxiliary anatomical features are derived from a pretrained Reverse Imaging segmentation foundation model [30] trained on the ACDC train split. For MultiMorph-Seg, official STONE annotations are used. Models are trained for 50 epochs via AdamW (lr 10 −4) with λf = 0 .5, λs =10 , and λc = 0 .05 . For fair comparison, MultiMorph optimizes the same CTE loss; all hyperparameters are tuned on the STONE validation with comparable 
+
+std(log det J) and folding ratios < 10 −5. One-shot GroupRegNet optimizes from random initialization for 250 steps. Any 2Reg IO refines for 30 steps (lr 3×10 −5). Implementation used PyTorch 2.8.0 on an NVIDIA RTX5090. Code and weights are available at https://github.com/YiZhang025/Any2Reg .Any 2Reg for Variable-Length and Contrast-Diverse Cardiac MRI 7
+
+Table 1. Main quantitative results for in-domain (STONE) and three cardiac MRI datasets. σlog |J| ≡ std(log det J) × 10 −2. - indicates not applicable due to sequence length constraints; Best /Second mark the best and second-best results. 
+
+Method STONE MOLLI ASL Cine 
+
+Dice ↑ TRE ↓ σlog |J| ↓ Dice ↑ TRE ↓ Dice ↑ Dice ↑
+
+Raw 78.8 ±7.1 4.19 ±1.26 / 78.6 ±14.8 3.16 ±1.50 76.7 ±7.8 79.1 ±4.8 Elastix 85.0 ±5.4 3.46 ±1.08 12.7 ±4.5 79.2 ±14.3 3.10 ±1.32 79.4 ±8.1 86.8 ±3.8 GroupRegNet 83.0 ±6.2 3.60 ±1.04 9.3 ±3.5 79.7 ±14.6 3.09 ±1.36 78.6 ±8.5 80.5 ±4.7 PCA-Relax 80.6 ±6.6 4.01 ±1.16 14.0 ±4.7 78.2 ±14.8 3.13 ±1.49 - -
+
+MultiMorph 83.1 ±6.4 3.77 ±1.15 14.7 ±1.9 78.4 ±14.3 3.11 ±1.39 75.2 ±5.7 84.8 ±4.3 MultiMorph-Seg 85.0 ±5.9 3.71 ±1.17 15.2 ±2.2 78.8 ±14.1 3.18 ±1.36 76.9 ±6.4 86.1 ±3.9 Any 2Reg w/o FM 84.2 ±5.9 3.65 ±1.11 8.3 ±1.4 78.9 ±14.5 3.17 ±1.43 79.0 ±7.2 89.5 ±2.7 Any 2Reg mean 86.4 ±4.8 3.23 ±0.86 14.2 ±1.6 84.7 ±14.7 3.02 ±0.97 80.3 ±7.7 89.9 ±2.5 Any 2Reg 86.9 ±4.7 3.18 ±0.88 12.3 ±3.0 84.8 ±14.8 2.96 ±0.96 80.5 ±7.9 89.8 ±2.5 Any 2Reg IO 86.9 ±4.4 3.14 ±0.83 13.7 ±3.1 84.9 ±15.0 2.98 ±0.95 80.6 ±7.6 90.9 ±2.1 
+
+## 4 Results and Discussion 
+
+Main performance. Table 1 presents quantitative results for in-domain and zero-shot cross-protocol scenarios. On STONE, Any 2Reg+IO achieves the high-est Dice and lowest TRE. The default Any 2Reg consistently outperforms U-Net baselines across all datasets. Ablation on aggregation shows Any 2Reg surpasses mean aggregation (Any 2Reg mean) in quantitative MRI datasets, validating that correlation yields a more informative canonical representation under contrast variation. Any 2Reg w/o FM also outperforms baselines in zero-shot cases; this confirms that set-based aggregation improves generalization independently of the anatomy-driven features. Strong zero-shot performance on Cine shows robust generalization to a completely different spatiotemporal sequence. In contrast, fixed-length channel-stacked method PCA-Relax fails on ASL and Cine due to sequence-length constraints. Any 2 Reg IO Any 2 Reg Elastix GroupRegNet MultiMorph-Seg MultiMorph Raw Any 2 Reg w/o FM a) b)           
+
+> 0.70 0.75 0.80 0.85 0.90 0.95 1.00
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 01234
+> 0.4 0.6 0.8
+
+Fig. 3. T1 mapping quality on STONE (LV+Myo). (a) Slice-wise mean R2. Slice po-sition: base (0) to apex (4). Any 2Reg IO demonstrates the best alignment at all slice positions. (b) R2 survival curves show Any 2Reg has consistently higher fitting quality as a result of superior alignment. 8 Y. Zhang et al. Raw (no reg) Elastix GroupRegNet MultiMorph MultiMorph-Seg Any 2Reg w/o FM Any 2Reg Any 2Reg IO                               
+
+> SD T1=175.7 ms SD T1=123.1 ms SD T1=137.2 ms SD T1=156.1 ms SD T1=140.9 ms SD T1=121.1 ms SD T1=91.5 ms SD T1=92.0 ms
+> R2=0.512 R2=0.713 R2=0.599 R2=0.603 R2=0.635 R2=0.593 R2=0.866 R2=0.873
+> 750
+> 1000
+> 1250
+> 1500
+> 1750
+> T1 (ms)
+> 0
+> 50
+> 100
+> 150
+> 200
+> SD T1 (ms)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> R 2
+
+Fig. 4. Qualitative result on a representative STONE sequence with T1 map, fitting uncertainty SD T1 (↓), and pixelwise fitting R2 (↑). White arrows indicate the location of large motion. Both Any 2Reg and Any 2Reg IO yield clear T1 maps with high precision. 
+
+Scalability analysis. We evaluated Any 2Reg’s scalability up to L = 512 .Any 2Reg inference scales linearly ( ∼2.4 ms per additional image), taking ∼0.2 s at L = 64 and ∼1.2 s at L = 512 . The correlation aggregation GPU runtime overhead remains negligible ( < 4% ). The 30-step IO variant also scales linearly (∼12 s at L = 64 ). Conversely, conventional method (Elastix) grows superlin-early ( ∼70 s at L = 64 ; ∼260 s at L = 128 ). 
+
+Quantitative Mapping. Figure 3 illustrates the benefits for downstream T1
+
+mapping, wherein Any 2Reg maintains the highest R2 survival rates. The most substantial margin is observed in the base segment, where motion degrades alignment. Qualitatively, as shown in Figure 4, imprecise registration mixes the signal contributions from adjacent tissues across frames. This degrades the quality of fit, resulting in reduced R2 values and high T1 fitting uncertainty (SD T1 ) [14]. Any 2Reg effectively resolves these motion artifacts, achieving a su-perior fit ( R2 = 0 .866 , SD T1 = 91 .5 ms) in high precision (low SD T1 ) T1 maps. 
+
+## 5 Conclusion 
+
+We propose a new way of groupwise registration, Any 2Reg, which can operate on variable-length, variable-contrast image sequences of cardiac MRI. Any 2Reg reformulates groupwise registration as a set-to-set prediction problem, and com-pletely eliminates the rigid coupling of sequence length and image order in con-ventional channel-stacked architectures. Trained solely on one quantitative MRI sequence, Any 2Reg achieves robust zero-shot generalization across heterogeneous MRI protocols, including unseen quantitative sequences and spatiotemporal Cine sequences. It improves spatial alignment and downstream quantitative mapping over state-of-the-art baselines while maintaining speed advantage. Any 2Reg pro-vides a highly scalable and robust solution for registering cardiac MRI, and its generic setup enables extension to other medical image registration applications. Any 2Reg for Variable-Length and Contrast-Diverse Cardiac MRI 9
+
+## References 
+
+1. Abulnaga, S.M., Hoopes, A., Dey, N., Hoffmann, M., Fischl, B., Guttag, J., Dalca, A.: Multimorph: On-demand atlas construction. In: Proceedings of the Computer Vision and Pattern Recognition Conference. pp. 30906–30917 (2025) 2. Arava, D., Masarwy, M., Khawaled, S., Freiman, M.: Deep-learning based motion correction for myocardial t1 mapping. In: IEEE International Conference on Mi-crowaves, Antennas, Communications and Electronic Systems. pp. 55–59 (2021) 3. Balakrishnan, G., Zhao, A., Sabuncu, M.R., Guttag, J., Dalca, A.V.: Voxelmorph: a learning framework for deformable medical image registration. IEEE transactions on medical imaging 38 (8), 1788–1800 (2019) 4. Bernard, O., Lalande, A., Zotti, C., Cervenansky, F., Yang, X., Heng, P.A., Cetin, I., Lekadir, K., Camara, O., Ballester, M.A.G., et al.: Deep learning techniques for automatic mri cardiac multi-structures segmentation and diagnosis: is the problem solved? IEEE transactions on medical imaging 37 (11), 2514–2525 (2018) 5. Božić-Iven, M., Rapacchi, S., Tao, Q., Pierce, I., Thornton, G., Nitsche, C., Treibel, T.A., Schad, L.R., Weingärtner, S.: Improved reproducibility for myocar-dial asl: Impact of physiological and acquisition parameters. Magnetic Resonance in Medicine 91 (1), 118–132 (2024) 6. Campello, V.M., Gkontra, P., Izquierdo, C., Martin-Isla, C., Sojoudi, A., Full, P.M., Maier-Hein, K., Zhang, Y., He, Z., Ma, J., et al.: Multi-centre, multi-vendor and multi-disease cardiac segmentation: the m&ms challenge. IEEE Transactions on Medical Imaging 40 (12), 3543–3554 (2021) 7. El-Rewaidy, H., Nezafat, M., Jang, J., Nakamori, S., Fahmy, A.S., Nezafat, R.: Nonrigid active shape model–based registration framework for motion correction of cardiac t1 mapping. Magnetic resonance in medicine 80 (2), 780–791 (2018) 8. Haaf, P., Garg, P., Messroghli, D.R., Broadbent, D.A., Greenwood, J.P., Plein, S.: Cardiac t1 mapping and extracellular volume (ecv) in clinical practice: a compre-hensive review. Journal of Cardiovascular Magnetic Resonance 18 (1), 89 (2016) 9. Hanania, E., Volovik, I., Barkat, L., Cohen, I., Freiman, M.: Pcmc-t1: Free-breathing myocardial t1 mapping with physically-constrained motion correction. In: International Conference on Medical Image Computing and Computer-Assisted Intervention. pp. 226–235. Springer (2023) 10. Hanania, E., Zehavi-Lenz, A., Volovik, I., Link-Sourani, D., Cohen, I., Freiman, M.: Mbss-t1: Model-based subject-specific self-supervised motion correction for robust cardiac t1 mapping. Medical Image Analysis 102 , 103495 (2025) 11. He, Z., Chung, A.C.: Instantgroup: Instant template generation for scalable group of brain mri registration. IEEE Transactions on Image Processing (2025) 12. Huizinga, W., Poot, D.H., Guyader, J.M., Klaassen, R., Coolen, B.F., van Kra-nenburg, M., Van Geuns, R., Uitterdijk, A., Polfliet, M., Vandemeulebroucke, J., et al.: Pca-based groupwise image registration for quantitative mri. Medical image analysis 29 , 65–78 (2016) 13. Isensee, F., Jaeger, P.F., Kohl, S.A., Petersen, J., Maier-Hein, K.H.: nnu-net: a self-configuring method for deep learning-based biomedical image segmentation. Nature methods 18 (2), 203–211 (2021) 14. Kellman, P., Arai, A.E., Xue, H.: T1 and extracellular volume mapping in the heart: estimation of error maps and the influence of noise on precision. Journal of Cardiovascular Magnetic Resonance 15 (1), 1–12 (2013) 15. Kellman, P., Hansen, M.S.: T1-mapping in the heart: accuracy and precision. Jour-nal of cardiovascular magnetic resonance 16 , 1–20 (2014) 10 Y. Zhang et al. 16. Klein, S., Staring, M., Murphy, K., Viergever, M.A., Pluim, J.P.: Elastix: a tool-box for intensity-based medical image registration. IEEE transactions on medical imaging 29 (1), 196–205 (2009) 17. Li, X., Zhang, Y., Zhao, Y., van Gemert, J., Tao, Q.: Contrast-agnostic groupwise registration by robust pca for quantitative cardiac mri. In: International Workshop on Statistical Atlases and Computational Models of the Heart. pp. 77–87 (2023) 18. Li, Y., Wu, C., Qi, H., Si, D., Ding, H., Chen, H.: Motion correction for native my-ocardial t1 mapping using self-supervised deep learning registration with contrast separation. NMR in Biomedicine 35 (10), e4775 (2022) 19. Makela, T., Clarysse, P., Sipila, O., Pauna, N., Pham, Q.C., Katila, T., Magnin, I.E.: A review of cardiac image registration methods. IEEE Transactions on medical imaging 21 (9), 1011–1021 (2002) 20. Martín-González, E., Sevilla, T., Revilla-Orodea, A., Casaseca-de-la Higuera, P., Alberola-López, C.: Groupwise non-rigid registration with deep learning: an afford-able solution applied to 2d cardiac cine mri reconstruction. Entropy 22 (6), 687 (2020) 21. Meng, M., Feng, D., Bi, L., Kim, J.: Correlation-aware coarse-to-fine mlps for de-formable medical image registration. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 9645–9654 (2024) 22. Messroghli, D.R., Radjenovic, A., Kozerke, S., Higgins, D.M., Sivananthan, M.U., Ridgway, J.P.: Modified look-locker inversion recovery (molli) for high-resolution t1 mapping of the heart. Magnetic Resonance in Medicine 52 (1), 141–146 (2004) 23. Polfliet, M., Klein, S., Huizinga, W., Paulides, M.M., Niessen, W.J., Vandemeule-broucke, J.: Intrasubject multimodal groupwise registration with the conditional template entropy. Medical image analysis 46 , 15–25 (2018) 24. Ronneberger, O., Fischer, P., Brox, T.: U-net: Convolutional networks for biomed-ical image segmentation. In: Medical Image Computing and Computer-Assisted Intervention, October 5-9, 2015, Part III 18. pp. 234–241. Springer (2015) 25. Tao, Q., van der Tol, P., Berendsen, F.F., Paiman, E.H., Lamb, H.J., van der Geest, R.J.: Robust motion correction for myocardial t1 and extracellular volume mapping by principle component analysis-based groupwise image registration. Journal of Magnetic Resonance Imaging 47 (5), 1397–1405 (2018) 26. Weingärtner, S., Roujol, S., Akçakaya, M., Basha, T.A., Nezafat, R.: Free-breathing multislice native myocardial t1 mapping using the slice-interleaved t1 (stone) se-quence. Magnetic resonance in medicine 74 (1), 115–124 (2015) 27. Xue, H., Shah, S., Greiser, A., Guetter, C., Littmann, A., Jolly, M.P., Arai, A.E., Zuehlsdorff, S., Guehring, J., Kellman, P.: Motion correction for myocardial t1 mapping using image registration with synthetic image estimation. Magnetic res-onance in medicine 67 (6), 1644–1655 (2012) 28. Zhang, Y., Zhao, Y., Huang, L., Xia, L., Tao, Q.: Deep-learning-based groupwise registration for motion correction of cardiac t 1 mapping. In: International Con-ference on Medical Image Computing and Computer-Assisted Intervention. pp. 586–596. Springer (2024) 29. Zhang, Y., Wu, X., Gach, H.M., Li, H., Yang, D.: Groupregnet: a groupwise one-shot deep learning-based 4d image registration method. Physics in Medicine & Biology 66 (4), 045030 (2021) 30. Zhao, Y., Zhang, Y., Simonetti, O., Han, Y., Tao, Q.: Reverse imaging for wide-spectrum generalization of cardiac mri segmentation. In: International Confer-ence on Medical Image Computing and Computer-Assisted Intervention. Springer (2025)

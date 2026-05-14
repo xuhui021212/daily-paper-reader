@@ -1,0 +1,1273 @@
+Title: Detecting AI-Generated Videos with Spiking Neural Networks
+
+URL Source: https://arxiv.org/pdf/2605.05895v1
+
+Published Time: Fri, 08 May 2026 01:01:44 GMT
+
+Number of Pages: 35
+
+Markdown Content:
+# Detecting AI-Generated Videos with Spiking Neural Networks 
+
+Minsuk Jang Yujin Yang Heeseon Kim Minseok Son Younghun Kim Chang-Ick Kim 
+
+Korea Advanced Institute of Science and Technology (KAIST), Daejeon, Republic of Korea 
+
+## Abstract 
+
+Modern AI-generated videos are photorealistic at the single-frame level, leaving inter-frame dynamics as the main remaining axis for detection. Existing detectors typically handle this temporal evidence in three ways: feeding the full frame sequence to a generic temporal backbone, reducing one dominant temporal cue to fixed video-level descriptors, or comparing temporal features to real-video statistics through a detection metric. These strategies degrade sharply under cross-generator evaluation, where artifact type and timescale vary across generators. On caption-paired benchmark, GenVidBench, we identify two signatures that prior detectors do not jointly exploit: AI-generated videos exhibit smoother frame-to-frame temporal residuals at the pixel level, and more compact trajectories in the semantic feature space, indicating a temporal smoothness gap at both levels. We further observe that, when raw video is fed into a Spiking Neural Networks (SNNs), fake clips elicit firing predominantly at object and motion boundaries, unlike real clips, suggesting that the SNN responds to temporal artifacts localized at edges. These cues are sparse, asynchronous, and concentrated at moments of change, which makes SNNs a natural choice for this task: their event-driven, sparsely-activated dynamics align with the structure of the residual signal in a way that dense ANN backbones do not. Building on this observation, we propose MAST, a detector that processes multi-channel temporal residuals with a spike-driven temporal branch alongside a frozen semantic encoder for cross-generator generalization. On the GenVideo benchmark, MAST achieves 93.14% mean accuracy across 10 unseen generators under strict cross-generator evaluation, matching or surpassing the strongest ANN-based detectors and demonstrating the practical applicability of SNNs to AI-generated video detection. 
+
+## 1 Introduction 
+
+AI-generated videos have rapidly approached frame-level photorealism [ 4, 3, 26 , 10 ], shifting the detection problem away from single-frame artifacts and toward temporal structure. What now separates real from generated video is less whether an individual frame looks plausible than whether motion, change, and semantic evolution remain natural over time. Reliable detection of synthetic video is therefore increasingly a problem of modeling temporal consistency rather than static appearance. Prior detectors already exploit temporal cues through frame differences, motion residuals, feature trajectories, and higher-order statistics [ 44 , 74 , 30 , 11 , 83 , 82 ]. These approaches variously model temporal sequences end-to-end [ 44 , 11 ], summarize a dominant cue with fixed clip-level descriptors [ 83 , 30 ], or compare temporal statistics through discrepancy measures [ 82 ]. However, generators differ not only in artifact magnitude, but also in the type and timescale of the temporal inconsistencies 
+
+> Preprint.
+> arXiv:2605.05895v1 [cs.CV] 7 May 2026
+
+Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks Temporal        
+
+> Clue
+> Video
+> Encoder
+> Spiking
+> Transformer
+> Semantic
+> Clue
+> 𝑥 !
+> 𝑥 "
+> 𝑥 #
+> ...w#
+> . . .
+> . . .
+> . . .
+> w!
+> w"
+> . . .
+> Σ
+> Spiking Neural Networks
+> (a) Motivation of Applying SNN to AIGV Detection (b) An overview of MAST
+> AIGV  Real
+> t=2 t=4 t=n
+> …
+> Boundary -
+> Localized
+> Activation
+> Diffused
+> Activation
+> Spatial Gate Map
+> AI -Generated vs. Real
+> MAST
+> Classifier
+> Real Video
+> AI -Generated
+> Video
+
+Figure 1: (a) Motivation. Although real and AI-generated videos can appear similar at the frame level, their inter-frame temporal residuals produce different response patterns in a spiking neural network: real videos yield more diffuse activations, whereas AI-generated videos show stronger concentration near image boundaries. (b) MAST overview. Motivated by this observation, MAST combines spike-based temporal integration over pseudo-events with a frozen semantic trajectory encoder, uses trajectory curvature as an auxiliary cue, and fuses temporal and semantic features. they produce. This diversity can make detectors built around a single cue or a fixed temporal summary less robust under cross-generator evaluation. To better understand this failure mode, we perform a paired analysis of real and generated videos. This analysis reveals two complementary temporal signatures. At the pixel level, generated videos exhibit smoother, late-accumulating residual dynamics. At the semantic level, their per-frame semantic trajectories from a video encoder [ 50 ] within feature space occupy smaller and less curved regions than natural videos. Together, these findings suggest that detection should preserve residual evolution over time rather than collapse it into a fixed descriptor. To exploit these temporal signatures efficiently, we turn to Spiking Neural Networks (SNNs), whose stateful spiking dynamics are designed for time-varying signals and offer event-driven, sparse process-ing aligned with our pseudo-event formulation. While SNNs are known to underperform on dense RGB inputs due to their binary spike representation discarding continuous-valued activations [ 40 ], the inter-frame residual identified above is spatially sparse and event-like, matching the regime for which SNNs were originally developed [ 19 , 29 ]. Building on this match, we introduce MAST 
+
+(Multi-channel pseudo-event SNN with Adaptive Spiking Temporal integrators; Figure 1), a detector that combines two complementary components: a temporal component representing multiple residual cues as pseudo-events and integrating each channel with a learnable timescale, and a semantic component using a frozen X-CLIP [ 50 ] encoder for trajectory cues. Under strict cross-generator evaluation, MAST achieves 93.14% mean accuracy across 10 unseen generators on GenVideo [11]. Our main contributions are: • Analysis. On caption-paired GenVidBench, AI-generated videos exhibit lower-frequency, late-accumulating pixel residuals and more compact semantic trajectories than natural videos, and their boundary-localized firing under a raw-video SNN motivates SNN as the temporal backbone of MAST. • Method. Bridging Spiking Neural Networks and AI-generated video detection, we propose, to our knowledge, the first SNN-based detector for this task. Our method, MAST , combines multi-channel pseudo-event residuals, spike-based temporal integration with learnable per-channel time constants, and a frozen semantic trajectory encoder. • Empirical evaluation. MAST achieves 93.14% mean accuracy on GenVideo across 10 un-seen generators under strict cross-generator evaluation, remains competitive with parameter-matched ANN counterparts and prior detectors under a shared semantic backbone, and offers favorable inference energy. 2Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 0.0 0.2 0.4 0.6 0.8 1.0          
+
+> Sparsity (RGB)
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> Density
+> (a) RGB Space
+> Real
+> Fake
+> 0.2 0.4 0.6 0.8
+> Sparsity (Residual)
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> Density
+> (b) Residual Space
+> Real
+> Fake
+> 6420
+> Frequency Centroid
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Density
+> (c) Temporal Frequency
+> Real
+> Fake (all)
+> ms
+> pika
+> t2vz
+> vc2
+> 050 100 150
+> Curvature (degrees)
+> 0.000
+> 0.005
+> 0.010
+> 0.015
+> 0.020
+> 0.025
+> 0.030
+> 0.035
+> Density
+> (d) Trajectory Curvature
+> Real
+> Fake (all)
+> ms
+> pika
+> t2vz
+> vc2
+
+Figure 2: GenVidBench Pair 1. (a) RGB sparsity overlaps; (b)(c)(d) Laplacian residual sparsity, spectral centroid fc, and angular curvature θ all separate real from fake. The discriminative signature is temporal, not single-frame. 
+
+## 2 Related Work 
+
+2.1 AI-Generated Video Detection with Temporal Artifacts 
+
+Detecting AI-generated videos is increasingly framed as a problem of reading temporal artifacts. Recent detectors extract inter-frame signals in a variety of forms: pixel-level differences [ 44 , 35 , 53 ], optical flow residuals [ 83 , 74 ], feature-space first-order differences [ 30 , 44 , 11 , 2, 61 ], and second-order differences [ 83 ]. Benchmarks such as GenVideo [ 11 ] and GenVidBench [ 51 ] evaluate these detectors under strict cross-generator protocols and report performance gaps on unseen genera-tors [ 31 ]. Within this temporal-artifact literature, methods differ mainly in how they aggregate temporal evidence. One line feeds frame or feature sequences to an end-to-end temporal backbone, as in DeCoF [ 44 ] and DeMamba [ 11 ]. Another summarizes a dominant cue with explicit clip-level descriptors, as in D3 [ 83 ] and ReStraV [ 30 ]. A third uses statistic-based discrepancy measures, as in NSG-VD [ 82 ]. MAST shares the focus on temporal evidence with these lines, but differs in com-bining multi-channel pseudo-event residuals with learnable cue-specific temporal integration 
+
+before clip-level summarization. 
+
+2.2 Spiking Neural Networks for Temporal Processing 
+
+Spiking Neural Networks (SNNs) [ 46 , 20 , 57 , 58 , 6 ] process information through asynchronous binary spikes. Their canonical Leaky Integrate-and-Fire (LIF) neuron acts as a stateful temporal integrator governed by a time constant τ [ 19 , 43 , 56 ]; variants such as PLIF [ 16 ] and TS-LIF [ 60 ]let τ be learned end-to-end, and STSep [ 13 ] separates spatial and temporal pathways to reduce gradient conflicts. Recent work further improves the spiking substrate itself through reversed bit representations [ 25 ] and enhanced output feature training [ 24 ]. Section 4.2 states the LIF formulation we use. Beyond classification, SNNs have been increasingly applied across the diverse task spectrum traditionally dominated by Artificial Neural Networks (ANNs), including human pose tracking [ 88 ], neural radiance fields [ 78 , 22 ], point cloud processing [ 59 ], even on autonomous driving [ 66 ]. SNNs are the standard architecture for event-camera vision tasks [ 19 , 8], where the input is sparse and event-driven by construction. On RGB benchmarks, researchers have explicitly converted static images into event streams [ 54 , 36 ], and recent work has narrowed the accuracy gap to Artificial Neural Networks (ANNs) by integrating attention into the spiking substrate [ 85 , 76 , 77 ]. For video understanding, SNNs exploit temporal dynamics to improve efficiency [ 39 , 79 , 63 ] and extract spatiotemporal features [ 86 , 87 ], often converting inter-frame differences into pseudo-events [ 68 ]. 
+
+However, application of SNNs to AI-generated video detection, remains unexplored . We address this gap by treating the inter-frame residual as a sparse pseudo-event stream and processing it with a spike-based temporal module with a video encoder. 
+
+## 3 Motivation: Temporal Signatures of AI-Generated Video 
+
+We first ask what kind of temporal structure actually separates real and AI-generated videos under controlled content. Across this analysis, two complementary cues emerge: semantic trajectory structure and residual dynamics . Together, they suggest that a detector should preserve time-varying residual structure rather than collapse it to a fixed scalar, adapt temporal integration across heterogeneous cues, and complement pixel-level dynamics with semantic trajectory information. 
+
+GenVidBench. We use GenVidBench [ 51 ], a caption-paired benchmark where each generated clip shares its prompt with a corresponding real clip. We focus on Pair 1 dataset, which pairs Vript [ 75 ]real videos with ModelScope [ 67 ], Pika [ 55 ], Text2Video-Zero [ 33 ], and VideoCrafter2 [ 10 ]. This 3Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks (a) Temporal Dynamics of Pseudo-Event Channels (b) Anomaly Score Accumulation 
+
+Figure 3: (a) Per-frame spatial mean ±σ of the temporal residual, real (blue) vs. fake (red, all generators pooled); a consistent gap persists across frames. (b) Raw-residual anomaly trace Araw 
+
+> t
+
+aggregated over the residual channels, per generator. caption-pairing makes semantic trajectory analysis more meaningful, since real-versus-fake gaps reflect generator behavior without content differences. 
+
+3.1 Semantic Trajectory Structure 
+
+Table 1: Statistics on GenVidBench (Pair 1). Srgb , Sres : Hoyer sparsity in RGB and high-frequency residual space; fc: spec-tral centroid of the residual signal; Vol.: convex-hull volume of the trajectory.                         
+
+> Generator Srgb Sres fcVol. Real (Vript) 0.438 0.506 0.0178 19 .07
+> ModelScope 0.483 0.559 0.0057 5.54
+> Pika 0.466 0.447 0.0040 9.94
+> Text2Video-Zero 0.455 0.582 0.0014 8.13
+> VideoCrafter2 0.504 0.312 0.0038 3.23
+
+We first examine temporal structure in semantic feature space. Per-clip values are summarized in Figure 2 and Table 1: the Hoyer sparsity [ 28 ] of the raw RGB im-age ( Srgb ), measuring how concentrated single-frame intensity is across pixels; the Hoyer sparsity of the high-frequency Laplacian residual [ 5] ( Sres , defined be-low), measuring whether inter-frame change is local-ized or spread across the frame; the spectral centroid fc
+
+of the residual time series, the energy-weighted mean frequency along the temporal axis, with higher fc in-dicating faster pixel-level dynamics; and the angular curvature θ and convex-hull volume Vol of the X-CLIP trajectory, capturing how widely the clip-level latent representation moves across frames. Single-frame statistics ( Srgb and the Laplacian residual ∆HF  
+
+> t
+
+= |Lap( Yt) − Lap( Yt−1)|) do not separate real from fake (Figure 2(a, b)). The temporal cues, however, show separate distribution: the spectral centroid fc and the angular curvature/volume of the X-CLIP trajectory both place generators on the same side of natural motion (Figure 2(c, d)), with fc 3× to 13 × lower for generators than for Real and convex-hull volume 2× to 6× smaller. This pixel-level and semantic-space gap together points to a common latent-interpolation-driven temporal smoothness in generated video. 
+
+3.2 Residual Dynamics in Generated Video 
+
+We next examine how the residual signal evolves over time. The fake distribution sits above the real one across the entire 8-frame clip and the gap widens in later frames (Figure 3(a)). We attribute the late-frame widening to error accumulation under conditional generation: per-frame inconsistencies compound as the clip progresses. A single mean-pooled scalar over the clip would collapse this time-varying structure. To summarize this dynamics in a single time-varying scalar, we define at as the spatial mean of the temporal residual at frame t, averaged over the residual channels. We then accumulate {at} through a non-firing leaky integrator with a fixed leak constant τanom :
+
+Araw  
+
+> t
+
+= Araw  
+
+> t−1
+
+exp 
+
+
+
+− 1
+
+τanom 
+
+
+
++ at, (1) yielding a raw-residual anomaly trace Araw  
+
+> t
+
+derived directly from the residual without any trained model. On GenVidBench, Araw  
+
+> t
+
+separates real from fake monotonically over the 8-frame window, and every per-generator fake trajectory remains above the real mean (Figure 3(b)). 4Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks Pseudo Event 
+
+Generatio n          
+
+> t= 0 t= 1 . . . . t= n . . . . t= 2 t= 3
+
+× n times 
+
+> Augmented Tensor
+
+Pseudo Events 
+
+> Vth
+> Vth
+> Vth
+> Vth
+> St,c
+> St,c
+> St,c
+> St,c
+> SDT -v3 Anomaly Gate
+> LIF Accumulation
+
+Classifier 
+
+> Real
+> or
+> Fake
+
+Frozen Encoder 
+
+Zvideo   
+
+> Transformer
+> Transformer
+> Transformer
+> Transformer
+> Conv SNN Block
+> ×2
+> Spiking Transformer
+> Block ×8
+> Input spike
+> Spike Separable
+> Convolution
+> Channel Conv
+> +
+> Ou tput spike
+> +
+
+.
+
+. 
+
+> Residual  Residual
+> Residual
+> Spike Separable
+> Convolution
+> Input spike
+
+.
+
+> Spike -Driven
+> Self -Attentio n
+> Channel -Wise
+> ML P
+
+.
+
+> +
+
+.
+
+> +
+> +
+> Residual Residual
+> Ou tput spike
+> Conv SNN Bloock
+> Spiking Transformer Block
+> Time Steps
+> Semantic Trajectory Branch
+> Spike -Driven Temporal Branch
+> Anomaly?
+> Yes
+> No
+> PerChannel LIF
+> Reset
+
++
+
+> Curvature
+> Aux
+> Hea d
+
+Figure 4: MAST overview. A trainable Spike-Driven Temporal Branch (SDTB, dashed) processes multi-channel pseudo-event residuals; a frozen Semantic Trajectory Branch (solid) provides a video-level semantic feature and trajectory geometry. The two representations are concatenated before classification. 
+
+## 4 MAST: Adaptive Temporal Integration of Residual and Semantic Cues 
+
+The observations in Section 3 lead directly to three design choices for MAST. First , the fc and trajectory-volume gaps in Section 3.1 show that discriminative evidence unfolds over time, so temporal residuals must not be collapsed to a fixed scalar or descriptor before classification. Second ,the per-generator residual statistics in Section 3.2 (Figure 3) operate at distinctly different timescales across generators, so temporal integration must be adaptive across cues rather than governed by a single shared time constant. Third , the Srgb /Sres failures contrasted with the cleaner fc and trajectory-volume separation show that pixel-level and semantic-level evidence are complementary, since generators can appear natural in one space while remaining inconsistent in the other, so a single modality is insufficient. MAST instantiates these three requirements through two complementary pathways (Figure 4, Algorithm 1): a trainable Spike-Driven Temporal Branch (SDTB) that processes pixel-level residuals as pseudo-events, and a frozen Semantic Trajectory Branch that produces both the geometry of each video’s trajectory in the latent feature space and a representative video-level semantic feature. 
+
+4.1 Temporal Residuals as Pseudo-Events (a) Event -Camera Frames  (b) Temporal Residual (HF) 
+
+> Input Result
+
+Figure 5: (a) Event-camera frames from DVS-Gesture [ 1]. (b) Pseudo-events derived from a conventional video. In both cases, responses are concentrated at pixels that change over time, supporting temporal residuals as event-like inputs to the temporal module. We represent inter-frame residuals as event-like pseudo-events (Figure 5) so that the SDTB oper-ates on changes rather than raw appearance. Let 
+
+Ft ∈ RH×W ×3 denote the video frame at time t. We refer to any signal extracted from Ft relative to its pre-decessor Ft−1 as a temporal residual . The simplest instance is the absolute frame difference, 
+
+∆Ft = Ft − Ft−1 , (2) and the same family includes high-frequency Lapla-cians, Sobel edge maps, higher-order differences [ 83 ], and feature-space derivatives [ 30 ]. These signals are sparse and concentrated at pixels that change between frames. This structure is closely aligned with the event-driven regime in which SNNs operate naturally [ 19 ,29 , 46 , 43 ]. Let It(x, y ) ∈ R>0 denote the pixel intensity at spatial location (x, y ) at time t. An 5Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks Inter Frame  Temporal Residuals 
+
+Figure 6: Pixel-level temporal residuals derived from two consecutive frames Ft and Ft+1 . From left to right: high-frequency Laplacian (HF), Sobel edge magnitude difference, absolute frame difference (AbsDiff), and second-order frame difference (Diff 2). event camera triggers a binary event at (x, y ) whenever the log-intensity change between consecutive frames exceeds a contrast threshold c ∈ R>0,
+
+et(x, y ) = 1 log It(x, y ) − log It−1(x, y ) ≥ c  , (3) and we adopt the same structural form, but replace the hard threshold with a differentiable soft one: 
+
+Et(x, y ) = σ
+
+ ∆Ft(x, y ) − cth 
+
+β
+
+
+
+, (4) where σ(·) is the logistic function, cth ∈ R>0 is a fixed threshold, and β > 0 is a temperature controlling the sharpness of the soft threshold. 
+
+4.2 Spike-Based Temporal Integration with Per-Channel Learnable Timescales                                                      
+
+> Algorithm 1: MAST forward In: x=( F1, . . . , F T),y
+> Learn: {τc, V th ,c }Cc=1 , ϕ ;
+> Frozen: Semantic Trajectory Branch
+> 1: Zvideo , Z patch ←X-CLIP (x)
+> // pseudo events: all adjacent pairs
+> 2: for t= 2 , . . . , T do Et←σ((∆ Ft−cth )/β )
+> 3: end for
+> 4: for t, c do sc,t ←PerChannelLIF (Ec,t ;τc, V th ,c )
+> 5: end for
+> 6: g, Agate ←SpikeAttn (s)▷[77]
+> 7: F←[Zvideo ∥Fanom ∥Fgate ];ˆy←ϕ(F)
+> // multi-objective loss
+> 8: L←BCE(ˆ y, y )+λ1BCE(ˆ ysnn , y )+
+> λ2SupCon( F)
+> 9: return ˆy, L
+
+We model pseudo-events with adaptive spike-based tem-poral integration. We adopt the standard Leaky Integrate-and-Fire (LIF) neuron, whose discrete-time dynamics are 
+
+vt =  1 − 1
+
+> τ
+
+ vt−1 + xt, (5) 
+
+st = Θ( vt − Vth ), (6) 
+
+vt ← vt − st · Vth , (7) where vt ∈ R is the membrane potential at timestep t,
+
+xt ∈ R is the input current, τ ∈ R>0 is the membrane time constant, Vth ∈ R>0 is the firing threshold, Θ( ·)
+
+is the Heaviside step function, and st ∈ { 0, 1} is the output spike. Eq. 7 implements a soft reset that subtracts the fired spike level from the membrane potential after firing. Crucially, τ controls the effective temporal integration window, motivating the per-channel learnable variant introduced below. This module constructs a multi-channel pseudo-event stream E ∈ RT ×C×H′×W ′
+
+from four pixel-level residual channels (high-frequency Laplacian, Sobel edge-magnitude difference, absolute frame difference, second-order frame difference) and two semantic-level residual channels derived from the frozen patch tokens Zpatch ∈ RT ×N ×D of the semantic trajectory encoder (Section 4.3), where 
+
+T is the number of frames in the clip, N is the number of patch tokens per frame, and D is the embedding dimension. We write Zt,n  
+
+> patch
+
+∈ RD for the token at frame t ∈ { 1, . . . , T } and patch index 
+
+n ∈ { 1, . . . , N }, and define the per-patch temporal difference ∆Zt,n  
+
+> patch
+
+= Zt,n  
+
+> patch
+
+− Zt−1,n  
+
+> patch
+
+. The two semantic channels are the per-patch displacement dtn and trajectory curvature κtn,
+
+dtn = ∆Zt,n  
+
+> patch 2
+
+, (8) 
+
+κtn = arccos ∆Zt,n 
+
+> patch
+
+, ∆Zt−1,n 
+
+> patch
+
+∆Zt,n   
+
+> patch 2
+
+∆Zt−1,n  
+
+> patch 2
+
+. (9) The six channels carry information at different temporal scales, so integrating them through a single fixed time constant would collapse them onto one low-pass filter. We therefore use channel-wise LIF 6Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+neurons with independently learnable time constants τc and firing thresholds Vth ,c , both parameterized in the log-domain ( τc = 2 · exp( θτ,c )), which we refer to as PerChannelLIF . The learnable τc adapts each channel’s integration window to its own scale [60]. Channel-wise spikes from PerChannelLIF are processed by an attention block built on the Efficient Spike-Driven Self-Attention (E-SDSA) topology of SDT-V3 [ 77 , 76 ], in which queries, keys, and values QS , K S , V S are spike tensors over the (token, time) joint dimension. The attention output is computed as 
+
+SpikeAttn( QS , K S , V S ) = Linear out 
+
+
+
+Multispike  (QS K⊤ 
+
+> S
+
+VS ) · scale 
+
+, (10) where scale is the standard attention scaling factor, Multispike( ·) is the L-level multispike firing function (Appendix F, Eq. 40), and Linear out is the output projection. The block reads out a per-timestep spatial gate map Gt ∈ RH′×W ′
+
+, summarized into per-frame statistics gt (mean and max) and accumulated through a leaky-integrator to produce the trained-gate anomaly trace Agate  
+
+> t
+
+that runs in parallel with the raw-residual diagnostic of Section 3.2. 
+
+4.3 Semantic Trajectory Encoding 
+
+We complement residual dynamics with a semantic-space view of temporal change. A temporal residual measures frame-to-frame variation in pixel space; we read the same variation at a higher level of abstraction by projecting each frame into a latent embedding Zt ∈ RD and tracing the resulting trajectory 
+
+T =  Z1, Z 2, . . . , Z T
+
+, ∆Zt = Zt − Zt−1, (11) whose per-step displacement ∆Zt is the semantic analogue of the pixel-level residual ∆Ft. We employ a pre-trained X-CLIP [ 50 ] as a frozen video encoder. X-CLIP inserts cross-frame attention layers between its spatial transformer blocks, so its per-frame embeddings are computed in the temporal context of the entire clip rather than in isolation. This encoder produces two outputs that the rest of MAST consumes. The first is the video-level embedding Zvideo , which is concatenated directly into the fused representation and provides the semantic prior whose curvature and volume gaps separate real from generated clips. The second is the sequence of patch tokens Zpatch ∈ RT ×N ×D ,kept frozen and detached from the X-CLIP gradient flow, from which we compute the patch-level displacement and curvature channels that enter the PerChannelLIF. 
+
+4.4 Fusion and Training Objectives 
+
+The SDTB provides the trained-gate anomaly trace Agate and the spatial gate maps Gt, projected respectively into a temporal anomaly vector Fanom (from Agate ) and a spatial gate vector Fgate 
+
+(from Gt). The final representation concatenates the three: Ffinal = [ Zvideo ∥ Fanom ∥ Fgate ].A lightweight MLP classifier head ϕ maps the fused representation to a real-versus-fake logit, 
+
+ˆy = ϕ(Ffinal ). We train the model with three objectives: 
+
+L = LBCE (ˆ y, y ) + λ1LBCE (ˆ ysnn , y ) + λ2Lsupcon . (12) The first term, LBCE (ˆ y, y ), is the main binary cross-entropy on the fused prediction ˆy from Ffinal .The second term, LBCE (ˆ ysnn , y ), is an auxiliary binary cross-entropy on ˆysnn , the prediction of an auxiliary classification head that operates on the SDTB features alone; this term forces the SDTB to be a self-sufficient temporal-cue classifier rather than a residual offset on top of the dominant frozen X-CLIP feature. The third term, Lsupcon , applies supervised contrastive learning [ 34 ] on Ffinal to pull same-label clips together and push real and generated clips apart in the fused representation space. To handle the non-differentiable spike function during backpropagation, we use the ATan surrogate gradient [49, 15]; full training details are deferred to Appendix F. 
+
+## 5 Experiments 
+
+Datasets and Protocols. We evaluate MAST on cross-generator AI-generated video benchmarks. On GenVideo [ 11 ] we follow the standard protocol [ 11 ], training on 10 ,000 Kinetics-400 [ 32 ] clips paired with 10 ,000 Pika [ 55 ] clips and testing on 10 unseen generators (ModelScope, MorphStudio, MoonValley, HotShot, Show1, Gen2, Crafter, Lavie, Sora, WildScrape) [ 67 , 62 , 47 , 48 , 81 , 14 , 9 , 70 ,4 ]. For backbone-matched comparison we use IvyFake [ 31 ] with 3 training generators (Latte [ 45 ], Pika [ 55 ], OpenSora [ 84 ]) and 9 unseen test generators (Crafter, Gen2, HotShot, Lavie, ModelScope, MoonValley, MorphStudio, Sora, WildScrape). Ablation studies use GenVideo. For both benchmarks 7Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+Table 2: GenVideo cross-generator results when trained on 10 ,000 Kinetics-400 [ 32 ] + 10 ,000 
+
+Pika [ 55 ] clips. Acc and AUC (%) on ten unseen generators. Best per-column in bold; second-best underlined. †: trained and evaluated by us. Other results are sourced from [82].                                                                                                                                                                                                                             
+
+> Method Metric Model Scope Morph Studio Moon Valley HotShot Show1 Gen2 Crafter Lavie Sora Wild Scrape Avg.
+> DeMamba [11] Acc 91.70 95.00 97.60 68.50 72.40 97.20 92.40 77.70 72.32 77.30 84.21 AUC 98.04 98.82 99.68 87.84 90.12 99.46 97.81 91.32 88.36 87.38 93.88 NPR [64] Acc 79.80 89.20 98.20 57.20 65.70 94.80 89.50 66.50 67.86 70.80 77.96 AUC 93.05 97.18 99.66 82.97 90.50 99.13 97.87 87.54 90.47 91.84 93.02 TALL [74] Acc 75.10 82.10 96.20 65.50 80.30 96.90 90.40 74.10 61.61 76.30 79.85 AUC 95.82 97.14 99.73 92.55 97.36 99.79 99.09 94.84 86.67 93.75 95.67 STIL [23] Acc 86.90 85.40 71.70 50.70 51.00 72.50 56.60 53.60 50.89 55.80 63.51 AUC 96.43 97.77 99.34 86.66 90.56 98.88 97.04 88.16 92.57 87.52 93.49 NSG-VD [82] Acc 81.67 98.33 96.67 91.67 90.83 88.33 95.83 94.17 88.39 88.75 91.46 AUC 92.26 98.66 98.15 94.45 96.38 94.83 98.16 97.41 96.40 94.73 96.14
+> ReStraV †[30] Acc 82.14 74.43 99.52 91.14 60.14 79.28 92.27 86.00 94.64 88.98 84.85 AUC 93.17 92.44 99.93 96.66 89.45 84.82 97.59 95.17 98.92 96.71 94.49 D3 †[83] Acc 79.82 79.80 80.99 79.87 80.59 81.82 81.02 79.93 80.90 79.38 80.41 AUC 79.49 80.89 88.77 81.25 86.21 91.25 89.04 84.37 80.67 77.15 83.91 MM-Det †[61] Acc 90.24 90.39 90.50 87.18 86.80 90.98 90.39 87.40 89.85 87.48 89.12 AUC 97.40 98.10 98.42 78.45 75.23 98.89 97.14 87.12 76.34 76.22 86.33
+> Ours Acc 94.07 95.12 96.03 90.18 94.21 97.42 96.87 94.36 90.86 82.31 93.14
+> AUC 95.81 96.81 97.28 94.95 95.81 98.10 97.95 95.60 91.10 86.12 94.95
+
+we follow the original evaluation protocols: per-generator accuracy and AUROC are computed on the union of fake test clips and the benchmark’s fixed real reference set, and mACC/mAUC are arithmetic means over the unseen generators. Additional experiments are reported in Appendix E. 
+
+5.1 Main Results. A) Cross-generator generalization on GenVideo. Table 2 reports cross-generator accuracy and AUROC on the GenVideo test set. MAST is compared against deepfake video detectors (De-Mamba [ 11 ], NPR [ 64 ], TALL [ 74 ], STIL [ 23 ]), the physics-based detector NSG-VD [ 82 ], the trajectory-based detector ReStraV [ 30 ], and the second-order detector D3 [ 83 ]. MAST achieves 
+
+93 .14% mean accuracy, outperforming the second-best baseline (NSG-VD, 91 .46% ) by 1.68 points, and ranks first on 5 of 10 unseen generators. These results confirm that MAST generalizes effectively to cross-generator settings and maintains high accuracy on unseen generators that differ substantially in artifact type and timescale from the single training generator. 
+
+Figure 7: Backbone-matched comparison on IvyFake. All methods share the X-CLIP-B/16 semantic backbone and differ only in the temporal module: D3 (RAFT), DeMamba (Mamba), Ours (SNN). 
+
+B) Backbone-matched comparison on IvyFake. 
+
+To verify the effectiveness of the SDTB, we compare detectors with same semantic backbone on another AIGV benchmark, IvyFake [ 31 ]. The three detectors we compare share the X-CLIP-B/16 semantic back-bone and differ in the temporal module : D3 [ 83 ] with RAFT [ 65 ]-based optical flow, DeMamba [ 11 ] with a Mamba [ 21 ]-based temporal model, and ours with a spike-driven transformer [ 77 ]. As shown in Fig-ure 7, MAST achieves 85 .91% mACC and 94 .99% 
+
+mAUC, exceeding DeMamba and D3. These results indicate that the spike-driven integrator exploits tem-poral information more effectively and combines it more tightly with the shared semantic features than the Mamba- and flow-based alternatives. MAST’s lower scores on IvyFake than on GenVideo reflect IvyFake’s shorter clips, which give a temporally-driven detector less signal. 
+
+5.2 Ablation Studies. A+B) Branch composition and pseudo-event channels. Table 3 confirms that all four components (STDB, Semantic Trajectory Branch, Pseudo-Event Generation, Curvature cue) contribute non-8Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+Table 3: Branch composition ablation. Each row uses a different subset of branches at inference.             
+
+> Configuration mACC mAUC Full MAST (ours) 93.14 94.95
+> Semantic Trajectory branch only 88.75 92.68 Spike-Driven Temporal branch only 85.27 89.62 MAST w/o pseudo-event (RGB only) 91.05 92.03 MAST w/o curvature 88.94 91.15
+
+Table 4: Pseudo event channel leave-one-out ab-lation. Check marks indicate channels kept.                           
+
+> HF Sobel AbsDiff Diff2 mACC mAUC
+> ✓✓✓✓93.14 94.95
+> ✓✓✓91.94 90.84
+> ✓✓✓91.32 89.68
+> ✓✓✓91.63 92.50
+> ✓✓✓86.82 93.32
+
+redundantly: dropping any single one degrades performance, supporting the two-signature observation in Section 3. The leave-one-out result on the four pixel-level pseudo-event channels (Table 4) shows the same pattern at the channel level: removing any single channel degrades mACC, supporting the multi-channel design of the pixel-residual pathway. Notably, the SNN can still learn a usable real/fake signal directly from raw RGB (mACC =91.05), but its mAUC drops to 92.03, indicating substantially weaker ranking quality without the pseudo-event channels. Table 5: ANN vs. SNN at matched pa-rameters. Latency per-clip ( T =8 , B=1 ,
+
+224 ×224 ) on NVIDIA RTX 3090.             
+
+> Module Params Latency mACC mAUC
+> ANN 10.7 M 54.19 ms 92.78 94.92
+> SNN (ours) 9.3 M 33.88 ms 93.14 94.95
+
+C) Temporal module: SNN vs. ANN. We replace the SDTB with an ANN (Artificial Neural Networks) Transformer built to match the SNN parameter count at equal depth and width ( L=8 , d=256 ), trained under the same schedule (Table 5). The SNN attains +0 .36 
+
+mACC and +0 .03 mAUC at 1.6× lower latency under matched (even slightly fewer) parameters. Although an ANN with the exact same architecture would likely yield higher raw performance, the SNN’s efficiency remains notable as SNNs typically lag behind ANNs on dense RGB inputs. The operator-level mapping between the two branches is detailed in Appendix D, and a detailed energy comparison is provided in Appendix H. This performance gain aligns with our design choice of feeding the integrator pseudo-event tensors instead of raw RGB, effectively utilizing the sparse regime for which SNNs were originally designed. 
+
+Figure 8: Training dynamics of learnable vs. fixed LIF. Fixed: τ =2 .0, Vth =1 .0.
+
+D) Impact of learnable τ and threshold. We com-pare learnable per-channel τc and threshold against a fixed LIF baseline ( τ =2 .0, Vth =1 .0). As shown in Figure 8, learnable LIF rapidly converges to 93 .7% 
+
+mAUC and 95 .7% F1 by epoch 2, while fixed LIF plateaus at 89 .3% mAUC and degrades on F1 after epoch 5. The capacity gap supports our argument that generator-specific timescales require channel-wise adaptation, and the late-stage F1 drop further sug-gests that learnable parameters help preserve gradient flow during prolonged training. 
+
+## 6 Conclusion 
+
+We presented MAST, a detector for AI-generated video that is built around the temporal structure of residuals, adopting SNNs. Motivated by the structural similarity between event-camera signals and inter-frame temporal residuals, MAST introduces Spiking Neural Networks as the temporal backbone alongside a frozen X-CLIP semantic trajectory encoder. Under strict cross-generator evaluation, MAST achieves 93 .14% mean accuracy on GenVideo, matching or surpassing the strongest ANN-based detectors and thereby demonstrating the practical applicability of SNNs to AI-generated video detection. More broadly, our results suggest that effective AI-generated video detection depends on modeling temporal structure explicitly, rather than relying on a single cue or reducing temporal evidence to fixed summaries before classification. 
+
+Limitation. Because MAST relies on spike-driven temporal integration, its inductive bias is biased toward temporal cues; performance therefore degrades when the temporal signal is weak, such as on very short clips or under image-only detection. More broadly, applying SNN architectures directly in the RGB pixel domain remains fundamentally weaker than ANN counterparts, and closing this gap is left as future work. 9Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+## References 
+
+[1] Arnon Amir, Brian Taba, David Berg, Timothy Melano, Jeffrey McKinstry, Carmelo Di Nolfo, Tapan Nayak, Alexander Andreopoulos, Guillaume Garreau, Marcela Mendoza, et al. A low power, fully event-based gesture recognition system. In Proceedings of the IEEE conference on computer vision and pattern recognition , pages 7243–7252, 2017. [2] Jianfa Bai, Man Lin, Gang Cao, and Zijie Lou. Ai-generated video detection via spatial-temporal anomaly learning. In Chinese Conference on Pattern Recognition and Computer Vision (PRCV) ,pages 460–470. Springer, 2024. [3] Andreas Blattmann, Tim Dockhorn, Sumith Kulal, Daniel Mendelevitch, Maciej Kilian, Do-minik Lorenz, Yam Levi, Zion English, Vikram Voleti, Adam Letts, et al. Stable video diffusion: Scaling latent video diffusion models to large datasets. arXiv preprint arXiv:2311.15127 , 2023. [4] Tim Brooks, Bill Peebles, Connor Holmes, Will DePue, Yufei Guo, Li Jing, David Schnurr, Joe Taylor, Troy Luhman, Eric Luhman, Clarence Ng, Ricky Wang, and Aditya Ramesh. Video generation models as world simulators. 2024. [5] P Burt and E Adelson. The laplacian pyramid as a compact image code. IEEE Transactions on Communications , 31(4):532–540, 1983. [6] Nicholas T. Carnevale and Michael L. Hines. The NEURON Book . Cambridge University Press, 2006. [7] Joao Carreira and Andrew Zisserman. Quo vadis, action recognition? a new model and the kinetics dataset. In proceedings of the IEEE Conference on Computer Vision and Pattern Recognition , pages 6299–6308, 2017. [8] Bharatesh Chakravarthi, Aayush Atul Verma, Kostas Daniilidis, Cornelia Fermuller, and Yezhou Yang. Recent event camera innovations: A survey. In European conference on computer vision ,pages 342–376. Springer, 2024. [9] Haoxin Chen, Menghan Xia, Yingqing He, Yong Zhang, Xiaodong Cun, Shaoshu Yang, Jinbo Xing, Yaofang Liu, Qifeng Chen, Xintao Wang, et al. Videocrafter1: Open diffusion models for high-quality video generation. arXiv preprint arXiv:2310.19512 , 2023. [10] Haoxin Chen, Yong Zhang, Xiaodong Cun, Menghan Xia, Xintao Wang, Chao Weng, and Ying Shan. Videocrafter2: Overcoming data limitations for high-quality video diffusion models. In 
+
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 7310–7320, 2024. [11] Haoxing Chen, Yan Hong, Zizheng Huang, Zhuoer Xu, Zhangxuan Gu, Yaohui Li, Jun Lan, Huijia Zhu, Jianfu Zhang, Weiqiang Wang, et al. Demamba: Ai-generated video detection on million-scale genvideo benchmark. arXiv preprint arXiv:2405.19707 , 2024. [12] Xinyuan Chen, Yaohui Wang, Lingjun Zhang, Shaobin Zhuang, Xin Ma, Jiashuo Yu, Yali Wang, Dahua Lin, Yu Qiao, and Ziwei Liu. Seine: Short-to-long video diffusion model for generative transition and prediction. In The Twelfth International Conference on Learning Representations ,2023. [13] Yiting Dong, Zhaofei Yu, Jianhao Ding, Zijie Xu, and Tiejun Huang. Unleashing tempo-ral capacity of spiking neural networks through spatiotemporal separation. arXiv preprint arXiv:2512.05472 , 2025. [14] Patrick Esser, Johnathan Chiu, Parmida Atighehchian, Jonathan Granskog, and Anastasis Germanidis. Structure and content-guided video synthesis with diffusion models. In Proceedings of the IEEE/CVF international conference on computer vision , pages 7346–7356, 2023. [15] Wei Fang, Yanqi Chen, Jianhao Ding, Zhaofei Yu, Timothée Masquelier, Ding Chen, Liwei Huang, Huihui Zhou, Guoqi Li, and Yonghong Tian. Spikingjelly: An open-source machine learning infrastructure platform for spike-based intelligence. Science Advances , 9(40):eadi1480, 2023. 10 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+[16] Wei Fang, Zhaofei Yu, Yanqi Chen, Timothée Masquelier, Tiejun Huang, and Yonghong Tian. Incorporating learnable membrane time constant to enhance learning of spiking neural networks. In Proceedings of the IEEE/CVF international conference on computer vision , pages 2661–2671, 2021. [17] Christoph Feichtenhofer. X3d: Expanding architectures for efficient video recognition. In 
+
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 203–213, 2020. [18] Christoph Feichtenhofer, Haoqi Fan, Jitendra Malik, and Kaiming He. Slowfast networks for video recognition. In Proceedings of the IEEE/CVF international conference on computer vision , pages 6202–6211, 2019. [19] Guillermo Gallego, Tobi Delbruck, Garrick Orchard, Chiara Bartolozzi, Brian Taba, Andrea Censi, Stefan Leutenegger, Andrew Davison, Jörg Conradt, Kostas Daniilidis, and Davide Scaramuzza. Event-based vision: A survey. IEEE Transactions on Pattern Analysis and Machine Intelligence , 44(1):154–180, 2020. [20] Samanwoy Ghosh-Dastidar and Hojjat Adeli. Spiking neural networks. International journal of neural systems , 19(04):295–308, 2009. [21] Albert Gu and Tri Dao. Mamba: Linear-time sequence modeling with selective state spaces. 
+
+arXiv preprint arXiv:2312.00752 , 2023. [22] Yi Gu, Zhaorui Wang, and Renjing Xu. Sharpening Your Density Fields: Spiking Neuron Aided Fast Geometry Learning. In Beibei Wang and Alexander Wilkie, editors, Eurographics Symposium on Rendering . The Eurographics Association, 2025. [23] Zhihao Gu, Yang Chen, Taiping Yao, Shouhong Ding, Jilin Li, Feiyue Huang, and Lizhuang Ma. Spatiotemporal inconsistency learning for deepfake video detection. In Proceedings of the 29th ACM international conference on multimedia , pages 3473–3481, 2021. [24] Yufei Guo, Weihang Peng, Xiaode Liu, Yuanpei Chen, Yuhan Zhang, Xin Tong, Zhou Jie, and Zhe Ma. Enof-snn: Training accurate spiking neural networks via enhancing the output feature. 
+
+Advances in Neural Information Processing Systems , 37:51708–51726, 2024. [25] Yufei Guo, Yuhan Zhang, Zhou Jie, Xiaode Liu, Xin Tong, Yuanpei Chen, Weihang Peng, and Zhe Ma. Reverb-snn: Reversing bit of the weight and activation for spiking neural networks. In 
+
+International Conference on Machine Learning , pages 21220–21231. PMLR, 2025. [26] Wenyi Hong, Ming Ding, Wendi Zheng, Xinghan Liu, and Jie Tang. Cogvideo: Large-scale pretraining for text-to-video generation via transformers. arXiv preprint arXiv:2205.15868 ,2022. [27] Mark Horowitz. 1.1 computing’s energy problem (and what we can do about it). In 2014 IEEE international solid-state circuits conference digest of technical papers (ISSCC) , pages 10–14. IEEE, 2014. [28] Patrik O Hoyer. Non-negative matrix factorization with sparseness constraints. Journal of machine learning research , 5(Nov):1457–1469, 2004. [29] Yuhuang Hu, Shih-Chii Liu, and Tobi Delbruck. v2e: From video frames to realistic dvs events. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 1312–1321, 2021. [30] Cristian Internò, Robert Geirhos, Markus Olhofer, Sunny Liu, Barbara Hammer, and David Klindt. AI-generated video detection via perceptual straightening. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. [31] Changjiang Jiang, Wenhui Dong, Zhonghao Zhang, Chenyang Si, Fengchang Yu, Wei Peng, Xinbin Yuan, Yifei Bi, Ming Zhao, Zian Zhou, and Caifeng Shan. IVY-FAKE: A unified explainable framework and benchmark for image and video AIGC detection. arXiv preprint arXiv:2506.00979 , 2025. 11 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+[32] Will Kay, Joao Carreira, Karen Simonyan, Brian Zhang, Chloe Hillier, Sudheendra Vijaya-narasimhan, Fabio Viola, Tim Green, Trevor Back, Paul Natsev, et al. The kinetics human action video dataset. arXiv preprint arXiv:1705.06950 , 2017. [33] Levon Khachatryan, Andranik Movsisyan, Vahram Tadevosyan, Roberto Henschel, Zhangyang Wang, Shant Navasardyan, and Humphrey Shi. Text2video-zero: Text-to-image diffusion models are zero-shot video generators. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 15954–15964, 2023. [34] Prannay Khosla, Piotr Teterwak, Chen Wang, Aaron Sarna, Yonglong Tian, Phillip Isola, Aaron Maschinot, Ce Liu, and Dilip Krishnan. Supervised contrastive learning. Advances in neural information processing systems , 33:18661–18673, 2020. [35] Gihun Lee and Mihui Kim. Deepfake detection using the rate of change between frames based on computer vision. Sensors , 21(21):7367, 2021. [36] Hongmin Li, Hanchao Liu, Xiangyang Ji, Guoqi Li, and Luping Shi. Cifar10-dvs: an event-stream dataset for object classification. Frontiers in neuroscience , 11:244131, 2017. [37] Kunchang Li, Xinhao Li, Yi Wang, Yinan He, Yali Wang, Limin Wang, and Yu Qiao. Video-mamba: State space model for efficient video understanding. In European conference on computer vision , pages 237–255. Springer, 2024. [38] Yanghao Li, Chao-Yuan Wu, Haoqi Fan, Karttikeya Mangalam, Bo Xiong, Jitendra Malik, and Christoph Feichtenhofer. Mvitv2: Improved multiscale vision transformers for classification and detection. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 4804–4814, 2022. [39] Yuhang Li, Tamar Geller, Youngeun Kim, and Priyadarshini Panda. Seenn: Towards temporal spiking early exit neural networks. Advances in Neural Information Processing Systems ,36:63327–63342, 2023. [40] Yuxin Liao, Mingrui Wang, Hao Bian, Cheng Sun, and Bei Yu. Spik-NeRF: Bridging spiking neural networks and neural radiance fields for real-time rendering. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. [41] Ji Lin, Chuang Gan, and Song Han. Tsm: Temporal shift module for efficient video under-standing. In Proceedings of the IEEE/CVF international conference on computer vision , pages 7083–7093, 2019. [42] Ze Liu, Jia Ning, Yue Cao, Yixuan Wei, Zheng Zhang, Stephen Lin, and Han Hu. Video swin transformer. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 3202–3211, 2022. [43] Chenxiang Ma, Xinyi Chen, Yanchen Li, Qu Yang, Yujie Wu, Guoqi Li, Gang Pan, Huajin Tang, Kay Chen Tan, and Jibin Wu. Spiking neural networks for temporal processing: Status quo and future prospects. arXiv preprint arXiv:2502.09449 , 2025. [44] Long Ma, Zhiyuan Yan, Qinglang Guo, Yong Liao, Haiyang Yu, and Pengyuan Zhou. Detecting ai-generated video via frame consistency. In 2025 IEEE International Conference on Multimedia and Expo (ICME) , pages 1–6. IEEE, 2025. [45] Xin Ma, Yaohui Wang, Xinyuan Chen, Jia Gengyun, Ziwei Liu, Yuan-Fang Li, Cunjian Chen, and Yu Qiao. Latte: Latent diffusion transformer for video generation. Transactions on Machine Learning Research , 2025. [46] Wolfgang Maass. Networks of spiking neurons: The third generation of neural network models. 
+
+Neural Networks , 10(9):1659–1671, 1997. [47] Moonvalley.ai. Moonvalley text to video generator. https://moonvalley.ai/ , 2022. Ac-cessed: 2026-05-04. [48] John Mullan, Duncan Crawbuck, and Aakash Sastry. Hotshot-xl. https://github.com/ hotshotco/hotshot-xl , 2023. Accessed: 2026-05-04. 12 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+[49] Emre O Neftci, Hesham Mostafa, and Friedemann Zenke. Surrogate gradient learning in spiking neural networks. IEEE Signal Processing Magazine , 36(6):51–63, 2019. [50] Bolin Ni, Houwen Peng, Minghao Chen, Songyang Zhang, Gaofeng Meng, Jianlong Fu, Shiming Xiang, and Haibin Ling. Expanding language-image pretrained models for general video recognition. In European conference on computer vision , pages 1–18. Springer, 2022. [51] Zhenliang Ni, Qiangyu Yan, Mouxiao Huang, Tianning Yuan, Yehui Tang, Hailin Hu, Xinghao Chen, and Yunhe Wang. Genvidbench: A 6-million benchmark for ai-generated video detection. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, pages 15582– 15590, 2026. [52] Maxime Oquab, Timothée Darcet, Théo Moutakanni, Huy Vo, Marc Szafraniec, Vasil Khalidov, Pierre Fernandez, Daniel Haziza, Francisco Massa, Alaaeldin El-Nouby, et al. Dinov2: Learning robust visual features without supervision. Transactions on Machine Learning Research Journal ,2024. [53] Mohammed R. Oraibi and Abdulkareem M. Radhi. Enhancement digital forensic approach for inter-frame video forgery detection using a deep learning technique. Iraqi Journal of Science ,63(6):2686–2701, 2022. [54] Garrick Orchard, Ajinkya Jayawant, Gregory K Cohen, and Nitish Thakor. Converting static image datasets to spiking neuromorphic datasets using saccades. Frontiers in neuroscience ,9:437, 2015. [55] Pika Labs. Pika ai video generator. https://pika.art , 2024. Accessed: 2026-05-04. [56] Yuanbin Qian, Shuhan Ye, Chong Wang, Xiaojie Cai, Jiangbo Qian, and Jiafei Wu. Ucf-crime-dvs: A novel event-based dataset for video anomaly detection with spiking neural networks. In 
+
+Proceedings of the AAAI Conference on Artificial Intelligence , volume 39, pages 6577–6585, 2025. [57] Nitin Rathi and Kaushik Roy. Diet-snn: A low-latency spiking neural network with direct input encoding and leakage and threshold optimization. IEEE Transactions on Neural Networks and Learning Systems , 34(6):3174–3182, 2021. [58] Nitin Rathi, Gopalakrishnan Srinivasan, Priyadarshini Panda, and Kaushik Roy. Enabling deep spiking neural networks with hybrid conversion and spike timing dependent backpropagation. In International Conference on Learning Representations , 2020. [59] Dayong Ren, Zhe Ma, Yuanpei Chen, Weihang Peng, Xiaode Liu, Yuhan Zhang, and Yufei Guo. Spiking pointnet: Spiking neural networks for point clouds. Advances in Neural Information Processing Systems , 36:41797–41808, 2023. [60] FENG SHIBO, Wanjin Feng, Xingyu Gao, Peilin Zhao, and Zhiqi Shen. Ts-lif: A temporal segment spiking neuron network for time series forecasting. In The Thirteenth International Conference on Learning Representations , 2025. [61] Xiufeng Song, Xiao Guo, Jiache Zhang, Qirui Li, Lei Bai, Xiaoming Liu, Guangtao Zhai, and Xiaohong Liu. On learning multi-modal forgery representation for diffusion generated video detection. In Advances in Neural Information Processing Systems , volume 37, pages 122054–122077, 2024. [62] Morph studio. Morph studio text to video generator. https://www.morphstudio.com/ ,2023. Accessed: 2026-05-04. [63] SK Sudha and S Aji. Spiking neural networks for video analysis: An in-depth review of models and architectures. Neural Networks , page 108844, 2026. [64] Chuangchuang Tan et al. Rethinking the upsampling operations in CNN-based generative network for generalizable deepfake detection. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 28130–28139, 2024. 13 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+[65] Zachary Teed and Jia Deng. Raft: Recurrent all-pairs field transforms for optical flow. In 
+
+European conference on computer vision , pages 402–419. Springer, 2020. [66] Alberto Viale, Alessio Marchisio, Maurizio Martina, Guido Masera, and Muhammad Shafique. Lanesnns: Spiking neural networks for lane detection on the loihi neuromorphic processor. In 2022 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) , pages 79–86. IEEE, 2022. [67] Jiuniu Wang, Hangjie Yuan, Dayou Chen, Yingya Zhang, Xiang Wang, and Shiwei Zhang. Modelscope text-to-video technical report. arXiv preprint arXiv:2308.06571 , 2023. [68] Lin Wang, Yo-Sung Ho, Kuk-Jin Yoon, et al. Event-based high dynamic range image and very high frame rate video generation using conditional generative adversarial networks. In 
+
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 10081–10090, 2019. [69] Wenjing Wang, Huan Yang, Zixi Tuo, Huiguo He, Junchen Zhu, Jianlong Fu, and Jiaying Liu. Videofactory: Swap attention in spatiotemporal diffusions for text-to-video generation. arXiv preprint arXiv:2305.10874 , 2023. [70] Yaohui Wang, Xinyuan Chen, Xin Ma, Shangchen Zhou, Ziqi Huang, Yi Wang, Ceyuan Yang, Yinan He, Jiashuo Yu, Peiqing Yang, et al. Lavie: High-quality video generation with cascaded latent diffusion models. International Journal of Computer Vision , 133(5):3059–3078, 2025. [71] Yi Wang, Yinan He, Yizhuo Li, Kunchang Li, Jiashuo Yu, Xin Ma, Xinhao Li, Guo Chen, Xinyuan Chen, Yaohui Wang, et al. Internvid: A large-scale video-text dataset for multi-modal understanding and generation. In The Twelfth International Conference on Learning Representations , 2024. [72] Yi Wang, Kunchang Li, Xinhao Li, Jiashuo Yu, Yinan He, Guo Chen, Baoqi Pei, Rongkun Zheng, Zun Wang, Yansong Shi, et al. Internvideo2: Scaling foundation models for multimodal video understanding. In European conference on computer vision , pages 396–416. Springer, 2024. [73] Zhiqiang Xia, Zhaokang Chen, Bin Wu, Chao Li, Kwok-Wai Hung, Chao Zhan, Yingjie He, and Wenjiang Zhou. Musev: Infinite-length and high fidelity virtual human video generation with visual conditioned parallel denoising. arxiv , 2024. [74] Yuting Xu, Jian Liang, Gengyun Jia, Ziming Yang, Yanhao Zhang, and Ran He. Tall: Thumbnail layout for deepfake video detection. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 22658–22668, 2023. [75] Dongjie Yang, Suyuan Huang, Chengqiang Lu, Xiaodong Han, Haoxin Zhang, Yan Gao, Yao Hu, and Hai Zhao. Vript: A video is worth thousands of words. Advances in Neural Information Processing Systems , 37:57240–57261, 2024. [76] Man Yao, Jiakui Hu, Zhaokun Zhou, Li Yuan, Yonghong Tian, Bo Xu, and Guoqi Li. Spike-driven transformer. Advances in neural information processing systems , 36:64043–64058, 2023. [77] Man Yao, Xuerui Qiu, Tianxiang Hu, Jiakui Hu, Yuhong Chou, Keyu Tian, Jianxing Liao, Luziwei Leng, Bo Xu, and Guoqi Li. Scaling spike-driven transformer with efficient spike firing approximation training. IEEE Transactions on Pattern Analysis and Machine Intelligence ,47(4):2973–2990, 2025. [78] Xingting Yao, Qinghao Hu, Tielong Liu, Zitao Mo, Zeyu Zhu, Zhengyang Zhuge, and Jian Cheng. Spikingnerf: Making bio-inspired neural networks see through the real world. arXiv preprint arXiv:2309.10987 , 2023. [79] Ruokai Yin, Youngeun Kim, Di Wu, and Priyadarshini Panda. Loas: Fully temporal-parallel dataflow for dual-sparse spiking neural networks. In 2024 57th IEEE/ACM International Symposium on Microarchitecture (MICRO) , pages 1107–1121. IEEE, 2024. 14 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+[80] Zhengqing Yuan, Yixin Liu, Yihan Cao, Weixiang Sun, Haolong Jia, Ruoxi Chen, Zhaoxu Li, Bin Lin, Li Yuan, Lifang He, et al. Mora: Enabling generalist video generation via a multi-agent framework. arXiv preprint arXiv:2403.13248 , 2024. [81] David Junhao Zhang, Jay Zhangjie Wu, Jia-Wei Liu, Rui Zhao, Lingmin Ran, Yuchao Gu, Difei Gao, and Mike Zheng Shou. Show-1: Marrying pixel and latent diffusion models for text-to-video generation. International Journal of Computer Vision , 133(4):1879–1893, 2025. [82] Shuhai Zhang, ZiHao Lian, Jiahao Yang, Daiyuan Li, Guoxuan Pang, Feng Liu, Bo Han, Shutao Li, and Mingkui Tan. Physics-driven spatiotemporal modeling for AI-generated video detection. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. [83] Chende Zheng, Ruiqi Suo, Chenhao Lin, Zhengyu Zhao, Le Yang, Shuai Liu, Minghui Yang, Cong Wang, and Chao Shen. D3: Training-free ai-generated video detection using second-order features. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 12852–12862, 2025. [84] Zangwei Zheng, Xiangyu Peng, Tianji Yang, Chenhui Shen, Shenggui Li, Hongxin Liu, Yukun Zhou, Tianyi Li, and Yang You. Open-sora: Democratizing efficient video production for all. 
+
+arXiv preprint arXiv:2412.20404 , 2024. [85] Zhaokun Zhou, Yuesheng Zhu, Chao He, Yaowei Wang, Shuicheng YAN, Yonghong Tian, and Li Yuan. Spikformer: When spiking neural network meets transformer. In The Eleventh International Conference on Learning Representations , 2023. [86] Lin Zhu, Xiao Wang, Yi Chang, Jianing Li, Tiejun Huang, and Yonghong Tian. Event-based video reconstruction via potential-assisted spiking neural network. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 3594–3604, 2022. [87] Shihao Zou, Qingfeng Li, Wei Ji, Jingjing Li, Yongkui Yang, Guoqi Li, and Chao Dong. Spikevideoformer: An efficient spike-driven video transformer with hamming attention and o (t) complexity. In Proceedings of the 42nd International Conference on Machine Learning ,pages 80805–80821, 2025. [88] Shihao Zou, Yuxuan Mu, Xinxin Zuo, Sen Wang, and Li Cheng. Event-based human pose tracking by spiking spatiotemporal transformer. arXiv preprint arXiv:2303.09681 , 10, 2023. 15 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+# APPENDIX 
+
+## A. Notation and Standard Formulations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 A.1 Hoyer Sparsity A.2 Spectral Centroid A.3 Angular Curvature A.4 Convex-Hull Volume 
+
+## B. Residual Channel Implementation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 B.1 HF (High-Frequency Laplacian) B.2 Sobel B.3 AbsDiff B.4 Diff2 B.5 Negative Result: Chroma Channel B.6 Common Post-processing 
+
+## C. Per-Generator Distributions on IvyFake . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 C.1 Per-channel Sparsity Distributions C.2 Curvature and Frequency Distributions C.3 Feature-Space t-SNE Visualization 
+
+## D. SNN vs. ANN Architecture and Parameter Matching . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 D.1 Architecture Details D.2 Operator Differences D.3 Parameter Count Breakdown 
+
+## E. Additional Experiments . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25 E.1 Loss Component Ablation E.2 Semantic Backbone Ablation E.3 Additional Result on GenVideo (SEINE Configuration) E.4 Additional Result on GenVidBench (Main Task) 
+
+## F. SNN Training Details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 28 F.1 Initialization, runtime clamps, and rate regularization F.2 PerChannelLIF dynamics 
+
+## G. Spike Gate Map Visualizations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 29 G.1 Boundary fire Analysis G.2 Cross-Generator Gallery G.3 Temporal Evolution 
+
+## H. Energy Efficiency: SOPs vs. FLOPs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 34 H.1 SOPs Calculation H.2 Energy Conversion Constants 
+
+## I. Hyperparameter Details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 35 16 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+## A Notation and Standard Formulations 
+
+This appendix collects the closed-form expressions of standard quantities reported in the main text (Hoyer sparsity, spectral centroid, angular curvature, convex-hull volume), which are well-known but useful to record explicitly for reproducibility. 
+
+A.1 Hoyer Sparsity 
+
+The Hoyer sparsity [ 28 ] of a tensor x ∈ RN with N entries is a unit-invariant measure of how concentrated the signal is in space, normalized to [0 , 1] :
+
+Hoyer( x) = 
+
+√N − ∥ x∥1/∥x∥2
+
+√N − 1 . (13) Values close to 1 correspond to spike-like distributions concentrated at a few entries; values close to 0
+
+correspond to uniform distributions. Section 3.1 reports Srgb and Sres as the clip-averaged Hoyer sparsity of the raw RGB image and of the high-frequency Laplacian temporal residual respectively, with Sres = 1 
+
+> T−1
+
+PTt=2 Hoyer(∆ HF  
+
+> t
+
+).
+
+A.2 Spectral Centroid of the Residual Time Series 
+
+For each clip we form the per-frame spatial mean s(t) = spatial _mean(∆ HF  
+
+> t
+
+) of the high-frequency Laplacian residual and compute its discrete-Fourier power spectrum and spectral centroid: 
+
+P (f ) = FFT( s) 2, fc =
+
+P 
+
+> f
+
+f · P (f )
+
+P 
+
+> f
+
+P (f ) . (14) The spectral centroid summarizes the frequency at which the residual signal carries most of its energy. 
+
+A.3 Angular Curvature of the X-CLIP Trajectory 
+
+Given the per-frame X-CLIP video embedding Zt 
+
+> video
+
+and its per-step displacement ∆Zt 
+
+> video
+
+=
+
+Zt 
+
+> video
+
+− Zt−1video , the angular curvature at frame t is the angle between two consecutive displacement vectors, 
+
+θt = arccos ∆Zt
+
+> video
+
+, ∆Zt−1video 
+
+∆Zt  
+
+> video 2
+
+∆Zt−1video 2
+
+. (15) Low θt corresponds to a smooth latent path, high θt to sharp directional jumps. Section 3.1 reports the clip-median θ as a per-clip statistic. 
+
+A.4 Convex-Hull Volume of the Trajectory 
+
+The volume statistic Vol. in Table 1 summarizes the spread of each trajectory in latent space. We project per-frame X-CLIP video embeddings Zt 
+
+> video
+
+∈ RD to their first three PCA components, 
+
+z(t) = U ⊤Zt 
+
+> video
+
+∈ R3, where U is fit jointly on the union of all real and generated clips in the analyzed pool. For a video of length T , we compute the volume of the convex hull formed by the projected trajectory points: 
+
+Vol . = Volume  Conv( {z(t)}Tt=1 ). (16) In our configuration ( T = 16 ), the 16 trajectory points projected into 3D space are sufficient to form a well-defined convex polyhedron. This strict convex-hull volume offers a precise geometric measure of the trajectory’s overall spread. The PCA projection is used only for this volume summary and for trajectory visualization; it is not the feature space in which the classifier operates. 
+
+Trajectory curvature statistics. The angular curvature in Eq. (15) and all distance-based sum-maries reported in Section 3.1 are computed directly in the full D-dimensional X-CLIP feature space, without dimensionality reduction. Given per-frame features {Zt
+
+> video
+
+}Tt=1 , we form first- and second-order temporal differences, 
+
+d(1)  
+
+> t
+
+= Zt+1 video − Zt 
+
+> video 2
+
+, d(2)  
+
+> t
+
+= d(1)  
+
+> t+1
+
+− d(1)  
+
+> t
+
+, (17) 17 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+and report {mean , std , max , min } of each sequence, together with the analogous cosine-distance variant. Per-frame features are L2-normalized before the cosine-distance computation; no other normalization is applied. The PCA projection used for the convex-hull volume above is not applied here. 
+
+## B Residual Channel Implementation 
+
+Given an input clip of T RGB frames at resolution H × W , we compute four complementary residual channels (HF, Sobel, AbsDiff, Diff2) per frame, which can distinguish real/fake video distribution, and another Chroma channel, which results undistinguishable distributions. All operations are differentiable and implemented as standard convolutions or arithmetic ops. The four residual channels (HF, Sobel, AbsDiff, Diff2) form the input to the SDTB (Section 4); the Chroma channel was tested but excluded from the final pipeline. Section C reports per-generator Hoyer sparsity distributions for each channel on IvyFake. 
+
+B.1 HF – High-Frequency Laplacian Temporal Difference 
+
+Captures inter-frame variation in high-frequency texture content. Generators that re-synthesize each frame independently tend to introduce flickering at fine spatial scales. 
+
+Yt = 0 .299 Rt + 0 .587 Gt + 0 .114 Bt (18) 
+
+Lt = Conv2d( Yt; KLap ), KLap =
+
+"0 1 01 −4 10 1 0
+
+#
+
+(19) 
+
+∆HF  
+
+> t
+
+= |Lt − Lt−1|, t = 1 , . . . , T − 1. (20) 
+
+Figure 9: Per-generator Laplacian HF sparsity distributions on IvyFake. 
+
+B.2 Sobel – Edge Temporal Difference 
+
+Captures inter-frame variation in object boundaries. Generated content often exhibits subtle boundary jitter due to imperfect cross-frame consistency. 
+
+Gxt = Conv2d( Yt; KSobel -x), Gyt = Conv2d( Yt; KSobel -y) (21) 
+
+Mt =
+
+q
+
+(Gxt )2 + ( Gyt )2 + ϵ (22) 
+
+∆Sobel  
+
+> t
+
+= |Mt − Mt−1|, (23) where KSobel -x, K Sobel -y are the standard 3 × 3 Sobel kernels and ϵ = 10 −6.18 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+Figure 10: Per-generator Sobel sparsity distributions on IvyFake. 
+
+B.3 AbsDiff – First-Order Frame Difference 
+
+The simplest temporal residual: per-pixel absolute RGB difference, averaged across color channels. 
+
+∆abs  
+
+> t
+
+= 13
+
+X
+
+> c∈{ R,G,B }
+
+|F ct − F ct−1|. (24) 
+
+Figure 11: Per-generator absolute difference sparsity distributions on IvyFake. 
+
+B.4 Diff2 – Second-Order (Acceleration) 
+
+The temporal derivative of ∆abs  
+
+> t
+
+, capturing the rate of change of motion. Natural videos exhibit smooth motion acceleration, while synthetic videos often produce abrupt jumps in this signal. 
+
+∆2nd  
+
+> t
+
+= |∆abs  
+
+> t
+
+− ∆abs 
+
+> t−1
+
+|, t ≥ 2. (25) 19 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+Figure 12: Per-generator second-order difference sparsity distributions on IvyFake. 
+
+B.5 Negative Result: Chroma Channel 
+
+We initially considered a fifth channel based on the YCbCr chroma difference, motivated by the intuition that generators sometimes produce discontinuous chromatic transitions invisible in luma-only analysis. The channel is defined as 
+
+Cb t = −0.169 Rt − 0.331 Gt + 0 .500 Bt + 0 .5 (26) 
+
+Cr t = 0.500 Rt − 0.419 Gt − 0.081 Bt + 0 .5 (27) 
+
+∆Chroma  
+
+> t
+
+= |Cb t − Cb t−1| + |Cr t − Cr t−1|. (28) In practice the per-generator chroma sparsity distributions (Figure 13) overlap heavily with the natural distribution and do not separate real from generated clips at the level the four luma-derived channels do; adding the channel to the SDTB input did not improve cross-generator detection in preliminary experiments, so we excluded it from the final pipeline. We retain the analysis here as a documented negative result. 
+
+Figure 13: Per-generator chroma sparsity distributions on IvyFake. Unlike the luma-derived channels, real and fake distributions overlap substantially. 
+
+B.6 Common Post-processing 
+
+For input to the SDTB, each channel is processed identically: per-frame mean normalization, adaptive average pooling to a 14 × 14 spatial grid (matching the X-CLIP patch resolution), application of a 20 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+per-channel learnable scale softplus( wc), optional soft thresholding σ(( x − τ )/s ) with τ = 0 .1, and zero-masking of the first frame (which has no valid temporal predecessor): 
+
+˜xt = xt/ ¯x + ϵ, ¯x = mean t(xt) (29) 
+
+x′ 
+
+> t
+
+= AdaptiveAvgPool2d(˜ xt, 14 × 14) (30) 
+
+x′′  
+
+> t
+
+= softplus( wc) · x′
+
+> t
+
+, x′′′  
+
+> t
+
+= σ(( x′′  
+
+> t
+
+− τ )/s ) (31) 
+
+x′′′  
+
+> 0
+
+← 0. (32) The four channels are concatenated with two trajectory channels (Section 4) to form the six-channel input to the SDTB. 
+
+Pseudo-event generation cost. We measure the wall-clock cost of constructing the four pixel-level residual channels from a raw RGB clip on a 3090 RTX with fp16 autocast, T =8 , B=1 , 224 ×224 
+
+(Table 6). The four channels combined take 0.60 ms per clip ( 0.075 ms per frame), which is roughly 
+
+1% of the temporal-module forward time reported in Table 5. Table 6: Per-channel and combined latency of pseudo-event generation on a 3090 RTX (fp16 autocast, 
+
+T =8 , B=1 , 224 ×224 ).             
+
+> Channel per-clip (8 frames) per-frame
+> HF (Laplacian) 0.36 ms 0.044 ms Sobel 0.42 ms 0.052 ms AbsDiff 0.17 ms 0.021 ms Diff2 0.24 ms 0.029 ms All four (combined pipeline) 0.60 ms 0.075 ms
+
+## C Per-Generator Distributions on IvyFake 
+
+This appendix reports per-generator distributions on IvyFake [ 31 ] for the four residual channels defined in Appendix B and for the two semantic-level statistics referenced in Section 3.1, together with a t-SNE visualization of the feature spaces produced by the two branches and by their fusion. The aim is to (i) show that the real-vs-fake gaps observed on the GenVidBench Pair-1 analysis generalize to the broader, multi-generator IvyFake test pool, and (ii) characterize per-generator behavior to identify which residual cues drive separation on which generators. 
+
+C.1 Per-Channel Sparsity Distributions 
+
+We report per-generator Hoyer sparsity distributions for the four residual channels (HF, Sobel, AbsDiff, Diff2). For readability, the figures are placed inline with their channel definitions in Appendix B: Figure 9 (HF), Figure 10 (Sobel), Figure 11 (AbsDiff), Figure 12 (Diff2). The Chroma channel, which we tested but excluded from the final pipeline, is shown in Figure 13 as a documented negative result. Three patterns are consistent across the four kept channels. First, fake distributions shift in the same direction across nearly all generators (toward higher sparsity for HF/Sobel and toward lower sparsity for AbsDiff/Diff2), confirming that the GenVidBench Pair-1 observation in Section 3.1 is not a single-source artifact but a property that recurs across the IvyFake generator pool. Second, no single channel separates all generators: HF and Sobel give the cleanest separation on diffusion-style generators (Crafter, Gen2, ModelScope), AbsDiff and Diff2 pick up motion-based generators where high-frequency texture is closer to real (e.g. WildScrape, Sora). This per-generator complementarity is what the multi-channel pseudo-event design exploits, and is consistent with the leave-one-out result in Table 4. Third, the Chroma distribution overlaps the natural reference for most generators, which is the empirical basis for excluding it from the final pipeline. 
+
+C.2 Curvature and Frequency Distributions 
+
+We additionally report two semantic-level statistics computed on IvyFake: trajectory curvature in the X-CLIP feature space (per-clip, following the displacement-vector formulation of Appendix A) and 21 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+the spectral centroid fc of the residual signal along the temporal axis. For each statistic we plot the per-generator kernel density estimate against the natural reference distribution and report the mean shift ∆ = μfake − μreal in the subplot title. 
+
+Figure 14: Per-generator trajectory curvature distributions on IvyFake. 
+
+Figure 15: Per-generator spectral centroid fc distributions on IvyFake. Both statistics shift in the direction predicted by the GenVidBench Pair-1 analysis (Section 3.1). Trajectory curvature ( θ) is consistently lower for generators than for the natural reference, indicating smoother and less-curved latent paths even on the more diverse IvyFake content. Spectral centroid fc
+
+is also consistently lower for generators, indicating that the temporal residual signal carries most of its energy at lower frequencies than real video. The magnitude of the shift varies per generator: the largest gaps appear on Crafter, Gen2, and ModelScope (consistent with the per-channel sparsity result above), while WildScrape and Sora show smaller but same-direction shifts. The same-direction behavior across both pixel-level ( fc) and semantic-level ( θ) statistics empirically supports the dual-pathway design: the two signal levels do not contradict each other but provide correlated, complementary evidence. 
+
+C.3 Feature-Space t-SNE Visualization 
+
+To complement the per-statistic distributions, we visualize how the feature spaces produced by MAST evolve through training. We project five feature spaces with t-SNE (Figure 16): the spiking temporal 22 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+feature ( Fanom ∥ Fgate ) before and after training; the X-CLIP semantic feature ( Zvideo ) before and after training (the X-CLIP encoder itself is frozen, so “before/after training” here refers to the training of the rest of MAST that consumes its features); and the fused representation ( Ffinal = [ Zvideo ∥
+
+Fanom ∥ Fgate ]) after training. Real clips are shown as blue circles and fake clips as colored markers per generator. Two patterns emerge. First, the spiking temporal feature shows the largest change with training: before training it does not separate real from fake, while after training it forms a clearly separable structure, indicating that the spike-driven module learns discriminative temporal evidence beyond what the frozen semantic encoder provides. Second, the fused representation produces the tightest real cluster and the cleanest separation from the fake distribution, supporting the Zvideo ∥ Fanom ∥ Fgate 
+
+concatenation as effectively combining the two complementary signals. (a) Backbone Semantic (b) Temporal Artifact (c) Fused Feature 
+
+Figure 16: t-SNE projection of MAST feature spaces on IvyFake. Top row: spiking temporal feature (Fanom ∥ Fgate ) and X-CLIP semantic feature ( Zvideo ) before training. Middle row: the same two feature spaces after training. Bottom: the trained fused representation Ffinal . Real clips are blue circles; fake clips are colored markers per generator. The spiking feature acquires real-vs-fake separability through training; the fused representation produces the tightest real cluster. 
+
+## D SNN vs. ANN Architecture and Parameter Matching 
+
+D.1 Architecture Details 
+
+The two branches share an identical input/output interface (Table 7) and the same five-stage macro-structure (Table 8): Stage 1 processes each artifact channel individually; Stage 2 fuses them into the hidden dimension; Stage 3 is a deep stack of 8 spatial-temporal mixing blocks; Stage 4 computes a per-position token gate; and Stage 5 accumulates these gates into a final temporal anomaly trace. The two branches differ only in the operator used at each stage; this isolates the contribution of spike-driven processing from architectural confounds. The operator-level correspondence is listed in Table 8. Table 7: Common input/output interface of the SDTB and the parameter-matched ANN baseline.                                        
+
+> Tensor Shape
+> Input event grid RB×T×C×Hg ×Wg
+> Channels C4active artifact (HF, Sobel, AbsDiff, Diff2) + 2 trajectory (dist, curv) Grid Hg×Wg14 ×14 (X-CLIP) or 16 ×16 (ViCLIP, IV2) Time length T8frames at fps=8
+> Gate map G∈[0 ,1] B×T×Hg ×Wg
+> Token gates RB×T×N,N=HgWg
+> Anomaly trace Agate ∈RB×T
+
+Spike-Driven Temporal Branch (SDTB). The SDTB is the core temporal component of MAST responsible for processing the multi-channel pseudo-event tensor (generated from pixel-level residuals and semantic trajectory displacements) into a dense temporal anomaly representation before it is concatenated with the frozen X-CLIP semantic features. To achieve this efficiently, the SDTB adopts the foundational architecture of the Spike-Driven Transformer V3 (SDT-V3) [ 77 ] but structurally adapts it for spatio-temporal residual anomaly detection. Our SDTB operates in five specialized stages: 23 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+• Stage 1 (Per-channel Preprocessing): Instead of a shared initial convolution, each of the 
+
+C pseudo-event channels passes through its own PerChannelLIF module with independent, learnable time constants τc and thresholds Vth ,c . This accommodates the diverse temporal dynamics of different residuals (e.g., HF is high-frequency; AbsDiff is dense and motion-driven). • Stage 2 (Fusion): A 1×1 convolution projects the concatenated per-channel spikes into the shared hidden dimension d=256 .• Stage 3 (Spike-Driven Blocks): We stack 8 modified SDT-V3 blocks. To preserve gradient flow and representational capacity without breaking sparse integer operations, we substitute strict binary spikes with the L=4 Multispike function (output values {0, 1, 2, 3, 4}; see Eq. (40) ). Following SDT-V3’s efficiency principles, we use Spike Separable Convolutions (SpikeSepConv) for local spatial mixing and simple Linear projections for generating discrete Q, K, V in the attention module, deliberately avoiding costly re-parameterization convolutions (RepConv). • Stage 4 (Gate Head): A per-position convolution collapses the hidden features into spatial token gates. • Stage 5 (Anomaly Accumulator): A leaky LIF neuron operates over the temporally evolv-ing gate map. With an infinite firing threshold ( Vanom =∞), it acts purely as a continuous temporal smoother yielding the final anomaly trace Agate and the spatial gate maps Gt,without generating discrete output spikes. 
+
+ANN baseline (parameter-matched CNN-Transformer). The ANN baseline replaces every spike-driven component with its standard continuous counterpart while preserving depth, hidden width, head count, and MLP ratio. The PerChannel preprocessing keeps a per-channel 3×3 Conv but drops the LIF state, applying LayerNorm + GELU per frame instead, removing explicit time-accumulation in the ANN preprocessing. The block follows a standard post-norm ( LN( x + f (x)) ) structure, and the attention is a standard softmax multi-head attention on dense floating-point tensors, flattened over both space and time. The accumulator is a linear EMA over the gate-map mean. Table 8: Stage-by-stage specification of the SDTB and the parameter-matched ANN baseline. Both branches use hidden width d=256 , depth L=8 , h=4 heads, and mlp_ratio r=2 .5.                                                                            
+
+> Stage Component SDTB ANN baseline
+> Stage 1 Preprocessing PerChannelLIF: learnable τc,Vth ,c PerChannel-LayerNorm + GELU (frame-wise) Projection Conv 2d1→Dc, 3×3+ BN, Dc=20 Conv 2d1→Dc, 3×3+ BN, Dc=20
+> Stage 2 Channel fusion to d=256 Conv 1×1(CD c→256 ) + BN + GELU Conv 1×1(CD c→256 ) + BN + GELU Stage 3 Block depth L=8 Modified SDT-V3 Blocks L=8 ANN-Blocks (post-norm) Local mixing Spike Separable Convolution (SpikeSepConv) ConvStem (single 3×3+ BN) Attention Multispike Linear Attention (E-SDSA) Softmax MHA, h=4 ,dh=64
+> MLP Linear →Multispike →Linear →Multispike, r=2 .5Linear →GELU →Linear, r=2 .5
+> Stage 4 Per-position gate Conv 1×1(256 →1), σ(( ·+binit )/τ gate )Conv 1×1(256 →1), same σscaling Stage 5 Anomaly accumulator Leaky LIF: A[t]=(1 −1/τ a)A[t−1] + λ¯GtEMA: A[t]= αA [t−1] + (1 −α) ¯Gt
+> Hyperparameters τa=2 .0,λ=0 .5,Vanom =∞α=0 .5(optionally learnable)
+
+D.2 Operator Differences 
+
+The defining contrast resides in Stage 3. Rather than using the original Spike-Driven Self-Attention (SDSA) which relies on heavy RepConvs, we adapt the Efficient-SDSA (E-SDSA) topology from SDT-V3. We further align it with our anomaly detection pipeline by replacing rigid binary spikes with our 4-level Multispike function. The modified attention is formulated as: 
+
+QS = Multispike(Linear( U )) , KS = Multispike(Linear( U )) , VS = Multispike(Linear( U )) ,
+
+(33) 
+
+SpikeAttn( QS , K S , V S ) = Linear out 
+
+
+
+Multispike  (QS K⊤ 
+
+> S
+
+VS ) · scale 
+
+. (34) Because QS , K S , and VS are discrete integer tensors restricted to {0, 1, 2, 3}, the matrix product 
+
+QS K⊤ 
+
+> S
+
+VS avoids floating-point multiplications entirely, reducing to highly efficient sparse integer 24 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+accumulations. This design systematically sidesteps the O(N 2) softmax computational cost of ANNs, yielding substantial energy efficiency on neuromorphic hardware while maintaining richer representation capacity than binary spikes. The ANN baseline replaces this entire Stage 3 module with standard softmax multi-head attention 
+
+Softmax( QK ⊤/√dh)V on dense floating-point Q, K, V with standard O(N 2) complexity. All other operator-level differences (Multispike vs GELU, SpikeSepConv vs ConvStem, spiking MLP vs FFN, LIF accumulator vs EMA). 
+
+D.3 Parameter Count Breakdown 
+
+Table 9 reports the measured parameter breakdown of the SDTB and the parameter-matched ANN baseline. Module-only counts denote the SDTB on its own; trainable counts add the projection heads and remaining trainable components in MAST; total counts include the frozen X-CLIP encoder. Table 9: Parameter breakdown of MAST and the matched ANN baseline.          
+
+> Configuration Module params Trainable params Total params
+> MAST (SNN, modified SDT-V3) 9.30 M 16.68 M 141.09 M MAST w/ ANN (CNN-Transformer) 10.71 M 18.35 M 142.76 M
+
+The ANN baseline is approximately 18% larger than the SNN gate in module parameters and 10% 
+
+larger in total trainable parameters, i.e. slightly more capacity than the SNN, not less. Under this matching, the 1.6× latency advantage and the +0 .36 mACC / +0 .03 mAUC gap reported in Table 5 are attributable to the spike-driven operator stack rather than to additional capacity. 
+
+## E Additional Experiments 
+
+E.1 Loss Component Ablation Loss formulation. MAST is trained end-to-end with a three-term objective that combines a main binary classification loss with two auxiliary terms, both intended to stabilize the SDTB during joint training with the frozen X-CLIP backbone: 
+
+L = LBCE (ˆ y, y ) + λ1LBCE (ˆ ysnn , y ) + λ2Lsupcon . (35) Here y ∈ { 0, 1} is the real/fake label, ˆy ∈ [0 , 1] is the sigmoid prediction on the fused representation 
+
+Ffinal , and ˆysnn ∈ [0 , 1] is the prediction of an auxiliary classification head that consumes only the spike-driven temporal features ( Fanom ∥ Fgate ). The main and auxiliary classification losses are standard binary cross-entropy, 
+
+LBCE (p, y ) = − y log p − (1 − y) log(1 − p), (36) applied to ˆy and ˆysnn respectively. The supervised contrastive loss [ 34 ] acts on the ℓ2-normalized fused features zi = Ffinal ,i /∥Ffinal ,i ∥2 within a mini-batch of size B,
+
+Lsupcon =
+
+> B
+
+X
+
+> i=1
+
+−1
+
+|P (i)|
+
+X 
+
+> p∈P(i)
+
+log exp  z⊤ 
+
+> i
+
+zp/τ c
+
+P 
+
+> a∈A(i)
+
+exp  z⊤ 
+
+> i
+
+za/τ c
+
+ , (37) where P (i) = {p̸ = i : yp = yi} is the set of same-label positives for anchor i, A(i) = {1, . . . , B }\ {i} is the set of contrast samples, and τc is the contrastive temperature. We use λ1 = 0 .2 for the auxiliary SNN BCE term and λ2 = 0 .3 for the supervised contrastive term throughout all experiments. 
+
+Why the auxiliary terms are needed for the spiking branch. Spiking neural networks are notoriously hard to train jointly with a strong frozen backbone: the Heaviside firing function in Eq. 6 is non-differentiable, and the spike sparsity that gives the SDTB its energy advantage also makes its gradient signal sparse. We follow common practice and replace the Heaviside with the ATan surrogate gradient [ 15 ] during the backward pass while keeping the forward pass strictly binary. Even with this surrogate, the SDTB tends to receive a much weaker training signal than the frozen X-CLIP feature it is fused with, and easily collapses into acting as a small residual offset on the dominant semantic 25 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+feature rather than learning discriminative temporal evidence on its own. The auxiliary BCE term 
+
+LBCE (ˆ ysnn , y ) counteracts this by forcing the SDTB to be a self-sufficient classifier, which keeps its gradient signal alive throughout training. The supervised contrastive term then pulls same-label clips together and pushes real and generated clips apart in Ffinal , tightening the within-class structure of the fused representation and improving transfer to unseen generators. 
+
+Ablation. We drop one auxiliary term at a time while keeping the main BCE, and additionally report the main-BCE-only configuration as the lower bound. Removing either auxiliary term degrades cross-generator performance (Table 10), confirming that both auxiliary terms contribute beyond the main BCE: the auxiliary SNN BCE is necessary for the spike-driven branch to learn discriminative temporal evidence, and the supervised contrastive term is necessary for the fused representation to generalize across generators. Table 10: Loss component ablation on GenVideo (Pika+K400). Each row drops one term from the full objective. “Main BCE only” denotes training with λ1=λ2=0 , which collapses (see Why “Main BCE only” collapses below).             
+
+> Configuration mACC mAUC
+> Full (ours) 93.14 94.95
+> w/o LBCE ,snn 91.73 90.98 w/o Lsupcon 92.74 89.79 BCE only collapse collapse
+
+Why “Main BCE only” collapses. With both auxiliary terms removed, the X-CLIP backbone alone drives the main BCE near its minimum, so the gradient flowing into the SDTB is effectively zero. The SDTB never escapes its initialization: the gate bias keeps the sigmoid output below 0.15 ,and the L=4 Multispike requires v/V th > 0.5 to fire, which the Xavier-initialized convolutions in the spike-driven blocks do not produce. The SDTB therefore stays silent, and within the first epoch the leaky integrator accumulates membrane potentials that drift toward the Vth clamp boundary and produce NaN logits, terminating training before any meaningful evaluation can be performed. Under DDP with find_unused_parameters=true , the dormant SDTB is treated as having unused gradients and an extra ALLREDUCE is issued on the now NaN-poisoned tensor, which deadlocks the NCCL watchdog. The auxiliary spike-rate regularizer of Appendix F breaks this failure cycle by forcing a non-zero firing rate from the first epoch, after which the BCE-on-ˆysnn term keeps the SDTB gradient alive. Accordingly, training under the “Main BCE only” configuration diverges within the first epoch and yields no measurable mACC or mAUC; we report this row as collapse rather than as a numerical baseline. 
+
+E.2 Semantic Backbone Ablation 
+
+We replace the X-CLIP-B/16 [ 50 ] semantic backbone with alternative video and image encoders while holding the rest of MAST fixed, to isolate the contribution of the semantic encoder choice from the SDTB. We compare against three families of alternatives. Generic video backbones are represented by VideoMamba-Ti and VideoMamba-M [ 37 ], which use selective state-space models for video sequence modeling without text supervision. Text-aligned video encoders are represented by ViCLIP [ 71 ] and InternVideo2 [ 72 ], which extend CLIP-style contrastive pretraining to video-text pairs. Strong image backbones are represented by DINOv2 [ 52 ], a self-supervised ViT pretrained on a large curated image corpus that produces high-quality per-frame features without any video-level pretraining. As shown in Table 11, X-CLIP-B/16 attains the strongest cross-generator mACC. The other text-aligned video encoders (ViCLIP, InternVideo2) lag despite their much larger pretraining corpora, and the generic video backbones (VideoMamba) underperform substantially. The strong image backbone DINOv2 approaches X-CLIP but does not match it, which suggests that strong per-frame features alone are not sufficient. We attribute the X-CLIP advantage to its cross-frame attention mechanism: each per-frame embedding is computed in the temporal context of the entire clip rather than in isolation, so the resulting features already encode short-range temporal coherence at the semantic level. This makes X-CLIP a natural 26 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+complement to the spike-driven temporal pathway, which operates on pixel-level residual dynamics: the two pathways then cover orthogonal levels of temporal abstraction (semantic-context coherence vs. pixel-residual evolution) rather than redundantly modeling the same signal. Table 11: Semantic backbone ablation on GenVideo (Pika+K400).               
+
+> Backbone mACC mAUC
+> X-CLIP-B/16 (ours) 93.14 94.95
+> VideoMamba-Ti 66.74 90.95 VideoMamba-M 86.09 95.28 DINOv2 92.30 94.70 InternVideo2 91.50 93.40 ViCLIP 89.30 91.40
+
+E.3 Additional Result on GenVideo (SEINE Configuration) 
+
+In addition to the Pika training configuration reported in the main text (Table 2), the GenVideo protocol [ 11 ] also includes a SEINE training configuration: 10 ,000 Kinetics-400 [ 32 ] clips paired with 10 ,000 SEINE [ 12 ] clips, evaluated on the same ten unseen test generators. Table 12 reports cross-generator results under this configuration. Under the SEINE configuration, MAST attains 
+
+77 .41% mACC and 84 .25% mAUC, which is substantially below its Pika-trained counterpart ( 93 .14% 
+
+mACC, 94 .95% mAUC). We discuss the reasons in detail below. Table 12: GenVideo cross-generator results when trained on 10 ,000 Kinetics-400 [ 32 ] + 10 ,000 
+
+SEINE [ 12 ] clips. Acc and AUC (%) on ten unseen generators. Best per-column in bold; second-best underlined. †: trained and evaluated by us. Other results are sourced from [82].                                                                                                                                                                                                     
+
+> Method Metric Model Scope Morph Studio Moon Valley HotShot Show1 Gen2 Crafter Lavie Sora Wild Scrape Avg.
+> DeMamba [11] Acc 72.80 93.00 93.20 87.80 86.60 91.90 94.90 83.40 68.75 73.10 84.54 AUC 88.29 98.39 98.76 97.84 96.89 98.76 99.35 96.87 80.93 88.11 94.42 NPR [64] Acc 71.40 86.40 83.10 80.10 76.20 85.70 90.10 77.60 66.96 61.90 77.95 AUC 85.73 96.01 93.79 91.44 89.96 95.13 96.87 89.46 84.15 76.66 89.92 TALL [74] Acc 78.80 87.00 89.20 79.60 80.50 88.40 93.60 71.40 66.07 67.40 80.20 AUC 97.10 98.12 98.63 96.37 96.45 97.76 99.38 94.80 83.35 89.45 95.14 STIL [23] Acc 64.20 78.60 89.10 73.30 59.30 83.10 84.40 62.30 57.14 59.40 71.08 AUC 95.53 97.91 99.40 96.49 92.79 98.06 98.86 91.00 92.79 86.58 94.94 NSG-VD [82] Acc 82.50 88.33 89.58 84.58 86.25 87.08 86.67 87.92 89.29 78.33 86.05
+> AUC 90.67 97.62 98.38 95.88 96.69 97.87 97.64 95.09 96.14 88.65 95.46
+> ReStraV †[30] Acc 91.29 98.00 8.12 1.43 5.68 3.48 1.28 98.50 39.93 7.52 35.52 AUC 98.59 99.47 43.25 51.64 36.46 36.38 99.40 60.25 21.86 55.01 60.23 D3 †[83] Acc 79.82 79.80 80.99 79.87 80.59 81.82 81.02 79.93 80.90 79.38 80.41 AUC 79.49 80.89 88.77 81.25 86.21 91.25 89.04 84.37 80.67 77.15 83.91
+> Ours Acc 74.79 76.85 74.96 79.57 82.14 87.54 87.05 77.07 71.72 62.45 77.41 AUC 83.41 85.06 82.45 87.30 88.94 90.93 91.35 86.26 78.65 68.16 84.25
+
+Why the SEINE configuration underperforms. The drop relative to the Pika-trained model reflects a training–test distribution mismatch along three axes. First, SEINE is a frame-interpolation generator with smooth, low-flicker temporal artifacts, so the spike gate adapts to a low spike density and underfires on the flicker-heavy GenVideo test generators (Crafter, Gen2, ModelScope), producing logits concentrated near zero. Second, SEINE training clips and the GenVideo test pool sit at opposite ends of the temporal-smoothness axis along which our pseudo-event front-end is most sensitive, so the SDTB’s learned firing statistics transfer poorly. Third, SEINE training clips are short (2.0 s, 16–32 frames at 8 fps), so an 8-frame sample covers half of each clip and the 8 fps fakes differ in frame rate from the 24 fps Youku reals, exposing a temporal subsampling shortcut that does not transfer to the predominantly 24 fps GenVideo-Val test generators. We report this configuration to document the regime where MAST’s inductive bias is weakest rather than as a competitive number. 27 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+E.4 Additional Result on GenVidBench (Main Task) 
+
+We additionally evaluate on the GenVidBench [ 51 ] Main (M) task, which tests on five sources (Mu-seV [ 73 ], SVD [ 3], CogVideo [ 26 ], Mora [ 80 ], and HD-VG [ 69 ] natural videos). Unlike GenVideo, GenVidBench mixes diffusion-based generators (CogVideo, Mora) with flow- and animation-based generators (MuseV, SVD), which probes whether the residual cues used by MAST transfer beyond the diffusion-style temporal artifacts that dominate GenVideo. Beyond the AIGV detectors used in the main text, we additionally compare against action-recognition baselines (TSM [ 41 ], X3D [ 17 ], MViT V2 [ 38 ], SlowFast [ 18 ], I3D [ 7 ], VideoSwin [ 42 ]) reproduced from [ 51 ]. MAST reaches strong performance on the diffusion-based sources (CogVideo, Mora) but underperforms on MuseV and SVD, where ReStraV remains the strongest method. This split suggests that the pseudo-event residual cues align better with diffusion-style temporal artifacts than with flow-based generation. Table 13: GenVidBench [ 51 ] Main (M) task accuracy (%). Best per-column in bold; second-best underlined. †: trained and evaluated by us. Other results are sourced from [30].                                                                     
+
+> Method MuseV SVD CogVideo Mora HD-VG Avg.
+> TSM [41] 70.37 54.70 78.46 70.37 96.76 76.40 X3D [17] 92.39 37.27 65.72 49.60 97.51 77.09 MViT V2 [38] 76.34 98.29 47.50 96.62 97.58 79.90 SlowFast [18] 12.25 12.68 38.34 45.93 93.63 41.66 I3D [7] 8.15 8.29 60.11 59.24 93.99 49.23 VideoSwin [42] 62.29 8.01 91.82 45.83 99.29 67.27 NSG-VD †[82] 69.2 61.7 75.7 55.3 91.05 70.59 ReStraV [30] 93.52 94.01 93.52 92.97 91.07 93.01
+> D3 †[83] 54.43 54.59 55.87 55.74 10.50 46.23
+> Ours 55.55 41.99 97.80 91.18 97.53 75.43
+
+## F SNN Training Details 
+
+F.1 Initialization, runtime clamps, and rate regularization. 
+
+The per-channel LIF parameters τc and Vth ,c are learnable for every channel c of the SDTB and are stored in log-scale form log τc and log Vth ,c . At initialization, all log-scale parameters are set to zero, so every channel begins training at the base values τc = τ0 = 2 .0 and Vth ,c = Vth ,0 = 1 .0, and the per-channel adaptation emerges from gradient descent rather than from random initialization. To keep both quantities in a stable range we apply soft clamps at every forward pass, τc ∈ [0 .5, 20 .0] 
+
+and Vth ,c ∈ [0 .05 , 10 .0] , which prevent single-step decay or stale memory on the τ side and saturate-everything or silence-everything failure modes on the Vth side. To keep the SDTB in a regime where the auxiliary BCE gradient remains informative we add a small spike-rate penalty 
+
+Lrate = β (¯ s − r∗)2, r∗ = 0 .15 , β = 0 .01 , (38) where ¯s = Ec,t [s(c) 
+
+> t
+
+/L ] is the batch-mean normalized firing rate. The target r∗ = 0 .15 lies in the 
+
+0.1–0.3 range typical of recent spike-driven transformers [ 77 , 85 ], and the small weight β = 0 .01 
+
+keeps the regularizer subordinate to the BCE and SupCon objectives so that the firing rate stays within roughly [0 .15 , 0.40] in practice without being pinned to the target. Lrate acts only as a soft prior on the global firing rate and does not modify Vth ,c outside the gradient path; in particular, no manual or no-grad threshold update is performed at any point during training. Gradients are clipped by global L2 norm 1.0, the multispike level is fixed at L = 4 , and the surrogate sharpness at α = 2 .0
+
+throughout training. 
+
+Pseudo-event threshold parameters. The pseudo-event soft threshold of Eq. (4) is parameterized by two scalars: a threshold level cth and a temperature β. Both are global across channels and spatial locations rather than learned per-channel; this is intentional, since the per-channel temporal adaptation is performed downstream by PerChannelLIF, and giving the front-end thresholding additional per-channel degrees of freedom empirically destabilized training. We fix cth = 0 .10 and 
+
+β = max( cth · 0.25 , 10 −6) = 0 .025 throughout all experiments, which places the sigmoid in a regime where the pseudo-event tensor is sparse but not saturated and where the gradient with respect 28 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+to the residual ∆Ft is well-conditioned under standard [0 , 1] frame normalization. Holding (cth , β )
+
+fixed also keeps the front-end interpretation comparable across generators and matches the semantics of the contrast threshold in physical event cameras (Eq. (3) ), which is a fixed hardware-level constant rather than a learned per-channel parameter. 
+
+F.2 PerChannelLIF dynamics. 
+
+The temporal integrator inside the SDTB is a per-channel Leaky-Integrate-and-Fire (LIF) neuron with independent learnable time constant τc and firing threshold Vth ,c for each channel c. Both parameters are stored in log space and recovered as τc = exp(log τc), Vth ,c = exp(log Vth ,c ) to keep them strictly positive. The forward dynamics for channel c at timestep t are 
+
+v(c) 
+
+> t
+
+=
+
+
+
+1 − 1
+
+> τc
+
+
+
+v(c) 
+
+> t−1
+
++ x(c) 
+
+> t
+
+, s(c) 
+
+> t
+
+= Spike  v(c) 
+
+> t
+
+, V th ,c 
+
+, (39) followed by a soft reset that subtracts the fired spike level, v(c) 
+
+> t
+
+← v(c) 
+
+> t
+
+− s(c) 
+
+> t
+
+Vth ,c . A hard-reset variant is implemented as an option but the soft reset is used by default. 
+
+Multispike forward and ATan surrogate gradient. Following SDT-V3 [ 77 ], the firing function is an L=4 multispike (output values in {0, 1, 2, 3, 4}) rather than a single binary spike: 
+
+s(c) 
+
+> t
+
+=
+
+j
+
+clamp  v(c) 
+
+> t
+
+/V th ,c , 0, L  + 0 .5
+
+k
+
+∈ { 0, 1, 2, 3, 4}, L = 4 . (40) Equation (40) is non-differentiable, so during the backward pass we replace its derivative with an ATan surrogate gradient [ 49 , 15 ] summed over the L integer thresholds k + 12 for k = 0 , . . . , L − 1:
+
+∂s (c)
+
+> t
+
+∂v (c)
+
+> t
+
+= ⊮0 < v (c) 
+
+> t
+
+< L  L−1X
+
+> k=0
+
+α/ 21 +   π(v(c) 
+
+> t
+
+− k − 12 ) α/ 2 2 , (41) with sharpness parameter α = 2 .0. The clipping indicator zeroes the gradient outside the saturating range, and placing one ATan kernel at each integer threshold ensures non-zero gradient even at the integer points where the floor function is locally constant in Eq. (40). 
+
+No adaptive threshold updates. We highlight a design choice that is easy to misread from the codebase. All gradients into τc and Vth ,c flow through the ATan surrogate (Eq. (41) ) from the BCE and gate losses; both are standard nn.Parameter tensors and there is no manual or no-grad threshold update. The @torch.no_grad() blocks present in the implementation serve only to export streaming-inference cache (the LIF membrane potential at the end of one clip, reused as the initial state for the next clip in streaming mode) and play no role in threshold or time-constant updates during training. 
+
+## G Spike Gate Map Visualizations 
+
+G.1 Boundary fire Analysis. 
+
+We quantify the qualitative boundary-firing pattern of Figures 18–19 by partitioning the 14 × 14 patch grid (corresponding to a 224 × 224 input) into a boundary ring and an interior block (Figure 17): the boundary is the outer 1-ring of 52 patches and the interior is the inner 12 × 12 = 144 patches. A patch is active when its gate value exceeds the per-frame 70 th-percentile threshold; a percentile rather than a fixed threshold is used because per-clip gate magnitudes vary in [0 .05 , 0.50] , so a fixed value would label entire frames as active for some clips and entirely inactive for others. Within each frame we count patches that participate in a run of three or more consecutive active patches along the four boundary edges (boundary fire, BF ) and along rows and columns of the interior block (interior fire, IF ); both counts are normalized by their region size ( 52 and 144 ). BF /IF > 1 means firing concentrates on the boundary. 
+
+Edge-gate overlap (GenVideo test). We additionally compare the gate map to the per-frame Sobel edge map at 224 × 224 . The Sobel map fires at any high-gradient pixel, while the boundary ring is a fixed spatial mask, so the two metrics test what the gate aligns with vs. where it fires. Absolute correlations (Table 14) are small because the gate also responds to non-edge regions; the consistent real-vs-fake gap across all four metrics is the evidence we read as the gate aligning with a temporal artifact more strongly localized at edges in fake clips. 29 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+Figure 17: Boundary-vs-interior partition of the 14 × 14 patch grid. The outer 1-ring of 52 patches forms the boundary mask; the inner 12 × 12 = 144 patches form the interior mask. Table 14: Edge-gate overlap on GenVideo. “Edge ratio” is mean gate magnitude on edge vs. non-edge pixels.                   
+
+> Metric Real Fake Diff
+> Pearson correlation 0.025 0.035 +0 .010
+> Precision@ 20% 0.109 0.111 +0 .002
+> Mean gate (edge) 0.396 0.526 +0 .130
+> Mean gate (non-edge) 0.377 0.492 +0 .115
+> Edge ratio 0.710 0.933 +0 .223
+
+Per-generator boundary fire. On every fake source, BF is at least 1.3× the real value while IF 
+
+stays close to real (Table 15), so the additional firing on fakes concentrates on the boundary ring rather than spreading across the frame. The pattern holds across eight heterogeneous generators, supporting a generator-agnostic reading. Table 15: Per-generator boundary fire ( BF ) and interior fire ( IF ) on the GenVideo test split, at the 
+
+70 th-percentile gate threshold; rates are fractions of the region size ( 52 , 144 ).                     
+
+> Source BF IF
+> Real 0.027 0.141
+> WildScrape 0.043 0.134
+> Lavie 0.042 0.190
+> HotShot 0.034 0.165
+> MorphStudio 0.042 0.142
+> Gen2 0.038 0.156
+> ModelScope 0.042 0.158
+> MoonValley 0.043 0.168
+> Crafter 0.051 0.162
+
+G.2 Temporal Evolution 
+
+Figures 18 and 19 show per-frame SDT-V3 gate activations paired with the input RGB sequence on one representative GenVideo-Val clip per test generator. Across all ten generators, the gate develops high-amplitude activations concentrated along object boundaries and motion-driven edges from t=2 
+
+onward (the gate is empty at t=1 by construction), the activations shift in space and intensity from frame to frame rather than locking onto a fixed mask, and the clip-mean firing rate ¯A stays within a narrow 0.46 –0.61 range across very different generation styles. 30 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+Figure 18: Per-frame spike gate-map visualization on one representative clip per GenVideo test generator (part 1 of 2: Gen2, ModelScope, HotShot, Crafter, Show1). For each generator, the top row shows the input RGB frames at t = 2 to t = 8 and the bottom row shows the corresponding SDT-V3 gate activation as a heatmap. Row labels report the clip-mean firing rate ¯A. Boundary- and motion-localized firing emerges from t = 2 onward and remains non-stationary along the temporal axis. 31 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+Figure 19: Per-frame spike gate-map visualization on one representative clip per GenVideo test generator (part 2 of 2: Lavie, MoonValley, MorphStudio, WildScrape, Sora). Layout and conventions follow Figure 18. The same boundary- and motion-localized firing pattern persists across these five additional generators, confirming that the gate behavior is not specific to any single generator family. 32 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+G.3 Cross-Generator Residual Gallery 
+
+To better illustrate the per-frame behavior of the temporal residual channels, we visualize all four pseudo-event channels (plus the excluded Chroma channel) for every frame of a clip, rather than reporting only aggregate statistics. Due to space constraints we present two representative GenVideo-Val fake clips drawn from different generator families (Figures 20 and 21). The clips were selected to span qualitatively distinct content and two different generation styles, so that any pattern that recurs across both fakes is unlikely to be content-specific or generator-specific. Each panel shows the input RGB sequence, the four pseudo-event channels (HF, Sobel, AbsDiff, Diff2), and the Chroma channel that we tested but excluded from the final pipeline, all aligned along 
+
+t = 1 to t = 8 .The Gen2 clip (Figure 20) shows static maze-like geometry with subtle camera motion, a regime where pixel residuals are small and detection is content-poor; the HF/Sobel channels nevertheless light up consistently from t = 2 onward along the maze edges, indicating that even low-displacement frames produce a discriminative residual signature. 
+
+Figure 20: Temporal residual channels on a fake clip generated by Runway Gen-2, a commercial diffusion-based text-to-video model (clip gen2_371 ). From top to bottom: input RGB sequence, the four pseudo-event channels (HF, Sobel, AbsDiff, Diff2), and the Chroma channel (excluded from the final pipeline). Columns correspond to frames t = 1 to t = 8 .The Show1 clip (Figure 21) shows a person under heavy rain, where fine-grained moving texture (rain streaks) saturates the AbsDiff and Diff2 channels across the entire frame; this confirms that the pseudo-event channels respond to genuine high-frequency motion, and motivates the multi-channel design rather than reliance on any single residual operator. 33 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+Figure 21: Temporal residual channels on a fake clip generated by Show1, a hybrid pixel-and-latent diffusion text-to-video model (clip show1_142 ). From top to bottom: input RGB sequence, the four pseudo-event channels (HF, Sobel, AbsDiff, Diff2), and the Chroma channel (excluded from the final pipeline). Columns correspond to frames t = 1 to t = 8 .
+
+## H Energy Efficiency: SOPs vs. FLOPs 
+
+We compare the inference-time energy of our spike-driven anomaly gate (SDT-V3) against an architecturally matched ANN counterpart (CNN–Transformer with ReLU/MultiHeadAttention/GELU MLP) trained under the same protocol on Pika →GenVideo-Val. Both gate variants share the input pipeline (six pseudo-event channels pooled to the 14 ×14 X-CLIP patch grid, T =8 frames), the same eight-block depth and four-head configuration, and are matched in trainable parameter count (SNN: 
+
+9.3M, ANN: 10 .7M). The X-CLIP backbone is identical across the two variants and is reported separately for context. 
+
+H.1 SOPs Calculation 
+
+For an ANN layer with input X ∈ Rcin ×h×w and a kernel of size k × k producing cout channels, 
+
+MAC ANN (ℓ) = cin cout k2 h w. 
+
+For the spike-driven equivalent operating over T frames with empirical firing rate ¯s ∈ [0 , 1] , only an accumulate is charged when an input spike fires: 
+
+SOPs( ℓ) = MAC ANN (ℓ) × ¯s. 
+
+Following recent spike-driven Transformer literature [ 85 , 77 ], no input multiplication is charged because the input is a binary spike train. The empirical firing rate is measured by injecting N =64 
+
+GenVideo-Val clips into the trained gate and recording the fraction of cells with gate _map > 0.5,averaged across all timesteps and locations. 34 Jang et al. Detecting AI-Generated Videos with Spiking Neural Networks 
+
+Assumptions. We use T =8 timesteps, identifying each frame with one neural step. The measured average firing rate is ¯s = 0.124 on the trained checkpoint 
+
+genvideo_xclip_learnable_lif/best.pt . ANN MACs are counted analytically from the CNN–Transformer architecture (PerChannel CNN stem, 1×1 fusion, eight standard Transformer blocks with full O(N 2D) self-attention, 1×1 gate head); the trained ANN baseline reaches GenVideo-Val mAUC = 0 .902 . SNN ops are obtained the same way for the SDT-V3 gate (linear attention, O(N D 2)) and then multiplied by ¯s. The X-CLIP backbone FLOPs ( 281 .2 G/clip) are derived analytically from the ViT-B/16 vision tower and the four-layer Multi-frame Integration Transformer. 
+
+H.2 Energy Conversion Constants 
+
+We adopt the 45 nm CMOS reference values reported by Horowitz [27]: 
+
+E32 bMAC = 4 .6 pJ , E32 bAC = 0 .9 pJ .
+
+Total inference energy is EANN = P 
+
+> ℓ
+
+MAC( ℓ) EMAC and ESNN = P 
+
+> ℓ
+
+SOPs( ℓ) EAC . These values are a digital-CMOS upper bound; modern neuromorphic substrates (Loihi-2, SpiNNaker-2) report lower per-spike energies, so the figures below should be read as a conservative estimate of the SNN advantage. 
+
+Results. Table 16 summarises the comparison. Table 16: Per-clip parameter count, operation count, and inference energy of the gate branch (X-CLIP backbone excluded). Both gate variants are matched in block depth, head count, and trainable parameter count and are trained under identical protocol. SNN energy uses EAC =0 .9 pJ; ANN energy uses EMAC =4 .6 pJ. SOPs are obtained from the SDT-V3 dense FLOP count multiplied by the empirically measured firing rate ¯s=0 .124 on GenVideo-Val.                     
+
+> Model Type blocks Params (M) Ops (G) Energy (mJ)
+> SDT-V3 (ours) SNN 89.3 1.38 SOPs 1.24
+> CNN–Transformer ANN 810.7 18.61 MACs 85.61 X-CLIP backbone (frozen) ANN 12+4 —281.2 FLOPs 1293.61
+
+Pipeline-level cost. Including the frozen X-CLIP backbone, the full inference cost is Eours ≈
+
+1294 .85 mJ/clip versus Eann ≈ 1379 .22 mJ/clip for the dense counterpart; the spike-driven gate adds only +0 .10% on top of the backbone, while a matched ANN gate adds +6 .62% .The CNN–Transformer ANN, despite being matched to the SNN gate in block depth, head count, and trainable parameter count, consumes ≈ 69 .0× the energy of our spike-driven gate ( 85 .61 mJ vs. 1.24 mJ per clip). The gap decomposes into approximately a 5.1× contribution from the AC-vs-MAC constant ratio ( 4.6/0.9), an ∼ 1.7× contribution from the linear-attention dense-op count of SDT-V3 ( O(N D 2)) versus full attention ( O(N 2D)), and an ∼ 8.1× contribution from the 87 .6% 
+
+activation sparsity at ¯s=0 .124 (intrinsic to the spike-driven design). Consistent with the feasibility framing of this work, this estimate should be read as supporting evidence that spike-driven detection is energetically practical at parameter parity, rather than as a wall-time deployment-energy claim; benchmarking on neuromorphic hardware is left as future work. 
+
+## I Hyperparameter Details. 
+
+We train MAST for 10 epochs with AdamW (weight decay 0.01 ) and a cosine LR schedule, using batch size 16 per GPU on 4 NVIDIA RTX 3090 GPUs (effective batch 64 ) under DDP with AMP and gradient clipping at L2 norm 1.0. The X-CLIP backbone is kept frozen and uses LR 1×10 −5, while the SDTB uses a separate parameter group at LR 3×10 −4. We apply label smoothing of 0.1 and report results averaged over three independent runs with seeds {2025 , 2026 , 2027 }. Auxiliary objectives are weighted as λsupcon =0 .3 (SupCon, τc=0 .07 ), λsnn =0 .2 (SNN-only auxiliary BCE), λanom =0 .2
+
+(anomaly-score BCE with margin 0.5, centered), and λrate =0 .01 for the spike-rate regularizer (target 
+
+r∗=0 .15 ). 35

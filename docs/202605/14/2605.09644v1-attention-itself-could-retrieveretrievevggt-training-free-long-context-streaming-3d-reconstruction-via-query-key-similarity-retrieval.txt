@@ -1,0 +1,688 @@
+Title: Attention Itself Could Retrieve.RetrieveVGGT: Training-Free Long Context Streaming 3D Reconstruction via Query-Key Similarity Retrieval
+
+URL Source: https://arxiv.org/pdf/2605.09644v1
+
+Published Time: Tue, 12 May 2026 02:09:44 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# Attention Itself Could Retrieve. RetrieveVGGT: Training-Free Long Context Streaming 3D Reconstruction via Query-Key Similarity Retrieval 
+
+## Zichen Zou 1,2, Xiaosong Jia 1,2, Zuxuan Wu 1,2, Yu-Gang Jiang 1,2
+
+> 1
+
+Institute of Trustworthy Embodied AI (TEAI), Fudan University 
+
+> 2
+
+Shanghai Key Laboratory of Multimodal Embodied AI 
+
+Correspondence Author 
+
+## Abstract 
+
+Visual Geometry Grounded Transformer (VGGT) advances 3D reconstruction via scalable Transformer architecture, but the quadratic complexity of global attention prevents long context application. StreamVGGT enables streaming with causal attention, yet its KV cache grows linearly with frames, causing memory overflow and quality degradation. We present RetrieveVGGT, a training-free framework, which formulates context construction for VGGT as a retrieval problem . By retrieving a fixed number of relevant frames at each step, VGGT maintains a controllable memory budget, which is close to its training context length. Interestingly, we find that the similarity between current frame queries and cached history frame keys at the first global attention layer of VGGT is already a strong indicator of relevance, eliminating the need for additional learned scoring. To enhance information diversity similar to a recommender system, we propose Segment Sampling so that the retrieval spans distinct relevant segments rather than a single high-similarity region. We design a pose-aware spatial memory mechanism that organizes history frames according to their already estimated camera poses, enabling location-aware retrieval. Extensive experiments demonstrate that RetrieveVGGT achieves state-of-the-art performance, outperforming StreamVGGT, TTT3R, and InfiniteVGGT while maintaining constant memory usage regardless of sequence length. Code is available at https://github.com/zzctmd/RetrieveVGGT .
+
+## 1 Introduction 
+
+The demand for progressively reconstructing 3D scenes from continuous video streams, i.e., long-context streaming 3D reconstruction, is rapidly increasing in applications such as autonomous driving [ 1, 2 ], augmented reality [ 3– 5], and embodied intelligence [ 6– 9]. Traditional pipelines based on Structure-from-Motion (SfM) [ 10 –15 ] and Multi-View Stereo (MVS) [ 16 – 21 ] are computationally expensive, and sensitive to noise. Recent feed-forward models like VGGT [ 22 ] predict dense geometry end-to-end, achieving impressive generalization but suffering from quadratic complexity of global attention. Streaming architectures address online reconstruction through various memory mechanisms. Explicit spatial memories (Spann3R [ 23 ], Point3R [ 24 ]) anchor past observations in 3D but grow unboundedly. Recurrent 1
+
+> arXiv:2605.09644v1 [cs.CV] 10 May 2026
+
+# Retrieve Multiple Relevant Regions Figure 1 Formulation of RetrieveVGGT . Given streaming video input (Bottom), RetrieveVGGT retrieves relevant keyframes from history for each incoming query frame via attention-derived relevance (Middle), ensuring flexible and comprehensive scene coverage with long history (Top). 
+
+state compression (CUT3R [ 25 ], TTT3R [ 26 ]) uses fixed-length states but suffers from catastrophic forgetting. StreamVGGT [ 27 ] enables streaming by KV cache under causal attention, yet its cache grows linearly with frames, causing memory overflow and progressive degradation on long sequences. Concurrent to our work, InfiniteVGGT [ 28 ] prunes the cache to a fixed budget, but its query-agnostic compression discards frame-specific context, limiting reconstruction quality. We present RetrieveVGGT , a training-free streaming 3D reconstruction framework, which treats the construction of context for VGGT as a retrieval problem. As in Fig. 1, for each incoming frame, RetrieveVGGT retrieves relevant frames from the entire history based on the intrinsic similarity between current frame queries and cached history frame keys at the first global attention layer of VGGT, thereby bounding memory to a fixed budget. To further enhance information diversity much like in a recommender system, we propose Segment Sampling, which identifies and samples from distinct high-relevance segments across the full history. Furthermore, RetrieveVGGT maintains a pose-aware spatial memory that organizes cached KV states by previously estimated camera pose into spatial regions, enabling efficient region-level compression via periodic uniform subsampling for truly scalable long-term memory management. Our main contributions are summarized as follows: 
+
+• We propose RetrieveVGGT, a retrieval based training-free streaming 3D reconstruction framework that enables each frame to dynamically attend to its most relevant historical keyframes, achieving faithful reconstruction with constant memory cost regardless of sequence length. 
+
+• We introduce Segment Sampling and a pose-aware spatial memory to jointly enhance selection diversity across the full history and scalable long-term memory management. 
+
+• Extensive experiments on 3D reconstruction, video depth estimation, and camera pose estimation demon-strate that RetrieveVGGT achieves state-of-the-art performance with up to 20% improvement over existing streaming methods, while maintaining bounded GPU memory consumption. 
+
+## 2 Related Work 
+
+2.1 Classic 3D Reconstruction. 
+
+Recovering 3D structure from multi-view images has traditionally relied on geometric optimization and rendering techniques. Structure-from-Motion (SfM) [ 10 –15 ] reconstructs sparse geometry and camera poses 2through feature extraction [ 29 –31 ], matching [ 14 , 32 – 34 ], triangulation, and bundle adjustment [ 35 , 36 ], with COLMAP [ 13 ] a representative system, yet both SfM and Multi-View Stereo (MVS) [ 16 – 21 ] remain multi-stage, tightly coupled, and offline. Neural Radiance Fields (NeRF) [ 37 – 41 ] and 3D Gaussian Splatting (3DGS) [ 42 – 45 ]achieve photorealistic novel view synthesis, yet demand scene-specific training and cannot generalize to unseen environments at test time. Simultaneous Localization and Mapping (SLAM) [ 46 – 49 ] offers online joint localization and mapping, but often depends on specific motion assumptions or auxiliary sensors [ 50 ]and produces incomplete sparse maps. These shortcomings motivate end-to-end learning-based approaches. 
+
+2.2 Feedforward 3D Reconstruction. 
+
+A paradigm shift began with DUSt3R [ 51 ], which formulates reconstruction as pointmap regression from image pairs via a Vision Transformer, unifying matching, pose estimation, and geometry prediction end-to-end. MASt3R [ 52 ] improves metric accuracy with pixel-level correspondences, and MonST3R [ 53 ] adapts the formulation to dynamic scenes, yet these pairwise methods still require costly global alignment when handling more than two views. To eliminate this bottleneck, multi-view feed-forward architectures have emerged: Fast3R [ 54 ] extends pairwise regression to N-view inputs with parallel view fusion, while VGGT [ 22 ]scales to a 1.2B-parameter transformer that jointly predicts poses, depth, pointmaps, achieving state-of-the-art accuracy across diverse 3D tasks. FastVGGT [ 55 ] reduces its cost through training-free token merging, and VGGTLong [ 56 ] decomposes long trajectories into sub-maps for extended capacity. The quadratic complexity of global attention limits these methods to short, offline settings, motivating streaming architectures. 
+
+2.3 Streaming Online 3D Reconstruction. 
+
+Streaming architectures process frames incrementally. Explicit spatial memory methods (Spann3R [ 23 ], Point3R [ 24 ]) anchor past observations at 3D positions, yet their memory grows unboundedly with scene extent and requires heuristic pruning once saturated. Recurrent state methods (CUT3R [ 25 ], TTT3R [ 26 ], TTSA3R [ 57 ], MUT3R [ 58 ]) compress history into a fixed-length representation, yet suffer from information loss over long sequences or remain bounded by limited state capacity. Causal attention methods (STream3R [ 59 ], StreamVGGT [ 27 ]) cache key-value states under causal attention, yet the KV cache grows unboundedly on long inputs, leading to memory overflow and redundancy. Concurrent to our work, InfiniteVGGT [ 28 ]proposes training-free token pruning to maintain a fixed-budget cache, though such pruning is query-agnostic regardless of per-frame needs. In contrast, RetrieveVGGT adopts a retrieval-based paradigm where the context each frame attends to is explicitly and dynamically adjusted based on its relevance profile. 
+
+## 3 Method 
+
+RetrieveVGGT is a training-free streaming 3D reconstruction framework built upon StreamVGGT [ 27 ] that dynamically selects relevant historical keyframes for each incoming query frame, as in Fig. 2. We begin by introducing the StreamVGGT inference pipeline as our foundation (Sec. 3.1), then present the query-driven frame selection mechanism (Sec. 3.2), followed by two complementary components: Segment Sampling for diverse keyframe coverage (Sec. 3.3) and pose-aware spatial memory for long-term compression (Sec. 3.4). 
+
+3.1 Preliminary: StreamVGGT 
+
+StreamVGGT is based on VGGT [ 22 ], consisting of an image encoder ℰ, 𝐿 transformer aggregator layers, and prediction heads. Given a new frame 𝐼 𝑡 at time step 𝑡 , the image encoder extracts a token sequence z0 
+
+> 𝑡
+
+= ℰ( 𝐼 𝑡 ).The tokens then pass through the 𝐿 transformer aggregator layers. At each layer 𝑙 , a frame attention block first refines the tokens per image ˆz𝑙 𝑡 = FrameAttn 𝑙 (z𝑙 −1 
+
+> 𝑡
+
+). Then, it passes through causal attention block 
+
+z𝑙 𝑡 = CausalAttn 𝑙  ˆz𝑙 𝑡 , K𝑙  
+
+> 1: 𝑡
+
+, V𝑙 
+
+> 1: 𝑡
+
+ where K𝑙  
+
+> 1: 𝑡
+
+and V𝑙  
+
+> 1: 𝑡
+
+denote the KV cache from history frames 1 through 𝑡 
+
+at layer 𝑙 . Finally, the prediction heads utilize certain layer features for outputs. We could observe that the KV cache grows linearly with the sequence length 𝑡 and this unbounded growth leads to GPU memory overflow and introduces substantial information redundancy that degrades reconstruction quality, as in Fig. 3(a). RetrieveVGGT addresses this by replacing the full KV cache with a retrieval mechanism for relevant frames, described in next section. 3RetrieveVGGT: Query -Key Similarity Retrieval 
+
+> Decoder Layer 1
+> Frame
+> Attn
+> Casual
+> Attn
+
+Streaming Inference Pipeline 
+
+Frame 𝑰 𝒕  
+
+> 𝒛 𝒕
+> 𝟎 Point Head
+
+Multi -Task Heads               
+
+> Image Encoder
+> Decoder Layer 2
+> Frame
+> Attn
+> Casual
+> Attn
+> . . .
+> Decoder Layer L
+> Frame
+> Attn
+> Casual
+> Attn Depth Head
+> Camera Head $q&
+> "𝐪 𝐭 ̅𝐤 𝟏
+> Query -Driven Segment Sampling  ̅
+> 𝐤 𝟐 ̅𝐤 𝟑
+> . . . ̅
+> 𝐤 𝒕 '𝟐 ̅𝐤 𝒕 '𝟏
+> Frame Descriptors (mean pooled K)
+> r(t, i) =$𝐪 𝐭 ,$𝒌 𝒕 𝒉𝒊𝒔
+> Relevance
+> Scores
+> frame index
+> 𝜏 =𝜇 (𝑟 ")+0.3𝜎 (𝑟 ")
+> Seg1 Seg2
+> KV
+> History
+> ...
+> ...
+> ...
+
+KV History         
+
+> Frame 1:
+> Frame 2:
+> Frame t -2:
+> Frame 3:
+> Frame t -1:
+> ×Llayers
+> KV
+> KV
+> KV
+> KV
+> KV
+
+Selected KV (indices shared across all L layers) 
+
+> Pose -Aware Spatial Memory
+> Pose
+> delete
+> redundant
+> Periodic Compression
+
+Figure 2 Retrieval Mechanism of RetrieveVGGT. For each frame 𝐼 𝑡 : (1) Query-Driven Frame Selection : mean pooled query is compared against all history frame descriptors at the first attention layer, requiring no extra learned module. 
+
+(2) Segment Sampling : selects relevant frames across distinct segments to avoid over-concentration. KV history at the selected indices is reused across all 𝐿 layers. (3) Pose-Aware Spatial Memory : organizes KV states by estimated camera poses and periodically compresses over-populated regions to bound memory with spatial diversity. 
+
+3.2 Query-Driven Frame Selection 
+
+A solution to the unbounded KV growth is to limit which historical states each frame attends to. Window-based methods (e.g., WinT3R [ 60 ]) restrict attention to a local temporal neighborhood, but lose earlier context (Fig. 3( 𝑏 1)). Cache pruning methods (e.g., concurrent work InfiniteVGGT [ 28 ]) maintain a globally compressed cache within a fixed budget, yet all future frames share the same pruned context regardless of viewpoint, losing relevant information (Fig. 3( 𝑏 2)). RetrieveVGGT instead adopts a query-driven paradigm (Fig. 3( 𝑏 3)): each incoming frame dynamically selects relevant keyframes from the entire history based on its own query, bounding memory to a fixed budget while preserving long-range coverage tailored to each frame’s actual need. Concretely, at time step 𝑡 , frame 𝐼 𝑡 passes through the image encoder and frame attention at layer 0, yielding ˆz0 
+
+> 𝑡
+
+∈ ℝ𝑃 ×𝑑 where 𝑃 is the number of patches per image. The first global attention block of VGGT (no interaction with history before this layer) computes Query, Key, Value for current frame: 
+
+Q0 
+
+> 𝑡
+
+, K0 
+
+> 𝑡
+
+, V0 
+
+> 𝑡
+
+= Proj 0
+
+> 𝑞𝑘𝑣
+
+ LN 0(ˆ z0 
+
+> 𝑡
+
+) ∈ ℝ𝐻 ×𝑃 ×𝑑 ℎ , (1) where 𝐻 is the number of heads and 𝑑 ℎ = 𝑑 /𝐻 . Each token sequence begins with 𝑠 special tokens (camera and register tokens) followed by 𝑃 𝑝 = 𝑃 − 𝑠 patch tokens. Since only patch tokens encode frame-specific visual content, we mean-pool over patch positions for frame-level descriptors: 
+
+¯q𝑡 = 1
+
+𝑃 𝑝 𝑃 Õ
+
+> 𝑗 =𝑠 +1
+
+Q0 
+
+> 𝑡
+
+[:, 𝑗, :] ∈ ℝ𝐻 ×𝑑 ℎ , ¯k𝑡 = 1
+
+𝑃 𝑝 𝑃 Õ
+
+> 𝑗 =𝑠 +1
+
+K0 
+
+> 𝑡
+
+[:, 𝑗, :] ∈ ℝ𝐻 ×𝑑 ℎ , (2) where ¯q𝑡 and ¯k𝑡 are frame-level query and key descriptors of the current frame, respectively; only patch tokens (indices 𝑠 +1 to 𝑃 ) are averaged, excluding 𝑠 special tokens. The key descriptor ¯k𝑡 is cached for retrieval. We compute the relevance score between the current query ¯q𝑡 and each history descriptor ¯k𝑖 :
+
+𝑟 (𝑡, 𝑖 ) = 1
+
+𝐻 
+
+> 𝐻
+
+Õ
+
+> ℎ=1
+
+⟨ ¯ q𝑡 [ℎ, :], ¯k𝑖 [ℎ, :]⟩ , 𝑖 = 1, . . . , 𝑡 −1. (3) 4Figure 3 Analysis of Cache and Retrieval Strategy of History Frames. (a) Cosine similarity of key descriptors across 150 frames reveals high redundancy in KV cache (mean similarity ≈ 0.98 ), motivating subset selection. (b) Comparison of three cache management approaches: (b 1) Window-based methods lose all information outside their window; (b 2) Cache pruning maintains a globally compressed cache not tailored to each query, losing relevant information; (b 3) RetrieveVGGT (Ours) dynamically selects the most relevant frames from the entire history based on the current query 𝑞 𝑡 .
+
+For history frame selection, given a frame budget 𝑁 , we always reserve the first frame since it is defined as the coordinate reference in VGGT [ 22 ]. The remaining 𝑁 −1 frames are selected via Segment Sampling (Sec. 3.3) based on the relevance scores r𝑡 , producing the selected set 𝒮 𝑡 . Selection operates at the frame level to preserve within-frame structural integrity, and is performed only at layer 0 and then reused across all 𝐿 
+
+layers, as we empirically observe no enhancement for layer-wise selection but with extra latency. At each layer 𝑙 , the retrieved frames’ KV are used: 
+
+z𝑙 𝑡 = Attn 
+
+
+
+Q𝑙 𝑡 , K𝑙  
+
+> 𝒮 𝑡
+
+, V𝑙 
+
+> 𝒮 𝑡
+
+
+
+. (4) After all layers, aggregated features pass through task-specific heads to produce 3D predictions. The estimated camera pose of current frame and descriptor ¯k𝑡 are recorded in spatial memory (Sec. 3.4). 
+
+3.3 Segment Sampling 
+
+As in Fig. 4 (a), a naïve top-𝐾 selection on the relevance scores r𝑡 tends to concentrate all selected frames within a single high-similarity peak, producing redundant views of one scene region while neglecting other informative parts of the history. Similar to the retrieval diversity in a recommender system, as in Fig. 4 (b), Segment Sampling addresses this by identifying multiple high-relevance segments and distributing the frame budget proportionally among them. Qualitative examples of retrieved keyframes, confirming that Q-K similarity indeed selects geometrically relevant views, are in Appendix A. The pipeline of Segment Sampling decomposes frame selection into four sequential steps, each designed to address a specific challenge arising from the previous stage. 
+
+Segment Identification. We first compute an adaptive threshold based on relevance scores across all history frames r𝑡 :
+
+𝜏 = 𝜇 (r𝑡 ) + 𝑤 thre 𝜎 (r𝑡 ), (5) where 𝜇 and 𝜎 denote mean and standard deviation. 𝑤 thre (set to 0.3) is a hyperparameter, where a frame is relevant if its score exceeds the mean by more than 𝑤 thre times the standard deviation. 5Redundant: only 3 peaks ！
+
+> Lar ge gap with zer o cover age ！
+
+Same budget, all 8 r elevant segments cover ed ！Figure 4 Comparison of Frame Selection . on the office/seq-07 sequence of 7-Scenes (500 frames, 𝐾 =47 ). (a) Top-𝐾 
+
+clusters frames around a single peak, covering only 3/8 high-relevance segments. (b) Segment Sampling (Ours) distributes frames across 8 segments above threshold 𝜏 (yellow regions), reducing Accuracy error from 0.281 m to 0.036 m ( 7.8 ×). 
+
+Then, a segment is defined as a maximal contiguous subsequence of frames whose relevance scores all exceed 
+
+𝜏 . Adjacent segments separated by fewer than 𝛿 frames are automatically merged together to avoid excessive over-fragmentation, yielding 𝑀 distinct coherent segments {𝑆 1 , 𝑆 2 , . . . , 𝑆 𝑀 }.
+
+Proportional Quota Allocation. Let 𝑟 max  
+
+> 𝑘
+
+= max 𝑖 ∈𝑆 𝑘 𝑟 (𝑡, 𝑖 ) be the peak relevance within segment 𝑆 𝑘 . The frame budget 𝑁 sel is first distributed in proportion to peak importance: 
+
+ˆ𝑛 𝑘 =
+
+$
+
+𝑁 sel · 𝑟 max 
+
+> 𝑘
+
+Í𝑀 𝑗 =1 𝑟 max 
+
+> 𝑗
+
+%
+
+. (6) The raw quota ˆ𝑛 𝑘 is then clamped to ensure feasibility: 
+
+𝑛 𝑘 = clamp ( ˆ 𝑛 𝑘 , 1, |𝑆 𝑘 |) , (7) where the lower bound 1 guarantees that every detected segment contributes at least one frame, while |𝑆 𝑘 |
+
+prevents over-sampling beyond its own segment length. 
+
+Within-Segment Sampling. Within each segment 𝑆 𝑘 , we first select the peak frame 𝑖 ∗ 
+
+> 𝑘
+
+= arg max 𝑖 ∈𝑆 𝑘 𝑟 (𝑡, 𝑖 ),then uniformly sample the remaining 𝑛 𝑘 − 1 frames across the segment span: 
+
+ℱ𝑘 = 𝑖 ∗ 
+
+> 𝑘
+
+∪ Uniform  𝑆 𝑘 \ { 𝑖 ∗ 
+
+> 𝑘
+
+}, 𝑛 𝑘 − 1 , (8) where Uniform (𝑆, 𝑛 ) draws 𝑛 evenly spaced frames from set 𝑆 .
+
+Budget Adjustment. After collecting all samples ℱseg = Ð𝑀 𝑘 =1 ℱ𝑘 from all segments, the total count may deviate significantly from 𝑁 sel . When the total number of detected segments 𝑀 exceeds 𝑁 sel , the guaranteed minimum of one frame per segment necessarily pushes |ℱ seg | above 𝑁 sel ; conversely, rounding and the strict upper bounds ( |𝑆 𝑘 |) may truncate quotas substantially below their proportional share, thereby leaving 
+
+|ℱ seg | < 𝑁 sel . We reconcile each case as follows: When the budget is exceeded, we retain only the 𝑁 sel highest-scoring samples: 
+
+ℱfinal = Top  𝑁 sel , ℱseg 
+
+. (9) When a surplus remains, we fill the gap with highest-scoring unselected frames: 
+
+ℱfinal = ℱseg ∪ Top  𝑁 sel − |ℱ seg |, ℋ𝑡 \ ℱ seg 
+
+ , (10) 6Pose-Aware Spatial Memory —— Two-Step Pipeline 
+
+incoming frame stream 
+
+# (a) Spatial Region Assignment       
+
+> 3D spatial grid
+> with unbalanced visitation
+> ... ... ... ...
+> Estimated camera poses
+> Composite key
+> (��,��,��,����)
+> Map frames to spatial grid
+> D=4
+> Compression
+> every Δ frames
+
+# (b) Periodic Compression    
+
+> Frames
+> Spatial Regions
+> Per-region Occupancy:
+> Regions above �are
+> compressed
+> 1
+> ...
+> �
+> 2
+> Compressed Regions
+> Preserved Regions
+> Example region
+> frames
+> Uniform-stride sampling
+> :Original frame : Removed frame
+> :Original frame
+> Example region
+> frames
+> Sampled
+> frames
+> All frames
+> preserved
+
+Figure 5 Pose-Aware Spatial Memory pipeline. (a) Spatial Region Assignment: each frame is mapped into an isometric 
+
+𝐾 3×𝐷 grid cell indexed by its 3D position and viewing direction, with a grow-only bounding box that keeps assignments stable across deletions. (b) Periodic Compression: regions exceeding the mean occupancy are thinned via uniform-stride sampling while anchor remains protected; deleted entries are tombstoned so metadata persists. 
+
+where Top (𝑛, ·) selects the 𝑛 highest-scoring frames from the given candidate set, and ℋ𝑡 denotes the complete set of all frames in the historical frame buffer up to the current time 𝑡 . Both cases guarantee exactly 𝑁 sel 
+
+frames while strictly preserving multi-segment diversity. 
+
+3.4 Pose-Aware Spatial Memory 
+
+Under certain cases, camera trajectories may revisit certain scene regions densely while leaving others sparsely covered, causing the KV cache to accumulate many redundant key frames in over-represented areas. This not only leads to unbounded growth of storage for KV states, but also dilutes the selection pool with redundant views, reducing the diversity. We therefore maintain a pose-aware spatial memory that organizes cached KV states by utilizing their estimated camera poses and periodically compresses over-represented regions. An overview of the two-step pipeline is in Fig. 5. 
+
+Spatial Region Assignment. After each frame 𝑡 passes through the camera prediction head, we store its 3D position p𝑡 ∈ ℝ3 and optical-axis direction d𝑡 ∈ ℝ3 . The scene is partitioned into a uniform 𝐾 ×𝐾 ×𝐾 grid based on the historical bounding box of all observed camera positions: 
+
+(𝑖 𝑥 , 𝑖 𝑦 , 𝑖 𝑧 ) =
+
+ p𝑡 − bmin 
+
+𝑔 
+
+
+
+, (11) where bmin is the minimum corner of the bounding box and 𝑔 = ∥bmax − bmin ∥/ 𝐾 is the adaptive cell size derived from the scene diameter. The viewing direction is quantized into 𝐷 azimuth bins: 
+
+𝑑 bin =
+
+ atan2 (𝑑 𝑧 , 𝑑 𝑥 ) + 𝜋 
+
+2𝜋 /𝐷 
+
+
+
+. (12) Each frame is assigned to the spatial region identified by composite key (𝑖 𝑥 , 𝑖 𝑦 , 𝑖 𝑧 , 𝑑 bin ), yielding up to 𝐾 3 ×𝐷 
+
+distinct regions. We set 𝐾 =3 and 𝐷 =4 in practice. Notably, the historical bounding box only grows and never 7Table 1 3D reconstruction results on 7-Scenes [ 61 ] and NRGBD [ 62 ] at sequence lengths of 200, 300, 400, and 500 frames. Best results are in red, second best are blue. “OOM” indicates out-of-memory failure. 
+
+Method Acc ↓ Comp ↓ NC ↑
+
+200 300 400 500 200 300 400 500 200 300 400 500 7-Scenes VGGT [22] OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM StreamVGGT [27] OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM STream3R 𝛽 [59] OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM Spann3R [23] 0.0403 0.0765 0.0797 0.0707 0.0214 0.0278 0.0275 0.0187 0.5730 0.5464 0.5428 0.5402 Point3R [24] 0.0371 0.0457 0.0518 0.0585 0.0203 0.0277 0.0242 0.0316 0.5778 0.5646 0.5604 0.5542 CUT3R [25] 0.0894 0.1269 0.1604 0.1827 0.0483 0.0629 0.0995 0.0808 0.5642 0.5429 0.5351 0.5309 TTT3R [26] 0.0275 0.0402 0.0502 0.0651 0.0232 0.0245 0.0263 0.0295 0.5804 0.5647 0.5575 0.5522 InfiniteVGGT [28] 0.0454 0.0432 0.0421 0.0398 0.0307 0.0269 0.0269 0.0236 0.5817 0.5695 0.5649 0.5617 Random sampling ( 𝑁 =48 ) 0.0439 0.0433 0.0432 0.0409 0.0287 0.0237 0.0237 0.0209 0.5849 0.5745 0.5696 0.5614 Uniform sampling ( 𝑁 =48 ) 0.0382 0.0379 0.0378 0.0392 0.0277 0.0238 0.0240 0.0227 0.5838 0.5705 0.5659 0.5600 Sliding window ( 𝑁 =48 ) 0.0327 0.0340 0.0451 0.0530 0.0253 0.0221 0.0244 0.0227 0.5843 0.5689 0.5644 0.5591 RetrieveVGGT (Ours) 0.0324 0.0314 0.0316 0.0312 0.0252 0.0211 0.0224 0.0199 0.5852 0.5708 0.5661 0.5617 NRGBD VGGT [22] OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM StreamVGGT [27] OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM STream3R 𝛽 [59] OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM OOM Spann3R [23] 0.0709 0.1002 0.1417 0.1829 0.0181 0.0262 0.0447 0.0487 0.6132 0.5953 0.5855 0.5794 Point3R [24] 0.0636 0.0757 0.1045 0.1208 0.0191 0.0143 0.0299 0.0312 0.6220 0.6136 0.6067 0.6139 CUT3R [25] 0.1362 0.2327 0.3231 0.3341 0.0299 0.0687 0.0992 0.1350 0.5987 0.5704 0.5512 0.5506 TTT3R [26] 0.1298 0.2278 0.3146 0.3196 0.0304 0.0703 0.1103 0.1440 0.6014 0.5777 0.5535 0.5510 InfiniteVGGT [28] 0.0461 0.0532 0.0651 0.0696 0.0200 0.0244 0.0348 0.0370 0.6520 0.6431 0.6503 0.6433 Random sampling ( 𝑁 =48 ) 0.0433 0.0595 0.0777 0.0790 0.0189 0.0233 0.0311 0.0312 0.6435 0.6366 0.6305 0.6296 Uniform sampling ( 𝑁 =48 ) 0.0422 0.0578 0.0773 0.0760 0.0202 0.0254 0.0401 0.0371 0.6468 0.6415 0.6374 0.6359 Sliding window ( 𝑁 =48 ) 0.0869 0.1191 0.1501 0.1622 0.0296 0.0410 0.0626 0.0539 0.6135 0.6152 0.6028 0.6048 RetrieveVGGT (Ours) 0.0351 0.0454 0.0464 0.0500 0.0150 0.0222 0.0280 0.0294 0.6649 0.6553 0.6566 0.6554 
+
+shrinks, ensuring region assignments remain stable even after frame deletion. 
+
+Periodic Compression. After processing every Δ frames, we assess the spatial distribution of frames and selectively thin over-populated regions. Let {𝑅 1 , . . . , 𝑅 𝑃 } denote the occupied regions and |𝑅 𝑝 | the number of compressible frames in 𝑅 𝑝 (anchor frame kept). The average occupancy is: 
+
+¯𝑐 = 1
+
+𝑃 
+
+> 𝑃
+
+Õ
+
+> 𝑝 =1
+
+|𝑅 𝑝 |. (13) Regions with |𝑅 𝑝 | > ¯𝑐 are deemed over-represented. For each such region, we retain a fraction of its frames via uniform stride sampling: 
+
+|𝑅 ′ 
+
+> 𝑝
+
+| = ⌊( 1 − 𝛽 ) | 𝑅 𝑝 |⌋ , (14) where 𝛽 is the deletion ratio (set to 0.5). |𝑅 ′ 
+
+> 𝑝
+
+| frames are evenly spaced across the temporal span to preserve spatial diversity, and the remaining |𝑅 𝑝 | − | 𝑅 ′ 
+
+> 𝑝
+
+| frames are deleted. Under-represented regions ( |𝑅 𝑝 | ≤ ¯ 𝑐 ) are left intact. Deletion is implemented via tombstoning: KV tensors are released from memory while lightweight metadata (poses, descriptors) is preserved, keeping indices stable. Pose-Aware Spatial Memory bounds the memory footprint of the KV cache over arbitrarily long sequences while maintaining diverse spatial coverage: redundant views in densely visited areas are thinned, whereas unique viewpoints from sparsely visited areas are preserved. 
+
+## 4 Experiments 
+
+8Table 2 Video Depth Estimation on Bonn . We report Abs Rel ↓ and 𝛿< 1.25 (↑) under per-sequence scale alignment at sequence lengths of 200–500 frames. Best in red, second best blue. “OOM” indicates out-of-memory failure. Method Abs Rel ↓ 𝛿< 1.25 ↑                                                                                
+
+> 200 300 400 500 200 300 400 500 VGGT [22] OOM OOM OOM OOM OOM OOM OOM OOM StreamVGGT [27] OOM OOM OOM OOM OOM OOM OOM OOM STream3R 𝛽 [59] OOM OOM OOM OOM OOM OOM OOM OOM Spann3R [23] 0.2460 0.2680 0.2746 0.2608 0.6802 0.6574 0.6393 0.6476 Point3R [24] 0.0709 0.0829 0.0826 0.0802 0.9555 0.9475 0.9468 0.9490 CUT3R [25] 0.0726 0.0888 0.0898 0.0847 0.9469 0.9387 0.9338 0.9387 TTT3R [26] 0.0681 0.0789 0.0779 0.0755 0.9531 0.9499 0.9512 0.9534 InfiniteVGGT [28] 0.0637 0.0730 0.0717 0.0699 0.9659 0.9574 0.9585 0.9600 RetrieveVGGT (Ours) 0.0604 0.0698 0.0699 0.0669 0.9677 0.9620 0.9626 0.9634
+
+4.1 Implementation Details 
+
+RetrieveVGGT is built upon the open-source StreamVGGT [ 27 ] checkpoint without fine-tuning. We set 𝑁 =48 
+
+and evaluate on three tasks: 3D reconstruction on 7-Scenes [ 61 ] and NRGBD [ 62 ], video depth estimation on Bonn [ 63 ], and camera pose estimation on TUM-dynamics [ 64 ]. Additional short-sequence results are in Appendix D. All experiments run on a single NVIDIA RTX 5880 Ada GPU. All hyperparameters and their default values are in Appendix C. 
+
+4.2 3D Reconstruction 
+
+We evaluate 3D reconstruction on 7-Scenes [ 61 ] and NRGBD [ 62 ] with 200–500 frames (Tab. 1). RetrieveVGGT achieves the best results across most settings, outperforming InfiniteVGGT [ 28 ]’s query-agnostic pruning while remaining robust where TTT3R and Point3R degrade; VGGT [ 22 ], StreamVGGT [ 27 ], and STream3R 𝛽 [ 59 ]encounter OOM at even 200 frames. Under the same budget 𝑁 =48 , random and uniform sampling lack geometric guidance and degrade severely on NRGBD (Acc error ≈82% ), while sliding window discards all earlier context (Acc 0.087–0.162). These results confirm that attention-derived relevance—not merely the budget—drives improvement. Qualitative comparisons are provided in Appendix E. 
+
+4.3 Video Depth Estimation 
+
+Beyond scene-level 3D reconstruction, we further evaluate per-frame depth accuracy and inter-frame depth consistency, which are crucial indicators of whether a streaming method maintains coherent geometry over time. We adopt Bonn [ 63 ] as the benchmark, since it provides the longest available continuous RGBD sequences among existing indoor datasets, following existing protocols [ 26 , 28 ]. Specifically, we select continuous sequences of 200 to 500 frames (beginning after the initial 30 frames) from five scenes, and report Absolute Relative Error (Abs Rel ↓) and 𝛿< 1.25 (↑) under per-sequence scale alignment. As in Tab. 2, RetrieveVGGT achieves the best depth estimation accuracy across all sequence lengths on both metrics, consistently outperforming the second-best InfiniteVGGT. 
+
+4.4 Camera Pose Estimation 
+
+We evaluate camera pose estimation on TUM-dynamics [ 64 ]. We select continuous sequences with stride 1 and vary the length from 50 to 1 000 frames. Predicted trajectories are aligned to ground truth via Sim(3) Umeyama alignment. Fig. 6 plots ATE as a function of sequence length. RetrieveVGGT achieves the lowest error almost across all lengths, even on the very short input length where StreamVGGT is not OOM. 
+
+## 5 Ablation Studies 
+
+5.1 Descriptor Feature for Frame Selection 
+
+A central design choice is which feature to use for relevance scoring. We compare frozen DINOv2 features at multiple depths (layers 8, 12, and 20) against features extracted from VGGT’s global attention blocks. As in 9Lowest ATE across all scales Figure 6 Influence of input length on ATE on TUM-dynamics (50–1000 frames). Inset: short-sequence regime ( ≤150 frames). OOM runs truncated at their last successful length. 
+
+Tab. 3a, first global attention is significantly better, possibly due to the VGGT pretraining already enables the global attention to find out relevant areas for SfM . Furthermore, performing independent selection at every layer yields no gain over the adopted first-layer-only selection. 
+
+5.2 Selection Strategy: Top-𝐾 vs. Segment Sampling 
+
+We evaluate the impact of Segment Sampling and the sensitivity of threshold 𝜏 across four configurations (Tab. 3b). Probabilistic Sampling improves over naïve top-𝐾 by introducing stochasticity, yet it still lacks explicit control over multi-peak coverage. Segment Sampling outperforms both by guaranteeing that frames are drawn from multiple relevance peaks, thereby ensuring diversity of information. Different 𝑤 thre leads to some variance, but the overall performance is stable. 
+
+5.3 Frame Budget 
+
+We ablate the frame budget 𝑁 (1 anchor + 𝑁 −1 selected) on 7-Scenes at 500 frames. As in Tab. 3c, Accuracy improves steadily with 𝑁 while Completeness remains stable, confirming that RetrieveVGGT effectively utilizes additional capacity. Notably, even at 𝑁 =24 , RetrieveVGGT already surpasses InfiniteVGGT’s Accuracy (0.0360 vs. 0.0398 ), demonstrating the efficiency of our selection strategy. We set 𝑁 =48 , the same as InfiniteVGGT for fair comparisons. 
+
+5.4 Pose-Aware Spatial Compression 
+
+We ablate the periodic compression module that bounds the KV cache size for long sequences. Without compression, all KV states accumulate indefinitely. Our pose-aware compression groups cached frames by spatial region and preferentially thins over-represented regions while preserving unique viewpoints. For a fair comparison under the same memory budget, we also evaluate a random baseline that deletes the same 10 Table 3 Ablation Studies on 7-Scenes (500 frames). (a) Descriptor feature for frame selection. (b) Selection strategy and threshold. (c) Frame budget 𝑁 (1 anchor + 𝑁 −1 selected). (d) Compression strategy (both compressed variants retain about 320 active keyframes). (e) Spatial grid resolution. 
+
+(a) Descriptor Feature.               
+
+> Descriptor Source Acc ↓Comp ↓
+> DINOv2 (Layer 8, shallow) 0.0740 0.0251 DINOv2 (Layer 12, middle) 0.0760 0.0244 DINOv2 (Layer 20, deep) 0.0865 0.0291 First-Layer Selection (Ours) 0.0312 0.0199
+> Every-Layer Selection 0.0325 0.0217
+
+(b) Selection Strategy & Threshold.                      
+
+> Selection Strategy Acc ↓Comp ↓
+> Top-𝐾 (no Segment Sampling) 0.0530 0.0227 Probabilistic Sampling 0.0341 0.0196
+> Segment Sampling ( 𝜏 =𝜇 )0.0335 0.0210 Segment Sampling ( 𝜏 =𝜇 +0.3𝜎 )0.0312 0.0199 Segment Sampling ( 𝜏 =𝜇 +0.6𝜎 )0.0381 0.0208
+
+(c) Frame Budget.            
+
+> Budget 𝑁 Acc ↓Comp ↓
+> 12 0.0488 0.0199 24 0.0360 0.0188
+> 48 (Ours) 0.0312 0.0199
+
+(d) Compression Strategy.           
+
+> Strategy Acc ↓Comp ↓
+> None (full cache) 0.0312 0.0199
+> Random deletion 0.0376 0.0228 Pose-aware (Ours) 0.0327 0.0206
+
+(e) Grid Resolution.           
+
+> Configuration Acc ↓Comp ↓
+> w/o position 0.0355 0.0216 w/o direction 0.0336 0.0214 Full (Ours) 0.0327 0.0206
+
+number of frames at each trigger but without considering their spatial distribution. Both compressed variants reduce the active KV cache from 500 to about 320 keyframes on average. As shown in Tab. 3d, pose-aware compression maintains reconstruction quality close to the uncompressed upper bound, whereas random deletion degrades quality due to the indiscriminate removal of informative frames. 
+
+5.5 Spatial Grid Resolution 
+
+We ablate the grid resolution (𝐾, 𝐷 ) for pose-aware compression on 7-Scenes at 500 frames, where 𝐾 
+
+denotes the number of position grid divisions per axis and 𝐷 the number of azimuth direction bins. As in Tab. 3e, removing either position partitioning (𝐾 =1, 𝐷 =4) or direction partitioning (𝐾 =3, 𝐷 =1) degrades reconstruction quality, confirming that both spatial and directional awareness contribute to identifying truly redundant frames. We adopt (𝐾 =3, 𝐷 =4) as the default. 
+
+## 6 Conclusion 
+
+We present RetrieveVGGT, a training-free streaming 3D reconstruction framework that resolves the tension between bounded memory and faithful long-sequence reconstruction. Our core insight is that each frame need only attend to a compact, query-relevant subset of history rather than the full accumulated context. We introduce Segment Sampling to ensure diversity and Pose-Aware Spatial Memory to reduce redundancy. Extensive experiments show that RetrieveVGGT achieves state-of-the-art performance while maintaining constant memory cost regardless of sequence length. Treating streaming 3D reconstruction similar to a recommender system opens a new way of tackling long context. 11 References 
+
+[1] Yuanhui Huang, Wenzhao Zheng, Yunpeng Zhang, Jie Zhou, and Jiwen Lu. Tri-perspective view for vision-based 3d semantic occupancy prediction. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 9223–9232, 2023. [2] Wenzhao Zheng, Weiliang Chen, Yuanhui Huang, Borui Zhang, Yueqi Duan, and Jiwen Lu. Occworld: Learning a 3d occupancy world model for autonomous driving. In European conference on computer vision, pages 55–72. Springer, 2024. [3] Jin Gyu Hong, Seung Young Noh, Hee Kyung Lee, Won Sik Cheong, and Ju Yong Chang. 3d clothed human reconstruction from sparse multi-view images. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 677–687, 2024. [4] Jiahui Lei, Yĳia Weng, Adam W Harley, Leonidas Guibas, and Kostas Daniilidis. Mosca: Dynamic gaussian fusion from casual videos via 4d motion scaffolds. In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 6165–6177, 2025. [5] Shunyuan Zheng, Boyao Zhou, Ruizhi Shao, Boning Liu, Shengping Zhang, Liqiang Nie, and Yebin Liu. Gps-gaussian: Generalizable pixel-wise 3d gaussian splatting for real-time human novel view synthesis. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 19680–19690, 2024. [6] Kevin Black, Noah Brown, Danny Driess, Adnan Esmail, Michael Equi, Chelsea Finn, Niccolo Fusai, Lachy Groom, Karol Hausman, Brian Ichter, et al. 𝜋 0: A vision-language-action flow model for general robot control. arXiv preprint arXiv:2410.24164, 2024. [7] Moo Jin Kim, Karl Pertsch, Siddharth Karamcheti, Ted Xiao, Ashwin Balakrishna, Suraj Nair, Rafael Rafailov, Ethan Foster, Grace Lam, Pannag Sanketi, et al. Openvla: An open-source vision-language-action model. arXiv preprint arXiv:2406.09246, 2024. [8] Qixiu Li, Yaobo Liang, Zeyu Wang, Lin Luo, Xi Chen, Mozheng Liao, Fangyun Wei, Yu Deng, Sicheng Xu, Yizhong Zhang, et al. Cogact: A foundational vision-language-action model for synergizing cognition and action in robotic manipulation. arXiv preprint arXiv:2411.19650, 2024. [9] Hidenobu Matsuki, Gwangbin Bae, and Andrew J Davison. 4dtam: Non-rigid tracking and mapping via dynamic surface gaussians. In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 26921–26932, 2025. [10] Sameer Agarwal, Yasutaka Furukawa, Noah Snavely, Ian Simon, Brian Curless, Steven M Seitz, and Richard Szeliski. Building rome in a day. Communications of the ACM, 54(10):105–112, 2011. [11] Jan-Michael Frahm, Pierre Fite-Georgel, David Gallup, Tim Johnson, Rahul Raguram, Changchang Wu, Yi-Hung Jen, Enrique Dunn, Brian Clipp, Svetlana Lazebnik, et al. Building rome on a cloudless day. In European conference on computer vision, pages 368–381. Springer, 2010. [12] Shaohui Liu, Yidan Gao, Tianyi Zhang, Rémi Pautrat, Johannes L Schönberger, Viktor Larsson, and Marc Pollefeys. Robust incremental structure-from-motion with hybrid features. In European Conference on Computer Vision, pages 249–269. Springer, 2024. [13] Johannes L Schonberger and Jan-Michael Frahm. Structure-from-motion revisited. In Proceedings of the IEEE conference on computer vision and pattern recognition, pages 4104–4113, 2016. [14] Changchang Wu. Towards linear-time incremental structure from motion. In 2013 International Conference on 3D Vision-3DV 2013, pages 127–134. IEEE, 2013. [15] Philipp Lindenberger, Paul-Edouard Sarlin, Viktor Larsson, and Marc Pollefeys. Pixel-perfect structure-from-motion with featuremetric refinement. In Proceedings of the IEEE/CVF international conference on computer vision, pages 5987–5997, 2021. [16] Yao Yao, Zixin Luo, Shiwei Li, Tian Fang, and Long Quan. Mvsnet: Depth inference for unstructured multi-view stereo. In Proceedings of the European conference on computer vision (ECCV), pages 767–783, 2018. 
+
+12 [17] Yao Yao, Zixin Luo, Shiwei Li, Tianwei Shen, Tian Fang, and Long Quan. Recurrent mvsnet for high-resolution multi-view stereo depth inference. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 5525–5534, 2019. [18] Yasutaka Furukawa and Jean Ponce. Accurate, dense, and robust multiview stereopsis. IEEE transactions on pattern analysis and machine intelligence, 32(8):1362–1376, 2009. [19] Xiaodong Gu, Zhiwen Fan, Siyu Zhu, Zuozhuo Dai, Feitong Tan, and Ping Tan. Cascade cost volume for high-resolution multi-view stereo and stereo matching. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 2495–2504, 2020. [20] Rui Chen, Songfang Han, Jing Xu, and Hao Su. Point-based multi-view stereo network. In Proceedings of the IEEE/CVF international conference on computer vision, pages 1538–1547, 2019. [21] Martin Habbecke and Leif Kobbelt. A surface-growing approach to multi-view stereo reconstruction. In 2007 IEEE Conference on Computer Vision and Pattern Recognition, pages 1–8. IEEE, 2007. [22] Jianyuan Wang, Minghao Chen, Nikita Karaev, Andrea Vedaldi, Christian Rupprecht, and David Novotny. Vggt: Visual geometry grounded transformer. In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 5294–5306, 2025. [23] Hengyi Wang and Lourdes Agapito. 3d reconstruction with spatial memory. In 2025 International Conference on 3D Vision (3DV), pages 78–89. IEEE, 2025. [24] Yuqi Wu, Wenzhao Zheng, Jie Zhou, and Jiwen Lu. Point3r: Streaming 3d reconstruction with explicit spatial pointer memory. arXiv preprint arXiv:2507.02863, 2025. [25] Qianqian Wang, Yifei Zhang, Aleksander Holynski, Alexei A Efros, and Angjoo Kanazawa. Continuous 3d perception model with persistent state. In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 10510–10522, 2025. [26] Xingyu Chen, Yue Chen, Yuliang Xiu, Andreas Geiger, and Anpei Chen. Ttt3r: 3d reconstruction as test-time training. arXiv preprint arXiv:2509.26645, 2025. [27] Dong Zhuo, Wenzhao Zheng, Jiahe Guo, Yuqi Wu, Jie Zhou, and Jiwen Lu. Streaming 4d visual geometry transformer. arXiv preprint arXiv:2507.11539, 2025. [28] Shuai Yuan, Yantai Yang, Xiaotian Yang, Xupeng Zhang, Zhonghao Zhao, Lingming Zhang, and Zhipeng Zhang. Infinitevggt: Visual geometry grounded transformer for endless streams. arXiv preprint arXiv:2601.02281, 2026. [29] Mihai Dusmanu, Ignacio Rocco, Tomas Pajdla, Marc Pollefeys, Josef Sivic, Akihiko Torii, and Torsten Sattler. D2-net: A trainable cnn for joint description and detection of local features. In Proceedings of the ieee/cvf conference on computer vision and pattern recognition, pages 8092–8101, 2019. [30] David G Lowe. Distinctive image features from scale-invariant keypoints. International journal of computer vision, 60(2):91–110, 2004. [31] Ethan Rublee, Vincent Rabaud, Kurt Konolige, and Gary Bradski. Orb: An efficient alternative to sift or surf. In 2011 International conference on computer vision, pages 2564–2571. Ieee, 2011. [32] Hongkai Chen, Zixin Luo, Jiahui Zhang, Lei Zhou, Xuyang Bai, Zeyu Hu, Chiew-Lan Tai, and Long Quan. Learning to match features with seeded graph matching network. In Proceedings of the IEEE/CVF international conference on computer vision, pages 6301–6310, 2021. [33] Philipp Lindenberger, Paul-Edouard Sarlin, and Marc Pollefeys. Lightglue: Local feature matching at light speed. In Proceedings of the IEEE/CVF international conference on computer vision, pages 17627–17638, 2023. [34] Yan Shi, Jun-Xiong Cai, Yoli Shavit, Tai-Jiang Mu, Wensen Feng, and Kai Zhang. Clustergnn: Cluster-based coarse-to-fine graph neural network for efficient feature matching. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 12517–12526, 2022. [35] Sameer Agarwal, Noah Snavely, Steven M Seitz, and Richard Szeliski. Bundle adjustment in the large. In European conference on computer vision, pages 29–42. Springer, 2010. 
+
+13 [36] Bill Triggs, Philip F McLauchlan, Richard I Hartley, and Andrew W Fitzgibbon. Bundle adjustment—a modern synthesis. In International workshop on vision algorithms, pages 298–372. Springer, 1999. [37] Jonathan T Barron, Ben Mildenhall, Dor Verbin, Pratul P Srinivasan, and Peter Hedman. Mip-nerf 360: Unbounded anti-aliased neural radiance fields. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 5470–5479, 2022. [38] Anpei Chen, Zexiang Xu, Andreas Geiger, Jingyi Yu, and Hao Su. Tensorf: Tensorial radiance fields. In European conference on computer vision, pages 333–350. Springer, 2022. [39] Ben Mildenhall, Pratul P Srinivasan, Matthew Tancik, Jonathan T Barron, Ravi Ramamoorthi, and Ren Ng. Nerf: Representing scenes as neural radiance fields for view synthesis. Communications of the ACM, 65(1):99–106, 2021. [40] Kai Zhang, Gernot Riegler, Noah Snavely, and Vladlen Koltun. Nerf++: Analyzing and improving neural radiance fields. arXiv preprint arXiv:2010.07492, 2020. [41] Peng Wang, Lingjie Liu, Yuan Liu, Christian Theobalt, Taku Komura, and Wenping Wang. Neus: Learning neural implicit surfaces by volume rendering for multi-view reconstruction. arXiv preprint arXiv:2106.10689, 2021. [42] Bernhard Kerbl, Georgios Kopanas, Thomas Leimkühler, George Drettakis, et al. 3d gaussian splatting for real-time radiance field rendering. ACM Trans. Graph., 42(4):139–1, 2023. [43] David Charatan, Sizhe Lester Li, Andrea Tagliasacchi, and Vincent Sitzmann. pixelsplat: 3d gaussian splats from image pairs for scalable generalizable 3d reconstruction. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 19457–19467, 2024. [44] Haodong Xiang, Xinghui Li, Kai Cheng, Xiansong Lai, Wanting Zhang, Zhichao Liao, Long Zeng, and Xueping Liu. Gaussianroom: Improving 3d gaussian splatting with sdf guidance and monocular cues for indoor scene reconstruction. In 2025 IEEE International Conference on Robotics and Automation (ICRA), pages 2686–2693. IEEE, 2025. [45] Zhensheng Yuan, Haozhi Huang, Zhen Xiong, Di Wang, and Guanghua Yang. Robust and efficient 3d gaussian splatting for urban scene reconstruction. In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 26209–26219, 2025. [46] Andrew J Davison, Ian D Reid, Nicholas D Molton, and Olivier Stasse. Monoslam: Real-time single camera slam. IEEE transactions on pattern analysis and machine intelligence, 29(6):1052–1067, 2007. [47] Jakob Engel, Thomas Schöps, and Daniel Cremers. Lsd-slam: Large-scale direct monocular slam. In European conference on computer vision, pages 834–849. Springer, 2014. [48] Georg Klein and David Murray. Parallel tracking and mapping for small ar workspaces. In 2007 6th IEEE and ACM international symposium on mixed and augmented reality, pages 225–234. IEEE, 2007. [49] Richard A Newcombe, Steven J Lovegrove, and Andrew J Davison. Dtam: Dense tracking and mapping in real-time. In 2011 international conference on computer vision, pages 2320–2327. IEEE, 2011. [50] Richard A Newcombe, Shahram Izadi, Otmar Hilliges, David Molyneaux, David Kim, Andrew J Davison, Pushmeet Kohi, Jamie Shotton, Steve Hodges, and Andrew Fitzgibbon. Kinectfusion: Real-time dense surface mapping and tracking. In 2011 10th IEEE international symposium on mixed and augmented reality, pages 127–136. Ieee, 2011. [51] Shuzhe Wang, Vincent Leroy, Yohann Cabon, Boris Chidlovskii, and Jerome Revaud. Dust3r: Geometric 3d vision made easy. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 20697–20709, 2024. [52] Vincent Leroy, Yohann Cabon, and Jérôme Revaud. Grounding image matching in 3d with mast3r. In European conference on computer vision, pages 71–91. Springer, 2024. [53] Junyi Zhang, Charles Herrmann, Junhwa Hur, Varun Jampani, Trevor Darrell, Forrester Cole, Deqing Sun, and Ming-Hsuan Yang. Monst3r: A simple approach for estimating geometry in the presence of motion. arXiv preprint arXiv:2410.03825, 2024. 
+
+14 [54] Jianing Yang, Alexander Sax, Kevin J Liang, Mikael Henaff, Hao Tang, Ang Cao, Joyce Chai, Franziska Meier, and Matt Feiszli. Fast3r: Towards 3d reconstruction of 1000+ images in one forward pass. In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 21924–21935, 2025. [55] You Shen, Zhipeng Zhang, Yansong Qu, Xiawu Zheng, Jiayi Ji, Shengchuan Zhang, and Liujuan Cao. Fastvggt: Training-free acceleration of visual geometry transformer. arXiv preprint arXiv:2509.02560, 2025. [56] Kai Deng, Zexin Ti, Jiawei Xu, Jian Yang, and Jin Xie. Vggt-long: Chunk it, loop it, align it–pushing vggt’s limits on kilometer-scale long rgb sequences. arXiv preprint arXiv:2507.16443, 2025. [57] Zhĳie Zheng, Xinhao Xiang, and Jiawei Zhang. Ttsa3r: Training-free temporal-spatial adaptive persistent state for streaming 3d reconstruction. arXiv preprint arXiv:2601.22615, 2026. [58] Guole Shen, Tianchen Deng, Xingrui Qin, Nailin Wang, Jianyu Wang, Yanbo Wang, Yongtao Chen, Hesheng Wang, and Jingchuan Wang. Mut3r: Motion-aware updating transformer for dynamic 3d reconstruction. arXiv preprint arXiv:2512.03939, 2025. [59] Yushi Lan, Yihang Luo, Fangzhou Hong, Shangchen Zhou, Honghua Chen, Zhaoyang Lyu, Shuai Yang, Bo Dai, Chen Change Loy, and Xingang Pan. Stream3r: Scalable sequential 3d reconstruction with causal transformer. arXiv preprint arXiv:2508.10893, 2025. [60] Zizun Li, Jianjun Zhou, Yifan Wang, Haoyu Guo, Wenzheng Chang, Yang Zhou, Haoyi Zhu, Junyi Chen, Chunhua Shen, and Tong He. Wint3r: Window-based streaming reconstruction with camera token pool. arXiv preprint arXiv:2509.05296, 2025. [61] Jamie Shotton, Ben Glocker, Christopher Zach, Shahram Izadi, Antonio Criminisi, and Andrew Fitzgibbon. Scene coordinate regression forests for camera relocalization in rgb-d images. In Proceedings of the IEEE conference on computer vision and pattern recognition, pages 2930–2937, 2013. [62] Dejan Azinović, Ricardo Martin-Brualla, Dan B Goldman, Matthias Nießner, and Justus Thies. Neural rgb-d surface reconstruction. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 6290–6301, 2022. [63] Emanuele Palazzolo, Jens Behley, Philipp Lottes, Philippe Giguere, and Cyrill Stachniss. Refusion: 3d reconstruction in dynamic environments for rgb-d cameras exploiting residuals. In 2019 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS), pages 7855–7862. IEEE, 2019. [64] Jürgen Sturm, Nikolas Engelhard, Felix Endres, Wolfram Burgard, and Daniel Cremers. A benchmark for the evaluation of rgb-d slam systems. In 2012 IEEE/RSJ international conference on intelligent robots and systems, pages 573–580. IEEE, 2012. [65] Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. Quest: Query-aware sparsity for efficient long-context llm inference. arXiv preprint arXiv:2406.10774, 2024. [66] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, et al. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Processing Systems, 36:34661–34710, 2023. [67] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. Snapkv: Llm knows what you are looking for before generation. Advances in Neural Information Processing Systems, 37:22947–22970, 2024. [68] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information processing systems, 30, 2017. [69] Daniel J Butler, Jonas Wulff, Garrett B Stanley, and Michael J Black. A naturalistic open source movie for optical flow evaluation. In European conference on computer vision, pages 611–625. Springer, 2012. [70] Andreas Geiger, Philip Lenz, Christoph Stiller, and Raquel Urtasun. Vision meets robotics: The kitti dataset. The international journal of robotics research, 32(11):1231–1237, 2013. 
+
+15 Appendix 
+
+## A Retrieved Keyframe Visualization 
+
+We visualize keyframes retrieved by RetrieveVGGT on five NRGBD [ 62 ] (Fig. 7) and 7-Scenes [ 61 ] (Fig. 8) scenes. For each, we show the query frame (red border) at Frames 300 and 500 with four retrieved keyframes (blue border) selected via Segment Sampling from the entire history. 
+
+Analysis. (1) Query-adaptive: when the query observes a different region at Frame 300 vs. 500, retrieved sets change accordingly—each frame selects its own context rather than sharing a globally pruned cache [ 28 ]. 
+
+(2) Geometric relevance: retrieved keyframes depict the same or nearby regions as the query, even when separated by hundreds of frames, confirming that Q-K similarity at the first global attention layer encodes geometric correspondence without any extra learned module. (3) Temporal diversity: Segment Sampling distributes retrieved keyframes across distinct temporal segments, providing complementary multi-view coverage rather than clustering around a single peak. 
+
+(a) complete_kitchen Query → Retrieved Keyframes 
+
+> Frame 300
+> Frame 500
+
+(b) grey_white_room 
+
+> Frame 300
+> Frame 500
+
+Figure 7 Retrieved keyframes on NRGBD [ 62 ]. The retrieved keyframes capture views of the same spatial region as the query and span a wide temporal range, confirming that Segment Sampling prevents clustering around a single peak. 
+
+## B Ablation on Relevance Scoring Functions 
+
+Recent LLM KV cache management methods—Quest [ 65 ], H2O [ 66 ], and SnapKV [ 67 ]—show that raw pre-softmax Q ·K scores suffice to identify important KV entries. Following this principle, RetrieveVGGT 16 (a) office/seq-02 Query → Retrieved Keyframes 
+
+> Frame 300
+> Frame 500
+
+(b) pumpkin/seq-07 
+
+> Frame 300
+> Frame 500
+
+(c) redkitchen/seq-12 
+
+> Frame 300
+> Frame 500
+
+Figure 8 Retrieved keyframes on 7-Scenes [ 61 ]. Same layout as Fig. 7. The retrieved frames consistently cover geometrically relevant views from diverse temporal locations. 
+
+uses the un-normalized dot product 𝑟 (𝑡, 𝑖 ) = 1
+
+> 𝐻
+
+Í𝐻 ℎ=1⟨ ¯ q𝑡 [ℎ, :], ¯k𝑖 [ℎ, :]⟩ as the frame-level relevance score, which jointly considers direction and magnitude of the Q-K descriptors. We ablate this choice against two alternatives that differ in how they treat magnitude: 
+
+• Raw Dot Product (Ours): 𝑠 = 1
+
+> 𝐻
+
+Í𝐻 ℎ=1⟨ ¯ q𝑡 [ℎ, :], ¯k𝑖 [ℎ, :]⟩ . Preserves both direction and magnitude of the learned Q-K descriptors. 17 Table 4 Ablation on relevance scoring functions on 7-Scenes (500 frames, budget 𝑁 =48 ). Raw dot product achieves the best Accuracy, confirming that magnitude information in Q-K descriptors carries important geometric signals. 
+
+Scoring Function Acc ↓ Comp ↓ NC ↑
+
+Negative L2 Distance 0.0576 0.0227 0.5665 Cosine Similarity 0.0330 0.0209 0.5715 Raw Dot Product (Ours) 0.0314 0.0199 0.5720 
+
+• Cosine Similarity : 𝑠 =       
+
+> Í𝐻 ℎ=1⟨ ¯ q𝑡 [ℎ, :],¯k𝑖 [ℎ, :]⟩
+> qÍ𝐻 ℎ=1∥ ¯ q𝑡 [ℎ, :]∥ 2
+> qÍ𝐻 ℎ=1∥ ¯k𝑖 [ℎ, :]∥ 2
+
+. Discards magnitude, retaining only directional agree-ment. 
+
+• Negative L2 Distance : 𝑠 = −
+
+q 1
+
+> 𝐻
+
+Í𝐻 ℎ=1 ∥ ¯ q𝑡 [ℎ, :] − ¯k𝑖 [ℎ, :]∥ 22. Penalizes both directional misalignment and magnitude discrepancy. The standard scaling factor 1/√𝑑 ℎ [ 68 ] is frame-independent and preserves relative rankings, so scaled dot product yields identical selections and is excluded. 
+
+Analysis (Tab. 4). (1) Magnitude encodes geometric importance. VGGT’s key descriptors encode both viewing direction and geometric informativeness via magnitude. The raw dot product preserves both, achieving the best Accuracy. (2) Cosine similarity collapses discriminability. After normalization, only direction remains—but pairwise cosine is ≈0.98 (Fig. 3(a), main paper), so all frames score nearly identically. 
+
+(3) Negative L2 penalizes informative frames. Since Í𝐻 ℎ=1 ∥ ¯ q[ℎ, :]− ¯k[ℎ, :]∥ 22= Í𝐻 ℎ=1 ∥ ¯ q[ℎ, :]∥ 2+ Í𝐻 ℎ=1 ∥ ¯k[ℎ, :
+
+]∥ 2−2 Í𝐻 ℎ=1⟨ ¯ q[ℎ, :], ¯k[ℎ, :]⟩ , high-norm keys (geometrically richer) incur larger distances and lower scores— opposite to the dot product, which rewards them. 
+
+## C Hyperparameters 
+
+Table 5 lists the default hyperparameters. The frame budget 𝑁 controls the number of retrieved keyframes; 
+
+𝑤 thre sets the relevance cutoff for segment identification; 𝛿 filters brief dips between segments; Δ triggers periodic spatial memory thinning; and 𝛽 controls the fraction of frames removed in over-populated regions. 
+
+> Table 5 Hyperparameters of RetrieveVGGT.
+
+Parameter Symbol Value Frame budget 𝑁 48 Segment threshold coefficient 𝑤 thre 0.3 Segment merge gap 𝛿 3 frames Compression trigger interval Δ 200 frames Deletion ratio 𝛽 0.5 Spatial grid resolution (𝐾, 𝐷 ) (3, 4)
+
+## D Additional Quantitative Results 
+
+The main paper reports long-sequence results (200–1000 frames), where VGGT, StreamVGGT, and STream3R 𝛽 
+
+encounter out-of-memory failures. Here we complement the above with short-sequence evaluation, enabling direct comparison with these methods. Notably, as a training-free method, RetrieveVGGT matches or surpasses StreamVGGT [ 27 ] even on short sequences where StreamVGGT retains the full uncompressed KV cache. 18 Table 6 Camera pose estimation on short sequences. We evaluate on Sintel [ 69 ] (50 frames) and TUM-dynamics [ 64 ] (90 frames). Best results are in bold , second best are underlined. †Base model of RetrieveVGGT. 
+
+Method Online Sintel (50 frames) TUM-dynamics (90 frames) ATE ↓ RPE trans ↓ RPE rot ↓ ATE ↓ RPE trans ↓ RPE rot ↓
+
+VGGT [22] ✗ 0.206 0.129 1.893 0.006 0.008 1.435 Spann3R [23] ✓ 0.329 0.162 5.328 0.042 0.020 1.055 CUT3R [25] ✓ 0.189 0.058 0.535 0.029 0.008 0.271 Point3R [24] ✓ 0.384 0.133 1.539 0.036 0.017 0.476 StreamVGGT † [27] ✓ 0.227 0.130 1.667 0.019 0.012 0.923 STream3R 𝛽 [59] ✓ 0.184 0.063 0.639 0.012 0.008 0.234 
+
+InfiniteVGGT [28] ✓ 0.227 0.130 1.667 0.020 0.012 0.926 TTT3R [26] ✓ 0.190 0.073 0.592 0.017 0.007 0.254 RetrieveVGGT (Ours) ✓ 0.227 0.130 1.667 0.018 0.012 0.923        
+
+> Table 7 Video depth estimation on short sequences. We report scale-invariant relative depth (Per-sequence Scale) on Sintel [ 69 ] (50 frames), Bonn [ 63 ] (110 frames), and KITTI [ 70 ] (110 frames). Best results are in bold , second best are underlined. †Base model of RetrieveVGGT.
+
+Method Online Sintel (50 frames) Bonn (110 frames) KITTI (110 frames) Abs Rel ↓ 𝛿< 1.25 ↑ Abs Rel ↓ 𝛿< 1.25 ↑ Abs Rel ↓ 𝛿< 1.25 ↑
+
+VGGT [22] ✗ 0.287 66.1 0.055 97.1 0.070 96.5 
+
+Spann3R [23] ✓ 0.622 42.6 0.144 81.3 0.198 73.7 CUT3R [25] ✓ 0.421 47.9 0.078 93.7 0.118 88.1 Point3R [24] ✓ 0.452 48.9 0.060 96.0 0.136 84.2 StreamVGGT † [27] ✓ 0.323 65.7 0.059 97.2 0.1753 72.1 STream3R 𝛽 [59] ✓ 0.265 70.5 0.070 95.2 0.079 94.8 InfiniteVGGT [28] ✓ 0.325 65.6 0.060 97.3 0.1753 72.4 TTT3R [26] ✓ 0.404 50.0 0.068 95.4 0.113 90.4 RetrieveVGGT (Ours) ✓ 0.325 65.8 0.057 97.4 0.1754 71.8 
+
+D.1 Camera Pose Estimation 
+
+We evaluate camera pose estimation on short sequences following the protocol of TTT3R [ 26 ]: Sintel [ 69 ] (50 frames) and TUM-dynamics [ 64 ] (90 frames). Predicted trajectories are aligned to ground truth via Sim(3) Umeyama alignment. Results are in Tab. 6. 
+
+D.2 Video Depth Estimation 
+
+We evaluate video depth estimation on short sequences following the protocol of TTT3R [ 26 ]: Sintel [ 69 ] (50 frames), Bonn [ 63 ] (110 frames), and KITTI [ 70 ] (110 frames). We report scale-invariant Abs Rel ↓ and 𝛿< 1.25 
+
+(↑) under per-sequence scale alignment. Results are in Tab. 7. 
+
+## E Qualitative 3D Reconstruction Results 
+
+Fig. 9 shows qualitative comparisons on NRGBD. For each scene, we show reference images, predictions from TTT3R and RetrieveVGGT, and ground truth from an identical viewpoint. RetrieveVGGT maintains structural fidelity without the distortion or catastrophic forgetting seen in recurrent methods, particularly in large-scale scenes where long-range context is critical. 19 Reference TTT3R [26] RetrieveVGGT (Ours) Ground Truth  
+
+> NRGBD:
+
+breakfast_room  
+
+> NRGBD:
+
+complete_kitchen  
+
+> NRGBD:
+
+green_room  
+
+> NRGBD:
+
+grey_white_room  
+
+> NRGBD:
+
+kitchen  
+
+> NRGBD:
+
+morning_apartment  
+
+> NRGBD:
+
+whiteroom 
+
+Figure 9 Qualitative 3D reconstruction on NRGBD. Point cloud reconstructions on NRGBD scenes, all visualized from an identical viewpoint. 
+
+20 Figure 10 Qualitative Comparison of 3D reconstruction on 7Scenes. Compared with TTT3R and InfiniteVGGT, RetrieveVGGT (Ours) produces more complete and geometrically consistent reconstructions with fewer outliers. 
+
+Fig. 10 compares 3D reconstructions on 7-Scenes. RetrieveVGGT yields more complete geometry with fewer outliers than both TTT3R and InfiniteVGGT. 
+
+## F Limitations 
+
+As a training-free framework, RetrieveVGGT inherits the capability boundaries of its base model (e.g., dynamic objects, textureless regions). The fixed retrieval budget 𝑁 does not adapt to scene complexity. Evaluation is limited to indoor scenes; highly dynamic environments remain to be validated. 
+
+## G Broader Impacts 
+
+RetrieveVGGT lowers the barrier for long-sequence 3D reconstruction on commodity GPUs, benefiting applications in robotics, AR/VR, and cultural heritage. As with any 3D reconstruction technology, potential misuse for unauthorized spatial mapping warrants careful attention to privacy guidelines. 21
