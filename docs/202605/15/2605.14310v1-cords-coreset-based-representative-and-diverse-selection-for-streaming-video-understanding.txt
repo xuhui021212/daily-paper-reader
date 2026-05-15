@@ -1,0 +1,1324 @@
+Title: CoRDS: Coreset-based Representative and Diverse Selection for Streaming Video Understanding
+
+URL Source: https://arxiv.org/pdf/2605.14310v1
+
+Published Time: Fri, 15 May 2026 00:46:45 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# CoRDS: Coreset-based Representative and Diverse Selection for Streaming Video Understanding ∗
+
+Ailar Mahdizadeh 1,2 Puria Azadi 1 Muchen Li 1,2 Xiangteng He 1,2 Leonid Sigal 1,21University of British Columbia 
+
+> 2
+
+Vector Institute 
+
+ailar.mahdizadeh@ubc.ca 
+
+Abstract 
+
+Streaming video understanding with large vision-language models (VLMs) requires a compact memory that can support future reasoning over an ever-growing visual history. A common solution is to compress the key–value (KV) cache, but existing streaming methods typically rely on local token-wise heuristics, such as recency, temporal redundancy, or saliency, which do not explicitly optimize whether the retained cache is representative of the accumulated history. We propose to view KV-cache compression as a coreset selection problem: rather than scoring tokens independently for retention, we select a small subset that covers the geometry of the accumulated visual cache. Our method operates in a joint KV representation and introduces a bicriteria objective that balances coverage in key and value spaces, preserving both retrieval structure and output-relevant information. To encourage a more diverse retained subset, we further introduce an orthogonality-driven diversity criterion that favors candidates contributing new directions beyond the current selection, and connect this criterion to log-determinant subset selection. Across four open-source VLMs and five long-video and streaming-video benchmarks, our method improves over heuristic streaming compression baselines under a fixed cache budget. These results highlight that representative coreset selection offers a more effective principle, than token-wise pruning, for memory-constrained streaming video understanding. 
+
+1 Introduction 
+
+Large vision-language models (VLMs) have rapidly expanded the scope of visual reasoning, enabling a single multimodal backbone to handle open-ended queries over images, multi-image inputs, and long video sequences [ 1 , 2]. Recent advances in long-context modeling have further shown that extending the effective context window of the language backbone can substantially improve long-video reasoning. For example, LongVA [ 3] processes up to 2000 frames, or more than 200K visual tokens, without video-specific retraining. These developments make it increasingly plausible to deploy VLMs in always-on, real-time settings such as streaming assistants, wearable companions, AR/VR interfaces, embodied service robots, and other persistent perception agents that must interpret video as it arrives rather than after the full clip has been observed [4]. Streaming video understanding (SVU) differs fundamentally from conventional offline video under-standing (OVU). In OVU, the full video is available before inference, enabling frame sampling, token compression, or evidence retrieval with complete temporal context; in some settings, these operations can even be conditioned on the downstream query [ 5, 6 ]. In SVU, by contrast, future frames are unavailable, queries may arrive asynchronously, and all pre-query processing must be causal and  
+
+> ∗Code is publicly available at https://github.com/ailarmhz/CoRDS.git .Preprint.
+> arXiv:2605.14310v1 [cs.CV] 14 May 2026
+
+independent of the query [ 4, 7 , 8]. Thus, memory must remain bounded over unbounded streams, latency must support interactive use, and past evidence must be retained without re-encoding. Prior work has sought to mitigate these constraints through frame sampling [9, 10 ], input-side vision compression [ 11 , 5, 6], and KV-cache compression [12 , 4, 13 ]. These approaches substantially improve the feasibility of long-horizon video reasoning, yet they all face the same design tension: 
+
+which frames, tokens, or cached states deserve to be kept when only a tiny fraction of the visual history can remain active? Existing methods typically answer this question using local token-level heuristics, such as recency, temporal redundancy, norm-based saliency, or attention-derived relevance [ 12 , 4 , 13 , 10 ]. For instance, InfiniPot-V [ 4] scores cached KV entries using key similarity to estimate temporal redundancy and value norms to estimate saliency, respectively. StreamMem [ 13 ]instead distils historical context into a small set of memory tokens via cross-attention, effectively summarising the evicted cache rather than selecting from it. While computationally attractive, both families share a fundamental limitation: they do not explicitly optimize whether the retained memory is globally representative of the full accumulated history. As a result, cues that are individually weak but collectively important (static visual details, weak complementary signals, temporally distributed structure) may be discarded when they are not locally salient at the moment of compression. We take a different and more principled approach: instead of scoring cached tokens independently, we formulate KV-cache compression as representative coreset selection. The key question becomes which small subset best covers the accumulated visual KV cache under a fixed memory budget. We instantiate this idea in the cached KV feature space and make three contributions: 
+
+(1) A coreset view of streaming KV-cache compression. We introduce a query-agnostic, coverage-oriented formulation for visual KV-cache compression, shifting the objective from local token-wise pruning to selecting a compact memory that represents the accumulated video context or memory. 
+
+(2) Joint KV representative coverage. We show, empirically, that representative selection should account for both keys and values: keys determine how future queries retrieve cached entries, while values determine the information read out by attention. Based on this observation, we introduce a joint KV representation and a bicriteria coverage objective that explicitly balances approximation in key space and value space, yielding a more representative retained cache. 
+
+(3) Orthogonal diversity for non-redundant memory. A greedy optimization of the representa-tiveness objective, however, may yield a redundant coreset. Further, multiple representative subsets may have equal or similar representative power. To avoid wasting token budget, we introduce an orthogonal anti-redundancy term that favors candidates contributing new directions beyond the span of the current selection. We connect this criterion to log-determinant subset selection, providing a principled motivation for proposed lightweight regularizer on top of the coreset coverage objective. This results in an inference-time approach that can easily be incorporated into any transformer-based model. Consequently, we illustrate it within various versions of Qwen [ 14 , 2 ] and LLaVA-Next [ 15 ] families of models on five video benchmarks (EgoSchema [ 16 ], MLVU [ 17 ], Video MME [18 ], OVO-Bench[ 19 ] and StreamingBench [ 7 ]) under various memory / token compression budgets. In all cases we illustrate substantial improvement over baseline approaches ( e.g. , InfiniPot-V [ 4]and StreamMem [ 13 ]), especially in low memory budget regimes, and sometimes even improve on performance of the full model counterparts that have access to uncompressed memory – an effect that accounts for the difficulty of dealing with long and highly imbalanced visual context, even when it fits in memory (a.k.a. needle-in-a-haystack [20]). 
+
+2 Related Work 
+
+Video Understanding. Video understanding has a long history in computer vision, with work in the area dating back 20+ years. With the advent of deep learning, video understanding has shifted from hand-crafted representations to Transformer-based video foundation models and vision-language models. VLM-based video solutions [ 14 , 21 , 22 , 1 , 23 ] are highly expressive, as they allow free-form interaction and querying of the videos. However, scaling VLMs to long videos remains a core challenge, as memory and compute scale poorly (linearly and quadratically) with the length of the video in these transformer-based architectures. This is particularly challenging in streaming settings, where the length of the video may not only be long but is unknown and effectively infinite. 2Old Coreset KV Cache Tokens                
+
+> Recent KV Cache Tokens
+> Old KV Tokens
+> Tokens in K -Space
+> Tokens in V -Space
+> Tokens in KV -Space
+> Old Coreset Members
+> Updated Coreset Members
+> Orthogonal Diversity
+> Diverse
+> Large Residual
+> Redundant
+> Small Residual
+> …
+> 𝒖 𝟏 𝒖 𝟐 𝒖 𝒎
+> 𝒓 !
+> 𝒓 !
+> 𝑹 !𝒄 =𝑰 −𝑼 𝑼 𝑻 𝒄 𝟐
+> A. The Overview of CoRDS
+> Old frames
+> VLM
+> Old Corset New Cache
+> Updated Cache Coreset
+> CoRDS Cache content
+> Recent frames
+> B. Key Ideas in CoRDS
+> Key Space Value Space
+> Key -Value Space
+> Joint KV Representation
+> Old Coreset
+> 14
+> 2
+> 3
+> Updated Coreset
+> 1
+> 2
+> 3
+> 4
+> Representative Coverage (D 2-style coreset selection)
+> Streaming Video
+
+Figure 1: CoRDS framework. As streaming frames arrive, the accumulated KV cache is compressed by D2-style coreset selection in joint K-V space (Eq. 4) with an orthogonal anti-redundancy term (Eq. 9); the persistent cache is then used to answer asynchronous question queries. 
+
+Efficient video understanding via visual token pruning. To enable efficient long-video under-standing, recent works have been focusing on inference time technique to improve the performance of long video understanding for VLMs without having to retrain/finetune them. A common strategy which lies in this scope is to reduce the number of visual tokens before they are processed by the LLM. This line of work operates at the input-token level and typically exploits redundancy in the visual stream. Existing methods prune or merge tokens based on temporal cues (EVS [ 24 ]), feature-similarity clustering (DivPrune [ 25 ], Token Merging [ 26 ]), or vision-encoder saliency (LLaVA-PruMerge [ 27 ]). Despite being effective at reducing number of visual-tokens, these method usally relies solely on the single-frame visual features and relies on simple heruistics [ 24 ] to reduce temporal redundancy. Also these line of work does not have a natural mechanism to preserve a pool of memory and therefore hard to adapt to the long streaming video setting. As a result, they are complementary to our setting, where the key challenge is how to update and compress the accumulated KV cache as the video arrives over time. 
+
+Streaming video understanding and KV-cache compression. Streaming video understanding focuses on the online setting with unbounded input length. Benchmarks such as StreamingBench [ 7 ]and models like StreamingVLM [ 28 ] and LongVU [ 6 ] address this regime. While some methods op-erate at the frame level (e.g., AKS [ 10 ]), recent work integrates KV-cache compression into streaming pipelines. InfiniPot-V [ 4], ReKV [ 12 ], and StreamMem [ 13 ] apply heuristic-based strategies using similarity, norms, or retrieval. Despite their effectiveness, these methods lack formal guarantees on the representativeness of the retained memory. In contrast, our approach formulates KV-cache com-pression as a coreset selection problem with geometric grounding, offering a principled alternative for maintaining a compact yet representative memory in streaming video understanding. 
+
+3 Method 
+
+We formulate KV-cache compression as a representative coreset selection problem of the accumulated visual cache. In doing so, we are guided by a few core principles. First, for greatest versatility the approach should be training-free , meaning that it needs to rely on capacity of the trained model and its internal representations. Second, the selected coreset must be as representative as possible (for performance), non-redundant (for memory efficiency) and query agnostic (for practical use). Third, given hierarchy of semantic representations at different levels of the transformer, the optimal coresets may differ at these levels arguing for a potentially local , as opposed to monolithic, selection policy. With these design constraints in mind we first establish where selection should be made , using the joint KV feature space; then define how to represent tokens in that space, through a bicriteria coverage objective optimized by a deterministic D2-style farthest-first rule; and finally address how 
+
+3to diversify the selected subset, using an orthogonal anti-redundancy regularization motivated by a log-determinant approximation guarantee. 
+
+Setup, coreset objective, and tractable surrogate. A transformer decoder with L layers maintains, at each layer ℓ, key and value projections for every processed token i:
+
+k(ℓ) 
+
+> i
+
+= W (ℓ) 
+
+> K
+
+h(ℓ) 
+
+> i
+
+, v(ℓ) 
+
+> i
+
+= W (ℓ) 
+
+> V
+
+h(ℓ) 
+
+> i
+
+, (1) where h(ℓ) 
+
+> i
+
+∈ Rdmodel is the hidden state. For simplicity, we omit the layer superscript when discussing the selection problem within a fixed layer. At streaming time, the cache is naturally divided into an old cache O = {(ki, vi)}Ni=1 and a recent cache R. The recent cache is always retained to preserve the latest visual state. The old cache, however, must be reduced to a budget-b subset S ⊂ [N ]. The retained cache is therefore S ∪ R , with |S| = b. The ideal subset would maximize downstream performance, which depends on future queries and is intractable at selection time. We therefore replace it with a query-agnostic geometric coverage objective . We view the compressed cache as a coreset: a small subset that approximates the full accumulated cache for future attention queries. Let ϕi denote a feature representation of cached token i. Ideally, we want a weighted subset 
+
+(S, w) that uniformly approximates the full token set over a future attention queries set ( Q): 
+
+sup 
+
+> q∈Q
+
+X
+
+> i∈S
+
+wi f (q, ϕi) −
+
+> N
+
+X
+
+> i=1
+
+f (q, ϕi) ≤ ε
+
+> N
+
+X
+
+> i=1
+
+f (q, ϕi), (2) where f (q, ϕi) denotes the contribution of token i to the attention output, and the supremum (sup q∈Q || ) is taken over all q ∈ Q , corresponding to the worst-case approximation error over future queries. Here wi ∈ R≥0 is the weight assigned to retained token i ∈ S (collected into the vector w = ( wi)i∈S ), reflecting how much of the original cache that token represents in the approximation. The approximation error of the compressed cache can be bounded by key-space and value-space quantization errors (Proposition 1, Appendix A). Since exactly solving Eq. (2) is NP-hard, we instead minimize the tractable quantization-error surrogate P 
+
+> i∈O
+
+dα(i, S), with dα defined in Eq. (4) below, which upper-bounds the coreset error in the joint KV feature space. When old tokens are organized into video frames, we work at frame level: frame t is represented by the centroid ¯kt = 1
+
+> |I t|
+
+P 
+
+> i∈I t
+
+ki (and ¯vt analogously), and selected frame indices are then expanded to token indices. 
+
+Joint KV representation. The first design choice is the space in which coverage should be measured. For each cached token, three natural feature choices are: 
+
+ϕ(K) 
+
+> i
+
+= ki, ϕ(V ) 
+
+> i
+
+= vi, ϕ(KV ) 
+
+> i
+
+=
+
+ki
+
+vi
+
+
+
+∈ Rdk +dv . (3) Selecting only in key space ( ϕ(K)) preserves retrieval structure but ignores the content read out by attention. Selecting only in value space ( ϕ(V )) preserves output content but ignores which cached tokens future queries are likely to retrieve. We therefore select in the joint KV representation (ϕ(KV )). Empirically, joint KV selection consistently outperforms K-only or V-only selection (Section 4.7); theoretically, the attention-error bound depends on both key and value approximation errors (Proposition 1, Appendix A). All subsequent construction operates on ϕi = ϕ(KV ) 
+
+> i
+
+, and the same selected index set is used to retain the corresponding keys and values. 
+
+Bicriteria KV coreset. Directly concatenating keys ( k) and values ( v) implicitly fixes their relative importance through feature scale. To make this balance explicit, we define a bicriteria distance from a candidate token i to a selected set S:
+
+dα(i, S) = min 
+
+> j∈S
+
+h
+
+α ∥ki − kj ∥2 + (1 − α) ∥vi − vj ∥2i
+
+, α ∈ [0 , 1] . (4) The resulting coreset objective is: 
+
+S⋆b = arg min 
+
+> |S| =b
+
+X
+
+> i∈O
+
+dα(i, S). (5) 4The limit α → 1 recovers K-only selection, while α → 0 recovers V-only selection. In practice, we find that value-favoring settings, α < 0.5, perform best, which aligns with the attention-output bound: values directly determine output magnitude while keys only modulate which tokens are retrieved. 
+
+Greedy D2-style coreset selection. We minimize Eq. (5) greedily using D2-style farthest-first selection, the deterministic counterpart of D2-weighted sampling [ 29 ], which seeds cluster centers in proportion to their squared distance from all previously chosen centers. At each step t, the next token is 
+
+it+1 = arg max 
+
+> i∈O\S t
+
+dα(i, St) , (6) where St = {i1, . . . , i t} is the current selected set. Compared with k-means initialization or greedy variants that do not account for distance weighting, this squared-distance criterion is the one that gives D2 sampling its O(log k)-approximation guarantee for the k-means objective. The full greedy pass runs in O(b · N ) per layer-head, making it practical for online streaming inference.              
+
+> (a) Redundant Selection
+> span( St)
+> kj1
+> knew
+> small residual ∥rK∥2≈0
+> wastes budget
+> 0
+> (b) Orthogonal Selection
+> span( St)
+> kj1
+> ΠK
+> Stknew
+> rK=knew −ΠKknew
+> knew
+> new span
+> large residual ∥rK∥2≫0
+> expands coverage
+> 0
+
+Figure 2: Orthogonality intuition. (a) 
+
+A near-span candidate has a small resid-ual rK and adds little new coverage, whereas (b) a large-residual candidate expands the span into a new region. 
+
+Orthogonal anti-redundancy. Coverage-based selection has a subtle failure mode: two candidates with high dα
+
+scores may lie in nearly the same direction in feature space, so selecting both wastes budget while leaving other direc-tions uncovered (see Figure 2). We address this through an 
+
+orthogonal subspace criterion grounded in log-determinant coverage. Given the selected key matrix Ut = [ kj ]j∈S t ∈ Rdk ×t,define the orthogonal projector 
+
+P Kt = Ut
+
+ U⊤ 
+
+> t
+
+Ut
+
+†U⊤ 
+
+> t
+
+(7) and the key-space residual of candidate i:
+
+ri =  I − P Kt
+
+ki, rVi =  I − P Vt
+
+vi. (8) The squared norm ∥ri∥2 measures the component of ki
+
+that lies outside the span already covered by St: a large residual means token i contributes a genuinely new direction. Similarly, P Vt and rVi are defined using the selected value matrix. The orthogonal novelty score is 
+
+Orth( i | S t) = η ∥ri∥2 + (1 − η) rVi 
+
+> 2
+
+, η ∈ [0 , 1] .
+
+(9) This orthogonal term is motivated by classical log-determinant subset selection. In particular, for the key ma-trix UK 
+
+> S
+
+= [ kj ]j∈S , define 
+
+F(S) = log det  (UK 
+
+> S
+
+)⊤UK 
+
+> S
+
++ ϵI  .
+
+Greedily selecting the candidate with the largest orthogonal residual maximizes the marginal gain of this log-det objective and achieves the (1 − e−1) approximation guarantee for monotone submodular maximization (Theorem 2 in Appendix A). We use this result as a motivation for the diversity term. The final algorithm, however, uses orthogonality only as a soft bonus on top of the bicriteria coreset objective; we do not claim the same approximation guarantee for the combined score. 
+
+Final selection score. Pure orthogonal selection is not sufficient: a geometrically novel token may be irrelevant to the model output, and exact span projection is expensive for large caches. We therefore keep bicriteria coverage as the backbone and use orthogonality as a lightweight anti-redundancy regularizer. At step t, each candidate is scored, and the next representative is selected as follows: 
+
+score( i | S t) = edα(i, St) + λ ]Orth( i | S t), it+1 = arg max 
+
+> i∈O\S t
+
+score( i | S t), (10) 5where λ > 0 is a small fixed weight and f(·) denotes min-max normalization over the current candidate pool. The min-max normalization is important because the bicriteria distance and orthogonal novelty can have different numerical scales. The orthogonal bonus is implemented with a max-cosine redundancy surrogate (cheaper than exact span projection), making the per-step overhead comparable to a single matrix-vector product. Eq. (10) provides a compact selection criterion that balances coverage of the joint (k, v) geometry with an orthogonal diversity term that discourages redundant directions, thereby retaining tokens that best preserve the geometry of the accumulated cache. 
+
+Layer-selective compression and cascade reuse. The selection rule above can be applied inde-pendently to each decoder layer. However, not all layers benefit equally from compression. Early layers tend to retain more redundant frame-level visual structure, while later layers contain more task-conditioned features that are more sensitive to pruning. We therefore apply the coreset selector only to selected lower layers and leave the remaining layers uncompressed unless otherwise specified. To reduce the cost of running selection on multiple layers, we further use a cross-layer cascade. A small set of anchor layers performs the full coreset selection, while nearby follower layers reuse the selected token indices from their anchor. Importantly, follower layers reuse only the indices, not the K/V vectors themselves. If layer ℓ′ follows anchor layer ℓ with selected indices S(ℓ), then layer ℓ′
+
+retains its own cached values at those positions, K(ℓ′) ← K(ℓ′)[S(ℓ)] and V (ℓ′) ← V (ℓ′)[S(ℓ)]. This preserves layer-specific representations while avoiding redundant selection passes. 
+
+4 Experiments 
+
+4.1 Experimental Setup: Models, Benchmarks, and Budgets Algorithm 1 CoRDS: Coreset-based KV-Cache Compression 
+
+Require: Old cache O={(ki, vi)}Ni=1 , recent cache R
+
+(kept), budget b, hyperparams α, η, λ, ε 0
+
+Ensure: Compressed cache (S ∪ R ), |S| =b 
+
+> 1:
+
+S0 ← { arg max i ∥ki+vi∥} ▷ seed                                  
+
+> 2: for t= 0 ,1, . . . , b −1do
+> 3: for each i∈ O \ S tdo
+> 4: dα(i, St)via Eq. (4)
+> 5: Orth( i| S t)via Eq. (9)
+> 6: end for
+> 7: Min-max normalize both terms
+> 8: it+1 ←arg max i∈O\S tscore( i| S t)(Eq. (10))
+> 9: St+1 ← S t∪ { it+1 }
+> 10: end for
+> 11: return Sb∪ R
+
+We evaluate our training-free, query-agnostic compressor on four open VLMs: Qwen2-VL-7B [ 2], Qwen2.5-VL-3B/7B [ 14 ], and LLaVA-NeXT-Video-7B [ 15 ]. Following the OVU/SVU split of recent streaming-oriented work [ 4 , 13 ], we evaluate on three offline long-video benchmarks (EgoSchema [ 16 ], MLVU [ 17 ], and VideoMME [ 18 ], reported on the Short/Medium/Long splits) and two streaming 
+
+benchmarks, OVO-Bench [ 19 ] and Stream-ingBench [ 7], where queries arrive at arbi-trary timestamps. Visual tokens are processed causally and the compression rule never ac-cesses the question. We use each model’s standard sampling: Qwen2(.5)-VL with 768 frames ( ∼50K tokens) and LLaVA-NeXT-Video with 128 frames ( ∼25K tokens). Accuracy is reported at two cache budgets, |M |=3 Kand |M |=6 K visual KV tokens. For methods whose official results are available under matching backbone and budget, we quote numbers from the original papers; otherwise, we rerun them in our evaluation pipeline. 
+
+4.2 Offline Video Understanding 
+
+For the offline long-video benchmarks, we use EgoSchema [ 16 ], MLVU [ 17 ], and VideoMME [ 18 ]as controlled testbeds for streaming-style compression. Although these benchmarks are commonly evaluated in an offline setting, we process visual tokens causally as the video unfolds, rather than assuming that the entire video is available upfront. The cache is therefore compressed online before the question is accessed, preserving the query-agnostic setting used throughout our evaluation. We compare against three families of baselines on the offline benchmarks: the uncompressed Full KV cache as a conceptual upper bound 2; the query-agnostic vision-token compressors STC [ 6]and TTC [ 30 ]; and the KV-cache compressors InfiniPot-V [ 4 ] and StreamMem [ 13 ]. We include reference points from GPT-4V/4o and proprietary long-video systems (LLaVA-OV [ 31 ], LongVU 
+
+> 2Note, that this is not a true upper bound in terms of performance as long context may actually negatively impact accuracy, resulting in compressed cache model performing better in practice.
+
+6Method Size # Frames Budget EgoSchema MLVU VideoMME (Max) |M|
+
+GPT4-V – 1fps – 55.6 – 60.7 GPT4-o – 1fps – 72.2 66.2 77.2 LLaVA-OV [31] 7B 32 8K 60.1 64.7 58.2 LongVU [6] 7B 1fps 8K 67.6 65.4 60.6 LongVU [6] 3B 1fps 8K 59.1 55.9 51.5 Qwen2-VL Original 7B 768 50K 65.2 65.8 63.9 + TTC [30] 7B 768 6K – 58.4 59.8 + STC [6] 7B 768 6K – 57.9 60.1 + InfiniPot-V [4] 7B 768 6K 65.6 65.8 62.8 + StreamMem [13] 7B 4.0/0.5 fps 6K 67.2 65.9 62.1 + CoRDS (ours) 7B 768 6K 68.4 +1.2 70.1 +4.2 64.8 +2.0 
+
++ TTC [30] 7B 768 3K – 54.8 55.3 + STC [6] 7B 768 3K – 55.0 56.1 + InfiniPot-V [4] 7B 768 3K – 63.1 61.2 + CoRDS (ours) 7B 768 3K 68.1 67.4 +4.3 64.3 +3.1 
+
+> LLaVA-Next
+> -Video
+
+Original 7B 128 25K 67.6 68.7 62.8 + InfiniPot-V [4] 7B 128 6K 65.8 65.2 61.1 + CoRDS (ours) 7B 128 6K 66.2 +0.4 68.1 +2.9 62.5 +1.4 
+
++ CoRDS (ours) 7B 128 3K 66.0 67.8 62.0 
+
+> Qwen2.5-VL
+
+Original 3B 768 50K 64.4 63.3 60.3 + InfiniPot-V [4] 3B 768 6K 61.8 62.1 59.3 + StreamMem [13] 3B 4.0/0.5 fps 6K 62.2 62.3 59.5 + CoRDS (ours) 3B 768 6K 64.1 +1.9 69.6 +7.3 61.1 +1.6 
+
++ CoRDS (ours) 3B 768 3K 63.4 68.3 61.7 
+
+> Qwen2.5 -VL
+
+Original 7B 768 50K 62.8 68.5 64.9 + CoRDS (ours) 7B 768 6K 66.4 71.5 65.7 
+
++ CoRDS (ours) 7B 768 3K 64.8 70.0 65.3 
+
+Table 1: Offline video understanding benchmarks. Green numbers indicate the absolute improve-ment over the closest compressed competitor under the same backbone and cache budget. [6 ]) where reported. Table 1 reports accuracy on EgoSchema, MLVU, and VideoMME across four backbones at two cache budgets. At |M |=6 K (∼8× compression), our method matches or exceeds the uncompressed Full KV baseline on nearly all Qwen2(.5)-VL backbones, while at |M |=3 K (∼17 ×
+
+compression) it still outperforms InfiniPot-V at twice the budget. Overall, our method improves over prior compression baselines under matched budgets across the evaluated backbones, and in many cases matches or exceeds the Full KV reference. This suggests that the performance gains come from retaining a more informative and less redundant subset of visual KV tokens, rather than merely increasing the cache size. 
+
+4.3 Streaming Video Understanding 
+
+Streaming evaluation is the strictest test of a query-agnostic compressor: the question arrives at an arbitrary timestamp, so query-dependent rules cannot affect tokens compressed before the question is known. Table 2 reports OVO-Bench and StreamingBench with Qwen2-VL-7B at |M |=6 K. The uncompressed Qwen2-VL-7B aggregates are taken from the OVO-Bench [ 19 ], while InfiniPot-V [ 4]is re-run under our setting at matched budget. On OVO-Bench, our method exceeds both baselines on the overall score, with gains distributed across Backward, Real-time, and Forward sub-tracks rather than concentrated in one regime. On StreamingBench, our compressor exceeds InfiniPot-V on the majority of sub-tasks, with the largest gains on categories that require evidence dispersed across long stretches such as Prospective Reasoning, Counting, and Causal Reasoning. 7Table 2: Integrated comparison on OVO-Bench and StreamingBench using Qwen2-VL-7B under a 6K compression budget. Qwen2-VL-7B aggregates are taken from the OVO-Bench[19].                                                                                                 
+
+> Backward Real-time Forward Method
+> ASI
+> EPM
+> HLD
+> Avg
+> ACR
+> ATR
+> FPD
+> OCR
+> OJR
+> STU
+> Avg
+> REC
+> CRR
+> SSR
+> Avg Overall
+> Qwen2-VL-7B –––46.46 ––––––55.98 –––48.74 50.39 InfiniPot-V 58.11 51.85 39.78 49.91 46.79 64.66 72.28 63.76 57.61 44.38 60.94 32.38 58.75 65.98 49.18 53.34
+> CoRDS (ours) 58.69 53.06 39.64 50.46 47.26 64.43 73.00 64.40 55.98 42.55 61.55 32.85 55.55 65.67 49.26 53.76
+> StreamingBench — Real-time Visual Understanding
+> Method CS OR AR PR ActR SU EU Cnt TR CaR Avg
+> Qwen2-VL-7B –––––––––––InfiniPot-V 84.36 77.78 79.91 74.44 68.40 65.54 77.88 38.82 74.39 77.68 72.75
+> CoRDS (ours) 85.97 81.02 78.79 81.92 67.82 63.96 77.82 40.93 72.88 80.00 73.43
+> StreamingBench codes: CS = Clips Summarize, OR = Object Recog., AR = Attribute Recog., PR = Prospective Reas., ActR = Action Recog., SU = Spatial Underst., EU = Event Underst., Cnt = Counting, TR = Text-Rich Underst., CaR = Causal Reas.
+
+Table 3: Efficiency across varying video durations on Qwen2-VL-7B. V: peak VRAM (GB), F: prefill FPS, T: decode throughput (tok/s). Subscripts denote std over 5 runs; V is deterministic. Full KV OOMs for L ≥ 600 s.                                                                    
+
+> L= 300 sL= 500 sL= 800 sL= 1000 sMethod V↓F↑T↑V↓F↑T↑V↓F↑T↑V↓F↑T↑
+> Full KV 24.4 32 .4±0.213 .8±0.635.9 27 .5±0.430 .5±0.4OOM OOM InfiniPot-V [4] 10.1 42 .8±0.623 .2±0.410.7 43 .9±0.522 .0±0.411.6 43 .8±1.720 .5±3.011.8 44 .4±1.822 .2±2.2
+> CoRDS (w/o follower) 10.2 36 .7±0.223 .2±0.411.6 33 .2±0.223 .5±0.213.8 28 .4±0.223 .4±0.314.3 27 .1±0.222 .8±0.2
+> CoRDS 10.1 43 .2±0.422 .4±0.210.7 45 .0±0.322 .5±0.211.6 45 .9±0.523 .2±0.311.8 45 .9±0.823 .8±0.2
+
+4.4 Memory Footprint and Throughput 
+
+Table 3 reports peak VRAM, prefill FPS, and decode throughput on Qwen2-VL-7B at video lengths 
+
+L ∈ { 300 , 500 , 800 , 1000 } seconds. Full KV runs out of memory beyond L = 500 s, while both InfiniPot-V and our method maintain a flat memory footprint across all lengths. Our base configuration matches InfiniPot-V on memory and decode throughput. Adding the follower strategy, in which a small set of anchor layers run the full selection rule and the rest reuse their decisions (Appendix, Table 10), preserves the memory footprint and overtakes InfiniPot-V on prefill FPS at every length and on decode throughput from L ≥ 500 s. 
+
+4.5 Compression Ratios 
+
+Figure 3 sweeps the compression ratio {1/16 , 1/8, 1/4, 1/2} on Qwen2-VL-7B across the three VideoMME splits (Short, Medium, Long) and three MLVU task types (Holistic, Single, Multi), comparing our method against Uniform, SnapKV, InfiniPot, InfiniPot-V, and the Full KV reference. Our method consistently traces the outer edge of every radar regardless of ratio, and on several tasks lies entirely outside the Full KV ring holds across task types and length splits rather than being an artifact of any single benchmark. The advantage is largest at aggressive ratios ( 1/16 and 1/8), where all baselines visibly contract toward the centre while ours remains flat, supporting the claim that gains come from which tokens are kept rather than how many. Per-ratio numerical results across all backbones are reported in Appendix B, Table 5. 
+
+4.6 Qualitative Analysis 
+
+We further assess whether the retained cache is representative of the full accumulated KV cache, beyond downstream accuracy. For each video, we first run the model without compression to obtain a reference full KV cache, and then run each compression method under the same budget to record the retained tokens. For every full-cache token, we compute the cosine distance to its nearest retained neighbour and plot the CDF (see Fig. 4); curves further to the left indicate better coverage. To avoid bias toward our own selection objective, we report this CDF under three distance metrics: joint K∥V
+
+(after per-component normalisation), K-only, and V -only. Fig. 4 shows the result for the MLVU 
+
+81/16            
+
+> 1/8
+> 1/4
+> 1/2
+> VideoMME Short
+> 1/16
+> 1/8
+> 1/4
+> 1/2
+> VideoMME Medium
+> 1/16
+> 1/8
+> 1/4
+> 1/2
+> VideoMME Long
+> 1/16
+> 1/8
+> 1/4
+> 1/2
+> MLVU Holistic
+> 1/16
+> 1/8
+> 1/4
+> 1/2
+> MLVU Single
+> 1/16
+> 1/8
+> 1/4
+> 1/2
+> MLVU Multi
+> Uniform SnapKV InfiniPot InfiniPot-V Ours Full KV
+
+Figure 3: Per-task accuracy across compression ratios on Qwen2-VL-7B. Each radar compares methods across compression ratios; the dashed ring denotes Full KV. 
+
+Figure 4: Coverage CDF on MLVU anomaly recognition (Qwen2-VL-7B, |M |=6 K ). Curves further left indicate better full-cache coverage under joint K∥V , K-only, and V -only metrics. 
+
+anomaly recognition task with Qwen2-VL-7B at |M |=6 K; CDFs for the remaining MLVU tasks are in Appendix B.5. Across all three metrics, CoRDS covers the full cache better than InfiniPot-V, with peak gaps of ∆ = 0 .136 (Joint K∥V ), 0.156 (K-only), and 0.084 (V -only) at small distances (d ≈ 0.08 –0.12 ). Since the improvement also appears under K-only and V -only metrics, the gain is unlikely to be an artifact of evaluating with the same metric used for selection. This provides a plausible explanation for the downstream gains in Sec. 4.2: CoRDS retains a more representative and less redundant subset of the visual KV cache. 
+
+4.7 Ablations: Selector, Feature Space, and Layer Subset 
+
+Table 4: Design journey: Each step locks in one choice ( ⋆) which feeds the next. 
+
+Variant Acc. ↑ Time ↓
+
+Step (i). Selector 
+
+K-means representative 60 .0 1.93 ×
+
+Greedy shortlist 66 .5 1.19 ×
+
+⋆ D2 style farthest-point 70 .0 1.00 ×
+
+Step (ii). Feature space 
+
+K-only ( ki) 66 .0 1.00 ×
+
+V-only ( vi) 66 .5 1.07 ×
+
+⋆ KV-joint [ki; vi] 70 .0 1.08 ×
+
+Step (iii). Orth. compression: which layers? 
+
+Top 50% layers 62 .0 0.94 ×
+
+Top 25% layers 74 .5 0.81 ×
+
+⋆ Bottom-25% layers 77 .0 2.01 ×
+
+Table 4 reads top to bottom as controlled decisions, each locking in the previous winner ( ⋆) on a held-out MLVU PlotQA slice. (i) Selector: D2 style farthest-point matches the best accuracy at the lowest wall-clock. 
+
+(ii) Feature space: keys-only and values-only both un-derperform; KV-joint [ki; vi] recovers full accuracy, indi-cating both subspaces carry complementary information. 
+
+(iii) Layer subset: all-layer orthogonality fails to help (Appendix B.7), so we restrict it to a subset; bottom 25% 
+
+is the accuracy-prioritized variant. Additional ablations on α, η, λ, ε 0) are in Appendix B.4 (Tables 6, 7, 8, and 9, respectively), and follower configurations are covered in Appendix B.6, Table 10. 
+
+5 Conclusion 
+
+We presented CoRDS , a training-free, query-agnostic KV-cache compressor that reframes streaming KV cache compression as representative coreset selection. CoRDS combines three ingredients: a joint KV representation justified by an attention-output error bound, a bicriteria D2-style farthest-first objective balancing retrieval-side and content-9side coverage, and an orthogonal anti-redundancy regularizer that discourages selecting tokens which lie in directions already spanned by the current subset. A layer-selective schedule with cross-layer cascade keeps overhead on par with existing streaming compressors. Across four open VLMs and five long-video and streaming benchmarks, CoRDS consistently outperforms heuristic baselines under matched budgets and, at aggressive compression ratios, often matches or exceeds the uncompressed Full-KV reference, indicating that which tokens are kept matters more than how many . Coverage-CDF diagnostics confirm that gains arise from a more representative and less redundant retained cache. Promising next steps include lightweight late-stage query conditioning, adaptive per-layer budgets, and extending the coreset view to audio-visual and embodied long-context agents. 
+
+References 
+
+[1] Bo Li, Yuanhan Zhang, Dong Guo, Renrui Zhang, Feng Li, Hao Zhang, Kaichen Zhang, Yanwei Li, Ziwei Liu, and Chunyuan Li. LLaVA-OneVision: Easy visual task transfer. In Advances in Neural Information Processing Systems , 2024. https://arxiv.org/abs/2408.03326 .[2] Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, et al. Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution. arXiv preprint arXiv:2409.12191 , 2024. [3] Peiyuan Zhang, Kaichen Zhang, Bo Li, Guangtao Zeng, Jingkang Yang, Yuanhan Zhang, Ziyue Wang, Haoran Tan, Chunyuan Li, and Ziwei Liu. Long context transfer from language to vision. Transactions on Machine Learning Research , 2025. [4] Minsoo Kim, Kyuhong Shim, Jungwook Choi, and Simyung Chang. Infinipot-v: Memory-constrained kv cache compression for streaming video understanding. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [5] Rui Qian, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Yuhang Cao, Jiaqi Wang, and Dahua Lin. Streaming long video understanding with large language models. In Advances in Neural Information Processing Systems , 2024. https://arxiv.org/abs/2405.16009 .[6] Xiaoqian Shen, Yunyang Xiong, Changsheng Zhao, Lemeng Wu, Jun Chen, Chenchen Zhu, Zechun Liu, Fanyi Xiao, Balakrishnan Varadarajan, Florian Bordes, Zhuang Liu, Hu Xu, Hyunwoo J. Kim, Bilge Soran, Raghuraman Krishnamoorthi, Mohamed Elhoseiny, and Vikas Chandra. LongVU: Spatiotemporal adaptive compression for long video-language understanding. In Forty-second International Conference on Machine Learning , 2025. [7] Junming Lin, Zheng Fang, Chi Chen, Haoxuan Cheng, Zihao Wan, Fuwen Luo, Ziyue Wang, Peng Li, Yang Liu, and Maosong Sun. Streamingbench: Assessing the gap for mllms to achieve streaming video understanding. In ICASSP 2026-2026 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) , pages 12147–12151. IEEE, 2026. [8] Haoji Zhang, Yiqin Wang, Yansong Tang, Yong Liu, Jiashi Feng, and Xiaojie Jin. Flash-vstream: Efficient real-time understanding for long video streams. In Proceedings of the IEEE/CVF international conference on computer vision , pages 21059–21069, 2025. [9] Bhavika Suresh Devnani, Jitesh Jain, Humphrey Shi, and Judy Hoffman. Training-free adaptive frame selection for video-language understanding, 2026. [10] Xi Tang, Jihao Qiu, Lingxi Xie, Yunjie Tian, Jianbin Jiao, and Qixiang Ye. Adaptive keyframe sampling for long video understanding. In Proceedings of the Computer Vision and Pattern Recognition Conference ,pages 29118–29128, 2025. [11] Jindong Jiang, Xiuyu Li, Zhijian Liu, Muyang Li, Guo Chen, Zhiqi Li, De-An Huang, Guilin Liu, Zhiding Yu, Kurt Keutzer, et al. Storm: Token-efficient long video understanding for multimodal llms. In 
+
+Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 5830–5841, 2025. [12] Shangzhe Di, Zhelun Yu, Guanghao Zhang, Haoyuan Li, Hao Cheng, Bolin Li, Wanggui He, Fangxun Shu, Hao Jiang, et al. Streaming video question-answering with in-context video kv-cache retrieval. In ICLR ,2025. [13] Yanlai Yang, Zhuokai Zhao, Satya Narayan Shukla, Aashu Singh, Shlok Kumar Mishra, Lizhu Zhang, and Mengye Ren. Streammem: Query-agnostic kv cache memory for streaming video understanding. arXiv preprint arXiv:2508.15717 , 2025. 
+
+10 [14] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, Humen Zhong, Yuanzhi Zhu, Mingkun Yang, Zhaohai Li, Jianqiang Wan, Pengfei Wang, Wei Ding, Zheren Fu, Yiheng Xu, Jiabo Ye, Xi Zhang, Tianbao Xie, Zesen Cheng, Hang Zhang, Zhibo Yang, Haiyang Xu, and Junyang Lin. Qwen2.5-vl technical report, 2025. [15] Yuanhan Zhang, Bo Li, Haotian Liu, Yong Jae Lee, Liangke Gui, Di Fu, Jiashi Feng, Ziwei Liu, and Chunyuan Li. LLaVA-NeXT: A strong zero-shot video understanding model. https://llava-vl. github.io/blog/2024-04-30-llava-next-video/ , April 2024. [16] Karttikeya Mangalam, Raiymbek Akshulakov, and Jitendra Malik. EgoSchema: A diagnostic benchmark for very long-form video language understanding. In Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track , 2023. [17] Junjie Zhou, Yan Shu, Bo Zhao, Boya Wu, Shitao Xiao, Xi Yang, Yongping Xiong, Bo Zhang, Tiejun Huang, and Zheng Liu. MLVU: A comprehensive benchmark for multi-task long video understanding. 
+
+arXiv preprint arXiv:2406.04264 , 2024. [18] Chaoyou Fu, Yuhan Dai, Yondong Luo, Lei Li, Shuhuai Ren, Renrui Zhang, Zihan Wang, Chenyu Zhou, Yunhang Shen, Mengdan Zhang, Peixian Chen, Yanwei Li, Shaohui Lin, Sirui Zhao, Ke Li, Tong Xu, Xiawu Zheng, Enhong Chen, Rongrong Ji, and Xing Sun. Video-MME: The first-ever comprehensive evaluation benchmark of multi-modal LLMs in video analysis. arXiv preprint arXiv:2405.21075 , 2024. [19] Junbo Niu, Yifei Li, Ziyang Miao, Chunjiang Ge, Yuanhang Zhou, Qihao He, Xiaoyi Dong, Haodong Duan, Shuangrui Ding, Rui Qian, et al. Ovo-bench: How far is your video-llms from real-world online video understanding? In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 18902–18913, 2025. [20] Zijia Zhao, Haoyu Lu, Yuqi Huo, Yifan Du, Tongtian Yue, Longteng Guo, Bingning Wang, Weipeng Chen, and Jing Liu. Needle in a video haystack: A scalable synthetic evaluator for video mllms. In International Conference on Learning Representations , 2025. [21] Yi Wang, Xinhao Li, Ziang Yan, Yinan He, Jiashuo Yu, Xiangyu Zeng, Chenting Wang, Changlian Ma, Haian Huang, Jianfei Gao, Min Dou, Kai Chen, Wenhai Wang, Yu Qiao, Yali Wang, and Limin Wang. InternVideo2.5: Empowering video MLLMs with long and rich context modeling. arXiv:2501.12386 ,2025. [22] Zesen Cheng, Sicong Leng, Hang Zhang, Yifei Xin, Xin Li, Guanzheng Chen, Yongxin Zhu, Wenqi Zhang, Ziyang Luo, Deli Zhao, and Lidong Bing. VideoLLaMA 2: Advancing spatial-temporal modeling and audio understanding in video-llms. arXiv:2406.07476 , 2024. [23] Bin Lin, Yang Ye, Bin Zhu, Jiaxi Cui, Munan Ning, Peng Jin, and Li Yuan. Video-LLaVA: Learning united visual representation by alignment before projection. arXiv:2311.10122 , 2023. [24] Natan Bagrov, Eugene Khvedchenia, Borys Tymchenko, Shay Aharon, Lior Kadoch, Tomer Keren, Ofri Masad, Yonatan Geifman, Ran Zilberstein, Tuomas Rintamaki, et al. Efficient video sampling: Pruning temporally redundant tokens for faster vlm inference. arXiv preprint arXiv:2510.14624 , 2025. [25] Saeed Ranjbar Alvar, Gursimran Singh, Mohammad Akbari, and Yong Zhang. Divprune: Diversity-based visual token pruning for large multimodal models. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 9392–9401, 2025. [26] Daniel Bolya, Cheng-Yang Fu, Xiaoliang Dai, Peizhao Zhang, Christoph Feichtenhofer, and Judy Hoffman. Token merging: Your ViT but faster. In ICLR , 2023. [27] Yuzhang Shang, Mu Cai, Bingxin Xu, Yong Jae Lee, and Yan Yan. Llava-prumerge: Adaptive token reduction for efficient large multimodal models. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 22857–22867, 2025. [28] Ruyi Xu, Guangxuan Xiao, Yukang Chen, Liuning He, Kelly Peng, Yao Lu, and Song Han. StreamingVLM: Real-time understanding for infinite video streams. In The Fourteenth International Conference on Learning Representations , 2026. [29] David Arthur and Sergei Vassilvitskii. k-means ++ : The advantages of careful seeding. In Proceedings of the 18th Annual ACM-SIAM Symposium on Discrete Algorithms , pages 1027–1035, 2007. [30] Keda Tao, Can Qin, Haoxuan You, Yang Sui, and Huan Wang. Dycoke: Dynamic compression of tokens for fast video large language models. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 18992–19001, 2025. 
+
+11 [31] Bo Li, Yuanhan Zhang, Dong Guo, Renrui Zhang, Feng Li, Hao Zhang, Kaichen Zhang, Yanwei Li, Ziwei Liu, and Chunyuan Li. LLaVA-OneVision: Easy visual task transfer. arXiv preprint arXiv:2408.03326 ,2024. [32] George L. Nemhauser, Laurence A. Wolsey, and Marshall L. Fisher. An analysis of approximations for maximizing submodular set functions. Mathematical Programming , 14(1):265–294, 1978. [33] Tri Dao. FlashAttention-2: Faster attention with better parallelism and work partitioning. In International Conference on Learning Representations (ICLR) , 2024. 
+
+A Theory and Proofs 
+
+This appendix provides the formal statements and proofs underlying two ingredients of our method: (i) the bicriteria coverage objective that we minimise as a tractable surrogate for the worst-case attention-output deviation of the compressed cache (Proposition 1), and (ii) the log-determinant guarantee that motivates the orthogonal anti-redundancy term (Theorem 2). 
+
+A.1 Notation and Setup 
+
+Let C = {(ki, vi)}Ni=1 with ki ∈ Rdk , vi ∈ Rdv . The attention output for query q ∈ Rdk is 
+
+Attn( q, C) = 
+
+> N
+
+X
+
+> i=1
+
+ai(q) vi, ai(q) = exp( q⊤ki/√dk)
+
+PNj=1 exp( q⊤kj /√dk) , (11) so ai(q) ≥ 0 and P 
+
+> i
+
+ai(q) = 1 for every q. Let S ⊂ [N ] with |S| = b be a selected subset, and define the cluster-weighted compressed attention: for each j ∈ S let Cj = {i : j⋆(i) = j} where 
+
+j⋆(i) = arg min j′∈S ∥ϕi − ϕj′ ∥ is the nearest representative of token i in the joint feature space 
+
+ϕi = [ ki; vi] ∈ Rdk +dv . Assign cluster weight wj (q) = P 
+
+> i∈C j
+
+ai(q), so that the compressed attention output is 
+
+Attn w(q, S) = X
+
+> j∈S
+
+wj (q) vj . (12) This is the natural cluster-centroid approximation: every token i contributes its attention weight to its nearest selected representative. 
+
+A.2 Attention Approximation Bound Proposition 1 (Attention output error is bounded by the bicriteria quantization error) . For any query 
+
+q and any subset S with cluster assignment j⋆ defined above, 
+
+Attn( q, C) − Attn w(q, S) 2 ≤
+
+vuut NX
+
+> i=1
+
+ai(q) · min  
+
+> j∈S
+
+∥vi − vj ∥2 . (13) 
+
+Moreover, since min j∈S ∥vi − vj ∥2 ≤ 11−α dα(i, S) for any α ∈ [0 , 1) , the bound is controlled by the bicriteria quantization surrogate of Eq. (4) in the main text: 
+
+Attn( q, C) − Attn w(q, S) 2 ≤
+
+vuut 11 − α
+
+> N
+
+X
+
+> i=1
+
+ai(q) · dα(i, S) . (14) 
+
+In particular, the right-hand side depends on both the key-space and value-space quantization errors of S, which is what motivates joint (k, v) selection in the main text. Proof. Write the error as a weighted sum over clusters: 
+
+Attn( q, C) − Attn w(q, S) = 
+
+> N
+
+X
+
+> i=1
+
+ai(q) vi − X
+
+> j∈S
+
+X 
+
+> i∈C j
+
+ai(q)
+
+
+
+vj
+
+=
+
+> N
+
+X
+
+> i=1
+
+ai(q)  vi − vj⋆(i)
+
+. (15) 12 Taking the ℓ2 norm and applying the triangle inequality gives 
+
+Attn( q, C) − Attn w(q, S) 2 ≤
+
+> N
+
+X
+
+> i=1
+
+ai(q) ∥vi − vj⋆(i)∥2. (16) Cauchy–Schwarz with the probability weights ai(q) (which sum to one) yields 
+
+> N
+
+X
+
+> i=1
+
+ai(q) ∥vi − vj⋆(i)∥2 ≤
+
+vuut NX
+
+> i=1
+
+ai(q) ·
+
+vuut NX
+
+> i=1
+
+ai(q) ∥vi − vj⋆(i)∥22
+
+=
+
+vuut NX
+
+> i=1
+
+ai(q) ∥vi − vj⋆(i)∥22, (17) where the last equality uses P 
+
+> i
+
+ai(q) = 1 . Since ∥vi − vj⋆(i)∥2 = min j∈S ∥vi − vj ∥2 by definition of j⋆, this establishes Eq. (13). For Eq. (14), observe that 
+
+dα(i, S) = α min  
+
+> j∈S
+
+∥ki − kj ∥2 + (1 − α) min  
+
+> j∈S
+
+∥vi − vj ∥2 ≥ (1 − α) min  
+
+> j∈S
+
+∥vi − vj ∥2, (18) so min j∈S ∥vi − vj ∥2 ≤ dα(i, S)/(1 − α). Substituting into Eq. (13) gives Eq. (14) , in which the right-hand side mixes both ∥ki − kj ∥2 and ∥vi − vj ∥2 contributions through dα.
+
+A.3 Log-Determinant Guarantee for Greedy Orthogonalization 
+
+We now justify the orthogonal anti-redundancy term used in Eq. (9) of the main text. The greedy rule that selects the candidate with the largest residual norm is not an ad-hoc heuristic: it is exactly equivalent to maximising the marginal gain of a log-determinant coverage objective, which is monotone submodular and therefore admits a (1 − e−1) approximation guarantee. 
+
+Theorem 2 (Greedy orthogonalization achieves a (1 − e−1) log-det approximation) . Define the log-determinant coverage of selected keys as F(S) = log det  U⊤S US + ϵI  where US = [ kj ]j∈S 
+
+and ϵ > 0 is a small regularizer. The greedy rule it+1 = arg max i / ∈S t ∥ri∥2 with ri defined as in Eq. (8) of the main text produces a set ˆSb satisfying 
+
+F( ˆSb) ≥  1 − e−1 F(S⋆b ), (19) 
+
+where S⋆b = arg max |S| =b F(S).Proof. We show (i) the marginal gain of adding token i equals log(1 + ∥ri∥2 /c t) for a positive scalar 
+
+ct, so the greedy rule maximizing ∥ri∥2 also maximizes marginal F-gain; and (ii) F is monotone submodular, so the greedy maximizer achieves the (1 − e−1) bound of [32]. 
+
+(i) Marginal gain equals residual norm. Partition the Gram matrix after adding token i to St as 
+
+U⊤
+
+> t+1
+
+Ut+1 =
+
+U⊤ 
+
+> t
+
+Ut U⊤ 
+
+> t
+
+ki
+
+k⊤ 
+
+> i
+
+Ut ∥ki∥2
+
+
+
+.
+
+By the matrix determinant lemma (Schur complement of the (t, t ) block): 
+
+log det  U⊤
+
+> t+1
+
+Ut+1 + ϵI  − log det  U⊤ 
+
+> t
+
+Ut + ϵI 
+
+= log 
+
+
+
+∥ki∥2 + ϵ − k⊤ 
+
+> i
+
+Ut
+
+ U⊤ 
+
+> t
+
+Ut + ϵI −1U⊤ 
+
+> t
+
+ki
+
+
+
+− log ϵ
+
+= log 
+
+
+
+1 + 1 
+
+> ϵ
+
+k⊤
+
+> i
+
+ I − P K,ϵ t
+
+ki
+
+
+
+, (20) where P K,ϵ t = Ut(U⊤ 
+
+> t
+
+Ut + ϵI )−1U⊤ 
+
+> t
+
+is the regularized projector that converges to P Kt as ϵ → 0.The quadratic form k⊤ 
+
+> i
+
+(I − P K,ϵ t )ki = (I − P K,ϵ t )ki
+
+> 2
+
+is the squared regularized residual, which 13 EPM                              
+
+> Question (asked at t = 401s)
+> What shape was the meat I put on the pan?
+> A) round B) square C) flat D) triangle
+> CoRDS (ours) C: flat ✓InfiniPot-V A: round ✗
+> Clue Ask
+> EPM
+> Question (asked at t = 465s)
+> Where is the toolbox?
+> A) at the shelf B) on the floor C) near the door D) in the toolbox
+> CoRDS (ours) A: at the shelf ✓InfiniPot-V B: on the floor ✗
+> Clue Ask
+> EPM
+> Question (asked at t = 464s)
+> What did I put in the wood cutter?
+> A) a piece of wood B) a wooden tile C) a hammer D) a piece of paper
+> CoRDS (ours) A: a piece of wood ✓InfiniPot-V B: a wooden tile ✗
+> Clue Ask
+> ASI
+> Question (asked at t = 325s)
+> What does the person do before cut the potato into wedges?
+> A) place the potato wedges into a pan of hot oil
+> B) pour beer into the flour mixture and stir
+> C) dip the fish into the batter and place in the pan of oil
+> D) remove the potatoes from the oil and place on paper towel
+> CoRDS (ours) B: pour beer into the flour mixture and stir ✓
+> InfiniPot-V D: remove the potatoes from the oil and place on paper towel ✗
+> Clue Ask
+> Backward-tracing examples where CoRDS (ours) answers correctly while InfiniPot-V fails
+> Qwen2-VL-7B •6K compression budget •Frames sampled around the question moment
+
+Figure 5: Backward qualitative examples on EPM/ASI: CoRDS (ours) recovers the clue laid down hundreds of seconds before the question, while InfiniPot-V drops it. 
+
+equals ∥ri∥2 up to an O(ϵ) term. Since log(1 + x/ϵ ) is strictly monotone increasing in x > 0, the greedy rule maximizing ∥ri∥2 at each step also maximizes the exact marginal F-gain. 
+
+(ii) Submodularity of F. For any A ⊆ B and token i / ∈ B, the marginal gain F(A ∪ { i}) − F (A) ≥F(B ∪ { i}) − F (B) holds because the residual of ki with respect to a larger selected set can only decrease (the span of B contains the span of A, so more of ki is already projected out). Formally, if 
+
+A ⊆ B then PA ⪯ PB in the Loewner order, hence (I − PB ) ⪯ (I − PA) and the Schur complement in Eq. (20) is non-increasing as the conditioned set grows. Monotonicity F(A) ≤ F (B) for A ⊆ B
+
+follows directly from the positive semi-definiteness of the Gram matrix increment. By the greedy submodularity theorem of [ 32 ], any monotone submodular function subject to a cardinality constraint is (1 − e−1)-approximated by the greedy maximizer, yielding Eq. (19). 
+
+B Extended Experimental Results 
+
+This appendix expands the experimental section of the main paper. Appendix B.1 gives the full implementation and reproducibility details; Appendix B.2 gives per-task breakdowns of the streaming results; Appendix B.3 reports the per-backbone, per-budget numbers; Appendix B.4 ablates the four scalar hyperparameters (α, η, λ, ε 0); Appendix B.7 extends the design ablations of Section 4.7 to the full sweep; Appendix B.5 provides per-task coverage CDFs; Appendix B.6 extends the memory–throughput sweep; Appendix B.8 covers the cross-layer cascade analysis. 
+
+B.1 Implementation Details 
+
+All experiments are run on a single NVIDIA L40S 48 GB GPU with FlashAttention-2 [ 33 ], PyTorch 2.3, transformers 4.45, and bfloat16 weights and activations. Wall-clock results are reported as mean per-sample times over the corresponding evaluation slice. We evaluate four public VLMs without fine-tuning: Qwen2-VL-7B [ 2], Qwen2.5-VL-3B/7B [ 14 ], and LLaVA-NeXT-Video-7B [ 15 ]. We use each model’s standard sampling setting, with 768 frames and approximately 50K tokens for Qwen2/2.5-VL, and 128 frames and approximately 25K tokens for LLaVA-NeXT-Video. Visual tokens are fed causally, and the question is appended only after compression. The compressor uses compressed frames to block size ratio of 0.75, and a recent tail of |R| =⌊| M |/4⌋.The selection rule in Eq. 10 is fixed at (α, η, λ, ε 0)=(0 .25 , 0.25 , 0.25 , 10 −6) and β=0 .15 , with min-max normalization. Compression is active on the bottom 25% of decoder layers, while layers outside the active set reuse the most recent active-layer selection. Decoding uses greedy generation with each model’s default chat template and a 256-token cap for multiple-choice benchmarks. The held-out 200-sample MLVU PlotQA slice used for Table 4 and per-step ablations is fixed across runs, as are all random seeds. 14 REC  
+
+> Question (asked at t = 185s)
+
+How many times did they javelin throw?                
+
+> Answer (first 3 occurrences): 0→1 (61-66s) →2 (77-81s) →3 (156-164s)
+> At t = 185s (count = 3):
+> CoRDS (ours) = 3 ✓InfiniPot-V = 1 ✗
+> Clue 1 (count→1) Clue 2 (count→2) Clue 3 (count→3) Ask
+> GT count = 3
+> CoRDS (ours): '3' ✓
+> InfiniPot-V: '1' ✗
+
+CRR   
+
+> Question (Query at t = 128s; clue at t = 242s)
+
+Soldiers holding guns are driving a group of people across 
+
+the narrow alley, what is their destination?             
+
+> Answer: 'A room with metal walls.'
+> Number of correct reply by CoRDS (ours) = 4 ✓
+> Number of correct reply by InfiniPot-V = 2 ✗
+> Pre-clue
+> GT: No
+> CoRDS (ours): No ✓
+> InfiniPot-V: No ✓
+> Pre-clue
+> GT: No
+> CoRDS (ours): No ✓
+> InfiniPot-V: Yes. ✗
+> Post-clue
+> GT: Yes
+> CoRDS (ours): No ✗
+> InfiniPot-V: No ✗
+> Post-clue
+> GT: Yes
+> CoRDS (ours): Yes. ✓
+> InfiniPot-V: No ✗
+> Post-clue
+> GT: Yes
+> CoRDS (ours): Yes. ✓
+> InfiniPot-V: Yes ✓
+
+CRR   
+
+> Question (Query at t = 870s; clue at t = 880s)
+
+The man picked up several books from the ground. What does 
+
+the man do with the books he picked up?             
+
+> Answer: 'He handed these book to the woman.'
+> Number of correct reply by CoRDS (ours) = 4 ✓
+> Number of correct reply by InfiniPot-V = 3 ✗
+> Pre-clue
+> GT: No
+> CoRDS (ours): No ✓
+> InfiniPot-V: Yes ✗
+> Pre-clue
+> GT: No
+> CoRDS (ours): No ✓
+> InfiniPot-V: Yes ✗
+> Post-clue
+> GT: Yes
+> CoRDS (ours): Yes ✓
+> InfiniPot-V: Yes ✓
+> Post-clue
+> GT: Yes
+> CoRDS (ours): No ✗
+> InfiniPot-V: Yes ✓
+> Post-clue
+> GT: Yes
+> CoRDS (ours): Yes ✓
+> InfiniPot-V: Yes ✓
+
+CRR   
+
+> Question (Query at t = 111s; clue at t = 119s)
+
+The two cars, one yellow and the other one red, are driving 
+
+into the direction of each other. What happened next?             
+
+> Answer: 'They go past each other.'
+> Number of correct reply by CoRDS (ours) = 5 ✓
+> Number of correct reply by InfiniPot-V = 4 ✗
+> Pre-clue
+> GT: No
+> CoRDS (ours): No ✓
+> InfiniPot-V: No ✓
+> Pre-clue
+> GT: No
+> CoRDS (ours): No ✓
+> InfiniPot-V: No ✓
+> Post-clue
+> GT: Yes
+> CoRDS (ours): Yes ✓
+> InfiniPot-V: Yes ✓
+> Post-clue
+> GT: Yes
+> CoRDS (ours): Yes ✓
+> InfiniPot-V: Yes ✓
+> Post-clue
+> GT: Yes
+> CoRDS (ours): Yes ✓
+> InfiniPot-V: No ✗
+
+Forward-task examples: REC count progression and CRR clue-timing  
+
+> Top row: REC 'javelin throw' — count → 1, 2, 3 over the first 185s, evaluated at t=185s. Bottom rows: CRR — pre-clue probes (blue, GT=No) vs post-clue probes (green, GT=Yes).
+
+Figure 6: Forward qualitative examples on REC/CRR: CoRDS (ours) accumulates the three javelin-throw occur-rences and tracks pre-/post-clue answers across time, while InfiniPot-V undercounts and answers affirmatively before the clue. 
+
+B.2 Qualitative Streaming Examples 
+
+Figures 5, 7, and 6 show qualitative examples from the OVO-Bench Backward (BW), Real-time (RT), and Forward (FW) tracks. We compare CoRDS against InfiniPot-V on Qwen2-VL-7B at a 6K compression budget. 
+
+Backward (Fig. 5). The EPM and ASI examples test long-range episodic recall. The question is asked hundreds of seconds after the relevant clue frame, so the cache must preserve evidence far beyond the recent-tail window. For example, in “What shape was the meat I put on the pan?” asked at t=401 s, with the clue at t=393 s, CoRDS retains the flat-meat clue and answers flat , while InfiniPot-V drops it and answers round . The same pattern appears for “Where is the toolbox?” at 
+
+t=465 s, “What did I put in the wood cutter?” at t=464 s with the clue at t=309 s, and the ASI cooking-procedure question at t=325 s. In the latter case, InfiniPot-V selects a later distractor step, 
+
+remove the potatoes from the oil , whereas CoRDS preserves the true antecedent step, pour beer into the flour mixture and stir . In all cases, the decisive clue lies outside a short temporal window, and the coverage-driven selection in CoRDS preserves the moment needed to disambiguate the answer. 
+
+Real-time (Fig. 7). RT chunks end at the ask time, so the relevant clue often coincides with the most recent visual evidence. The examples span the STU, ATR, ACR, and OCR sub-tracks. CoRDS correctly reads fine-grained on-screen content, including the player number 14, the animal label 
+
+Porcupine , the final odds 5, the spoon count 7, and the character styling red hue . It also tracks short-horizon actions, such as puts the bottle on the table , picked up the clothes , and Back . By contrast, InfiniPot-V selects visually plausible but incorrect distractors in each case, such as Domestic Goat for the 60–90 cm height range, 32 for the free-throw shooter, and misty overlay for the red-hued character. These examples suggest that, even when the decisive evidence is recent, CoRDS preserves a cleaner trace of the relevant frames instead of over-pruning them in favor of generic context. 
+
+Forward (Fig. 6). FW examples test accumulation and clue-conditioned recall. In the REC “javelin throw” case, asked at t=185 s, the model must count three occurrences at 61–66 s, 77–81 s, and 156–164 s. CoRDS reports the correct count of 3, while InfiniPot-V collapses to 1 after pruning the two earlier occurrences. The three CRR examples evaluate the same question at successive time points around a clue, where pre-clue probes should answer No and post-clue probes should answer 
+
+Yes . Across the three queries, CoRDS scores 4/5, 4/5, and 5/5, compared with 2/5, 3/5, and 4/5 for InfiniPot-V. InfiniPot-V’s errors are concentrated in pre-clue frames, where it hallucinates affirmative 15 STU 
+
+Question (asked at t = 561s) 
+
+In what direction is Ghost Rider in me? 
+
+A) Right. B) Front. C) Back. D) Left. 
+
+CoRDS (ours) C: Back. ✓ InfiniPot-V B: Front. ✗
+
+Clue Ask 
+
+STU 
+
+Question (asked at t = 206.77s) 
+
+How many spoons are there on the table? 
+
+A) The table has nine spoons on it. 
+
+B) On the table, there are eight spoons. 
+
+C) There are five spoons on the table. 
+
+D) There are seven spoons on the table. 
+
+CoRDS (ours) D: There are seven spoons on the table. ✓
+
+InfiniPot-V B: On the table, there are eight spoons. ✗
+
+Clue Ask 
+
+ATR 
+
+Question (asked at t = 531.9s) 
+
+How is the character in the center styled? 
+
+A) The character is styled with a glowing aura, suggesting power. 
+
+B) The character is styled with a red hue, indicating an effect. 
+
+C) The character is styled with a misty overlay, signifying ethereal presence. 
+
+D) The character is styled with a silver sheen, implying mystery. 
+
+CoRDS (ours) B: The character is styled with a red hue, indicating an effect. ✓
+
+InfiniPot-V C: The character is styled with a misty overlay, signifying ethereal presence. ✗
+
+Clue Ask 
+
+ACR 
+
+Question (asked at t = 333.0s) 
+
+What is he doing with the bottle? 
+
+A) He shakes the bottle vigorously. 
+
+B) He puts the bottle on the table. 
+
+C) He picks up the bottle from the floor. 
+
+D) He hands the bottle to a friend. 
+
+CoRDS (ours) B: He puts the bottle on the table. ✓
+
+InfiniPot-V C: He picks up the bottle from the floor. ✗
+
+Clue Ask 
+
+ACR 
+
+Question (asked at t = 354.0s) 
+
+What did he do with the clothes? 
+
+A) He sorted the clothes by color. 
+
+B) He hung the clothes back up. 
+
+C) He folded the clothes. 
+
+D) He picked up the clothes. 
+
+CoRDS (ours) D: He picked up the clothes. ✓
+
+InfiniPot-V B: He hung the clothes back up. ✗
+
+Clue Ask 
+
+OCR 
+
+Question (asked at t = 237.0s) 
+
+Which player is making a free throw? 
+
+A) 12 B) 22 C) 32 D) 14 
+
+CoRDS (ours) D: 14 ✓ InfiniPot-V C: 32 ✗
+
+Clue Ask 
+
+OCR 
+
+Question (asked at t = 472.67s) 
+
+What animal's height range is listed as 60cm to 90cm? 
+
+A) Domestic Goat B) Wild Boar C) Coyote D) Porcupine 
+
+CoRDS (ours) D: Porcupine ✓ InfiniPot-V A: Domestic Goat ✗
+
+Clue Ask 
+
+OCR 
+
+Question (asked at t = 152.33s) 
+
+What is the final odds for the horse numbered 4? 
+
+A) 8 B) 5 C) 2 D) 3 
+
+CoRDS (ours) B: 5 ✓ InfiniPot-V D: 3 ✗
+
+Clue Ask 
+
+Real-time examples where CoRDS (ours) answers correctly while InfiniPot-V fails 
+
+Qwen2-VL-7B • 6K compression budget • RT chunks end at the ask time, so clue ≡ ask Figure 7: Real-time qualitative examples on STU/ATR/ACR/OCR: with the clue at the ask frame, CoRDS (ours) reads fine-grained on-screen content and short-horizon actions where InfiniPot-V picks plausible distractors. 
+
+answers, such as asserting the soldiers’ destination or the books’ fate before the clue is observed. This behavior is consistent with weaker temporal grounding in the retained cache. 
+
+B.3 Per-Backbone, Per-Budget Results 
+
+Table 5 reports the full budget sweep |M | ∈ { 3K, 6K, 12 K, 24 K} for Qwen2-VL-7B against five baselines, organized along the streaming versus non-streaming and query-aware versus query-agnostic axes. CoRDS already reaches the Full KV reference at |M |=3 K , with an average score of 64.31 compared with 62.85 for Full KV, and remains nearly flat from 3K onward. In contrast, each baseline continues to gain approximately 1–2 points from 3K to 24K, suggesting that they retain redundant tokens that our selector filters out. Moving from Case 2, non-streaming and query-agnostic, to Case 3, streaming and query-agnostic, costs baselines approximately 2–4 points, for example Uniform drops from 60.73 to 56.98. The same shift costs CoRDS only approximately 0.6 points, since query-agnostic coreset selection is naturally compatible with streaming and never accesses the question. The qualitative ordering CoRDS ≥ Full KV > InfiniPot-V > StreamMem > STC ≈ TTC observed on Qwen2-VL-7B is consistent across Qwen2.5-VL-3B/7B, and LLaVA-NeXT-Video-7B in Table 1. The smallest gap appears on LLaVA-NeXT-Video-7B at |M |=3 K, corresponding to approximately 
+
+8× compression of its 25K-token prefill, where memory pressure is mildest. This trend supports our claim that selection quality matters most under tighter memory budgets. 16 Table 5: Offline long video understanding evaluation results under memory-constrained scenario (case 3), with MC (Memory-Constrained) and QA (Query-Agnostic) conditions marked. Results are reported on (1) Video-MME – Short: -3min, Medium: 3-30min, Long: 30min-2h, and (2) MLVU – Holistic, Single-Detail, Multi-Detail LVU.                                                                                                                                                                                                                                                                                               
+
+> Case Streaming Compression Method Prefill Budget Decoding Budget VideoMME MLVU MC QA Short Medium Long Avg. Holistic Single Multi Avg.
+> Qwen2-VL-7B
+> –––Full KV 50K 50K 74.68 62.11 55.00 63.93 76.34 73.91 43.29 65.85 Case 1 ✗✗
+> FastV [4] 48/3K ( R=2 .8)54.11 50.11 48.67 50.96 69.59 59.40 33.84 55.01 (L=2 )48/6K ( R=5 .8)59.67 54.55 50.78 55.00 72.00 64.08 33.47 57.60 SnapKV [24] 50K 3K 74.00 61.00 54.22 63.07 77.08 67.49 39.07 61.21 50K 6K 74.22 60.55 54.33 63.03 77.59 73.91 42.90 66.10 Case 2 ✗✓
+> Uniform 50K 3K 70.33 54.67 49.55 58.18 72.29 59.06 33.51 55.54 50K 6K 72.00 58.78 52.11 60.96 77.08 67.49 39.07 62.11 SnapKV †50K 3K 69.00 54.00 50.67 57.89 75.88 63.48 35.35 58.99 50K 6K 72.11 57.56 52.22 60.63 76.46 66.43 36.22 60.66 Case 3 (CKV) ✓✓
+> Uniform 3K 3K 66.00 52.44 48.00 55.48 72.54 59.00 33.51 55.59 6K 6K 72.33 53.33 48.67 58.11 72.55 62.19 33.67 57.00 12K 12K 74.00 55.33 51.44 60.26 75.94 65.53 37.01 60.36 24K 24K 74.22 59.22 53.22 62.22 77.22 71.10 40.78 64.18 SnapKV ‡
+> 3K 3K 66.67 52.22 49.89 56.26 75.88 63.48 35.35 58.99 6K 6K 72.00 55.33 51.33 59.55 76.46 66.43 36.22 60.66 12K 12K 74.44 58.89 52.89 62.07 75.71 68.61 35.98 61.31 24K 24K 74.22 61.00 53.78 63.00 77.66 71.82 39.90 64.37 InfiniPot [21] 3K 3K 67.11 54.55 51.00 57.55 74.94 61.80 36.60 58.36 6K 6K 72.89 57.33 51.33 60.52 75.02 63.18 37.30 58.50 12K 12K 74.00 57.78 53.22 61.67 74.46 66.46 38.30 60.70 24K 24K 74.22 60.55 53.56 62.78 76.03 71.11 40.29 63.71 InfiniPot-V 3K 3K 73.89 57.78 51.78 61.11 77.73 70.38 43.15 64.70 6K 6K 74.11 60.78 53.44 62.78 77.16 72.31 44.75 65.82 12K 12K 74.22 62.68 53.89 63.59 76.90 73.41 43.97 65.99 24K 24K 74.22 63.22 53.11 63.52 76.91 73.97 42.18 65.73
+> CoRDS
+> 3K 3K 74.73 64.46 57.51 64.31 80.55 75.82 53.29 70.23 6K 6K 75.26 65.44 57.56 64.84 80.97 76.95 53.72 70.81 12K 12K 75.69 65.66 56.90 64.84 80.52 77.44 53.60 71.25 24K 24K 75.69 65.44 56.79 64.73 79.12 78.51 52.91 71.22
+
+B.4 Hyperparameter Ablations 
+
+The selection rule uses four scalar hyperparameters: α ∈ [0 , 1] for K/V weighting in the bicriteria distance in Eq. 4, η ∈ [0 , 1] for K/V weighting in the orthogonal residual norm in Eq. 10, λ ≥ 0
+
+for the orthogonal-bonus weight in Eq. 10, and ε0 > 0 for min-max normalization. We sweep one parameter at a time while fixing the others to (α, η, λ, ε 0)=(0 .25 , 0.25 , 0.25 , 10 −6). All sweeps use the same held-out 200-sample MLVU PlotQA slice with Qwen2-VL-7B at |M |=3 K. 
+
+Key/value weighting α in the bicriteria distance. Table 6 sweeps α over 
+
+{0, 0.1, 0.25 , 0.5, 0.75 , 0.9, 1}. The endpoints α → 1 and α → 0 correspond to the K-only and V-only coreset variants in Table 4, both of which trail the joint variant by 3–5 points. Accuracy peaks on a small plateau around α ∈ [0 .10 , 0.25] . We use α=0 .25 because it consistently improves over balanced ( α=0 .5) and key-favoring ( α=0 .75 ) settings by 2–3 points, in line with the attention-output bound in Proposition 1, Appendix A, where value reconstruction receives stronger weight. 
+
+Table 6: Sensitivity to α (bicriteria K/V weighting). 
+
+α 0.00 0.10 0.25 0.50 0.75 0.90 1.00 Accuracy ↑ 66.5 71.0 71.5 67.5 66.0 65.0 66.0 
+
+Key/value weighting η in the orthogonal residual. The orthogonal bonus uses the residual norm 
+
+η ∥rKi ∥2 + (1 − η) ∥rVi ∥2 in Eq. 10. Table 7 shows much lower sensitivity to η than to α: all values in η ∈ [0 .10 , 0.50] stay within ±0.5 points of the default. This is expected because the bicriteria term already enforces global K/V coverage, while the orthogonal term mainly discourages redundant choices near selection boundaries. We set η=0 .25 to match α.17 Table 7: Sensitivity to η (orthogonal residual K/V weighting).            
+
+> η0.00 0.10 0.25 0.50 1.00 Accuracy ↑70.0 71.5 71.5 71.0 69.0
+
+Orthogonal-bonus weight λ. λ balances bicriteria coverage with orthogonal anti-redundancy. Table 8 shows that λ=0 recovers the bicriteria-only setting, consistent with Step (iii) in Table 4 and the “Bicriteria only (no orth-bonus)” row in Table 14. Increasing λ is useful up to a point, but λ=1 
+
+reduces accuracy by about 2 points because the orthogonal term begins to favor geometrically novel but task-irrelevant tokens. The best region is broad, with similar accuracy for λ ∈ [0 .1, 0.5] and a slight peak at λ=0 .25 .                
+
+> Table 8: Sensitivity to λ(orthogonal-bonus weight).
+> λ0.00 0.10 0.25 0.50 0.75 1.00 Accuracy ↑71.5 71.5 72.0 71.5 70.5 69.5
+
+Min-max normalization regularizer ε0. ε0 prevents instability when max j sj − min j sj is close to zero. Table 9 shows identical accuracy for values in [10 −8, 10 −4], indicating that the rule is insensitive to this parameter under bfloat16 . We keep ε0=10 −6 as a conservative default for degenerate candidate pools.               
+
+> Table 9: Sensitivity to ε0(min-max regularizer).
+> ε010 −810 −610 −410 −210 −1
+> Accuracy ↑71.5 71.5 71.5 71.0 68.5
+
+Among the four parameters, α is the main one that needs tuning. The choices of η and λ are stable across broad ranges, and ε0 mainly serves numerical stability. 
+
+B.5 Coverage CDF: Per-Task Analysis 
+
+Figure 8 extends the single-task CDF analysis of Figure 4 to all eight MLVU tasks under joint 
+
+K∥V , K-only, and V -only metrics, with insets reporting ∆CDF max and the distance d∗ at which it occurs. The eight tasks fall into three regimes: strong-coverage (PlotQA, Anomaly, Topic, Order), where our CDF strictly dominates InfiniPot-V across all three metrics with ∆CDF max ∈ [0 .10 , 0.16] 
+
+localized at small d (d∗ ≈ 0.08 –0.12 , the regime where reconstruction fidelity drives accuracy); 
+
+comparable (Needle, Count), where ours dominates at small d but the curves merge at large d; and 
+
+mixed (Ego, Single), where ours is slightly worse on K-only at large d but still dominates on V -only and joint K∥V . The key observation is that our CDF dominates even under K-only and V -only metrics, neither of which the selector directly optimizes (it uses bicriteria dα on the joint space) — the gain is structural, not metric-aligned, which would only show up in the joint metric. The three regimes correlate with per-task accuracy gains in Table 5: regime (a) tasks show +5 –10 points over InfiniPot-V, regime (b) shows +1 –3, and regime (c) shows small or near-zero gains, connecting the geometric coverage diagnostic with downstream accuracy. 
+
+B.6 Memory Footprint and Throughput 
+
+Table 10 reports the full memory, throughput, and energy breakdown across video lengths L ∈{200 , 500 , 800 , 1000 } s and across the bottom-25, bottom-50, and all-layer activation regimes, with and without the follower module. The sweep complements the headline results in Table 3 and shows that the follower benefit increases with video length. VRAM savings grow from 0.05 GB at 
+
+L=200 s to 2.48 GB at L=1000 s, while energy savings range from 14% to 44%, with the largest gains at L ≥ 800 s. For example, in the bottom-25 regime at L=1000 s, energy drops from 10376 J to 5806 J. The follower module is therefore most useful for long videos, where memory pressure is 18 Figure 8: Coverage CDF of nearest-retained cosine distance for eight MLVU tasks under three KV-compression settings (Joint K ∥V, K only, V only). Each main panel shows the full CDF; the inset in the lower-right magnifies the region around the maximum gap, with the marker line and annotation reporting max ∆ CDF =CDF ours − CDF InfiniPot and the distance d at which it occurs. Higher CDF at smaller d indicates better coverage of the original token set by the retained tokens. 
+
+19 Table 10: Effect of the follower module across all Ours variants. Bold marks the better of {base, + follower} within each variant pair. The all-layer variant (no follower) is shown for reference. The follower module yields a larger relative gain on the lighter bottom-25 backbone than on bottom-50, and its memory benefit grows monotonically with L. At L = 1000 s the source video yields ≈ 864 effective frames.                                                                                       
+
+> L(s) Variant VRAM (GB) ↓FPS ↑tok/s ↑Energy (J) ↓
+> 200 bottom-25 9.9 37.5 23.1 1577 + follower 9.8 41.4 22.1 1363
+> bottom-50 9.9 36.4 23.1 1605 + follower 9.8 39.2 23.6 1438
+> all-layer (ref.) 9.9 35.1 22.1 1445 500 bottom-25 11.6 33.2 23.5 4825 + follower 10.7 45.0 22.5 3307
+> bottom-50 10.9 34.1 23.2 4365 + follower 10.7 42.0 22.4 3394
+> all-layer (ref.) 10.8 37.0 22.5 3620 800 bottom-25 13.8 28.4 23.4 9133 + follower 11.6 45.9 23.2 5345
+> bottom-50 12.7 30.7 23.8 8143 + follower 11.6 42.8 23.5 5399
+> all-layer (ref.) 11.7 37.0 20.8 5802 1000 bottom-25 14.3 27.1 22.8 10376 + follower 11.8 45.9 23.8 5806
+> bottom-50 13.1 29.6 22.7 9110 + follower 11.8 42.6 22.3 5837
+> all-layer (ref.) 11.8 37.5 23.7 6328
+
+most severe. Prefill FPS with the follower module also increases with L, reaching 45.0 at 500 s and 45.9 at both 800 s and 1000 s, while the no-follower variants slow down from 33.2 to 28.4 and then 27.1. This pattern follows from selection amortization: per-layer selection cost grows with cache size, so applying the selector at fewer layers yields larger gains as L increases. 
+
+B.7 Selector, Feature Space, and Layer Subset: Full Sweep 
+
+Tables 11, 12, and 13 expand the three fixed choices in Table 4: selector, feature space, and orthogonal compression layer scope. Beyond the rows already reported in the main paper, Table 11 adds two further selectors: attention shortlist, which selects the top k tokens by mean attention from a probe layer before applying D2 on the shortlist, and value norm top k. Both are widely used heuristics in the prior literature, but neither matches plain D2 farthest point selection in accuracy: attention based shortlists collapse to a recency proxy on streaming inputs because the question is unavailable, while value norm top k ignores redundancy. Table 12 adds attention augmented [ki; vi; ai] and mean centered [ki; vi −¯v] feature spaces; neither beats plain joint KV, and the attention augmented variant additionally leaks model specific tuning into the selector through the probe layer choice.                    
+
+> Table 11: Full selector sweep. Feature space fixed to KV-joint. MLVU PlotQA, 200-sample slice, Qwen2-VL-7B, |M|=3 K. Top three rows reproduce Table 4; the remaining rows are added in this appendix. Selector (KV-joint feature space) Accuracy ↑Time ( ×)↓
+> K-means representative 60.0 1.93 ×
+> Attention-shortlist 68.5 1.10 ×
+> Value-norm top-k64.0 0.85 ×
+> Greedy shortlist 66.5 1.19 ×
+> D2style farthest-point 70.0 1.00 ×
+
+Table 13 expands Step (iii) of Table 4 with the all layer variant referenced in Section 4.7 (“all layer orthogonality fails to help”), three parity based partitions, and a single mid layer variant. The all layer variant is the most expensive ( 5.18 × over the single layer setting) and has the lowest accuracy among the tested configurations, for two structural reasons: late layers in decoder only VLMs encode task conditioned features, such as object identity, action, and scene information, that are sensitive 20 Table 12: Full feature-space sweep. Selector fixed to D2.Feature space ( D2 selector) Accuracy ↑ Time ( ×) ↓                  
+
+> K-only ( ki)66.0 1.00 ×
+> V-only ( vi)66.5 1.07 ×
+> Attention-augmented [ki;vi;ai]69.5 1.18 ×
+> Mean-centered [ki;vi−¯v]70.0 1.10 ×
+> KV-joint [ki;vi]70.0 1.08 ×
+
+to pruning, and compression in early layers cascades because every downstream layer must operate on the compressed cache, causing per layer noise to accumulate. The bottom 25% scope sidesteps both issues by leaving late layers uncompressed and amortizing early layer selection across follower layers.                             
+
+> Table 13: Full layer-scope sweep. Time is normalized to the fastest setting. Active orthogonal-compression layers #Layers Accuracy ↑Time ( ×)↓
+> All 28 layers 28 68.5 5.18 ×
+> Top 50% layers 14 62.0 1.45 ×
+> Even layers 14 70.0 5.18 ×
+> Odd layers 14 72.0 1.43 ×
+> Top 25% layers 774.5 1.25 ×
+> Layer 14 only (single mid) 173.0 1.00 ×
+> Bottom-25% layers (L0–L6) 777.0 3.09 ×
+
+B.8 Cross-layer cascade 
+
+The bottom-25% regime is the strongest accuracy point but the slowest layer-selective regime, for an intuitive reason: when the compression decision is made in the very first layers, every subsequent layer must run on the resulting compressed cache, and any per-layer overhead from the orthogonal bonus accumulates over the rest of the network. The cross-layer cascade resolves this: a small number of anchor layers in {L0, . . . , L 6} run the full orthogonality driven D 2 style selector, and the remaining follower layers in the same group reuse the anchor’s selected indices at near-zero cost. Four observations consolidate from the full cascade analysis (Table 14): (i) more compression is not better : compressing all 28 layers hurts accuracy because late layers encode task-conditioned features; (ii) group structure matters more than pass count . the alternating {L0, L2, L4} partition with balanced anchor →follower groups beats both denser and sparser partitions; (iii) anchor position within the group is irrelevant to accuracy (all four tested positions yield 0.750), but L0 minimizes follower overhead; and (iv) follower strategy is nearly irrelevant : hard index reuse, value-norm rerank, and attention-based reranking all tie on accuracy, confirming that the representative token set is locked in at the anchor step. 
+
+C Scope and Future Directions 
+
+CoRDS makes several deliberate design choices, each pointing to a natural extension. The or-thogonal diversity term is grounded in a (1 − e−1) guarantee for log-determinant subset selection (Theorem 2), which motivates the regularizer; tightening the analysis to cover the combined bicriteria-plus-orthogonal objective is an interesting theoretical direction. The layer-selective schedule and cross-layer cascade are configured on a held-out slice, which we found effective and lightweight in practice, and learned per-input or per-backbone schedules could yield further gains. For efficiency, the orthogonality term uses a max-cosine surrogate that preserves the qualitative behavior of exact span projection at the cost of a single matrix-vector product per step. CoRDS is query-agnostic by design, which is the setting required for streaming compression where queries arrive after compression; lightweight late-stage query conditioning is a complementary direction. Finally, our evaluation 21 Video-MME (n=500 ) MLVU dev (n=200 )
+
+Configuration Short Med. Long Avg Time ↓ Plot Needle Ego Hol. Sing. Avg Time ↓
+
+Reference (no cascade): every active layer is an anchor 
+
+All layers (L0–L27) [ REF ] 64.7 53.6 52.1 56.8 1.000 × 64.4 82.6 48.1 64.4 72.9 68.5 1.000 ×
+
+Bottom-25% (L0–L6) 65.3 63.3 53.9 60.8 0.335 × 76.9 82.6 48.1 76.9 72.9 75.0 0.327 ×
+
+⋆ Last layer (L27) 68.3 63.3 53.9 61.8 0.118 × 72.1 84.1 55.6 72.1 76.0 74.0 0.112 ×
+
+Ablation 1a: Anchor placement among bottom-25% (active = L0–L6; pre-anchor followers run bicriteria-only, post-anchor followers do hard reuse) 
+
+No cascade (all 7 are anchors) 65.3 63.3 53.9 60.8 0.333 × 76.9 82.6 48.1 76.9 72.9 75.0 0.330 ×
+
+Anchor L0 65.3 63.9 53.3 60.8 0.140 × 76.9 82.6 48.1 76.9 72.9 75.0 0.134 ×
+
+⋆ Anchor L1 65.9 65.1 53.3 61.4 0.151 × 76.9 82.6 48.1 76.9 72.9 75.0 0.143 ×
+
+Anchor L3 65.9 65.1 53.9 61.6 0.174 × 76.9 82.6 48.1 76.9 72.9 75.0 0.168 ×
+
+Anchor L6 65.9 65.1 53.3 61.4 0.207 × 76.0 82.6 51.9 76.0 74.0 75.0 0.204 ×
+
+Ablation 1b: Late-layer cascade (active layers vary; followers do hard reuse) 
+
+Active L13, L27; anchor L13 67.1 63.3 52.1 60.8 0.120 × 73.1 84.1 51.9 73.1 75.0 74.0 0.114 ×
+
+⋆ Active L26, L27; anchor L26 67.7 63.3 53.9 61.6 0.115 × 75.0 84.1 55.6 75.0 76.0 75.5 0.114 ×
+
+Active L27; anchor L27 68.3 63.3 53.9 61.8 0.116 × 72.1 84.1 55.6 72.1 76.0 74.0 0.116 ×
+
+Ablation 2: Cascade depth (anchor = L0; followers do hard reuse on L1 .. Lk) 
+
+k = 0 (anchor only) 68.3 63.3 53.3 61.6 0.148 × 75.0 84.1 55.6 75.0 76.0 75.5 0.138 ×
+
+⋆ k = 1 68.9 63.9 54.5 62.4 0.141 × 75.0 84.1 55.6 75.0 76.0 75.5 0.138 ×
+
+k = 2 67.7 64.5 51.5 61.2 0.142 × 74.0 82.6 55.6 74.0 75.0 74.5 0.135 ×
+
+k = 3 66.5 63.3 52.1 60.6 0.141 × 74.0 82.6 59.3 74.0 76.0 75.0 0.140 ×
+
+k = 4 66.5 63.9 52.1 60.8 0.142 × 76.0 82.6 59.3 76.0 76.0 76.0 0.137 ×
+
+k = 5 65.9 65.1 53.3 61.4 0.143 × 76.0 84.1 51.9 76.0 75.0 75.5 0.137 ×
+
+k = 6 65.3 63.9 53.3 60.8 0.138 × 76.9 82.6 48.1 76.9 72.9 75.0 0.134 ×
+
+Ablation 3: Number of anchors within L0–L6 (others do hard reuse) 
+
+1: {L0} 65.3 63.9 53.3 60.8 0.140 × 76.9 82.6 48.1 76.9 72.9 75.0 0.133 ×
+
+2: {L0, L3} 65.9 64.5 53.3 61.2 0.172 × 76.0 82.6 51.9 76.0 74.0 75.0 0.168 ×
+
+2: {L0, L4} 65.3 63.9 53.3 60.8 0.171 × 77.9 82.6 48.1 77.9 74.0 76.0 0.170 ×
+
+⋆ 3: {L0, L2, L4} 65.3 64.5 53.9 61.2 0.203 × 77.9 84.1 55.6 77.9 76.0 77.0 0.201 ×
+
+4: {L0, L1, L3, L5} 65.3 65.1 53.3 61.2 0.242 × 76.9 82.6 51.9 76.9 74.0 75.5 0.232 ×
+
+7: {L0–L6} (= no cascade) 65.3 63.3 53.9 60.8 0.337 × 76.9 82.6 48.1 76.9 72.9 75.0 0.331 ×
+
+Ablation 4: Follower strategy (anchor = L0; followers = L1–L6) 
+
+Full cache: 68.3 63.3 53.3 61.6 0.144 × 75.0 84.1 55.6 75.0 76.0 75.5 0.138 ×
+
+(no follower comp.; upper bound) Bicriteria only: 65.9 65.7 53.9 61.8 0.212 × 76.9 81.2 48.1 76.9 71.9 74.5 0.203 ×
+
+(no orth-bonus) Heuristic 65.9 65.7 53.3 61.6 0.140 × 76.0 81.2 55.6 76.0 74.0 75.0 0.138 ×
+
+Cheap rerank 65.9 65.7 53.3 61.6 0.142 × 76.0 82.6 51.9 76.0 74.0 75.0 0.134 ×
+
+⋆ Hard reuse 65.3 63.9 53.3 60.8 0.139 × 76.9 82.6 48.1 76.9 72.9 75.0 0.137 ×
+
+Ablation 5: Decay coefficient γ (anchor = L0; followers = L1–L6) 
+
+γ = 0 .00 65.9 65.7 53.9 61.8 0.205 × 76.9 81.2 48.1 76.9 71.9 74.5 0.202 ×
+
+γ = 0 .10 65.9 65.7 53.9 61.8 0.213 × 76.9 81.2 48.1 76.9 71.9 74.5 0.202 ×
+
+γ = 0 .25 65.9 65.7 53.9 61.8 0.208 × 76.9 81.2 48.1 76.9 71.9 74.5 0.202 ×
+
+⋆ γ = 0 .50 65.9 65.7 53.9 61.8 0.208 × 76.9 81.2 48.1 76.9 71.9 74.5 0.204 ×
+
+γ = 0 .75 65.9 65.7 53.9 61.8 0.209 × 76.9 81.2 48.1 76.9 71.9 74.5 0.207 ×
+
+γ = 0 .90 65.9 65.7 53.9 61.8 0.209 × 76.9 81.2 48.1 76.9 71.9 74.5 0.202 ×
+
+γ = 1 .00 65.3 63.9 53.3 60.8 0.139 × 76.9 82.6 48.1 76.9 72.9 75.0 0.135 ×
+
+Table 14: Cascade-layer ablation on Video-MME ( n=500 ) and MLVU dev (n=200 ) using Qwen2-VL-7B-Instruct. Anchor layers run the full selector, follower layers reuse anchor selections, and highlighted rows mark the recommended accuracy/latency trade-off. 
+
+22 centers on standard multiple-choice long-video and streaming benchmarks, and extending the coreset view to open-ended generation, audio-visual reasoning, and embodied agents is a natural next step. 
+
+D Broader Impact 
+
+Streaming KV-cache compression reduces the memory and energy required to run long-video VLMs without retraining, which lowers the barrier to deploying multimodal models on consumer hardware, edge devices, and assistive technologies (e.g., wearable companions for users with visual or memory impairments) and reduces compute and carbon costs for long-video research more broadly. The same efficiency gains, however, also reduce the cost of always-on visual perception, which has dual-use implications for surveillance, persistent monitoring, and privacy in public and workplace settings. We release inference-time compression code rather than new pretrained generative models, which limits direct misuse pathways, but practitioners deploying CoRDS in always-on systems should weigh privacy, consent, and data-retention considerations alongside the efficiency benefits, and consider audit mechanisms when compressed video memory is used in safety- or rights-relevant decisions. 23

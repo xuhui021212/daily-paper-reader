@@ -1,0 +1,484 @@
+Title: RealCam: Real-Time Novel-View Video Generation with Interactive Camera Control
+
+URL Source: https://arxiv.org/pdf/2605.06051v1
+
+Published Time: Fri, 08 May 2026 01:02:49 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+# RealCam: Real-Time Novel-View Video Generation with Interactive Camera Control 
+
+# YOUCAN XU *, Zhejiang University, China 
+
+# JIAXIN SHI, Xmax.AI Ltd., China 
+
+# ZHEN WANG, Hong Kong University of Science and Technology, China 
+
+# WENSONG SONG, Zhejiang University, China 
+
+# FEIFEI SHAO, Zhejiang University, China 
+
+# CHEN LIANG, Xmax.AI Ltd., China 
+
+# JUN XIAO, Zhejiang University, China 
+
+# LONG CHEN †, Hong Kong University of Science and Technology, China 
+
+Camera-controlled video-to-video (V2V) generation enables dynamic view-point synthesis from monocular footage, holding immense potential for inter-active filmmaking and live broadcasting. However, existing implicit synthesis methods fundamentally rely on non-causal, full-sequence processing and rigid prefix-style temporal concatenation. This architectural paradigm man-dates bidirectional attention, resulting in prohibitive computational latency, quadratic complexity scaling, and inherent incompatibility with real-time streaming or variable-length inputs. To overcome these limitations, we intro-duce RealCam , a novel autoregressive framework for interactive, real-time camera-controlled V2V generation. We first design a high-fidelity teacher model grounded in a Cross-frame In-context Learning paradigm. By in-terleaving source and target frames into synchronized contextual pairs, our design inherently enables length-agnostic generalization and naturally facili-tates causal adaptation, breaking the rigid prefix bottleneck. We then distill this teacher into a few-step causal student via Self-Forcing with Distribution Matching Distillation, enabling efficient, on-the-fly streaming synthesis. Fur-thermore, to mitigate severe loop inconsistency in closed-loop trajectories, we propose Loop-Closed Data Augmentation (LoopAug) , a novel paradigm that synthesizes globally consistent loop sequences from existing multiview datasets. Extensive experiments demonstrate that RealCam achieves state-of-the-art visual fidelity and temporal consistency while enabling truly inter-active camera control with orders-of-magnitude faster inference than existing paradigms. Our project page is at https://xyc-fly.github.io/RealCam/. 
+
+1 Introduction 
+
+Camera movement serves as a fundamental cinematic language that directs audience attention and evokes profound emotional resonance. However, achieving professional-level camera movement such as sweeping crane shots or cinematic dolly-ins remains a privilege of high-budget productions. This typically requires expensive hardware rigs, meticulous pre-production planning, and costly reshoots, which places advanced cinematography out of reach for amateur videogra-phers and content creators. To address this dilemma, recent advances in generative AI, especially the camera-controlled video-to-video 
+
+> *
+
+Work was done during an internship at Xmax.AI. 
+
+> †
+
+Long is the corresponding author. Authors’ Contact Information: Youcan Xu, Zhejiang University, Hangzhou, China, youcan@zju.edu.cn; Jiaxin Shi, Xmax.AI Ltd., Beijing, China, jiaxin@xmax.ai; Zhen Wang, Hong Kong University of Science and Technology, Hong Kong, China, zhenwang@ust.hk; Wensong Song, Zhejiang University, Hangzhou, China, wensong. song@zju.edu.cn; Feifei Shao, Zhejiang University, Hangzhou, China, sff@zju.edu.cn; Chen Liang, Xmax.AI Ltd., China, chenliang2@hkust-gz.edu.cn; Jun Xiao, Zhejiang University, Hangzhou, China, junx@cs.zju.edu.cn; Long Chen, Hong Kong University of Science and Technology, Hong Kong, China, longchen@ust.hk. training on fixed length training on fixed length              
+
+> Causal adaptation Causal adaptation
+> Source frame Noisy target frame Input streaming frame Causal attention
+> （a）Temporal concatenation (b) Ours cross-frame concatenation
+> variable-length inference variable-length inference
+
+Fig. 1. Comparison of direct temporal concatenation and ours cross-frame concatenation. Our method generalizes to arbitrary video length during inference and naturally extends to causal attention. 
+
+(V2V) generative model [Bai et al . 2025; Chen et al . 2025; Luo et al . 2025; Park et al . 2025b; Van Hoorick et al . 2024; Yu et al .2025a], have emerged as a transformative post-production paradigm. By synthesizing novel viewpoints directly from existing footage, this paradigm allows for the post-hoc synthesis of user-specified view-points from casual captures, significantly reducing production costs and democratizing high-quality cinematography [Bai et al . 2025; Luo et al. 2025]. To achieve this goal, existing approaches can be broadly cate-gorized into two groups. One prominent line of research employs warp-then-inpaint frameworks [Chen et al . 2025; Jeong et al . 2025; Lu et al . 2025; Xiao et al . 2025; Yu et al . 2025a; Zhang et al . 2025]. These approaches utilize estimated depth [Hu et al . 2025] to perform explicit geometric transformations, getting geometrically aligned but content-missing warped frames. Then, a generative model condition-ing on these frames is employed to refine and inpaint them. However, these methods are sensitive to per-frame depth accuracy and generate degraded results under large viewpoint changes and complex scene structure. Alternatively, implicit synthesis methods [Bai et al . 2025; Park et al . 2025b; Van Hoorick et al . 2024] bypass explicit warping by directly injecting camera representations into the latent space to learn multi-view relationships. A representative method is ReCam-Master [Bai et al . 2025], which harnesses the generative power of pre-trained text-to-video models [Wang et al . 2025a] through a ded-icated video conditioning mechanism. Specifically, it concatenates   
+
+> arXiv:2605.06051v1 [cs.CV] 7 May 2026 2•Youcan Xu, Jiaxin Shi, Zhen Wang, Wensong Song, Feifei Shao, Chen Liang, Jun Xiao, and Long Chen
+
+source and target video tokens along the frame dimension and in-jects encoded camera parameters into the backbone’s feature stream. During fine-tuning on large-scale synchronized datasets [Bai et al .2025], the 3D full attention of the base model naturally aggregates information across both sequences, enabling the model to implicitly internalize cross-view geometric correspondences without relying on external depth estimator models. Despite achieving impressive visual fidelity, existing methods from both categories are fundamentally precluded from real-time, interactive applications due to prohibitive computational latency. This bottleneck is rooted in their reliance on bidirectional attention mechanisms — an inherently non-causal design that mandates all control inputs be specified a priori, trapping users in a frustrating “render-and-wait” cycle [Shin et al . 2025]. For instance, state-of-the-art models like ReCamMaster [Bai et al . 2025] take over 17 minutes to synthesize a mere 5-second clip. Furthermore, we identify another fundamental structural barrier in prevailing implicit synthesis frameworks [Bai et al . 2025; Park et al . 2025b]: The use of temporal concatenation. As illustrated in Figure 1(a), current SOTA models typically append the target video tokens after the complete source video sequence. This rigid prefix-style conditioning introduces two critical limitations: 
+
+• Generalization Collapse on Variable Lengths. The prefix-style concatenation [Bai et al . 2025; Luo et al . 2025] inherently binds the model to fixed-length training regimes. Consequently, it fails to generalize to variable-length inputs during inference, exhibit-ing severe fidelity degradation and temporal incoherence when sequence lengths deviate from the training distribution. 
+
+• Architectural Incompatibility with Streaming. The rigid prefix dependency forces the model to encode the entire source context, even before generating the first target frame. Such a strictly non-causal design fundamentally precludes frame-by-frame genera-tion [Huang et al . 2025a; Yin et al . 2025], making it architecturally incompatible with streaming or interactive workflows ( e.g., in-teractive live streaming), where dynamic, on-the-fly viewpoint manipulation is essential for sustaining audience engagement. Despite recent efforts [Park et al . 2025b] that incorporate camera-conditioned RoPE [Su et al . 2024] to support variable lengths still retain this rigid prefix structure and suffer from quadratic computa-tional scaling. Consequently, achieving scalable, interactive genera-tion remains fundamentally intractable under existing paradigms. To address these challenges, we propose RealCam , the first frame-work capable of real-time, interactive camera-controlled V2V gen-eration without explicit wrapping. Built upon a state-of-the-art DiT-based model [Wang et al . 2025a], RealCam adopts a two-phase design that directly addresses the aforementioned bottlenecks: 1) Bidirectional Teacher Training via Cross-frame In-context Learn-ing to construct a length-agnostic, causal-ready teacher model, and 2) Causal Distillation with LoopAug for efficient streaming inference with global consistency. In the first phase, our core insight is to refac-tor the video-to-video relationship by interleaving source and target frames into unified contextual pairs, enabling the model to generalize to arbitrary video lengths and naturally transition to causal attention (cf. , Figure 1(b)). In the second phase, building upon this cross-frame teacher, we distill it into a causal student through self-forcing roll-out, augmented with our proposed Loop-Closed Data Augmentation (LoopAug) to resolve temporal drift in cyclic trajectories. 
+
+In the Bidirectional Teacher Training phase , we employ a struc-tural shift from prefix-style conditioning to synchronous frame-pair processing. Instead of treating the source video as a long-range pre-fix, we interleave source and target frames into a unified sequence of contextual pairs. This cross-frame design provides two decisive advantages: (i) Causal Compatibility: By processing each frame-pair synchronously, the teacher model can naturally transition to a causal adaptation ( i.e., replacing bidirectional attention with causal masks) without breaking the conditional dependency, enabling frame-by-frame generation. (ii) Dynamic Robustness: Our cross-frame para-digm focuses on relative positional relationships rather than absolute sequence length, allowing the model to generalize to arbitrary video lengths during inference. In the Causal Distillation phase , we dis-till the cross-frame teacher into a few-step causal student through self-forcing-style distillation [Huang et al . 2025a; Zhao et al . 2025] for efficient, low-latency inference. However, we identify a critical limitation in direct distillation: severe loop inconsistency arises in closed-loop trajectories, causing visual distortions when the camera returns to its starting viewpoint. We attribute the challenge to a lack of loop-consistent supervision during distillation. To address this without costly manual data collection, we introduce Loop-Closed Data Augmentation (LoopAug) , a novel paradigm that synthesizes loop-closed sequences from existing multiview datasets, enabling long-horizon video generation with global consistency. The contributions of this work can be summarized as follows. 
+
+• To the best of our knowledge, RealCam is the first real-time framework for interactive, camera-controlled video-to-video generation without explicit wrapping [Lu et al . 2025; Xiao et al. 2025; Yu et al. 2025a]. 
+
+• We design a cross-frame in-context learning mechanism for the teacher model, enabling inherent causal compatibility and length-agnostic generalization. 
+
+• We propose LoopAug, a simple yet effective data augmenta-tion paradigm that significantly improves loop consistency and global stability in long-horizon video generation. 
+
+• Extensive experiments and ablation studies demonstrate that RealCam achieves superior performance and efficiency com-pared with existing state-of-the-art methods. 
+
+2 Related Work 
+
+Camera-Controlled Video Generation. With the goal of steering viewpoint changes through camera conditions, camera-controlled video generation has become an important branch of controllable video synthesis [Ma et al . 2025]. Early studies primarily explored this capability in text-to-video [Bahmani et al . 2025; He et al . 2024; Hou and Chen 2024; Kuang et al . 2024; Ling et al . 2024; Wang et al .2025b, 2024; Zhao et al. 2024] or image-to-video [Feng et al. 2024; Li et al . 2025d; Xiao et al . 2025; Xu et al . 2024; Yu et al . 2025b] settings. More recently, growing attention has shifted toward camera-controlled video-to-video generation [Bai et al . 2025; Luo et al . 2025; Van Hoorick et al . 2024]. This challenging task necessitates main-taining rigorous temporal synchronization and semantic consistency RealCam: Real-Time Novel-View Video Generation with Interactive Camera Control • 3
+
+with the source video while simultaneously re-projecting it onto a user-provided camera trajectory. Current methodologies generally follow two technical routes. Warp-then-inpaint methods [Jeong et al .2025; Lu et al . 2025; Xiao et al . 2025; Yu et al . 2025a; Zhang et al .2025] typically employ depth estimation to lift 2D frames into 3D point clouds, from which geometrically aligned proxy videos are rendered from target viewpoints. These proxies then serve as auxil-iary conditions to guide the generative process. Conversely, implicit synthesis methods [Bai et al . 2025; Park et al . 2025b] directly encode camera parameters into the model, often leveraging large-scale syn-thetic datasets for training. Despite their impressive visual quality, both paradigms are predominantly designed for offline, full-sequence modeling, rendering them computationally prohibitive for real-time interactive control. 
+
+Autoregressive Video Diffusion Models. Traditional video diffu-sion models [Kong et al . 2024; Wang et al . 2025a; Yang et al . 2024] typically rely on full-sequence, bidirectional modeling, which limits their scalability for long-horizon generation and real-time streaming. To overcome these constraints, a growing line of research [Chen et al . 2024; Gao et al . 2026; Jin et al . 2025; Yin et al . 2025] inte-grates autoregressive (AR) prediction with diffusion modeling. Early attempts like MAGI-1 [Teng et al . 2025] and CausVid [Yin et al .2025] transition from bidirectional to causal architectures, enabling chunk-wise rollout. To mitigate the inherent challenges of temporal drift and error accumulation in AR sampling, recent works have introduced advanced training and inference strategies. For instance, Self-Forcing [Huang et al . 2025a] and Rolling Forcing [Liu et al .2025] address the train-test mismatch by conditioning the model on its own generated outputs or employing joint denoising schemes. Furthermore, Deep Forcing [Yi et al . 2025] and LongLive [Yang et al . 2025] leverage attention-sink mechanisms and KV-cache man-agement to maintain global consistency during extended rollouts. However, these methods are primarily optimized for static, prompt-based generation. While effective for visual quality, they often lack the flexibility required for fine-grained, user-driven control or real-time interactive adjustments. 
+
+Interactive Video Models. Interactive video models [Li et al . 2025c; Mao et al . 2025; Parker-Holder et al . 2024; Shin et al . 2025; Zhao et al . 2025] aim to simulate responsive environments that support real-time user engagement and feedback. Recent advances have explored various interactive modalities to steer video content, ranging from motion trajectories [Shin et al . 2025; Zhao et al . 2025] and facial key-points [Li et al . 2025b] to multimodal signals like audio [Chern et al .2025; Su et al . 2026] and instructions [Li et al . 2025a; Yesiltepe et al .2025]. While promising, these models typically excel at semantic or object-level manipulations but struggle with the geometric precision required for fluid, real-time viewpoint transitions in open-domain videos. In this work, we bridge this gap by focusing on generating novel views of input videos through interactive camera control, en-abling an immersive "walk-through" experience with sub-second latency. 
+
+3 Method 
+
+Our RealCam aims to achieve real-time, interactive camera-controlled video-to-video (V2V) generation. To this end, we propose a two-step training pipeline. In Sec . 3.2, we first train a bidirectional camera-controlled V2V model that leverages cross-frame in-context learning to achieve high-fidelity novel-view synthesis with robust length gen-eralization. Then in Sec. 3.3, we distill this slow teacher model into a few-step c causal student model designed for streaming inference. To address the visual drift in long-horizon and closed-loop trajectories, we introduce LoopAug, a data augmentation strategy that enforces global consistency without additional manual labeling. The overview of the pipeline is depicted in Figure 2. 
+
+3.1 Preliminaries 
+
+Text-to-Video Base Model. Our work builds upon the Wan DiT family [Wang et al . 2025a], a latent video diffusion model that per-forms generative modeling directly in the latent space. This model comprises three key components: a 3D Variational Auto-Encoder (VAE), a Transformer-based velocity prediction network, and a text encoder. Given an input video 𝑥 ∈ R𝐹 ×𝐶 ×𝐻 ×𝑊 , the VAE encoder E
+
+compresses it into the latent space 𝑧 0 = E ( 𝑥 ) ∈ R𝑓 ×𝑐 ×ℎ×𝑤 . The gen-erative process aims to model the conditional distribution 𝑝 (𝑧 0 |𝑐 text ),where 𝑐 text denotes the textual embedding derived from the text encoder. We adopt the Flow Matching (FM) [Esser et al . 2024; Labs 2024; Wang et al . 2025a] for generative modeling, where the FM learns a transformation from a standard Gaussian distribution 
+
+𝑧 1 ∼ N ( 0, I) to the target 𝑧 0, and decodes it back to clean data with the decoder 𝑥 = D ( 𝑧 0). Specifically, for each training step with timestep 𝑡 ∼ [ 0, 1], FM obtains a noised intermediate latent via the linear interpolation between 𝑧 0 and 𝑧 1 as 𝑧 𝑡 = (1 − 𝑡 )𝑧 0 + 𝑡𝑧 1. The velocity prediction network 𝑣 𝜃 is then trained to estimate the velocity 
+
+𝑣 𝑡 = 𝑑𝑧 𝑡  
+
+> 𝑑𝑡
+
+= 𝑧 1 − 𝑧 0 by minimizing the flow matching loss: 
+
+LFM = E𝑧 0,𝑧 1,𝑡,𝑐 𝑡𝑒𝑥𝑡 
+
+∥𝑣 𝜃 (𝑧 𝑡 , 𝑡, 𝑐 𝑡𝑒𝑥𝑡 ) − ( 𝑧 1 − 𝑧 0)∥ 22
+
+ . (1) During inference, the FM starts from a random noisy latent 𝑧 1 ∼N ( 0, I), and progressively integrates the predicted velocity to obtain the clean latent: 𝑧 0 = 𝑧 1 − ∫ 01 𝑣 𝜃 (𝑧 𝑡 , 𝑡, 𝑐 text )𝑑𝑡 .
+
+Distribution Matching Distillation . Distribution matching distil-lation (DMD) [Yin et al . 2024a,b] is a technique that distills multi-step teacher diffusion model into a few-step student model. The core idea is to minimize KL divergence between the real data dis-tribution 𝑝 data  
+
+> 𝑡
+
+(approximated by the frozen teacher model) and the student-generated distribution 𝑝 gen t across randomly sampled time 𝑡 :
+
+LDMD = E𝑡 
+
+𝐷 KL (𝑝 gen  
+
+> 𝑡
+
+∥𝑝 data  
+
+> 𝑡
+
+). The loss is optimized by descending along its gradient: 
+
+∇𝜃 LDMD ≈ − E𝑡 
+
+
+
+𝑠 real (Ψ(𝐺 𝜃 (𝜖 ), 𝑡 ), 𝑡 )− 𝑠 fake (Ψ(𝐺 𝜃 (𝜖 ), 𝑡 ), 𝑡 )
+
+
+
+· 𝑑𝐺 𝜃 (𝜖 )
+
+𝑑𝜃 𝑑𝜖 
+
+
+
+.
+
+(2) where Ψ is the forward diffusion process, 𝜖 is random Gaussian noise, 𝐺 𝜃 is the generator parameterized by 𝜃 , 𝑠 real is the frozen score function for real data while 𝑠 fake is the learnable score function trained on the generator’s outputs. During training, DMD initializes both score functions from the teacher model. 4 • Youcan Xu, Jiaxin Shi, Zhen Wang, Wensong Song, Feifei Shao, Chen Liang, Jun Xiao, and Long Chen 𝐀 𝐀 𝐀 𝐀 
+
+Patchify 
+
+𝐀 𝐀 𝐀 𝐀 
+
+VAE 
+
+Encoder 
+
+Add Noise 
+
+VAE 
+
+Encoder 
+
+VAE 
+
+Decoder 
+
+DiT Block 
+
+Self-Attention 
+
+Projector 
+
+𝐀 0𝐀 𝐀 
+
+𝐀 𝐀 
+
+> ′
+
+𝐀 t
+
+> ′
+
+𝐀 𝐀 𝐀 𝐀 𝐀 𝐀 𝐀 𝐀 
+
+text 
+
+Patchify 
+
+Cross-Attention 
+
+Cross-frame 
+
+Feed-Forward NN 
+
+Concatenation 
+
+𝐀🀀𝐀𦰀𝐀𨐀𦰀𤠀𝐀𦰀 (𝐀 𝐀 , 𝐀 𝐀 )
+
+𝐀🀀𝐀𦰀𝐀𨐀𦰀𤠀𝐀𦰀 (𝐀 𝐀  
+
+> ′
+
+, 𝐀 𝐀  
+
+> ′
+
+)
+
+Unpatchify 
+
+𝐀 text
+
+(a) Overrall Architecture (b) Dit Block 
+
+Text 
+
+Encoder 
+
+𝐀 𝐀 
+
+Stage 1: Bidirectional Teacher Trainin g
+
+𝐀🀀𝐀𦰀𝐀𨐀𦰀𤠀𝐀𦰀 (𝐀 𝐀 , 𝐀 1 )
+
+> Next step
+
+Update 
+
+DMD 
+
+Stage 2: Causal Distillation 
+
+Memory 
+
+Add Noise 
+
+Noisy frame 
+
+History Frame 
+
+Clean Frame 
+
+Source Frame 
+
+Timestep 
+
+Scheduler Few-Step 
+
+Causal DiT 
+
+(c) Self-Rollout 
+
+𝐀 𝐀 𝐀 𝐀 
+
+> 𝐀
+
+𝐀 text
+
+Original video Reversed video reverse 
+
+(d) LoopAug 
+
+Fig. 2. Model architecture and training pipeline. Left: The training pipeline of teacher camera-controlled video-to-video model. (a) A latent diffusion model is optimized to reconstruct the target video 𝑉 𝑡𝑔𝑡 , conditioned on the source video 𝑉 𝑠𝑟𝑐 , target camera pose 𝑐 cam , and target prompt 
+
+𝑐 text . (b) We propose Cross-frame Concatenation to inject the source video condition, and following ReCamMaster [Bai et al . 2025], we train only self-attention layers, the camera encoder and projector. Right: Distilling a few-step causal diffusion model through Self Forcing-style DMD distillation. (c) The autoregressive self-rollout process with KV cache (memory) for generating a frame during both training and inference. After rolling out the full video sequence, the model is optimized by the DMD loss. The bottom is the Loop-Closed Data Augmentation (LoopAug) strategy. 
+
+3.2 Bidirectional Teacher Model Training 
+
+In the Bidirectional Teacher Training phase, we aim to build a bidi-rectional teacher model, which conditions on an fixed length in-put video 𝑉 𝑠𝑟𝑐 ∈ R𝐹 ×𝐶 ×𝐻 ×𝑊 and generates a re-rendering video 
+
+𝑉 𝑡𝑔𝑡 ∈ R𝐹 ×𝐶 ×𝐻 ×𝑊 that follows the user-specified trajectories. The target trajectories is represented as the extrinsic parameters of the camera denoted by c𝑐𝑎𝑚 := [𝑅 𝑤𝑐 , 𝑡 𝑤𝑐 ] ∈ R𝐹 ×3×4. We start from the pretrained text-to-video generative model [Wang et al . 2025a] and finetune it into a video-to-video generative model. 
+
+Cross-frame In-context Learning. To maintain dynamic synchro-nization and content consistency with the source video, while without relying on fixed-length temporal prefixes. We employ a cross-frame conditioning scheme. Rather than concatenating source and target latents along the temporal axis, we interleave them at the frame level: 
+
+(𝑧 𝑠 = E ( 𝑉 𝑠𝑟𝑐 ), 𝑧 0 = E ( 𝑉 𝑡𝑔𝑡 ),
+
+Interleave (𝑧 𝑠 , 𝑧 𝑡 ) = [𝑧 1 
+
+> 𝑠
+
+, 𝑧 1 
+
+> 𝑡
+
+, 𝑧 2 
+
+> 𝑠
+
+, 𝑧 2 
+
+> 𝑡
+
+, . . . 𝑧 𝑓 𝑠 , 𝑧 𝑓 𝑡 ], (3) where Interleave (𝑧 𝑠 , 𝑧 𝑡 ) ∈ R𝑏 ×2𝑓 ×𝑠 ×𝑑 is the input of velocity prediction network, 𝑧 𝑡 is the noised 𝑧 0, 𝑧 𝑖 𝑠 is the i-th latent frame. A pivotal advantage of this cross-frame design is the shift from absolute to relative modeling. By interleaving 𝑧 𝑖 𝑠 with its corresponding 𝑧 𝑖 𝑡 
+
+at each temporal position, the model learns to capture the relative frame relationships rather than being tethered to absolute temporal 49 
+
+Ours ReCamMaster Source 
+
+89 
+
+177 
+
+Fig. 3. Length-agnostic inference without retraining. Each row corresponds to a distinct video sequence synthesized at different inference lengths ( e.g., 49 denotes the total frames of the generated video). Both trained on fixed 81-frame clips, our model maintains high performance. In contrast, the direct concatenation method ( e.g., ReCamMaster [Bai et al . 2025]) exhibits severe degradation when the inference horizon deviates from the training length, underscoring the brittleness of prefix-style conditioning. RealCam: Real-Time Novel-View Video Generation with Interactive Camera Control • 5
+
+indices. This formulation enables the teacher model to generalize to arbitrary video lengths during inference without the need for retraining (as shown in Figure 3) and is compatible with the following causal adaptation described in Sec. 3.3. Like Recamaster [Bai et al .2025], we do not introduce additional parameters for cross-frame conditioning. And for camera condition injection, we first project the flattened 3 × 4 camera matrix to the space of video tokens and add it to the self-attention input features. 
+
+Training Objective. To further capture the camera dynamics while preventing learning the static characteristics of the synthetic dataset, we introduce a motion-aware loss. This objective emphasizes tempo-ral variations while suppressing redundant static appearance informa-tion. Specifically, we compute the frame-wise velocity differences 
+
+△( 𝑣 𝜃 (·)) and △( 𝑣 𝑡 ) ∈ R(𝑓 −1) × ℎ×𝑤 ×𝑐 , and we align them to preserve dynamic motion cues. We define the motion loss as: 
+
+LMotion = E𝑧 0,𝑧 1,𝑡,𝑐 text ,𝑧 𝑠 ,𝑐 cam 
+
+
+
+△ 𝑣 𝜃 (𝑧 𝑡 , 𝑡, 𝑧 𝑠 , 𝑐 text , 𝑐 cam )
+
+− △( 𝑧 1 − 𝑧 0) 22
+
+
+
+.
+
+(4) Then the total loss is the combination of the standard flow matching loss (Eq. (1) ) on camera-conditioned video pairs and the motion loss as L𝑇 𝑒𝑎𝑐ℎ𝑒𝑟 = (1 − 𝛼 ) · L 𝐹 𝑀 + 𝛼 · L 𝑀𝑜𝑡𝑖𝑜𝑛 , where 𝛼 is the weighting coefficient. 
+
+3.3 Causal Distillation 
+
+While the bidirectional teacher achieves high visual fidelity and cam-era controllability, its non-causal attention and multi-step attribute prevent real-time streaming. We distill the teacher into a few-step autoregressive student model. Given a noise schedule T = {𝑡 0 =
+
+0, . . . , 𝑡 𝑁 = 𝑇 }, each frame is denoised over 𝑁 steps, where 𝑁 is sig-nificantly smaller than that in the multi-step teacher model, enabling real-time interactive control. 
+
+Causal Adaptation. As shown in Figure 1 , our teacher model’s interleaved structure naturally extends to the causal adaptation. Fol-lowing the design protocol from CausVid [Yin et al . 2025], we re-place the bidirectional attention with causal attention architecture. And we pack the source and target noisy latent frame as a chunk 
+
+𝑍 𝑖 = [𝑧 𝑖 𝑠 , 𝑧 𝑖 𝑡 ]frame-dim ∈ R2×ℎ×𝑤 ×𝑐 as the input 1 of the causal model. Previous works [Huang et al . 2025a; Yin et al . 2025] initilize the causal student using regression on ODE solution pairs sampled from the teacher. However, the sampling process is time-consuming. We directly initialize our causal student using the flow matching loss (Eq. (1)) on camera-conditioned video pairs. 
+
+Distilling to Real-Time AR model. Following the previous works [Huang et al . 2025a; Zhao et al . 2025], we use Self-Forcing-style Distribution Matching Distillation framework to optimize our causal model. This approach explicitly simulates the autoregressive infer-ence dynamics during training, effectively mitigating the exposure bias of the causal model after adaptation. During training, given a source video latent 𝑧 𝑠 and pure noise 𝑧 𝑇 ∼N ( 0, I) , we partition them into 𝐿 chunks {𝑧 𝑖 𝑠 }𝐿 and {𝑧 𝑖 𝑡 𝑗 }𝐿 𝑗 =𝑁 , where 
+
+𝑡 𝑗 ∈ T . As shown in Figure 2 (c), we interleave the source frames 
+
+𝑧 𝑠 and noise frames 𝑧 𝑇 as {𝑍 𝑖 𝑡 𝑁 }𝐿 , where 𝑍 𝑖 𝑡 𝑁 = [𝑧 𝑖 𝑠 , 𝑧 𝑖 𝑡 𝑁 ] is the i-th 
+
+> 1In practice, generation is typically performed in chunks rather than one chunk.
+
+input chunk of the causal model. The sampling process of the i-th chunk involves N-step iterative denoising on its input. Specially, we randomly sample a denoising step 𝑛 , denoise step-by-step from 𝑍 𝑖 𝑡 𝑁 
+
+to 𝑍 𝑖 𝑡 𝑛 . At each denoising step 𝑡 𝑗 , we get clean chunk ˆ𝑍 𝑖 𝑡 0 = [ ˆ𝑧 𝑖 𝑠 , ˆ𝑧 𝑖 𝑡 0 ]
+
+by denoising the intermediate noisy frame 𝑍 𝑖 𝑡 𝑗 conditioned on a dynamically updated KV cache: C𝑖 = {𝑍 𝑖 𝑡 𝑗 } ∪ { ˆ𝑍 𝑘 𝑡 0 }max (1,𝑖 −𝑊 ) ≤ 𝑘 <𝑖 ,where ˆ𝑍 𝑘 𝑡 0 is the previously generated clean frames, 𝑊 is the attention window size of KV cache. We only preserve the target frame ˆ𝑧 𝑖 𝑡 0
+
+and then injects Gaussian noise with a lower noise level into the predicted denoised clean frame via the forward diffusion process. This produces a less noisy frame 𝑧 𝑖 𝑡 𝑗 −1 which concate with the source frame 𝑧 𝑖 𝑠 as 𝑍 𝑖 𝑡 𝑗 −1 as the input to the next denoising step. Formally, the denoising process is formulated as: 𝑧 𝑖 𝑡 𝑗 −1 = Ψ(𝐺 𝜃 (𝑍 𝑖 𝑡 𝑗 , 𝑡 𝑗 , 𝑍 <𝑖  
+
+> 0
+
+), 𝑡 𝑗 −1).Unlike Self-Forcing [Huang et al . 2025a] updating the KV cache using the one-step noisy feature denoised from 𝑍 𝑖 𝑡 𝑛 to ˆ𝑍 𝑖 𝑡 0 , we adopt the self-rollout strategy [Zhao et al . 2025], we continue denoising from 𝑍 𝑖 𝑡 𝑛 to 𝑍 𝑖 𝑡 0 step-by-step, and finally update the KV cache with the synthesized chunk 𝑍 𝑖 𝑡 0 = [𝑧 𝑖 𝑠 , 𝑧 𝑖 𝑡 0 ]. Note the camera condition is also split into L chunks {𝑐 𝑖 𝑐𝑎𝑚 }𝐿 to match the input of the causal student. After completing the 𝐿 chunks in Self-Forcing manner, we obtain a fully generated video 𝑧 0 = {𝑧 10, . . . , 𝑧 𝐿  
+
+> 0
+
+}. We then apply the DMD objective to align the student’s rollout distribution 𝑝 𝑔𝑒𝑛 with the teacher’s data distribution 𝑝 data . The Eq. (2) is reformulated as: 
+
+∇𝜃 LDMD ≈ − E𝑡,𝑧 0,𝑐 text ,𝑧 𝑠 ,𝑐 cam 
+
+
+
+𝑠 real (Ψ(𝑧 0, 𝑡 ), 𝑡, 𝑧 𝑠 , 𝑐 text , 𝑐 cam ) (5) 
+
+− 𝑠 fake (Ψ(𝑧 0, 𝑡 ), 𝑡, 𝑧 𝑠 , 𝑐 text , 𝑐 cam )
+
+
+
+· 𝜕𝑧 0
+
+𝜕𝜃 
+
+
+
+.
+
+Loop-Closed Data Augmentation (LoopAug). A critical issue we identify in causal distillation is loop inconsistency : when the camera returns to its initial viewpoint in a closed-loop trajectory, the gener-ated frame often exhibits visual inconsistency with the source video. We trace this to the absence of loop-consistent supervision in existing multi-view datasets. To address this without costly manual data col-lection, we introduce a data augmentation paradigm that synthesizes loop-closed sequences from existing multi-view datasets. As demon-strated in Figure 2(d), let 𝑉 = {𝑣 1, 𝑣 2, . . . , 𝑣 𝐹 } denote a raw video sequence of F frames. We construct a closed-loop extended video 𝑉 𝑒 
+
+by concatenating the original sequence with its reversed counterpart 
+
+𝑉 𝑟 = {𝑣 𝐹 −1, 𝑣 𝐹 −2, . . . , 𝑣 1 }: 𝑉 𝑒 = [𝑉 , 𝑉 𝑟 ]𝑓 𝑟𝑎𝑚𝑒 −𝑑𝑖𝑚 ∈ R(2𝐹 −1) × 𝐶 ×𝐻 ×𝑊 .The corresponding camera condition follows the same process. This provides explicit supervision for loop consistency, encouraging the model to generate identical frames when the camera returns to the same viewpoint. In practice, we use this method to finetune the teacher model and causal adaptation with a truncation strategy. 
+
+4 Experiments 
+
+Implementation Details. We build upon text-to-video (T2V) of Wan 2.1 (1.3B) [Wang et al . 2025a] and Wan 2.2 (5B) [Wang et al .2025a]. We train the teacher model on the MultiCamVideo dataset [Bai et al . 2025] at a resolution of 81 × 480 × 832 with a learning rate of 
+
+0.0001 and a batch size of 8. For causal adaptation and self-forcing distillation, we use a 3-step diffusion process in a chunk-wise manner 6 • Youcan Xu, Jiaxin Shi, Zhen Wang, Wensong Song, Feifei Shao, Chen Liang, Jun Xiao, and Long Chen Source 
+
+> video
+> Trajectory
+> Crafter
+> ReCam-
+> Master ReDirector
+> Ours
+> Teacher
+> Ours
+> RealCam  camera
+
+27, 54,80 
+
+Several giant wooly mammoths approach treading through... Animated scene features a close-up of a fluffy monster...     
+
+> Fig. 4. Qualitative comparison with SOTA methods. Red boxes indicated low quality content across frames. Our method achieves better camera control and excellent temporal synchronization. Table 1. Quantitative comparison with SOTA methods. Our method improves visual quality and keeps excellent geometric consistency and camera control, while significantly reducing latency.
+
+Method Latency Visual quality ↑ Geometric Consistency Camera Accuracy (s) ↓ Sub. Cons Bg. Cons. Aes. Qual. Img. Qual. Tem. Flick. Motion Smooth Dyn MEt3R ↑ MEt3R ↓ Trans Err ↓ Rot Err ↓
+
+ReCamMaster [Bai et al. 2025] 426 91.65 93.72 58.83 57.31 97.12 99.08 0.7846 0.2864 0.0301 3.150 TrajectoryCrafter [Yu et al. 2025a] 687 90.97 93.22 59.17 62.89 96.15 97.49 0.7610 0.2268 0.0705 5.107 ReDirector [Park et al. 2025b] 613 91.81 93.77 57.22 58.59 96.60 99.11 0.8011 0.2786 0.0236 2.866 
+
+Ours Teacher (1.3b) 426 92.16 94.06 59.46 62.09 97.09 99.21 0.8248 0.2643 0.0255 2.874 
+
+Ours Causal (1.3b) 1.15 92.61 94.73 59.68 63.02 97.24 99.22 0.8136 0.2245 0.0300 3.312 
+
+Ours Teacher (5b) 232 93.19 94.61 59.79 60.02 97.09 99.19 0.8275 0.2639 0.0253 2.616 
+
+Ours Causal (5b) 0.72 93.01 94.97 60.03 59.98 97.31 99.23 0.8282 0.2650 0.0287 3.335 
+
+containing 3 latent frames. We maintain a KV cache composed of a chunk from the initial frames and a fixed-size local window of the recent 5 chunks. We use LoopAug with a truncation strategy to further finetune the teacher model and train the causal student. All training is performed using the AdamW optimizer [Loshchilov and Hutter 2017] on NVIDIA H20 GPUs. We refer readers to the Appendix for additional details. 
+
+Baselines. We compare our method with the state-of-the-art camera-controlled V2V generation models [Bai et al . 2025; Park et al . 2025b; Yu et al . 2025a]. We adopt each baseline’s official backbone and im-plementation, allowing them to fully demonstrate designed capabili-ties. TrajectoryCrafter [Yu et al . 2025a] is the explicit warping-based method, which leverages a monocular depth model to preprocess the input video. ReCamMaster [Bai et al . 2025] and Redirector [Park RealCam: Real-Time Novel-View Video Generation with Interactive Camera Control • 7
+
+et al . 2025b] are implicit pose-based methods conditioned on camera extrinsic parameters. Besides, Redirector needs to use an external model [Huang et al . 2025b] to predict the input video’s camera ex-trinsic parameters and intrinsic parameters. 
+
+Evaluation Protocol. To ensure a rigorous and comprehensive evaluation, we construct a diverse test set consisting of both short and long video sequences. The short-video set comprises 30 81-frame videos, including 15 real-world samples from [Bai et al . 2025] and 15 synthetic samples from the Sora webpage [Brooks et al . 2024]. To evaluate long-horizon performance, we curate an additional 20 177-frame videos (5 real-world and 15 synthetic). For each source video, we apply 10 distinct camera trajectories following the protocol in ReCamMaster [Bai et al . 2025], yielding a total of 300 (short) and 200 (long) unique test cases. We evaluate the generated videos across three key dimensions: 1) Visual Quality: We employ multiple metrics from the VBench suite [Huang et al . 2024] to assess Aesthetic Quality (Aes. Qual.), Imaging Quality (Img. Qual.), Temporal Flickering (Tem. Flick.), Motion Smoothness (Motion Smooth.), Subject Consistency (Sub. Cons.), and Background Consistency (Bg. Cons.). 2) Geometric Con-sistency: Following [Park et al . 2025b], we use Dyn-MEt3R [Park et al . 2025a] to measure the global geometric consistency of the gen-erated videos, and per-frame MEt3R [Asim et al . 2025] to quantify structural alignment with the source video. 3) Camera Accuracy: We report TransErr and RotErr [Bai et al . 2025; Park et al . 2025b], which measure the relative translation and rotation errors for every frame pair. The camera poses of the generated videos are estimated using ViPE [Huang et al . 2025b] for ground-truth comparison. Finally, we report the first-frame latency measured on a single NVIDIA H20 GPU as the primary indicator of real-time interactive performance. 
+
+4.1 Results 
+
+Qualitative Comparisons. We present qualitative comparisons be-tween our RealCam and several state-of-the-art baselines in Figure 4. As highlighted by the red boxes, existing methods frequently suffer from content distortion and temporal desynchronization. For instance, TrajectoryCrafter [Yu et al . 2025a] introduces noticeable ghosting and structural artifacts when handling large camera displacements. Implicit methods like ReCamMaster [Bai et al . 2025] exhibit signifi-cant motion blur and fail to maintain the identity of dynamic subjects (e.g., the mammoths) as the sequence progresses. While ReDirec-tor [Park et al . 2025b] attempts to preserve geometry, it occasionally fails to localize dynamic objects under rapid viewpoint shifts, leading to the complete disappearance of foreground elements (as seen in the monster scene). In contrast, our Teacher model and its causal coun-terpart, RealCam, consistently synthesize high-fidelity videos that strictly adhere to the specified camera trajectories while maintaining seamless temporal synchronization with the source video. Notably, despite moving to an autoregressive streaming architecture, RealCam achieves visual quality and camera control accuracy comparable to the bidirectional Teacher model. 
+
+Quantitative Comparisons. The overall performance compar-isons are summarized in Table 1, yielding several key observations: RealCam achieves a dramatic reduction in latency compared to ex-isting bidirectional frameworks. While state-of-the-art methods like                          
+
+> Table 2. User study results. We evaluate video quality and cam-era following capability through pairwise comparisons. Our method is preferred (over >50%) over most baselines, with the teacher being slightly preferred over the student.
+> Video Quality Camera Following Method Ours-T Ours-C Ours-T Ours-C TrajectoryCrafter [Yu et al. 2025a] 66.34% 59.77% 64.62% 58.81% ReCamMaster [Bai et al. 2025] 53.60% 51.45% 54.25% 51.00% ReDirector [Park et al. 2025b] 51.24% 50.52% 50.85% 49.37% Ours-C 50.65% -51.1% -
+
+TrajectoryCrafter and ReDirector require hundreds of seconds to process a single clip, our causal models (1.3b and 5b) achieve sub-second inference speeds ( e.g., 0.72s for the 5b variant), representing an orders-of-magnitude speedup that is essential for interactive appli-cations. Despite the transition to a streaming-capable, autoregressive archi-tecture, RealCam demonstrates superior visual quality and consis-tency. Notably, our models outperform all baselines in visual quality, which we attribute to the Cross-frame In-context Learning paradigm that effectively anchors the target frames to the source context. In terms of geometric consistency, our models attain the highest Dyn-MEt3R scores and lowest MEt3R scores, highlighting their strength in preserving 3D structure during dynamic camera movement. Fur-thermore, the camera accuracy metrics remain competitive with the teacher model and baselines, particularly in Trans Err. It is worth noting that the performance gap between our Teacher and Causal stu-dent is minimal across most metrics, validating that our self-rollout distillation process successfully preserves the teacher’s high-fidelity geometric reasoning while enabling efficient, on-the-fly synthesis. 
+
+User Study. We further perform human evaluation to reflect real preferences. We collected 1,000 responses evaluating video quality and camera following capability of generated videos using our Wan 2.1 (1.3B) variants. Since accurately assessing various metrics is challenging for participants, we focus on two key dimensions: visual quality and camera following. As shown in Table 2, our teacher model (Ours-T) consistently outperforms all baselines in both dimensions. Our causal student (Ours-C) maintains superior video quality over all baselines and achieves better camera control, with the only exception being ReDirector [Park et al . 2025b]. Notably, ReDirector relies on an external model [Huang et al . 2025b] to estimate camera parameters from the source video, which provides it with an advantage in camera alignment tasks. 
+
+4.2 Ablation Study 
+
+Impact of Chunk Size. We investigate the latent chunk size, a key design choice that governs the balance between streaming quality and interactivity. As shown in Table 3, while a chunk size of 1 mini-mizes first-frame latency ( 0.42 𝑠 ), it suffers from significant quality degradation and high camera following error, especially when the videos extend to 177 frames. Increasing the chunk size to 3 provides the model with a broader field for bidirectional modeling, leading to a substantial boost in visual fidelity and a marked improvement in geometric consistency and camera accuracy. Given that a chunk size 8 • Youcan Xu, Jiaxin Shi, Zhen Wang, Wensong Song, Feifei Shao, Chen Liang, Jun Xiao, and Long Chen Source 
+
+> video
+
+A man and a woman are dancing together on a city street at dusk. 
+
+> w/o
+> LoopAug Ours
+
+Fig. 5. Qualitative ablation on long video. The camera trajectory first translates down with rotation and then back to the origin. Red boxes indicated inconsistency with the source video. Table 3. Quantitative ablations on key training strategies. 
+
+Method Latency Visual quality ↑ Geometric Consistency Camera Accuracy (s) ↓ Sub. Cons Bg. Cons. Aes. Qual. Img. Qual. Tem. Flick. Motion Smooth Dyn MEt3R ↑ MEt3R ↓ Trans Err ↓ Rot Err ↓
+
+Chunk=1 (w/o LoopAug) 0.42 91.97 93.78 59.22 57.98 96.73 99.14 0.8200 0.2602 0.0308 4.5516 Chunk=3 (w/o LoopAug) 0.72 93.14 94.63 60.20 60.12 96.91 99.17 0.8167 0.2634 0.0257 3.137 Ours 0.72 93.01 94.97 60.03 59.98 97.31 99.23 0.8282 0.2650 0.0287 3.335 
+
+results on long video (177) frames 
+
+Chunk=1 (w/o LoopAug) 0.42 89.70 92.65 58.75 59.47 97.01 99.15 0.7471 0.3041 0.1269 9.0987 Chunk=3 (w/o LoopAug) 0.72 92.30 94.24 60.82 62.63 97.09 99.14 0.7905 0.2920 0.1238 6.5733 Ours 0.72 93.89 95.09 61.82 64.15 97.11 99.20 0.7920 0.2644 0.0596 3.7419 
+
+of 3 still maintains sub-second responsiveness ( 0.72 𝑠 ), we select it as our optimal configuration to ensure precise camera control without compromising real-time interactivity. 
+
+Impact of Loop-Closed Data Augmentation. We further validate the effectiveness of LoopAug in enhancing long-term consistency and global stability. The impact of LoopAug is most prominent when scaling to long-horizon generation. Comparing the configurations with and without LoopAug in Table 3, the augmentation yields con-sistent improvements across all visual and geometric metrics. On 177-frame sequences, our full model preserves structural integrity and camera alignment without performance drop-off, whereas the ablated variant exhibits loop inconsistency ( Red boxes in Figure 5). This confirms that loop-closed supervision provides essential global constraints, enabling the causal student to maintain coherence over long video lengths. 
+
+5 Conclusion 
+
+We present RealCam , a novel few-step autoregressive video diffu-sion framework that enables interactive, real-time camera-controlled V2V generation. By refactoring video conditioning into a Cross-frame In-context Learning paradigm, we overcome the structural bottlenecks of rigid prefix-style methods, achieving length-agnostic synthesis and seamless causal adaptation. Coupled with our LoopAug strategy, RealCam effectively suppresses long-horizon drift while delivering state-of-the-art visual fidelity at sub-second latency. Cru-cially, our causal student achieves camera control performance and visual quality competitive with the bidirectional teacher model, prov-ing that real-time efficiency can be achieved without sacrificing geometric precision. Limitations and future directions are discussed in Appendix. 
+
+References        
+
+> Mohammad Asim, Christopher Wewer, Thomas Wimmer, Bernt Schiele, and Jan Eric Lenssen. 2025. Met3r: Measuring multi-view consistency in generated images. In Pro-ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition .6034–6044. Sherwin Bahmani, Ivan Skorokhodov, Guocheng Qian, Aliaksandr Siarohin, Willi Mena-pace, Andrea Tagliasacchi, David B. Lindell, and Sergey Tulyakov. 2025. AC3D: Analyzing and Improving 3D Camera Control in Video Diffusion Transformers. In
+> Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recogni-tion (CVPR) . 22875–22889. Jianhong Bai, Menghan Xia, Xiao Fu, Xintao Wang, Lianrui Mu, Jinwen Cao, Zuozhu Liu, Haoji Hu, Xiang Bai, Pengfei Wan, and Di Zhang. 2025. ReCamMaster: Camera-Controlled Generative Rendering from A Single Video. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) . 14834–14844. Tim Brooks, Bill Peebles, Connor Holmes, Will DePue, Yufei Guo, Leo Jing, David Schnurr, Joe Taylor, Troy Luhman, Eric Luhman, et al .2024. Video generation models as world simulators. OpenAI Blog 1, 8 (2024), 1.
+
+RealCam: Real-Time Novel-View Video Generation with Interactive Camera Control • 9
+
+Boyuan Chen, Diego Martí Monsó, Yilun Du, Max Simchowitz, Russ Tedrake, and Vin-cent Sitzmann. 2024. Diffusion forcing: Next-token prediction meets full-sequence diffusion. Advances in Neural Information Processing Systems 37 (2024), 24081– 24125. Kaihua Chen, Tarasha Khurana, and Deva Ramanan. 2025. Reconstruct, Inpaint, Test-Time Finetune: Dynamic Novel-view Synthesis from Monocular Videos. In Advances in Neural Information Processing Systems (NeurIPS) .Ethan Chern, Zhulin Hu, Bohao Tang, Jiadi Su, Steffi Chern, Zhijie Deng, and Pengfei Liu. 2025. LiveTalk: Real-Time Multimodal Interactive Video Diffusion via Improved On-Policy Distillation. arXiv preprint arXiv:2512.23576 (2025). Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al . 2024. Scal-ing rectified flow transformers for high-resolution image synthesis. In Forty-first international conference on machine learning .Wanquan Feng, Jiawei Liu, Pengqi Tu, Tianhao Qi, Mingzhen Sun, Tianxiang Ma, Songtao Zhao, Siyu Zhou, and Qian He. 2024. I2vcontrol-camera: Precise video camera control with adjustable motion strength. arXiv preprint arXiv:2411.06525 
+
+(2024). Kaifeng Gao, Jiaxin Shi, Hanwang Zhang, Chunping Wang, Jun Xiao, and Long Chen. 2026. Ca2-VDM: efficient autoregressive video diffusion model with causal gen-eration and cache sharing. In Proceedings of the 42nd International Conference on Machine Learning (Vancouver, Canada) (ICML’25) . JMLR.org, Article 717, 16 pages. Hao He, Yinghao Xu, Yuwei Guo, Gordon Wetzstein, Bo Dai, Hongsheng Li, and Ceyuan Yang. 2024. Cameractrl: Enabling camera control for text-to-video generation. arXiv preprint arXiv:2404.02101 (2024). Chen Hou and Zhibo Chen. 2024. Training-free camera control for video generation. 
+
+arXiv preprint arXiv:2406.10126 (2024). Wenbo Hu, Xiangjun Gao, Xiaoyu Li, Sijie Zhao, Xiaodong Cun, Yong Zhang, Long Quan, and Ying Shan. 2025. DepthCrafter: Generating Consistent Long Depth Sequences for Open-world Videos. In CVPR .Jiahui Huang, Qunjie Zhou, Hesam Rabeti, Aleksandr Korovko, Huan Ling, Xuanchi Ren, Tianchang Shen, Jun Gao, Dmitry Slepichev, Chen-Hsuan Lin, et al . 2025b. Vipe: Video pose engine for 3d geometric perception. arXiv preprint arXiv:2508.10934 
+
+(2025). Xun Huang, Zhengqi Li, Guande He, Mingyuan Zhou, and Eli Shechtman. 2025a. Self forcing: Bridging the train-test gap in autoregressive video diffusion. arXiv preprint arXiv:2506.08009 (2025). Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si, Yuming Jiang, Yuanhan Zhang, Tianxing Wu, Qingyang Jin, Nattapol Chanpaisit, et al . 2024. Vbench: Comprehensive benchmark suite for video generative models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition . 21807–21818. Hyeonho Jeong, Suhyeon Lee, and Jong Chul Ye. 2025. Reangle-a-video: 4d video gen-eration as video-to-video translation. In Proceedings of the IEEE/CVF International Conference on Computer Vision . 11164–11175. Yang Jin, Zhicheng Sun, Ningyuan Li, Kun Xu, Hao Jiang, Nan Zhuang, Quzhe Huang, Yang Song, Yadong Mu, and Zhouchen Lin. 2025. Pyramidal Flow Matching for Efficient Video Generative Modeling. In The Thirteenth International Conference on Learning Representations, ICLR 2025, Singapore, April 24-28, 2025 . OpenRe-view.net. https://openreview.net/forum?id=66NzcRQuOq Weijie Kong, Qi Tian, Zijian Zhang, Rox Min, Zuozhuo Dai, Jin Zhou, Jiangfeng Xiong, Xin Li, Bo Wu, Jianwei Zhang, et al . 2024. Hunyuanvideo: A systematic framework for large video generative models. arXiv preprint arXiv:2412.03603 (2024). Zhengfei Kuang, Shengqu Cai, Hao He, Yinghao Xu, Hongsheng Li, Leonidas J Guibas, and Gordon Wetzstein. 2024. Collaborative video diffusion: Consistent multi-video generation with camera control. Advances in Neural Information Processing Systems 
+
+37 (2024), 16240–16271. Black Forest Labs. 2024. FLUX. https://github.com/black-forest-labs/flux. Jiaqi Li, Junshu Tang, Zhiyong Xu, Longhuang Wu, Yuan Zhou, Shuai Shao, Tian-bao Yu, Zhiguo Cao, and Qinglin Lu. 2025c. Hunyuan-gamecraft: High-dynamic interactive game video generation with hybrid history condition. arXiv preprint arXiv:2506.17201 2, 3 (2025), 6. Runjia Li, Moayed Haji-Ali, Ashkan Mirzaei, Chaoyang Wang, Arpit Sahni, Ivan Sko-rokhodov, Aliaksandr Siarohin, Tomas Jakab, Junlin Han, Sergey Tulyakov, et al .2025a. EgoEdit: Dataset, Real-Time Streaming Model, and Benchmark for Egocen-tric Video Editing. arXiv preprint arXiv:2512.06065 (2025). Teng Li, Guangcong Zheng, Rui Jiang, Shuigen Zhan, Tao Wu, Yehao Lu, Yining Lin, Chuanyun Deng, Yepan Xiong, Min Chen, Lin Cheng, and Xi Li. 2025d. RealCam-I2V: Real-World Image-to-Video Generation with Interactive Complex Camera Con-trol. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) . 28785–28796. Zhiyuan Li, Chi-Man Pun, Chen Fang, Jue Wang, and Xiaodong Cun. 2025b. Person-aLive! Expressive Portrait Image Animation for Live Streaming. arXiv preprint arXiv:2512.11253 (2025). Pengyang Ling, Jiazi Bu, Pan Zhang, Xiaoyi Dong, Yuhang Zang, Tong Wu, Huaian Chen, Jiaqi Wang, and Yi Jin. 2024. Motionclone: Training-free motion cloning for controllable video generation. arXiv preprint arXiv:2406.05338 (2024). Kunhao Liu, Wenbo Hu, Jiale Xu, Ying Shan, and Shijian Lu. 2025. Rolling forcing: Autoregressive long video diffusion in real time. arXiv preprint arXiv:2509.25161 
+
+(2025). Ilya Loshchilov and Frank Hutter. 2017. Decoupled Weight Decay Regularization. In 
+
+International Conference on Learning Representations . https://api.semanticscholar. org/CorpusID:53592270 Dongyue Lu, Ao Liang, Tianxin Huang, Xiao Fu, Yuyang Zhao, Baorui Ma, Liang Pan, Wei Yin, Lingdong Kong, Wei Tsang Ooi, et al . 2025. SEE4D: Pose-Free 4D Generation via Auto-Regressive Video Inpainting. arXiv preprint arXiv:2510.26796 
+
+(2025). Yawen Luo, Xiaoyu Shi, Jianhong Bai, Menghan Xia, Tianfan Xue, Xintao Wang, Pengfei Wan, Di Zhang, and Kun Gai. 2025. Camclonemaster: Enabling reference-based camera control for video generation. In Proceedings of the SIGGRAPH Asia 2025 Conference Papers . 1–10. Yue Ma, Kunyu Feng, Zhongyuan Hu, Xinyu Wang, Yucheng Wang, Mingzhe Zheng, Bingyuan Wang, Qinghe Wang, Xuanhua He, Hongfa Wang, et al . 2025. Controllable video generation: A survey. arXiv preprint arXiv:2507.16869 (2025). Xiaofeng Mao, Shaoheng Lin, Zhen Li, Chuanhao Li, Wenshuo Peng, Tong He, Jiang-miao Pang, Mingmin Chi, Yu Qiao, and Kaipeng Zhang. 2025. Yume: An interactive world generation model. arXiv preprint arXiv:2507.17744 (2025). Byeongjun Park, Hyojun Go, Hyelin Nam, Byung-Hoon Kim, Hyungjin Chung, and Changick Kim. 2025a. Steerx: Creating any camera-free 3d and 4d scenes with geometric steering. In Proceedings of the IEEE/CVF International Conference on Computer Vision . 27326–27337. Byeongjun Park, Byung-Hoon Kim, Hyungjin Chung, and Jong Chul Ye. 2025b. ReDirector: Creating Any-Length Video Retakes with Rotary Camera Encoding. arXiv:2511.19827 [cs.CV] https://arxiv.org/abs/2511.19827 Jack Parker-Holder, Philip Ball, Jake Bruce, Vibhavari Dasagi, Kristian Holsheimer, Christos Kaplanis, Alexandre Moufarek, Guy Scully, Jeremy Shar, Jimmy Shi, et al .2024. Genie 2: A large-scale foundation world model. URL: https://deepmind. google/discover/blog/genie-2-a-large-scale-foundation-world-model 2 (2024). Joonghyuk Shin, Zhengqi Li, Richard Zhang, Jun-Yan Zhu, Jaesik Park, Eli Shechtman, and Xun Huang. 2025. Motionstream: Real-time video generation with interactive motion controls. arXiv preprint arXiv:2511.01266 (2025). Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. 2024. RoFormer: Enhanced transformer with Rotary Position Embedding. Neurocomputing 
+
+568 (2024), 127063. doi:10.1016/j.neucom.2023.127063 Yaofeng Su, Yuming Li, Zeyue Xue, Jie Huang, Siming Fu, Haoran Li, Ying Li, Zezhong Qian, Haoyang Huang, and Nan Duan. 2026. OmniForcing: Unleashing Real-time Joint Audio-Visual Generation. arXiv preprint arXiv:2603.11647 (2026). Hansi Teng, Hongyu Jia, Lei Sun, Lingzhi Li, Maolin Li, Mingqiu Tang, Shuai Han, Tianning Zhang, WQ Zhang, Weifeng Luo, et al . 2025. Magi-1: Autoregressive video generation at scale. arXiv preprint arXiv:2505.13211 (2025). Basile Van Hoorick, Rundi Wu, Ege Ozguroglu, Kyle Sargent, Ruoshi Liu, Pavel Tok-makov, Achal Dave, Changxi Zheng, and Carl Vondrick. 2024. Generative Camera Dolly: Extreme Monocular Dynamic Novel View Synthesis. European Conference on Computer Vision (ECCV) (2024). Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianxiao Yang, Jianyuan Zeng, et al . 2025a. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 3, 4 (2025), 6. Qinghe Wang, Yawen Luo, Xiaoyu Shi, Xu Jia, Huchuan Lu, Tianfan Xue, Xintao Wang, Pengfei Wan, Di Zhang, and Kun Gai. 2025b. Cinemaster: A 3d-aware and controllable framework for cinematic text-to-video generation. In Proceedings of the Special Interest Group on Computer Graphics and Interactive Techniques Conference Conference Papers . 1–10. Zhouxia Wang, Ziyang Yuan, Xintao Wang, Yaowei Li, Tianshui Chen, Menghan Xia, Ping Luo, and Ying Shan. 2024. Motionctrl: A unified and flexible motion controller for video generation. In ACM SIGGRAPH 2024 Conference Papers . 1–11. Zeqi Xiao, Wenqi Ouyang, Yifan Zhou, Shuai Yang, Lei Yang, Jianlou Si, and Xingang Pan. 2025. Trajectory attention for fine-grained video motion control. In The Thir-teenth International Conference on Learning Representations, ICLR 2025, Singapore, April 24-28, 2025 . OpenReview.net. https://openreview.net/forum?id=2z1HT5lw5M Dejia Xu, Weili Nie, Chao Liu, Sifei Liu, Jan Kautz, Zhangyang Wang, and Arash Vahdat. 2024. Camco: Camera-controllable 3d-consistent image-to-video generation. 
+
+arXiv preprint arXiv:2406.02509 (2024). Shuai Yang, Wei Huang, Ruihang Chu, Yicheng Xiao, Yuyang Zhao, Xianbang Wang, Muyang Li, Enze Xie, Yingcong Chen, Yao Lu, et al . 2025. Longlive: Real-time interactive long video generation. arXiv preprint arXiv:2509.22622 (2025). Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng Xu, Yuanming Yang, Wenyi Hong, Xiaohan Zhang, Guanyu Feng, et al . 2024. Cogvideox: Text-to-video diffusion models with an expert transformer. arXiv preprint arXiv:2408.06072 (2024). Hidir Yesiltepe, Tuna Han Salih Meral, Adil Kaan Akan, Kaan Oktay, and Pinar Yanardag. 2025. Infinity-rope: Action-controllable infinite video generation emerges from 10 • Youcan Xu, Jiaxin Shi, Zhen Wang, Wensong Song, Feifei Shao, Chen Liang, Jun Xiao, and Long Chen 
+
+autoregressive self-rollout. arXiv preprint arXiv:2511.20649 (2025). Jung Yi, Wooseok Jang, Paul Hyunbin Cho, Jisu Nam, Heeji Yoon, and Seungryong Kim. 2025. Deep forcing: Training-free long video generation with deep sink and participative compression. arXiv preprint arXiv:2512.05081 (2025). Tianwei Yin, Michaël Gharbi, Taesung Park, Richard Zhang, Eli Shechtman, Fredo Durand, and William T Freeman. 2024a. Improved distribution matching distillation for fast image synthesis. Advances in neural information processing systems 37 (2024), 47455–47487. Tianwei Yin, Michaël Gharbi, Richard Zhang, Eli Shechtman, Fredo Durand, William T Freeman, and Taesung Park. 2024b. One-step diffusion with distribution matching distillation. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition . 6613–6623. Tianwei Yin, Qiang Zhang, Richard Zhang, William T Freeman, Fredo Durand, Eli Shechtman, and Xun Huang. 2025. From slow bidirectional to fast autoregressive video diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition . 22963–22974. Mark Yu, Wenbo Hu, Jinbo Xing, and Ying Shan. 2025a. TrajectoryCrafter: Redirecting Camera Trajectory for Monocular Videos via Diffusion Models. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) . 100–111. Wangbo Yu, Jinbo Xing, Li Yuan, Wenbo Hu, Xiaoyu Li, Zhipeng Huang, Xiangjun Gao, Tien-Tsin Wong, Ying Shan, and Yonghong Tian. 2025b. ViewCrafter: Taming Video Diffusion Models for High-fidelity Novel View Synthesis. IEEE Transactions on Pattern Analysis and Machine Intelligence (2025), 1–18. doi:10.1109/TPAMI. 2025.3613256 David Junhao Zhang, Roni Paiss, Shiran Zada, Nikhil Karnad, David E. Jacobs, Yael Pritch, Inbar Mosseri, Mike Zheng Shou, Neal Wadhwa, and Nataniel Ruiz. 2025. ReCapture: Generative Video Camera Controls for User-Provided Videos using Masked Video Fine-Tuning. In 2025 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) . 2050–2062. doi:10.1109/CVPR52734.2025.00197 Kesen Zhao, Jiaxin Shi, Beier Zhu, Junbao Zhou, Xiaolong Shen, Yuan Zhou, Qianru Sun, and Hanwang Zhang. 2025. Real-Time Motion-Controllable Autoregressive Video Diffusion. arXiv preprint arXiv:2510.08131 (2025). Rui Zhao, Yuchao Gu, Jay Zhangjie Wu, David Junhao Zhang, Jia-Wei Liu, Weijia Wu, Jussi Keppo, and Mike Zheng Shou. 2024. Motiondirector: Motion customization of text-to-video diffusion models. In European Conference on Computer Vision .Springer, 273–290.

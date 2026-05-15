@@ -1,0 +1,1350 @@
+Title: Head Forcing: Long Autoregressive Video Generation via Head Heterogeneity
+
+URL Source: https://arxiv.org/pdf/2605.14487v1
+
+Published Time: Fri, 15 May 2026 00:53:14 GMT
+
+Number of Pages: 41
+
+Markdown Content:
+# Head Forcing: Long Autoregressive Video Generation via Head Heterogeneity 
+
+Jiahao Tian 1, Yiwei Wang 2, Gang Yu 3, and Chi Zhang 1† 
+
+> 1
+
+AGI Lab, Westlake University  
+
+> 2
+
+University of California at Merced  
+
+> 3
+
+StepFun 
+
+Abstract. Autoregressive video diffusion models support real-time syn-thesis but suffer from error accumulation and context loss over long horizons. We discover that attention heads in AR video diffusion trans-formers serve functionally distinct roles as local heads for detail refine-ment, anchor heads for structural stabilization, and memory heads for long-range context aggregation, yet existing methods treat them uni-formly, leading to suboptimal KV cache allocation. We propose Head Forcing , a training-free framework that assigns each head type a tai-lored KV cache strategy: local and anchor heads retain only essential tokens, while memory heads employ a hierarchical memory system with dynamic episodic updates for long-range consistency. A head-wise RoPE re-encoding scheme further ensures positional encodings remain within the pretrained range. Without additional training, Head Forcing ex-tends generation from 5 seconds to minute-level duration, supports multi-prompt interactive synthesis, and consistently outperforms existing base-lines. Project Page: https://jiahaotian-sjtu.github.io/headforcing. github.io/ .
+
+Keywords: Autoregressive video generation · Long video generation ·
+
+KV cache 
+
+1 Introduction 
+
+Autoregressive (AR) video diffusion models [5,6,25,47,64] have recently emerged as a promising paradigm for long video generation. Unlike bidirectional video diffusion models [1, 2, 7, 14, 18–21, 23, 31, 38, 40, 43, 50, 51, 59, 68, 71] that process all frames simultaneously and suffer from quadratic attention cost over temporal length, AR models generate video in a sequential fashion with KV caching, offer-ing inherent scalability to extended durations and enabling real-time streaming synthesis. These advantages have positioned AR video diffusion as the dominant framework for pushing video generation beyond the short-clip regime. Despite their promise, AR video diffusion models face two challenges that grow with generation length. First, error accumulation produces color drift and 
+
+† denotes corresponding author.  
+
+> arXiv:2605.14487v1 [cs.CV] 14 May 2026 2J. Tian et al.
+
+detail loss. Second, bounded KV caches discard earlier context, leading to iden-tity drift and scene forgetting. Training-based extensions such as Rolling Forc-ing [35], LongLive [57], and Self-Forcing++ [9] achieve minute-level consistency by anchoring generation to initial frames with periodic DMD retraining, but can suffer from static artifacts due to first-frame bias. Other approaches [28, 46, 65] leverage memory mechanisms for long-range consistency but require complex architectural modifications. All such methods incur considerable training cost. More recently, training-free strategies [33,58,60,61] have emerged, typically lever-aging attention sinks with RoPE adjustments for stable extended synthesis. How-ever, like training-based methods, they rely solely on attention sinks from the first few frames while discarding intermediate context. This prevents tracking subjects and scenes emerging mid-sequence, yielding homogeneous or static out-puts under single-prompt video generation and inconsistent transitions under multi-prompt video generation settings. Moreover, uniform treatment of all at-tention heads overlooks their distinct functional roles whose impact has not been systematically examined. To this end, we first profile the multi-head self-attention layers of AR video DiTs, revealing three functionally distinct head types in long generation. (1) 
+
+Memory heads attend broadly across the full context to capture narrative el-ements and sustain long-term memory. (2) Local heads focus on the current block and its immediate neighborhood for detail refinement and motion continu-ity. (3) Anchor heads exhibit significantly elevated first-frame attention, using the initial frame as an anchor to prevent visual collapse. Uniform KV cache allocation [60, 61] thus creates a fundamental mismatch: heads rarely utilizing historical context receive excessive budget, wasting computation and introduc-ing noise, while memory heads lack sufficiently rich historical evidence. This mismatch intensifies during long rolling generation, increasing drift accumula-tion and consistency degradation. Based on this insight, we propose a training-free, head-wise framework built on AR video DiTs for long, controllable video generation that allocates KV cache according to each head’s functional role. Local heads access only the current block and nearest neighboring frames for detail synthesis and motion continuity. Anchor heads access to the first few latent frames alongside the same local tokens to stabilize generation. Both designs conserve cache budget for memory heads while suppressing error propagation. For memory heads ,we replace conventional sliding windows with attention sinks by a hierarchical memory system with dynamic updates: (1) fast memory for the immediate neigh-bouring scenery, and (2) episodic memory storing representative, clean frames from distinct scenes. Episodic memory updates dynamically based on scene nov-elty and undergoes prompt-guided compression upon reaching capacity. Finally, we propose head-wise RoPE re-encoding tailored to this cache allocation, ensur-ing frame-level relative positional encoding within each head remain consistently within the pretrained range to reduce positional-inconsistency errors. Built upon pretrained AR video DiTs, e.g., Self Forcing [25], our method ex-tends video generation from 5 seconds to minute-level duration without notice-Head Forcing 3
+
+able quality degradation and further enables long horizon, contextually consis-tent, prompt-guided interactive video synthesis. In summary, our contributions are: 
+
+– We profile attention heads in AR video DiTs and identify three functional head types: memory heads, local heads and anchor heads, offering a new perspective on temporal modeling in AR video generation. 
+
+– We propose a training-free, head-wise framework that assigns heterogeneous KV cache strategies by head role: local heads access only the current block and nearest neighbors for detail synthesis and motion continuity, anchor heads preserve the first few latent frames to stabilize generation, and memory heads adopt a hierarchical fast and episodic memory with dynamic updates to preserve long-range consistency with reduced error accumulation. 
+
+– We further introduce a head-wise RoPE re-encoding strategy that keeps frame-level relative positions within the pretrained range, mitigating posi-tional encoding drift. 
+
+2 Related Work 
+
+Video Diffusion Models and Autoregressive Video Diffusion Mod-els. Following image diffusion models [22, 34, 36, 42, 44], video diffusion mod-els [1, 2, 7, 14, 18–21, 23, 31, 38, 40, 43, 50, 51, 59, 68, 71] typically process all frames simultaneously, employing bidirectional attention throughout the denoising pro-cess. With large-scale training, these models have achieved high-resolution video generation that maintains coherent visual appearance and motion continuity over dozens of frames. However, they remain fundamentally limited to short durations because they are trained exclusively on short clips. Extending these architectures to long videos is challenging due to prohibitively long token sequences. Recently, a rapidly growing number of AR video diffusion models [3, 5, 9, 13, 15–17, 24, 28, 32, 35, 37, 39, 41, 45, 52–55, 60, 61, 66, 67, 70, 72] combine diffusion modeling with autoregressive prediction to support long-horizon or streaming video gen-eration. MAGI-1 [47] and Diffusion Forcing [5] generate videos chunk-by-chunk with progressive denoising, enabling streaming generation. CausVid [64] converts a pretrained bidirectional diffusion transformer into an AR generator with KV caching. Building on these ideas, Self Forcing [25] addresses the train-inference mismatch by conditioning the model on its own generated frames. 
+
+Long Video Generation. Bidirectional video diffusion models [1, 7, 14, 19, 21, 23, 31, 38, 40, 48, 50, 51, 59] achieve impressive short video quality but struggle with long videos due to the quadratic attention cost, constraining scalability to extended temporal horizons. AR video diffusion models such as CausVid [64] and Self Forcing [25] offer a more scalable paradigm by generating frames se-quentially, yet suffer from long-horizon drift caused by error accumulation. To mitigate this, LongLive [57] and Rolling Forcing [35] introduce attention sinks with sliding-window KV caches; Self-Forcing++ [9] extends the DMD [62,63] for-mulation through long streaming tuning; Other approaches [8,28,56,65,66,69,73] leverage memory mechanisms to enhance long-range consistency. Despite their 4 J. Tian et al. 0                                    
+
+> 12 13 14
+> Local Heads
+> Memory Heads
+> Anchor Heads
+> Head 1
+> Head 2
+> Head i
+> Light -weight
+> Offline  Profiling
+> …
+> …
+> …
+> 17 18
+> 15 16 17 18
+> 859S
+> 16 17 18 15
+> Update Episode Memory
+> 16
+> If Novelty Score <𝜏 !"#$% ,
+> 15
+> Rolling Update
+> Rolling Update Merge
+> Rolling Update
+> 0
+> 15 16 17
+> Head 1
+> Head 2
+> Head i 20 21
+> 18 19 20 21
+> 8912 S
+> 19 20 21 18
+> 19 18
+> After KV Cache Update
+> …
+> …
+> …
+> …
+> … …
+> …
+> Current Tokens
+> Anchor Tokens Fast Memory Tokens
+> / Neighbouring Tokens
+> Episode Memory
+> Tokens SSummary Tokens in
+> Episode Memory
+> Head -wise Temporal RoPE Re -encoding
+> 014356278910
+> Causal DiT Layer
+> Causal DiT Layer
+> Autoregressive Generation
+> Evict Tokens
+> 818 19 Global Frame Number
+
+Fig. 1: Overview of Head Forcing. Attention heads are profiled offline into local, anchor, and memory heads, each receiving a tailored KV cache strategy. Memory heads are equipped with a hierarchical memory system with dynamic updates. Head-wise RoPE re-encoding ensures positional consistency across all heads. 
+
+effectiveness, these strategies typically require complex architectural modifica-tions and extensive re-training, limiting practical applicability. More recently, training-free methods have emerged to extend AR video generation length. Deep Forcing [61] and Rolling Sink [33] employ attention sink based cache stabiliza-tion for long rollout, while Infinity-RoPE [60] and LoL [10] modify RoPE at inference time for temporal encoding stability. StableWorld [58] applies dynamic frame eviction to reduce accumulated errors in interactive generation. However, these approaches apply uniform KV cache strategies across all attention heads, disregarding their functionally distinct roles. This yields suboptimal allocation that introduces noise while discarding important context, and the absence of long-term memory mechanisms causes consistency degradation over extended horizons. Our head-wise framework with hierarchical memory addresses both limitations. 
+
+3 Method 
+
+We first profile the functional role of each attention head during long-rollout AR video diffusion. Based on this analysis, as shown on Fig. 1, we propose Head Forcing , a training-free, head-wise framework with RoPE re-encoding built on pretrained AR video DiTs (e.g., Self Forcing [25]), enabling robust minute-level video generation and long-term consistent prompt-guided interactive generation. Head Forcing 5
+
+3.1 Preliminary Autoregressive Video Diffusion Model. In AR video diffusion models, the joint distribution over an N -frame video x1: N is factorized as 
+
+p(x1: N ) = 
+
+> N
+
+Y
+
+> i=1
+
+p
+
+
+
+xi | x<i 
+
+. (1) 
+
+A key challenge in AR video diffusion is the training-inference discrepancy, which Self Forcing [25] mitigates through a self-rollout mechanism that aligns train-ing with inference via diffusion-based conditional formulation. In block-wise AR video generation, the sequence of N frames is decomposed into N/f successive blocks of f latent frames each. Each block is denoised from Gaussian noise using a few-step diffusion model conditioned on prior frames through sliding-window attention with fixed cache size W over timesteps {0, 1, . . . , T }. A KV cache of fixed capacity stores recent-frame representations under a FIFO eviction policy. Under this scheme, at timestep t, for the i-th block (frames f i −f +1 , . . . , f i ), the self-attention layers operate as: 
+
+SelfAttention = softmax 
+
+
+
+Qi [Kcache , K i]⊤ /√d
+
+
+
+[Vcache , V i] , (2) 
+
+where Qi, Ki, Vi are the query, key, and value of the current block, Kcache and 
+
+Vcache are the cached keys and values, [·] denotes sequence-wise concatenation, and d is the key dimensionality. 
+
+3.2 Profile the Different Role of Attention Heads Local Heads: Layer_0_Head_6 Memory Heads: Layer_15_Head_1 Anchor Heads: Layer_1_Head_6 
+
+Fig. 2: Representative attention patterns for different at-tention heads. 
+
+We examine the AR video DiT gen-eration process to identify properties exploitable for long video generation. Specifically, we pro-file how the i-th block interacts with preceding frames across attention heads, characterizing their context de-pendency patterns and roles in long generation. 
+
+Long Video Profiling Process. We profile Self Forcing [25] in the main paper and report results on other AR video models in the supplementary . To charac-terize how each attention heads attend to the historical KV cache in long video generation, we extend the AR rollout beyond the training horizon using a sliding window over the KV cache together with a sink frame. This allows us to pro-file each head’s role for long video generation. Following Self Forcing [25], each block contains f =3 frames. For the i-th block, let Qi, Ki, and Vi denote the query, key, and value tokens of the current block. The per-head attention map is 
+
+A = softmax 
+
+
+
+Qi[Kpre , K i]⊤/√d
+
+
+
+, where Kpre denotes cached key tokens from 6 J. Tian et al. 
+
+all previously generated frames and [ , ] denotes token-dimension concatenation. Thus A ∈ R3s×3is , where s is the token count per frame and 3i the total frame count including previous and current blocks. Representative per-head attention maps within one sliding window are shown in Fig. 2. Beyond visual inspection, we further quantify how the current block allocates attention to different temporal regions of the KV cache. Specifically, we partition the full attention context into three temporal buckets: sink bucket (first frame, 
+
+[0 , s )), middle bucket (intermediate historical frames, [s, (3 i − 3) s)), and current bucket (current block, [(3 i − 3) s, 3is )). We compute the attention proportion for each bucket by aggregating attention weights over all its token indices: 
+
+pb = 13s
+
+> 3s
+
+X
+
+> m=1
+
+X
+
+> n∈Ib
+
+Amn , (3) 
+
+where Ib denotes the token index set of bucket b, and b ∈ { sink , middle , current }.All profiling statistics in Fig. 3 are averaged over multiple prompts, AR steps, and denoising steps. We then group attention heads by their attention patterns into local heads , anchor heads , and memory heads , and provide empirical evidence for their functional roles. (a) Attention Proposion on Different Temporal Bucket (b) Layer -wise Head Role 
+
+Fig. 3: Attention head profiling . (a) Attention proportion for each head, showing clear clustering into local, anchor, and memory heads. (b) Layer-wise head role distribution across all transformer layers. 
+
+Local Heads. As shown in Fig. 2, these atten-tion heads place over-whelmingly high at-tention on the cur-rent block and its immediate neighbor-ing frame, even under long historical con-text, suggesting that they mainly support local detail genera-tion and short-range temporal continuity. To identify them, we measure for each head the proportion of at-tention assigned to the current bucket and designate the top τlocal (we set 
+
+τlocal = 20% here) as local heads. For these heads, the attention mass on the current bucket is typically above 0.85. To verify their reliance on local informa-tion, we remove all KV caches associated with the identified local heads while keeping all other caches unchanged. As shown in Tab. 1, the Vbench [26] score indicates that this compression strategy incurs only a minor performance drop compared to the original Self Forcing, whereas removing the KV cache from an equivalent number of non-local heads leads to substantial degradation. 
+
+Anchor Heads. These heads exhibit significantly elevated first-frame attention as shown in Fig. 2 and Fig. 3 (a). Based on Fig. 3 (a), we identify anchor Head Forcing 7
+
+heads using the following criterion: attention heads whose attention weight to the first latent frame is in the top αanchor percentile are designated as anchor heads (we set αanchor = 25% here). We verify their role by removing the sink frame from the KV cache of these heads only. As shown in Fig. 4, evicting this frame from anchor heads causes rapid quality degradation, whereas the same operation on other heads produces no visible degradation. This confirms that anchor heads stabilize generation, which we attribute to the distinctive statistics of the first latent frame: it encodes only the initial image without temporal compression [25], serving as a stable long-range reference. We also observe that this anchoring behavior is tied to the sink frame itself rather than the first cache position: replacing it with any other frame at the same position does not elicit high attention. Remove First Frame 
+
+> in non -Anchor Heads
+> Remove First Frame
+> in Anchor Heads
+
+Fig. 4: Effect of removing the first latent frame from anchor heads vs. non-anchor heads. Setup Quality Consistency Total Self Forcing 84.82 96.78 83.92 Pruning in non-Local Heads 81.58 95.82 80.74 Pruning in Local Heads 84.78 96.80 83.88 
+
+Table 1: Ablation on local head KV cache pruning. 
+
+Memory Heads. The remaining attention heads as shown in Fig. 2 all dis-tribute their attention broadly across the entire range of historical frames ,effectively leveraging the full past context. These heads serve to aggregate long-range historical information and thus merit a larger KV cache budget to facilitate better long-term memory. 
+
+Stability of Profiling Results. We present whole profiling results in Fig. 3 (b) for all attention heads. We further observe that the profiling results remain stable across different AR steps, denoising steps, and prompts with detailed validation process, computational overhead and results provided in the supple-mentary . This stability suggests that the identified head categorization reflects an intrinsic structural property of the model. 
+
+3.3 Head-wise KV Cache Allocation. 
+
+Based on above insights, we propose a head-wise KV cache allocation framework on pretrained AR video DiTs, enabling robust minute-level video generation with long-horizon consistency and prompt-guided interactive long video generation. 
+
+Local Heads & Anchor Heads with KV Cache Pruning. Since local heads attend exclusively to local regions for detail refinement and motion con-tinuity, we retain only the nearest neighboring frame and the current block, i.e., 
+
+K(3 i−4) s:3 is for the i-th block. Anchor heads exhibit unique sensitivity to the first latent frame, which possesses distinct statistical properties and serves as an anchor frame. As observed in Fig. 3, these heads also allocate partial attention to tokens in the middle bucket. To improve robustness against potential misclassifi-cation at the category boundary, we retain the first three frames as anchor frames 8 J. Tian et al. 
+
+alongside the same local tokens used by local heads, i.e., [K0:3 s, K (3 i−4) s:3 is ].Both strategies free substantial cache budget for memory heads while removing redundant historical tokens that may introduce noise path. 
+
+Memory Heads with Hierarchical Memory System. Unlike local and an-chor heads, memory heads attend broadly across the entire history to aggregate long-range context. Simply applying a sliding window [57] discards intermediate context, causing narrative inconsistency and subject drift. We therefore intro-duce a hierarchical memory with two complementary tiers: fast memory Mfast 
+
+(with size of Bfast ) for the immediate temporal neighborhood, and episodic memory Mepi (with size of Bepi ) storing representative KV cache from earlier segments. Mfast retains KV cache from the most recent Bfast frames preceding the current block, i.e., KMfast = K(3 i−Bfast −3) s:(3 i−3) s, providing fine-grained short-term memory for motion continuity and visual coherence. It is updated via FIFO policy at each AR step. 
+
+Dynamic Update for Episodic Memory. The episodic memory Mepi stores a compact set of representative KV cache entries from earlier generated frames, enabling memory heads to recall distant scene elements and maintain long-term narrative consistency. Its design is guided by two principles: the stored KV cache (1) should be as clean as possible, with minimal error accumulation, and (2) should capture novel scenes and identities not yet represented in memory. Prior work has shown that KV cache associated with new scenes exhibits less error accumulation compared to frames that are repeatedly conditioned on a long history within the same scene [58]. Inspired by it, we adopt scene novelty 
+
+as the episodic memory admission criterion, as new scenes carry both cleaner KV cache and previously unseen content. When a block exits the fast memory window, we select its first frame as the representative candidate, since consecu-tive frames within a short chunk exhibit high temporal redundancy [28]. Scene novelty is measured via key embedding similarity, motivated by findings that key embeddings effectively capture temporal redundancy across frames [30] with more validation in the supplementary .Specifically, assume the episodic memory currently contains Nepi stored frames at each attention layer l ∈ { 1, . . . , L }, where L is the total number of layers. To ensure semantic continuity, we enforce a consistent admission policy across all layers, i.e., the same frame is either admitted to or excluded from episodic mem-ory at every layer simultaneously. We therefore aggregate novelty score across layers when evaluating scene novelty. We first apply mean pooling along the token dimension to compress the key cache of the candidate frame and each episodic entry into compact representatives K(l,h ) 
+
+> c
+
+∈ R1×d and K(l,h ) 
+
+> epi ,j
+
+∈ R1×d,where j ∈ { 1, . . . , N epi } indexes the episodic entries and h ∈ Hmem indexes the memory heads within each layer. Such compressed key representations have been shown to be sufficiently expressive for capturing frame-level semantics in gener-ation tasks [4, 28]. The novelty score is the maximum average cosine similarity to all episodic entries across layers and memory heads:     
+
+> δ(Kc) = max
+> j∈{ 1,...,N epi }
+> 1
+> |Hmem | × L
+> LX
+> l=1
+> X
+> h∈Hmem
+> cossim
+> 
+> K(l,h )
+> c, K (l,h )
+> epi ,j
+> 
+> ,(4)
+
+Head Forcing 9
+
+where |Hmem | is the total number of memory heads. A low δ(Kc) indicates the candidate is visually distinct from stored entries. The candidate is admitted into the episodic memory only if δ(Kc) < τ novel . Notably, the novelty score computation can be parallelized across layers and heads, introducing negligible computational overhead. 
+
+Prompt-guided Compression. When the episodic memory reaches its full capacity Bepi , rather than directly discarding entries, we compress redundant entries into a dedicated summary frame S via token-wise importance selection. The summary frame is placed at the beginning of the episodic memory. Specifically, for the l-th layer, on the initial overflow, no summary frame exists yet. We identify the most redundant pair ( ˆK(l)
+
+> epi ,i
+
+, ˆK(l) 
+
+> epi ,j
+
+) ∈ R|Hmem |× s×d, i, j ∈{1, . . . , B epi }, as the pair with highest pairwise key-embedding cosine similarity. Note that all pairwise cosine similarities have already been computed during the scene novelty evaluation in Eq. 4, incurring no additional cost. The selected pair is then compressed to initialize S. On subsequent overflows, we select the non-summary frame ˆK(l) 
+
+> epi ,j
+
+, j ∈ { 2, · · · , B epi }, with highest average similarity to its neighboring entries and merge it into S.For the compression procedure, we operate at the spatial token granularity. Concatenating KV caches of K(l) 
+
+> S
+
+and ˆK(l) 
+
+> epi, j
+
+(or ˆK(l) 
+
+> epi ,i
+
+and ˆK(l) 
+
+> epi ,j
+
+for initial case) along token dimension yields 2s key and value tokens, i.e., K(l) 
+
+> cat
+
+= [ K(l) 
+
+> S
+
+, ˆK(l) 
+
+> epi ,j
+
+]
+
+and V (l) 
+
+> cat
+
+= [ V (l) 
+
+> S
+
+, ˆV (l) 
+
+> epi ,j
+
+] (K(l) 
+
+> cat
+
+= [ ˆK(l)
+
+> epi ,i
+
+, ˆK(l) 
+
+> epi ,j
+
+], V (l) 
+
+> cat
+
+= [ ˆV (l)
+
+> epi ,i
+
+, ˆV (l) 
+
+> epi ,j
+
+] for initial case), where K(l)
+
+> cat
+
+, V (l) 
+
+> cat
+
+∈ R|Hmem |× 2s×d. Candidate tokens are scored by average cosine similarity to the current textual key embedding across memory heads: 
+
+r(l) = 1
+
+> |Hmem |
+
+P 
+
+> h∈Hmem
+
+cossim( K(l,h ) 
+
+> cat
+
+, K (l,h )
+
+> prompt
+
+) where K(l,h ) 
+
+> prompt
+
+∈ R1×d is the current textual key per head, and r(l) ∈ R2s is the resulting textual alignment score for each token. The top-s tokens, ranked by r(l), are selected to form the updated summary frame S: (K(l) 
+
+> S
+
+, V (l) 
+
+> S
+
+) ← Top- s
+
+
+
+(K(l)
+
+> cat
+
+, V (l) 
+
+> cat
+
+), r (l)
+
+
+
+. In the multi-prompt setting, scoring with the active prompt embedding in r(l) naturally biases token retention toward content that is semantically relevant to the current prompt as it evolves, which is crucial for maintaining narrative coherence across prompt transitions. After the above process, the final key sequence assembled for each memory head is [KMepi , K Mfast , K (3 i−3) s:3 is ].
+
+3.4 Head-wise RoPE Re-encoding 
+
+In AR video generation, global frame indices as RoPE coordinates grow lin-early with generated blocks, while cached anchor and episodic memory frames retain outdated indices from their original steps. The resulting relative positions between queries and cached keys may exceed the pretrained range, producing positional O.O.D. analogous to LLMs [29], which exacerbates error accumulation and flickering artifacts. To address this, we propose head-wise RoPE re-encoding. Rather than storing position-encoded KV cache and subsequently correcting temporal embeddings [61], we cache keys and values with only spatial-dimension 10 J. Tian et al. 
+
+RoPE applied, omitting frame-level temporal encoding. This preserves spatial positional information of cached tokens—particularly important for importance-compressed tokens whose spatial semantics remain intact regardless of temporal reassignment. After each cache update, we apply parallelizable head-wise re-encoding of frame-level indices to the assembled key sequences across all heads, simplifying the overall procedure. Specifically, at the i-th block with f =3 frames, each head h operates over a distinct assembled key sequence of head-specific length. Let F (h) 
+
+> i
+
+denote the total cached frames (including the current block) for head h, and K(h) 
+
+> i
+
+the concatenated key sequence for attention. We assign contiguous frame indices {0, 1, . . . , F (h) 
+
+> i
+
+−1} to K(h) 
+
+> i
+
+, and indices starting from 
+
+F (h) 
+
+> i
+
+− f to Q(h) 
+
+> i
+
+, leaving spatial (height, width) RoPE components unchanged:             
+
+> Q(h)
+> i:{F(h)
+> i−f, . . . , F (h)
+> i−1},K(h)
+> i:{0, . . . , F (h)
+> i−1}(5)
+
+This aligns each query with the last f frames of its key sequence. Since F (h)
+
+> i
+
+is bounded by the cache capacity of each head, all temporal relative positions remain within the pretrained range regardless of generation length. 
+
+3.5 Implementation With Efficiency Optimization 
+
+Head-wise KV cache allocation improves long video generation quality but in-troduces computational challenges due to variable-sized caches across heads. We address this from two complementary directions. 
+
+Variable-Length FlashAttention. The variable-length FlashAttention inter-face [11, 12], originally designed for continuous batching, naturally accommo-dates our head-wise scheme. We treat each head as an independent sequence and invoke a single flash_attn_varlen_func call for all heads simultaneously, avoiding per-head kernel launches. 
+
+Fused Triton Kernels. To reduce head-wise cache management overhead, we implement fused Triton [49] kernels. Two kernels handle KV cache updates: one for rolling the cache across all heads, another for updating episodic memory entries of Hmem . After update, each head assembles its sequence by concate-nating its sink region, episodic memory (for Hmem only), and local region, then applies RoPE re-encoding (Eq. 5) before packing into a flat buffer for variable-length attention. We fuse these three operations into a single Triton kernel. Together, these optimizations ensure negligible throughput overhead compared to the uniform-cache baseline. 
+
+4 Experiments 
+
+4.1 Experimental Settings Implementation details. We implement our method on Self Forcing [25], a causal four-step generator distilled from Wan2.1-T2V-1.3B [51] that natively produces five-second videos at 16 FPS with a resolution of 832 × 480 . Each Head Forcing 11 
+
+autoregressive step generates a block of f = 3 latent frames. For memory system, we set Bepi = 5 , Bfast = 3 and τnovel = 0 .95 and we update episode memory every three generation intervals. 
+
+Baselines. We compare Head Forcing against representative baselines span-ning both training-based and training-free paradigms. Training-based methods include Self Forcing [25], CausVid [64], Rolling Forcing [35], and LongLive [57]. Training-free methods include Deep Forcing [61] and Infinity-RoPE [60]. For the multi-prompt interactive generation setting, we compare with Self Forcing [25], LongLive [57] and Infinity-RoPE [60]. 
+
+Evaluation. We evaluate on VBench [26, 27] following prior protocols [25, 57, 60, 61]. For one-prompt long video generation, we sample 100 prompts from MovieGenBench [40] and generate videos at 30 and 60 seconds. We report com-mon VBench-Long metrics and throughput (FPS). For multi-prompt interactive generation, we design 50 multi-prompt sequences following Longlive [57], each with six successive prompts describing distinct actions or scene transitions, and evaluate on 60-second videos. Following prior work [28, 57], we report Quality Score, Consistency Score, and Aesthetic Score from VBench-Long [27], along with segment-wise CLIP scores at each prompt interval for text alignment. 
+
+4.2 Quantitative Results Long Video Generation. Tab. 2 presents the quantitative comparison for 30 second and 60 second video generation using one prompt. Head Forcing consis-tently outperforms both training-free across nearly all metrics. Unlike methods relying on uniform attention sinks that often induce motion stagnation, our head-wise KV cache framework effectively maintains long-horizon consistency and perceptual quality while preserves motion richness. At the same time, our throughput is comparable to baselines, confirming that the head-wise allocation combined with efficiency optimization introduces negligible overhead. 
+
+Prompt-Guided Interactive Video Generation. Tab. 3 reports results un-der the multi-prompt 60-second setting, where prompts switch at 10-second in-tervals. Head Forcing achieves the best Aesthetic and Consistency Scores while remaining competitive in Quality Score. Notably, our method yields better seg-ment CLIP scores after multiple prompt switches, indicating improved prompt alignment and contextual preservation. Additionally, we conducted a user study to compare with the aforementioned models in supplementary .
+
+4.3 Qualitative Results Long Video Generation. Fig. 5 presents qualitative comparisons for 60-second generation. Self Forcing [25] and CausVid [64] exhibit progressive color drift and oversaturation beyond their native 5 second training horizon. Deep Forcing [61] and Infinity-RoPE [60] slightly mitigate quality degradation but still suffer from reduced motion dynamics. Rolling Forcing [35] and LongLive [57] preserve visual stability through trained attention sinks but tend to produce repetitive content 12 J. Tian et al. 
+
+Table 2: Quantitative comparison on long video generation. We evaluate Head Forcing against open-source AR video diffusion and training-free AR long video gen-eration baselines on 30 s and 60 s videos across multiple quality metrics on VBench.                                                                                                                   
+
+> Model Throughput (FPS) ↑
+> Dynamic Degree ↑
+> Motion Smoothness ↑
+> Temporal Flickering ↑
+> Imaging Quality ↑
+> Aesthetic Quality ↑
+> Subject Consistency ↑
+> Background Consistency ↑
+> Training-based 30 seconds
+> Rolling Forcing [35] 15.99 33.92 98.80 98.62 70.21 61.26 98.12 97.01 LongLive [57] 19.03 40.72 98.83 98.80 69.22 61.44 97.97 97.15
+> CausVid [64] 15.83 32.21 98.21 98.47 65.78 59.87 97.64 96.84 Self Forcing [25] 15.83 35.22 98.42 98.58 68.24 60.16 97.62 96.77
+> Training-free
+> Deep Forcing [61] 15.74 36.42 98.31 98.59 69.33 60.70 97.85 96.95 Infinity-RoPE [60] 16.63 38.27 98.64 98.79 69.16 60.82 97.77 97.06
+> Head Forcing (Ours) 15.81 42.14 98.76 98.78 70.30 61.68 98.07 97.08
+> Training-based 60 seconds
+> Rolling Forcing [35] 15.99 32.86 98.69 98.57 70.09 60.97 97.87 96.87 LongLive [57] 19.03 40.29 98.75 98.70 69.08 61.11 97.72 96.92
+> CausVid [64] 15.83 31.08 98.26 98.49 65.36 59.32 97.53 96.66 Self Forcing [25] 15.83 31.92 98.21 98.56 67.33 57.17 97.32 96.53
+> Training-free
+> Deep Forcing [61] 15.74 35.75 98.38 98.63 68.93 60.39 97.70 96.82 Infinity-RoPE [60] 16.63 37.19 98.49 98.61 68.68 59.65 97.73 96.88
+> Head Forcing (Ours) 15.81 41.37 98.67 98.72 69.27 61.36 97.81 96.90
+
+Table 3: Quantitative comparison under multi-prompt 60 second setting 
+
+with representative prompt-guided interactive video models. All scores are measured over the whole sequence, except for the CLIP score. 
+
+Method Quality Consistency Aesthetic CLIP Score ↑
+
+Score ↑ Score ↑ Score ↑ 0–10 s 10–20 s 20–30 s 30–40 s 40–50 s 50–60 s 
+
+Self Forcing [25] 83.52 95.74 57.45 26.25 24.93 23.46 21.92 21.82 21.02 LongLive [57] 84.83 96.05 60.29 26.63 25.77 24.75 24.19 24.52 24.11 Infinity-RoPE [60] 84.66 96.10 59.33 26.78 25.43 24.38 23.55 23.82 23.53 
+
+Head Forcing(Ours) 84.74 96.69 60.67 26.54 25.36 24.64 24.27 24.62 24.22 
+
+with limited scene evolution. In contrast, Head Forcing maintains high visual fidelity, subject identity, and scene dynamics throughout the entire generation. 
+
+Prompt-Guided Interactive Video Generation. Fig. 5 also illustrates multi-prompt interactive generation. Given six successive prompts describing different actions and scenes, Head Forcing produces smooth transitions while faithfully fol-lowing each instruction, maintaining subject identity and scene coherence across prompt. In comparison, LongLive [57] and Infinity-RoPE [60] achieve reason-able prompt adherence but exhibit identity drift over extended sequences due to limited context while Self Forcing [25] exhibits more pronounced error accumu-lation. 
+
+4.4 Ablation Study 
+
+We conduct ablation studies on 60 s long video generation and multi-prompt in-teractive generation to evaluate the contribution of each component and validate key design choices. More ablation studies are provided in the supplementary .
+
+Impact of Main Components. Tab. 4 isolates the contribution of each main component by progressively adding them to the (A) Self-Forcing [25] baseline. (B) Introducing head-wise KV cache allocation alone (where memory heads still Head Forcing 13 Self Forcing 
+
+> LongLive
+> RollingForcing
+> Deep Forcing
+> Infinity Rope
+> CausVid
+> Ours
+> LongLive
+> Infinity Rope
+> Ours
+> Self Forcing
+
+Single -Prompt Long Video Gen (60s) Prompt -Guided Interactive Video Gen (60s) 
+
+Fig. 5: Qualitative Results. Qualitative comparison on 60 s single-prompt long video generation and 60 s prompt-guided interactive generation. 
+
+Table 4: Component-wise ablation on 60 s generation. HW = head-wise KV cache allocation, HM = hierarchical memory, RoPE = head-wise RoPE re-encoding. 
+
+Modules 60 s (Single Prompt Long Video Generation ) 60 s (Multi-Prompt )Head-Wise Hierarchical RoPE Dynamic Motion Subject Imaging Quality Consistency Clip Score Allocation Memory Re-encoding Degree ↑ Smoothness ↑ Consistency ↑ Quality ↑ Score ↑ Score ↑ Average ↑
+
+(A) Baseline ✗ ✗ ✗ 31.92 98.42 97.62 67.33 83.52 95.74 23.20 (B) + HW ✓ ✗ ✗ 37.22 98.49 97.65 68.14 84.10 96.33 24.31 (C) + HM ✓ ✓ ✗ 39.09 98.54 97.73 68.93 84.34 96.51 24.61 (D) Ours ✓ ✓ ✓ 41.37 98.69 97.81 69.27 84.74 96.69 24.95 
+
+use a sliding window as in Self-Forcing under the same KV cache budget) im-proves quality, consistency, and dynamic degree, as pruning irrelevant context from local heads and stabilizing generation through anchor frames while allow-ing memory heads to adopt a larger context window with the saved budget. (C) Adding the hierarchical memory system for memory heads further boosts con-textual consistency. (D) Finally, enabling RoPE re-encoding yields additional gains in motion smoothness and visual quality. These results demonstrate that three main components all contribute to our methods’ outstanding performance. 0% 10% 20% 25% 30% 40% 50% 60%           
+
+> Proportion threshold for local heads ( local )
+> 95.50
+> 95.75
+> 96.00
+> 96.25
+> 96.50
+> 96.75
+> Consistency Score
+> (a) Impact of local
+> 3456912
+> Budget of episode memory ( Bepi )
+> 23.0
+> 23.5
+> 24.0
+> 24.5
+> 25.0
+> Clip Score
+> (b) Impact of Bepi
+> 83.00
+> 83.25
+> 83.50
+> 83.75
+> 84.00
+> 84.25
+> 84.50
+> 84.75
+> 85.00
+> Quality Score
+> 83.0
+> 83.5
+> 84.0
+> 84.5
+> 85.0
+> Quality Score
+> Consistency Score Clip Score Quality Score
+
+Fig. 6: Hyperparameter Analysis of τlocal and Bepi .
+
+Detailed Vali-dation of Head-wise Strategy. 
+
+To further vali-date whether the improvement stems from the head-wise KV cache al-location, we com-pare four strate-gies under the same total KV cache budget: (1) Random Allocation, randomly 14 J. Tian et al. 
+
+Table 5: Detail validation of head-wise strategy.                                                      
+
+> 60 s (Single Prompt Long Video Generation )60 s (Multi-Prompt )
+> Strategy Dynamic Motion Subject Imaging Quality Consistency Clip Score Degree ↑Smoothness ↑Consistency ↑Quality ↑Score ↑Score ↑Average ↑
+> Random Allocation 32.21 98.29 97.38 67.92 83.55 95.88 23.55 Uniform Memory 36.73 98.41 97.53 68.12 84.21 96.11 24.21 Local +Memory 34.28 98.47 97.56 67.98 84.35 96.19 24.12 Anchor +Memory 39.73 98.55 97.70 68.86 84.66 96.54 24.65
+> Head Forcing 41.37 98.69 97.81 69.27 84.74 96.69 24.95
+
+Table 6: Ablation on episodic memory design. Top: admission criterion. Bottom: compression strategy upon overflow.                                                    
+
+> 60 s (Single Prompt Long Video Generation )60 s (Multi-Prompt )
+> Strategy Dynamic Motion Subject Imaging Quality Consistency Clip Score Degree ↑Smoothness ↑Consistency ↑Quality ↑Score ↑Score ↑Average ↑
+> Admission Criterion
+> Uniform sampling 37.42 98.53 97.71 68.87 84.61 96.21 24.59 Novelty-based (Ours) 41.37 98.69 97.81 69.27 84.74 96.69 24.95
+> Compression Strategy
+> FIFO eviction 39.42 98.62 97.73 69.04 84.68 96.52 24.71 Random selection 40.42 98.59 97.76 68.98 84.64 96.61 24.68 Ours 41.37 98.69 97.81 69.27 84.74 96.69 24.95
+
+dividing the same proportion of heads into three categories. (3) Local + Memory, merging anchor heads into memory heads. (4) Anchor + Memory, merging local heads into memory heads. (4) Anchor + Memory, merging local heads into mem-ory heads. As shown in Tab. 5, Uniform Memory, Anchor + Memory, and Local 
+
++ Memory waste cache budget and introduce redundant noise paths, degrading efficiency and reducing visual quality. 
+
+Episodic Memory Design. (1) Impact of different dynamic update strate-gies: For dynamic update strategy, we compare our scene novelty based criterion against uniform temporal sampling which admits frames into episodic memory at fixed intervals. As shown in Tab. 6, Our novelty-based criterion selectively re-tains frames from distinct scenes, yielding the best scene consistency and visual quality. (2) Impact of prompt-guided compression: We compare our compression method with FIFO eviction and random selection which randomly samples s
+
+tokens along the token dimension from candidate frames. Our prompt-guided method preserves diverse scene coverage, and improves average CLIP scores in the multi-prompt setting by biasing token retention toward currently relevant content. 
+
+Hyperparameter Analysis. (1) Impact of episode memory budget Bepi and proportion threshold τlocal for local head: Results are reported in Fig. 6 that performance is stable across a reasonable range for the two parameters, indicat-ing that the method does not require careful tuning. However, an overly small 
+
+τlocal which assigns an excessive number of local heads, degrades generation qual-ity. And an overly large Bepi may also harm performance, as the proportion of episodic memory tokens significantly outweighs that of the local window. (2) We put other hyperparameter evaluation in the supplementary .Head Forcing 15 
+
+5 Conclusion 
+
+We presented Head Forcing, a training-free framework that leverages the func-tional heterogeneity of attention heads for long autoregressive video generation. By profiling heads into three distinct types, we assign tailored KV cache strate-gies to each, replacing uniform allocation with head-wise management. Memory heads are further equipped with a hierarchical memory system for long-range consistency, and a head-wise RoPE re-encoding scheme ensures positional en-codings remain within the pretrained range. Without additional training, Head Forcing extends generation from 5 seconds to minute-level duration and consis-tently outperforms existing baselines on VBench. 
+
+References 
+
+1. Blattmann, A., Dockhorn, T., Kulal, S., Mendelevitch, D., Kilian, M., Lorenz, D., Levi, Y., English, Z., Voleti, V., Letts, A., et al.: Stable video diffusion: Scaling latent video diffusion models to large datasets. arXiv preprint arXiv:2311.15127 (2023) 2. Blattmann, A., Rombach, R., Ling, H., Dockhorn, T., Kim, S.W., Fidler, S., Kreis, K.: Align your latents: High-resolution video synthesis with latent diffusion mod-els. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 22563–22575 (2023) 3. Bruce, J., Dennis, M.D., Edwards, A., Parker-Holder, J., Shi, Y., Hughes, E., Lai, M., Mavalankar, A., Steigerwald, R., Apps, C., et al.: Genie: Generative interactive environments. In: Forty-first International Conference on Machine Learning (2024) 4. Cai, S., Yang, C., Zhang, L., Guo, Y., Xiao, J., Yang, Z., Xu, Y., Yang, Z., Yuille, A., Guibas, L., Agrawala, M., Jiang, L., Wetzstein, G.: Mixture of Contexts for Long Video Generation (Oct 2025). https://doi.org/10.48550/arXiv.2508. 21058 , http://arxiv.org/abs/2508.21058 , arXiv:2508.21058 [cs] 5. Chen, B., Martí Monsó, D., Du, Y., Simchowitz, M., Tedrake, R., Sitzmann, V.: Diffusion forcing: Next-token prediction meets full-sequence diffusion. Advances in Neural Information Processing Systems 37 , 24081–24125 (2024) 6. Chen, G., Lin, D., Yang, J., Lin, C., Zhu, J., Fan, M., Zhang, H., Chen, S., Chen, Z., Ma, C., et al.: Skyreels-v2: Infinite-length film generative model. arXiv preprint arXiv:2504.13074 (2025) 7. Chen, H., Xia, M., He, Y., Zhang, Y., Cun, X., Yang, S., Xing, J., Liu, Y., Chen, Q., Wang, X., et al.: Videocrafter1: Open diffusion models for high-quality video generation. arXiv preprint arXiv:2310.19512 (2023) 8. Chen, S., Wei, C., Sun, S., Nie, P., Zhou, K., Zhang, G., Yang, M.H., Chen, W.: Context forcing: Consistent autoregressive video generation with long context. arXiv preprint arXiv:2602.06028 (2026) 9. Cui, J., Wu, J., Li, M., Yang, T., Li, X., Wang, R., Bai, A., Ban, Y., Hsieh, C.J.: Self-forcing++: Towards minute-scale high-quality video generation. arXiv preprint arXiv:2510.02283 (2025) 10. Cui, J., Wu, J., Li, M., Yang, T., Li, X., Wang, R., Bai, A., Ban, Y., Hsieh, C.J.: Lol: Longer than longer, scaling video generation to hour. arXiv preprint arXiv:2601.16914 (2026) 11. Dao, T.: Flashattention-2: Faster attention with better parallelism and work par-titioning. arXiv preprint arXiv:2307.08691 (2023) 16 J. Tian et al. 12. Dao, T., Fu, D., Ermon, S., Rudra, A., Ré, C.: Flashattention: Fast and memory-efficient exact attention with io-awareness. Advances in neural information pro-cessing systems 35 , 16344–16359 (2022) 13. Gao, K., Shi, J., Zhang, H., Wang, C., Xiao, J., Chen, L.: Ca2-vdm: Efficient autoregressive video diffusion model with causal generation and cache sharing. arXiv preprint arXiv:2411.16375 (2024) 14. Girdhar, R., Singh, M., Brown, A., Duval, Q., Azadi, S., Rambhatla, S.S., Shah, A., Yin, X., Parikh, D., Misra, I.: Emu video: Factorizing text-to-video generation by explicit image conditioning. arXiv preprint arXiv:2311.10709 (2023) 15. Gu, Y., Mao, W., Shou, M.Z.: Long-context autoregressive video modeling with next-frame prediction. arXiv preprint arXiv:2503.19325 (2025) 16. Guo, Y., Yang, C., He, H., Zhao, Y., Wei, M., Yang, Z., Huang, W., Lin, D.: End-to-end training for autoregressive video diffusion via self-resampling. arXiv preprint arXiv:2512.15702 (2025) 17. Guo, Y., Yang, C., Yang, Z., Ma, Z., Lin, Z., Yang, Z., Lin, D., Jiang, L.: Long context tuning for video generation. arXiv preprint arXiv:2503.10589 (2025) 18. Gupta, A., Yu, L., Sohn, K., Gu, X., Hahn, M., Li, F.F., Essa, I., Jiang, L., Lezama, J.: Photorealistic video generation with diffusion models. In: European Conference on Computer Vision. pp. 393–411. Springer (2024) 19. HaCohen, Y., Chiprut, N., Brazowski, B., Shalem, D., Moshe, D., Richardson, E., Levin, E., Shiran, G., Zabari, N., Gordon, O., et al.: Ltx-video: Realtime video latent diffusion. arXiv preprint arXiv:2501.00103 (2024) 20. Henschel, R., Khachatryan, L., Hayrapetyan, D., Poghosyan, H., Tadevosyan, V., Wang, Z., Navasardyan, S., Shi, H.: Streamingt2v: Consistent, dynamic, and ex-tendable long video generation from text. arXiv preprint arXiv:2403.14773 (2024) 21. Ho, J., Chan, W., Saharia, C., Whang, J., Gao, R., Gritsenko, A., Kingma, D.P., Poole, B., Norouzi, M., Fleet, D.J., et al.: Imagen video: High definition video generation with diffusion models. arXiv preprint arXiv:2210.02303 (2022) 22. Ho, J., Jain, A., Abbeel, P.: Denoising diffusion probabilistic models. Advances in neural information processing systems 33 , 6840–6851 (2020) 23. Ho, J., Salimans, T., Gritsenko, A., Chan, W., Norouzi, M., Fleet, D.J.: Video diffusion models. Advances in neural information processing systems 35 , 8633– 8646 (2022) 24. Hu, J., Hu, S., Song, Y., Huang, Y., Wang, M., Zhou, H., Liu, Z., Ma, W.Y., Sun, M.: Acdit: Interpolating autoregressive conditional modeling and diffusion transformer. arXiv preprint arXiv:2412.07720 (2024) 25. Huang, X., Li, Z., He, G., Zhou, M., Shechtman, E.: Self forcing: Bridging the train-test gap in autoregressive video diffusion. arXiv preprint arXiv:2506.08009 (2025) 26. Huang, Z., He, Y., Yu, J., Zhang, F., Si, C., Jiang, Y., Zhang, Y., Wu, T., Jin, Q., Chanpaisit, N., Wang, Y., Chen, X., Wang, L., Lin, D., Qiao, Y., Liu, Z.: VBench: Comprehensive benchmark suite for video generative models. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (2024) 27. Huang, Z., Zhang, F., Xu, X., He, Y., Yu, J., Dong, Z., Ma, Q., Chanpaisit, N., Si, C., Jiang, Y., Wang, Y., Chen, X., Chen, Y.C., Wang, L., Lin, D., Qiao, Y., Liu, Z.: VBench++: Comprehensive and versatile benchmark suite for video generative models. IEEE Transactions on Pattern Analysis and Machine Intelligence (2025). 
+
+https://doi.org/10.1109/TPAMI.2025.3633890 
+
+28. Ji, S., Chen, X., Yang, S., Tao, X., Wan, P., Zhao, H.: Memflow: Flowing adap-tive memory for consistent and efficient long video narratives. arXiv preprint arXiv:2512.14699 (2025) Head Forcing 17 29. Jin, H., Han, X., Yang, J., Jiang, Z., Liu, Z., Chang, C.Y., Chen, H., Hu, X.: Llm maybe longlm: Self-extend llm context window without tuning. arXiv preprint arXiv:2401.01325 (2024) 30. Kim, M., Shim, K., Choi, J., Chang, S.: Infinipot-v: Memory-constrained kv cache compression for streaming video understanding. arXiv preprint arXiv:2506.15745 (2025) 31. Kong, W., Tian, Q., Zhang, Z., Min, R., Dai, Z., Zhou, J., Xiong, J., Li, X., Wu, B., Zhang, J., et al.: Hunyuanvideo: A systematic framework for large video generative models. arXiv preprint arXiv:2412.03603 (2024) 32. Li, C., Wang, R., Zhou, L., Feng, J., Luo, H., Zhang, H., Wu, Y., He, X.: Joyavatar: Real-time and infinite audio-driven avatar generation with autoregressive diffusion. arXiv preprint arXiv:2512.11423 (2025) 33. Li, H., Liu, S., Lin, Z., Chandraker, M.: Rolling sink: Bridging limited-horizon training and open-ended testing in autoregressive video diffusion. arXiv preprint arXiv:2602.07775 (2026) 34. Lipman, Y., Chen, R.T., Ben-Hamu, H., Nickel, M., Le, M.: Flow matching for generative modeling. arXiv preprint arXiv:2210.02747 (2022) 35. Liu, K., Hu, W., Xu, J., Shan, Y., Lu, S.: Rolling forcing: Autoregressive long video diffusion in real time. arXiv preprint arXiv:2509.25161 (2025) 36. Liu, X., Gong, C., Liu, Q.: Flow straight and fast: Learning to generate and transfer data with rectified flow. arXiv preprint arXiv:2209.03003 (2022) 37. Lu, Y., Zeng, Y., Li, H., Ouyang, H., Wang, Q., Cheng, K.L., Zhu, J., Cao, H., Zhang, Z., Zhu, X., et al.: Reward forcing: Efficient streaming video generation with rewarded distribution matching distillation. arXiv preprint arXiv:2512.04678 (2025) 38. Ma, X., Wang, Y., Chen, X., Jia, G., Liu, Z., Li, Y.F., Chen, C., Qiao, Y.: Latte: Latent diffusion transformer for video generation. arXiv preprint arXiv:2401.03048 (2024) 39. Po, R., Chan, E.R., Chen, C., Wetzstein, G.: Bagger: Backwards aggregation for mitigating drift in autoregressive video diffusion models. arXiv preprint arXiv:2512.12080 (2025) 40. Polyak, A., Zohar, A., Brown, A., Tjandra, A., Sinha, A., Lee, A., Vyas, A., Shi, B., Ma, C.Y., Chuang, C.Y., et al.: Movie gen: A cast of media foundation models. arXiv preprint arXiv:2410.13720 (2024) 41. Ren, S., Ma, S., Sun, X., Wei, F.: Next block prediction: Video generation via semi-autoregressive modeling. arXiv preprint arXiv:2502.07737 (2025) 42. Rombach, R., Blattmann, A., Lorenz, D., Esser, P., Ommer, B.: High-resolution image synthesis with latent diffusion models. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 10684–10695 (2022) 43. Singer, U., Polyak, A., Hayes, T., Yin, X., An, J., Zhang, S., Hu, Q., Yang, H., Ashual, O., Gafni, O., et al.: Make-a-video: Text-to-video generation without text-video data. arXiv preprint arXiv:2209.14792 (2022) 44. Song, J., Meng, C., Ermon, S.: Denoising diffusion implicit models. arXiv preprint arXiv:2010.02502 (2020) 45. Song, K., Chen, B., Simchowitz, M., Du, Y., Tedrake, R., Sitzmann, V.: History-guided video diffusion. arXiv preprint arXiv:2502.06764 (2025) 46. Sun, W., Zhang, H., Wang, H., Wu, J., Wang, Z., Wang, Z., Wang, Y., Zhang, J., Wang, T., Guo, C.: Worldplay: Towards long-term geometric consistency for real-time interactive world modeling. arXiv preprint arXiv:2512.14614 (2025) 18 J. Tian et al. 47. Teng, H., Jia, H., Sun, L., Li, L., Li, M., Tang, M., Han, S., Zhang, T., Zhang, W., Luo, W., et al.: Magi-1: Autoregressive video generation at scale. arXiv preprint arXiv:2505.13211 (2025) 48. Tian, J., Song, C., Cheng, W., Zhang, C.: Free-lunch long video generation via layer-adaptive o.o.d correction. Proceedings of the IEEE/CVF Conference on Com-puter Vision and Pattern Recognition (CVPR) (2026) 49. Tillet, P., Kung, H.T., Cox, D.: Triton: an intermediate language and compiler for tiled neural network computations. In: Proceedings of the 3rd ACM SIGPLAN International Workshop on Machine Learning and Programming Languages. pp. 10–19 (2019) 50. Villegas, R., Babaeizadeh, M., Kindermans, P.J., Moraldo, H., Zhang, H., Saffar, M.T., Castro, S., Kunze, J., Erhan, D.: Phenaki: Variable length video generation from open domain textual description. arXiv preprint arXiv:2210.02399 (2022) 51. Wan, T., Wang, A., Ai, B., Wen, B., Mao, C., Xie, C.W., Chen, D., Yu, F., Zhao, H., Yang, J., Zeng, J., Wang, J., Zhang, J., Zhou, J., Wang, J., Chen, J., Zhu, K., Zhao, K., Yan, K., Huang, L., Feng, M., Zhang, N., Li, P., Wu, P., Chu, R., Feng, R., Zhang, S., Sun, S., Fang, T., Wang, T., Gui, T., Weng, T., Shen, T., Lin, W., Wang, W., Wang, W., Zhou, W., Wang, W., Shen, W., Yu, W., Shi, X., Huang, X., Xu, X., Kou, Y., Lv, Y., Li, Y., Liu, Y., Wang, Y., Zhang, Y., Huang, Y., Li, Y., Wu, Y., Liu, Y., Pan, Y., Zheng, Y., Hong, Y., Shi, Y., Feng, Y., Jiang, Z., Han, Z., Wu, Z.F., Liu, Z.: Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 (2025) 52. Wang, Y., Xiong, T., Zhou, D., Lin, Z., Zhao, Y., Kang, B., Feng, J., Liu, X.: Loong: Generating minute-level long videos with autoregressive language models. arXiv preprint arXiv:2410.02757 (2024) 53. Weissenborn, D., Täckström, O., Uszkoreit, J.: Scaling autoregressive video models. arXiv preprint arXiv:1906.02634 (2020) 54. Weng, W., Feng, R., Wang, Y., Dai, Q., Wang, C., Yin, D., Zhao, Z., Qiu, K., Bao, J., Yuan, Y., et al.: Art-v: Auto-regressive text-to-video generation with diffusion models. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 7395–7405 (2024) 55. Xiao, S., Zhang, X., Meng, D., Wang, Q., Zhang, P., Zhang, B.: Knot forcing: Tam-ing autoregressive video diffusion models for real-time infinite interactive portrait animation. arXiv preprint arXiv:2512.21734 (2025) 56. Xiao, Z., Lan, Y., Zhou, Y., Ouyang, W., Yang, S., Zeng, Y., Pan, X.: Worldmem: Long-term consistent world simulation with memory. arXiv preprint arXiv:2504.12369 (2025) 57. Yang, S., Huang, W., Chu, R., Xiao, Y., Zhao, Y., Wang, X., Li, M., Xie, E., Chen, Y., Lu, Y., et al.: Longlive: Real-time interactive long video generation. arXiv preprint arXiv:2509.22622 (2025) 58. Yang, Y., Lv, Z., Pan, T., Wang, H., Yang, B., Yin, H., Li, C., Liu, Z., Si, C.: Stableworld: Towards stable and consistent long interactive video generation. arXiv preprint arXiv:2601.15281 (2026) 59. Yang, Z., Teng, J., Zheng, W., Ding, M., Huang, S., Xu, J., Yang, Y., Hong, W., Zhang, X., Feng, G., et al.: Cogvideox: Text-to-video diffusion models with an expert transformer. arXiv preprint arXiv:2408.06072 (2024) 60. Yesiltepe, H., Meral, T.H.S., Akan, A.K., Oktay, K., Yanardag, P.: Infinity-rope: Action-controllable infinite video generation emerges from autoregressive self-rollout. arXiv preprint arXiv:2511.20649 (2025) Head Forcing 19 61. Yi, J., Jang, W., Cho, P.H., Nam, J., Yoon, H., Kim, S.: Deep forcing: Training-free long video generation with deep sink and participative compression. arXiv preprint arXiv:2512.05081 (2025) 62. Yin, T., Gharbi, M., Park, T., Zhang, R., Shechtman, E., Durand, F., Freeman, B.: Improved distribution matching distillation for fast image synthesis. Advances in neural information processing systems 37 , 47455–47487 (2024) 63. Yin, T., Gharbi, M., Zhang, R., Shechtman, E., Durand, F., Freeman, W.T., Park, T.: One-step diffusion with distribution matching distillation. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 6613– 6623 (2024) 64. Yin, T., Zhang, Q., Zhang, R., Freeman, W.T., Durand, F., Shechtman, E., Huang, X.: From slow bidirectional to fast autoregressive video diffusion models. In: Pro-ceedings of the Computer Vision and Pattern Recognition Conference. pp. 22963– 22974 (2025) 65. Yu, J., Bai, J., Qin, Y., Liu, Q., Wang, X., Wan, P., Zhang, D., Liu, X.: Context as memory: Scene-consistent interactive long video generation with memory retrieval. arXiv preprint arXiv:2506.03141 (2025) 66. Yu, Y., Wu, X., Hu, X., Hu, T., Sun, Y., Lyu, X., Wang, B., Ma, L., Ma, Y., Wang, Z., et al.: Videossm: Autoregressive long video generation with hybrid state-space memory. arXiv preprint arXiv:2512.04519 (2025) 67. Yuan, H., Chen, W., Cen, J., Yu, H., Liang, J., Chang, S., Lin, Z., Feng, T., Liu, P., Xing, J., et al.: Lumos-1: On autoregressive video generation from a unified model perspective. arXiv preprint arXiv:2507.08801 (2025) 68. Zhang, D.J., Wu, J.Z., Liu, J.W., Zhao, R., Ran, L., Gu, Y., Gao, D., Shou, M.Z.: Show-1: Marrying pixel and latent diffusion models for text-to-video generation. International Journal of Computer Vision 133 (4), 1879–1893 (2025) 69. Zhang, L., Agrawala, M.: Packing input frame context in next-frame prediction models for video generation. arXiv preprint arXiv:2504.12626 (3), 5 (2025) 70. Zhang, L., Cai, S., Li, M., Wetzstein, G., Agrawala, M.: Frame context packing and drift prevention in next-frame-prediction video diffusion models. In: The Thirty-ninth Annual Conference on Neural Information Processing Systems (2025) 71. Zhang, S., Wang, J., Zhang, Y., Zhao, K., Yuan, H., Qin, Z., Wang, X., Zhao, D., Zhou, J.: I2vgen-xl: High-quality image-to-video synthesis via cascaded diffusion models. arXiv preprint arXiv:2311.04145 (2023) 72. Zhou, J., Du, Y., Xu, X., Wang, L., Zhuang, Z., Zhang, Y., Li, S., Hu, X., Su, B., Chen, Y.c.: Videomemory: Toward consistent video generation via memory integration. arXiv preprint arXiv:2601.03655 (2026) 73. Zhu, T., Zhang, S., Sun, Z., Tian, J., Tang, Y.: Memorize-and-generate: Towards long-term consistency in real-time video generation. arXiv preprint arXiv:2512.18741 (2025) Head Forcing S1 
+
+# Supplementary Material 
+
+A Profiling Details, Results and Stability Validation 
+
+This section provides comprehensive details on the attention head profiling pro-cedure introduced in Sec. 3.2 of the main paper, including the profiling setup (Sec. A.1), additional profiling results (Sec. A.2), extensive stability validation across AR steps, denoising timesteps, text prompts (Sec. A.3) and computational overhead of profiling process (Sec. A.4). 
+
+A.1 Detailed Profiling Setup Profiling Model and Rollout Setting. We profile Self Forcing [25], a causal four-step generator distilled from Wan2.1-T2V-1.3B [51]. The underlying DiT consists of L=30 transformer layers, each containing H=12 self-attention heads with a per-head dimension of d=128 , yielding L × H = 360 attention heads in total. Each autoregressive (AR) step generates a block of f =3 latent frames at a spatial resolution of 52 × 30 (s=1560 tokens per frame), conditioned on previously generated context via a KV cache of fixed window size W =21 frames combined with the sink frame under a FIFO eviction policy. We profile the model during long-rollout generation on a prompt set P con-taining 20 prompts to identify each head’s role for long video generation. For each prompt, we generate a rollout of 30 seconds (about 42 AR steps) and record self attention statistics at a randomly sampled set of autoregressive block indices 
+
+I containing three AR steps. To avoid bias from the very early generation stage, where the historical context is still too short to exhibit stable long-range behav-ior, we begin profiling from block 3. For each sampled block, we collect attention statistics from all denoising steps in the diffusion process. Specifically, at every AR step i and every denoising timestep t ∈ { 0, 1, 2, 3},we record the full per-head attention map A(l,h ) ∈ R3s×3is for all layers l ∈{1, . . . , 30 } and heads h ∈ { 1, . . . , 12 }. We then compute the three bucket-level attention proportions defined in Eq. 3 of the main paper: the sink proportion 
+
+psink , the middle proportion pmiddle , and the current proportion pcurrent . Unless otherwise stated, the profiling statistics reported below are computed by first averaging over all denoising timesteps at each AR step, then averaging over randomly sampled three AR steps. Based on the aggregated profiling statistics, heads are classified as follows: 
+
+– Anchor heads : those whose psink exceeds the top αanchor =25% percentile are designated as anchor heads. 
+
+– Local heads : among the remaining heads, the top τlocal =20% of heads ranked by pcurrent . These heads typically exhibit pcurrent > 0.85 .
+
+– Memory heads : remaining heads, which distribute attention broadly across the full historical context. S2 J. Tian et al. 
+
+A.2 Additional Profiling Results and Analysis Complete analysis of layer-wise head role distribution. Fig. 3 (b) provides the full layer-wise head role distribution for all 30 layers. Several patterns emerge: 
+
+– Local heads are predominantly found in the early layers (layers 0–8), consis-tent with early layers handling low-level feature extraction and local texture synthesis. 
+
+– Anchor heads appear across all layers but with higher concentration in the early-to-middle layers (layers 0–14), reflecting that structural stabilization requires hierarchical anchoring at multiple representation levels. 
+
+– Memory heads are most prevalent in the middle and deep layers (layers 8–27), where high-level semantic aggregation over long temporal contexts is most critical. This layer-wise distribution aligns with the well-established finding that trans-former layers form a hierarchy from local features to global semantics, further supporting the functional interpretation of the three head types. 
+
+More Visualization of Attention Map. Fig. S1 presents an expanded gallery of per-head attention maps beyond the three examples shown in main paper Fig. 2. We display more attention maps for representative heads from each type, sampled from different layers to illustrate the consistency of functional roles across the network depth. For each attention map, the x-axis represents key positions (all previous frames and the current block) and the y-axis represents query positions. 
+
+– Local heads : exhibit a sharp diagonal pattern with attention concentrated on the current block and its immediate neighbor, with virtually no attention to distant history. 
+
+– Anchor heads : show a prominent vertical stripe at the first-frame position alongside moderate local attention, confirming the anchoring behavior at multiple network depths. 
+
+– Memory heads : display a diffuse attention pattern spanning the entire historical context, with attention mass distributed relatively uniformly across previous frames. 
+
+A.3 Stability Validation 
+
+A critical question for the practical applicability of Head Forcing is whether the discovered head classification is stable: does it represent an intrinsic property of the model, or could it shift under different generation conditions? We sys-tematically validate stability along three axes: across AR steps, across denoising timesteps, and across text prompts. We repeat the offline profiling procedure under multiple controlled variations and compare the resulting head partitions. Let H(r)local , H(r)anchor , H(r)mem denote the three head sets obtained from a profiling run r, where a run is defined by a specific Head Forcing S3 Anchor Heads 
+
+Layer_28_Head_2 Layer_25_Head_8 Layer_23_Head_8 
+
+Layer_6_Head_4 Layer_17_Head_10 Layer_18_Head_4 
+
+Layer_0_Head_5 Layer_1_Head_1 
+
+Layer_28_Head_10 Layer_21_Head_11 
+
+Layer_3_Head_4 
+
+Layer_8_Head_3 
+
+Layer_0_Head_10 
+
+Layer_29_Head_11 
+
+Layer_4_Head_8 Layer_5_Head_3 
+
+Layer _27_ Head _1 Layer _23_ Head _1 
+
+> Loca l Heads Memory  Heads
+
+Fig. S1: More visualization of attention map. S4 J. Tian et al. 
+
+Table S1: Core stability ratio Sc across different conditions.                       
+
+> Anchor Head Sanchor Memory Head Smemory Local Head Slocal Average Savg
+> Scfor different AR step 0.901 0.916 0.922 0.913
+> Scfor different denoising ste p 0.949 0.953 0.961 0.954
+> Scfor different prompts 0.908 0.891 0.897 0.898
+
+choice of prompt subset, AR step subset, denoising step subset. To quantify sta-bility, we independently classify all 360 heads under each condition and compute defined core stability ratio. Specifically, for each role c ∈ { local , anchor , memory }
+
+and profiling runs (different conditions) r ∈ { 1, · · · , M }, we compute the core stability ratio for each head category c as follows: 
+
+Sc =
+
+H(1)  
+
+> c
+
+∩ H (2)  
+
+> c
+
+∩ · · · ∩ H (M )
+
+> c
+> 1
+> M
+
+P   
+
+> r∈{ 1,··· ,M }
+
+|H (r) 
+
+> c
+
+| ,
+
+where 1
+
+> M
+
+P   
+
+> r∈{ 1,··· ,M }
+
+|H (r) 
+
+> c
+
+| is the average number of head assigned to head role 
+
+c. Sc denotes the proportion of attention heads in category c that consistently appear across different conditions, where a higher Sc indicates more stable pro-filing results for that head category. We report the core stability ratio per head category to characterize the stability of each individual head category, and define the average core stability ratio as Savg = 13
+
+P 
+
+> c∈{ anchor ,local ,memory }
+
+Sc to measure the overall stability across all categories. In our experiments, we set the total number of runs (conditions) to M = 4 ,consistent with the standard practice in existing models that typically perform 
+
+4 denoising steps. This choice ensures that the three condition types that AR steps, denoising steps, and text prompts are evaluated at the same value scale, enabling fair and comparable stability measurements across conditions. 
+
+Stability Across Autoregressive Steps. We isolate the profiling statistics at individual autoregressive (AR) steps rather than averaging across them. Specif-ically, for a fixed prompt and a fixed 3rd denoising step, we compute the core stability ratio Sc for each head category across four AR steps i ∈ { 3, 12 , 21 , 30 }.As reported in the first row of Tab. S1, Sc remains consistently high (above 0.9)for all three head categories, indicating that the category assignment of each head is stable across all AR steps. The classification results are nearly identical across steps, with only minor boundary fluctuations observed for a small num-ber of heads near the classification thresholds between memory heads and anchor heads. 
+
+Stability Across Denoising Steps. Self-Forcing adopts a 4-step denoising schedule ( t ∈ { 0, 1, 2, 3}). For a fixed AR step and a fixed prompt, we perform head classification independently at each denoising timestep and compute the core stability ratio Sc for each head category. As reported in the second row of Tab. S1, Sc remains consistently high across all denoising timesteps, indicating that the category assignment of each head is equally stable with respect to the denoising stage. These results confirm that the head classification is robust to Head Forcing S5 
+
+variations in the denoising schedule, further supporting the reliability of the proposed profiling method. 
+
+Stability Across Prompts. Text prompts introduce the most significant source of semantic variation, as different prompts may activate distinct attention pat-terns. For a fixed AR step and a fixed denoising step, we perform head clas-sification independently on four different text prompts and compute the core stability ratio Sc for each head category. As reported in the third row of Tab. S1, 
+
+Sc remains consistently high across all prompt conditions, with only minor fluc-tuations observed for anchor heads near the anchor–memory decision boundary. These results confirm that the head classification is robust to variations in input semantics, demonstrating that the discovered head partition reflects an intrin-sic structural property of the model rather than an artifact of any particular prompt. 
+
+Summary of Stability Results. Under all three evaluated conditions, namely varying AR steps, denoising timesteps, and text prompts, the core stability ratio 
+
+Sc remains consistently high for all three head categories, as reported in Tab. S1. The average stability ratio Savg further confirms the overall robustness of the head classification. These results demonstrate that the profiling-based head cat-egorization is stable under diverse inference conditions, and thus head categories can be reliably determined through offline profiling alone, without requiring any additional classification overhead during inference. 
+
+A.4 Computational Overhead of Profiling Process 
+
+In the standard setting of this work, the full profiling procedure requires gener-ating 20 × 10 s of video while recording attention distributions, and the whole process taking approximately 1.2 GPU-hours on a single NVIDIA A100-80GB. Once completed, the resulting head classification is stored as a static configura-tion file and reused across all subsequent inference runs without modification. Importantly, this is a one-time offline cost that is amortized over all subse-quent generation runs. Furthermore, we provide precomputed profiling results for popular models, so that users are not required to run the profiling proce-dure themselves. In practice, owing to the stability of profiling results discussed above, users who choose to run profiling on their own can obtain reliable head classifications with as few as 3 to 4 prompts, reducing the total profiling time to approximately 10 minutes. 
+
+B Head Profiling on Other AR Video Models 
+
+Setup. We apply the same profiling protocol described in Sec. 3.2 of the main paper to LongLive [57] (an AR video DiT with chunk-wise generation). For each model, we generate 20 diverse prompts and collect per-head attention statistics averaged over AR steps, denoising steps, and prompts. 
+
+Profiling Results for LongLive. Fig. S2 shows the attention proportion scat-ter plots for all three models. In each case, heads cluster into three clearly sepa-rable groups corresponding to local, anchor, and memory heads, confirming that S6 J. Tian et al. (a) Attention Proposion on Different Temporal Bucket for LongLive (b) Layer -wise Head Role for LongLive 
+
+Fig. S2: Attention head profiling results for LongLive. 
+
+the tripartite head taxonomy is not an artifact of Self Forcing but an intrinsic property shared across AR video DiTs. 
+
+Head Forcing for LongLive. We then use similar Head Forcing method on LongLive with the same setting on Self Forcing. Fig. S3 shows the qualitative results of comparison between LongLive implemented with Head Forcing and vanilla LongLive in multi-prompt guided long video generation. The results show that LongLive implemented with Head Forcing achieves stronger prompt adher-ence, higher visual quality, and improved temporal consistency. 
+
+C More Analysis and Result of RoPE Re-encoding 
+
+Comparison with prior RoPE strategies. We compare our head-wise RoPE re-encoding against two representative inference-time RoPE strategies. Deep Forcing [61] stores position-encoded KV cache and applies post-hoc temporal corrections when positions become stale. Infinity-RoPE [60] re-indexes the global sequence uniformly across all heads, resetting sink tokens to position zero. Both methods treat every head identically, assigning the same temporal indices re-gardless of the head’s functional role or cache content. Our approach differs in two key aspects. First , we cache keys and values with spatial RoPE applied , stripping the temporal component at write time. This is particularly important for compressed summary tokens in episodic mem-ory: because compression merges spatial tokens from different frames, their spa-tial semantics should be preserved intact while temporal positions are freely reassignable. Second , re-encoding is performed per-head after cache assembly. Head Forcing S7 Prompt:    
+
+> 0-10s: A young executive in a sharp business suit is giving a presentation in a modern, glass -walled boardroom. She is pointing to a
+> chart on a large screen. Her colleagues are watching attentively.
+> 10 -20s The young executive giving the presentation in the boardroom is interrupted when the company's charismatic CEO
+> unexpectedly enters the room with a broad smile. All the colleagues turn to look.
+> 20 -30s: The young executive and the charismatic CEO stand at the front of the boardroom. The CEO praises the executive's work
+> and then makes a surprise announcement about a major new project. The colleagues look shocked and excited.
+> 30 -40s: The young executive and the charismatic CEO in the boardroom field questions from the excited colleagues. The CEO
+> gestures for the young executive to answer, showing his confidence in her.
+> 40 -50s: The young executive and the charismatic CEO in the boardroom shake hands in front of all the colleagues. The CEO
+> announces that the young executive will be leading the new project. She looks both honored and determined.
+> 50 -60s: The young executive and the charismatic CEO stand side -by -side in the boardroom as their colleagues erupt in applause.
+> The young executive's career has just taken a dramatic and positive turn .
+
+LongLiv e
+
+LongLive 
+
++ Head Forcing 
+
+Fig. S3: Qualitative results of comparison between LongLive implemented with Head Forcing and vanilla LongLive. 
+
+Table S2: Detailed ablation of RoPE re-encoding on 60 s single-prompt generation (extending Table 4, row C →D). Dynamic Motion Temporal Subject Imaging Aesthetic Degree ↑ Smoothness ↑ Flickering ↑ Consistency ↑ Quality ↑ Quality ↑
+
+w/o RoPE re-enc. 39.09 98.54 98.51 97.73 68.93 61.04 w/ RoPE re-enc. (Ours) 41.37 98.69 98.72 97.81 69.27 61.36 
+
+Since each head type maintains a different cache composition (local heads: f +1 
+
+frames; anchor heads: 2f +1 frames; memory heads: Bepi +Bfast +f frames), the assigned index range and hence the maximum relative position differ across heads. This ensures that every head’s relative positions stay strictly within the pretrained range, whereas uniform re-indexing can only guarantee this for one cache configuration. 
+
+Quantitative impact. Table S2 extends the main paper’s component ablation (Table 4, row C →D) with a finer breakdown. RoPE re-encoding yields consistent gains across all metrics, with the largest improvements on Temporal Flickering 
+
+(+0.21) and Dynamic Degree (+2.28). This aligns with our analysis: positional O.O.D. primarily manifests as inter-frame inconsistencies (flickering) and unnat-ural motion dynamics, both of which are mitigated by keeping relative positions in distribution. 
+
+D Effect of Key Embeddings 
+
+Why key embeddings? In causal DiTs, keys encode what information a to-ken offers to be attended to, making them natural semantic descriptors of frame S8 J. Tian et al. 0 5 10 15 20 25 
+
+> Layer Index
+> 0.90870
+> 0.92696
+> 0.94522
+> 0.96348
+> 0.98174
+> 1.00000
+> Similarity
+> Key
+> Latent frame similarity (0.95)
+
+Fig. S4: When the cosine similarity between two latent frames is approximately 0.95, we compute the key embedding similarity across all layers for the corresponding frame pair. 
+
+content. Moreover, key embeddings are readily available in the KV cache with-out additional computation, whereas alternatives such as latent frame similarity would require extra storage of the corresponding latent frames and computa-tion. Prior work on KV cache compression for video understanding [30] has also demonstrated that key-based similarity reliably captures temporal redundancy across frames, motivating our adoption. As shown in Fig. S4, when the cosine similarity between two latent frames is approximately 0.95, we compute the key embedding similarity across all layers for the corresponding frame pair. The resulting key embedding similarity closely mirrors the latent frame similarity, indicating that key embedding similarity can serve as a reliable proxy for latent frame similarity in measuring inter-frame resemblance. 
+
+Alternative metrics. We compare these two similarity metrics for comput-ing the novelty score δ(Kc) in Eq. 4, keeping all other components (head-wise allocation, hierarchical memory, RoPE re-encoding) and hyperparameters (τnovel = 0 .95 ) fixed: 1. Key cosine (Ours): cosine similarity on mean-pooled key embeddings across memory heads and layers, as described in Eq. 4. 2. Latent frame similarity : computing candidate frame cosine similarity be-tween candidate frame and latent episodic memory frames. 
+
+Results. Table S3 reports 60 s generation results under both single-prompt and multi-prompt settings. Key cosine similarity performs on par with the substan-tially more expensive latent frame similarity across all indicators, confirming that key embeddings are sufficiently expressive proxies for frame-level semantics. This confirms that key embeddings strike an effective balance between se-mantic expressiveness and computational efficiency, making them well-suited for online episodic memory management in real-time generation. Head Forcing S9 
+
+Table S3: Ablation on scene novelty metric for episodic memory admission. 
+
+60 s Single-Prompt 60 s Multi-Prompt Metric Dynamic Motion Subject Imaging Quality Consistency CLIP Score Degree ↑ Smooth. ↑ Consist. ↑ Quality ↑ Score ↑ Score ↑ Average ↑
+
+CLIP similarity 41.42 98.62 97.80 69.33 84.68 96.73 24.98 Key cosine (Ours) 41.37 98.69 97.81 69.27 84.74 96.69 24.95 
+
+E Extended Scalability Experiments 
+
+Qualitative Results on Extended Generation (Ultra Long Video Gen-eration). Head Forcing is able to scale to longer horizons through head-wise KV cache allocation and dynamic episodic memory management. Fig. S5 presents sampled keyframes from 5min (300 s) single-prompt ultra long video generation. Head Forcing is able to preserve subject identity and visual quality throughout the long rollout. Prompt: A charming comic -style illustration depicting a cozy living room scene where a fluffy gray        
+
+> cat is waking up its sleeping owner, who lies on the couch with a sleepy, resigned expression …
+> 0s 30s60s
+> 150s 180s 210s 240s
+> 90s12 0s
+> 300s
+
+Fig. S5: Qualitative results on 5min ultra long video generation. Head Forcing maintains visual fidelity throughout the video sequence. 
+
+Quantitative Results on Ultra-Long Video Generation. Fig. S6 presents the average VBench-Long score [26] as a function of video length under the single-prompt long video generation setting. The scores do not exhibit a sharp decline as the video length grows, remaining stable at a consistently high level. This demonstrates that Head Forcing can preserve overall video quality even under substantially extended generation lengths. 
+
+F Additional Ablation Studies 
+
+F.1 Qualitative Results from Ablation Study on Main Components 
+
+In Fig. S7, we present additional qualitative results from the ablation study of main components on 60 s long video generation. Incorporating head-wise allo-cation improves visual quality, consistency, and motion dynamics. Adding the S10 J. Tian et al. 1 2 3 4 5
+
+> Video length (min)
+> 0.62
+> 0.64
+> 0.66
+> 0.68
+> 0.70
+> 0.72
+> VBench score
+> VBench trend
+> Measured score
+
+Fig. S6: Average VBench-Long score across different video lengths.. 
+
+hierarchical memory system further enhances contextual consistency across the generated sequence. Finally, introducing head-wise re-encoding reduces flickering artifacts. Prompt: A cinematic 35mm film -style extreme close -up of a gray -haired man in his 60s, deeply 
+
+> engrossed in thought about the history of the universe as he sits at a Parisian café …
+> Baseline
+> +HW
+> +HW
+> +HM
+> +HW
+> +HM
+> +RoPE
+
+Fig. S7: Qualitative results from the ablation study of main components. 
+
+HW=head-wise kv cache allocation, HM = hierarchical memory, RoPE = head-wise RoPE re-encoding. 
+
+F.2 Additional Ablation Studies on Hyperparameters 
+
+We provide comprehensive sensitivity analysis for other hyperparameters, ex-tending the analysis of τlocal and Bepi in main paper Fig. 6. 
+
+Sensitivity of αanchor (Anchor Head Threshold). This analysis was de-ferred from the main paper and is essential for validating the robustness of Head Forcing S11 5% 10% 15% 20% 25% 30% 35% 40% 45%              
+
+> Proportion threshold for anchor heads ( anchor )
+> 97.00
+> 97.25
+> 97.50
+> 97.75
+> 98.00
+> Subject Consistency
+> Single prompt Long video generation
+> 5% 10% 15% 20% 25% 30% 35% 40% 45%
+> Proportion threshold for anchor heads ( anchor )
+> 24.00
+> 24.25
+> 24.50
+> 24.75
+> 25.00
+> Clip Score
+> Multi-prompt Long video generation
+> 59.0
+> 59.5
+> 60.0
+> 60.5
+> 61.0
+> 61.5
+> 62.0
+> Aesthetic Quality
+> 84.00
+> 84.25
+> 84.50
+> 84.75
+> 85.00
+> Quality Score
+> Consistency Score Clip Score Aesthetic Quality Quality Score
+
+Fig. S8: Impact of αanchor on 60 s generation quality. Performance is robust within [20% , 35%] . Imaging quality (strongly correlated with visual stability) is most sensitive, consistent with anchor heads’ role in preventing color drift. 0.85 0.88 0.90 0.92 0.95 0.97 0.99            
+
+> Novelty admission threshold ( novel )
+> 97.00
+> 97.25
+> 97.50
+> 97.75
+> 98.00
+> Subject Consistency
+> Single prompt Long video generation
+> 0.85 0.88 0.90 0.92 0.95 0.97 0.99
+> Novelty admission threshold( novel )
+> 24.00
+> 24.25
+> 24.50
+> 24.75
+> 25.00
+> Clip Score
+> Multi-prompt Long video generation
+> 59.0
+> 59.5
+> 60.0
+> 60.5
+> 61.0
+> 61.5
+> 62.0
+> Aesthetic Quality
+> 84.30
+> 84.55
+> 84.80
+> 85.05
+> Quality Score
+> Consistency Score Clip Score Aesthetic Quality Quality Score
+
+Fig. S9: Sensitivity of τnovel .
+
+anchor head selection. We vary αanchor ∈ { 5% , 10% , 15% , · · · , 40% , 45% }, keep-ing other parameter fixed. Fig. S8 presents the results. Performance is robust across αanchor ∈ [20% , 35%] . Setting αanchor too low ( <10%) fails to identify enough anchor heads, losing the stabilization benefit. Setting it too high ( >40%) over-assigns anchor heads, reducing the number of memory heads and thus the capacity for long-range context aggregation. In particular, the imaging quality metric is most sensitive to αanchor , as insufficient anchoring leads to color drift, while excessive anchoring reduces the expressiveness of the memory system. 
+
+Sensitivity of τnovel (Novelty Admission Threshold) We vary τnovel ∈{0.80 , 0.85 , 0.88 , 0.90 , 0.92 , 0.95 , 0.97 , 0.99 }, keeping all other hyperparameters fixed. We evaluate on both single-prompt 60 s and multi-prompt 60 s settings. Fig. S9 presents the results. Performance is stable in the range τnovel ∈ [0 .90 , 0.97] .A threshold that is too permissive ( τnovel ≥ 0.99 ) admits too few frames into episodic memory, effectively disabling it. A threshold that is too aggressive (τnovel ≤ 0.85 ) admits too many frames, causing frequent compression and di-luting the quality of stored entries. Notably, the multi-prompt CLIP score is more sensitive than single-prompt metrics, as the episodic memory is critical for maintaining cross-prompt contextual awareness. 
+
+More Results for Sensitivity of τlocal : In the main paper, we presented a sensitivity analysis of τlocal , focusing on the multi-prompt setting. Here, we S12 J. Tian et al. 0 10 20 25 30 40 50 60             
+
+> Proportion threshold for local heads ( local ))
+> 95.50
+> 95.75
+> 96.00
+> 96.25
+> 96.50
+> 96.75
+> Consistency Score
+> Multi-prompt long video generation
+> 010 20 25 30 40 50 60
+> Proportion threshold for local heads ( local ))
+> 97.00
+> 97.25
+> 97.50
+> 97.75
+> Subject Consistency
+> Single prompt long video generation
+> 83.0
+> 83.5
+> 84.0
+> 84.5
+> 85.0
+> Quality Score
+> 59.50
+> 59.75
+> 60.00
+> 60.25
+> 60.50
+> 60.75
+> 61.00
+> 61.25
+> Aesthetic Quality
+> Consistency Score Subject Consistency Quality Score Aesthetic Quality
+
+Fig. S10: Sensitivity of τlocal .
+
+additionally provide results for single-prompt long video generation in Fig. S10 combined with multi-prompt interactive video generation. 
+
+F.3 Impact of Component of Hierarchical Memory System Fast Memory. The fast memory Mfast provides memory heads with fine-grained short-term context for motion continuity and visual coherence. We vary 
+
+Bfast (the number of retained recent frames) from 0 to 6, as shown in Fig. S11. When Bfast = 1 , memory heads have minimal access to the immediate tem-poral neighborhood beyond the current block, which markedly impairs motion smoothness and introduces visible artifacts. A moderate value of Bfast = 3 is sufficient to maintain smooth temporal transitions. Further increasing Bfast to 6
+
+yields diminishing returns and eventually degrades performance, as the growing proportion of fast memory tokens amplifies noise propagation. 𝑩 𝒇𝒂𝒔𝒕 = 𝟑     
+
+> 𝑩 𝒇𝒂𝒔𝒕 =𝟏
+> 𝑩 𝒇𝒂𝒔𝒕 =𝟔
+
+Fig. S11: Impact of number of fast memory Bepi .
+
+G User Study 
+
+In Fig. S12, we present one of the example interfaces used in our user studies (for multi-prompt interactive video generation). 
+
+Single-Prompt Long Video Generation. We conduct a user study on 60 s single-prompt video generation, comparing Head Forcing against Self Forcing [25], Head Forcing S13 
+
+Fig. S12: User study interfaces 
+
+LongLive [57], Rolling Forcing [35], Deep Forcing [61], and Infinity-RoPE [60]. We randomly select 15 prompts from MovieGenBench [40] and generate one video per method per prompt. We recruit 20 participants, each rating every video independently on a 5-point Likert scale across three aspects: (i) Visual Quality: overall sharpness and absence of artifacts, (ii) Temporal Consistency: identity preservation and absence of flickering or drift, and (iii) Motion Dynamics: rich-ness and naturalness of motion. Results are reported in Tab. S4. Head Forcing achieves the highest mean score across all three criteria, with particularly strong advantages in Motion Dynamics and Temporal Consistency, consistent with our automatic evaluation results. 
+
+Table S4: User study on single-prompt 60 s generation. 5-point Likert scale; higher is better. Method Visual Quality ↑ Temporal Consistency ↑ Motion Smoothness, ↑ Avg ↑                        
+
+> Self Forcing [25] 1.56 2.09 1.92 1.86 Rolling Forcing [35] 4.12 3.71 2.34 3.39 Deep Forcing [61] 3.74 3.07 3.05 3.29 Infinity-RoPE [60] 3.66 3.18 2.91 3.25 LongLive [57] 3.83 3.35 3.21 3.46
+> Head Forcing (Ours) 4.04 3.98 3.67 3.89
+
+S14 J. Tian et al. 
+
+Multi-Prompt Interactive Video Generation. We further evaluate on 60 s multi-prompt interactive generation using the same participant pool. We select 15 six-prompt sequences from multi-prompt benchmark, comparing Head Forc-ing against Self Forcing [25], LongLive [57], and Infinity-RoPE [60]. Participants rate each video on the same three criteria above with an additional dimension: (iv)Prompt Adherence how faithfully each segment reflects its corresponding prompt. As shown in Tab. S5, Head Forcing obtains the best scores across all four criteria. The advantage is most pronounced on Prompt Alignment, confirm-ing that our episodic memory system effectively preserves context across prompt transitions. 
+
+Table S5: User study on multi-prompt 60 s generation. 5-point Likert scale; higher is better. Method Visual Quality ↑ Temporal Consistency ↑ Motion Smoothness. ↑ Prompt Alignment ↑ Avg ↑                    
+
+> Self Forcing [25] 1.81 1.95 2.18 2.20 2.03 Infinity-RoPE [60] 3.15 3.21 2.95 3.19 3.12 LongLive [57] 3.78 3.08 3.09 3.28 3.30
+> Head Forcing (Ours) 3.93 3.39 3.45 3.47 3.56
+
+H Efficiency Optimization Validation 
+
+In Section 3.5 of the main paper, we introduce two complementary efficiency op-timizations: variable-length FlashAttention and fused Triton kernels to address the computational challenges arising from head-wise KV caches allocation. In this section, we provide a validation of their effectiveness with throughput anal-ysis across generation lengths. We also compare our method’s memory usage with baselines. 
+
+H.1 Throughput With Different Efficiency Optimization Implementation. To isolate the contribution of each optimization, we com-pare four implementation variants under identical head-wise KV cache allocation strategies: (V1) Naive Loop : Each attention head is computed by a separate flash attention [11,12] call inside a Python for -loop. KV cache updates, sequence assembly, and RoPE re-encoding are likewise performed in a per-head loop using standard PyTorch tensor operations. (V2) + VarLen FlashAttn : All heads are packed into a single flat buffer with per-head sequence-length metadata and processed via a single flash_attn_varlen_func call, eliminating per-head ker-nel launches. (V3) + Fused Cache Kernels : Building on (V2), a Triton kernel is introduced for KV cache rolling updates. For episodic memory updates, we gather all memory heads per layer and pack them into a single tensor, enabling batched computation of novelty scores and prompt-guided compression along the batch dimension. The resulting updates are then applied through a custom Triton kernel for episodic memory management. (V4) Full (Ours) : Building Head Forcing S15 
+
+on (V3), the additional three-stage pipeline containing sequence assembly, RoPE re-encoding, and flat-buffer packing for each head is fused into a single Triton kernel, yielding the complete Head Forcing system. 
+
+Throughput. 
+
+As shown in Fig. S13 (a), the naive implementation (V1) achieves only 6.62 FPS, making it unsuitable for real-time applications. Each subsequent op-timization stage progressively recovers throughput to 15.81 FPS, demonstrating that Variable-Length FlashAttention and the fused Triton kernels are essential for making head-wise KV cache management practically efficient. (V1) Naive Loop (V2) + VarLen FA (V3) + Fused Cache (V4) Full     
+
+> (Ours)
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5
+> 15.0
+> 17.5
+> Throughput (FPS)
+> 6.62
+> 9.54
+> 13.43
+> 15.81
+> (a) Throughput with Different Efficiency Optimization
+> Self Forcing
+> (Uniform, W=21)
+> Deep Forcing Infinity-RoPE Head Forcing
+> (Ours)
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> 35
+> Total Memory (GB)
+> 32.14 31.27
+> 28.15 29.45
+> (b) Peak GPU Memory Consumption
+
+Fig. S13: Efficiency Optimization Validation. (a) Throughput (FPS) with differ-ent efficiency optimization. (b) Peak GPU memory consumption during 60 s video generation at 832 × 480 resolution on a single A100-80GB. 
+
+H.2 GPU Memory Consumption 
+
+Head-wise cache allocation not only improves generation quality but also offers notable memory efficiency benefits, as local and anchor heads maintain substan-tially smaller caches than the uniform baseline. As shown in Fig. S13, Head Forcing consumes less GPU memory than the uniform-cache approaches of Self Forcing [25] and Deep Forcing [61], while requiring only slightly more memory than Infinity-RoPE [60]. This advantage is particularly beneficial when deploying on memory-constrained GPUs or scaling to higher resolutions. 
+
+I Memory Budget Fairness Analysis 
+
+A natural concern is whether the performance gains of Head Forcing stem from a smarter cache allocation strategy or simply from using more total memory than the baselines. We address this with a precise per-method budget accounting that shows Head Forcing actually uses substantially less total cache. We express the KV cache budget as the total number of frame-slots , defined as PNtotal 
+
+h=1 Ch, where Ch is the number of cached frames for head h and Ntotal =
+
+L × H = 30 × 12 = 360 is the total number of attention heads in the model. S16 J. Tian et al. 
+
+This metric is hardware-agnostic and directly proportional to actual memory consumption, since every frame-slot stores the same number of KV tokens. Specifically, Self Forcing [25] maintains a uniform sliding-window cache of 
+
+W = 21 frames across all heads, with total frames 360 × 21 = 7 ,560 Deep Forcing [61], Infinity-RoPE [60] and LongLive [57] adopt attention-sink strategies that replace a small portion of the sliding window with dedicated sink tokens from the first few frames. Their total per-head cache size is about 16 for Deep Forcing, 8 for Infinity-Rope and 12 for LongLive. Under the profiling results reported in Sec. 3.2 of the main paper, the 360 heads are categorized as follows (exact counts may vary slightly with profiling prompt set; see Sec. A.3 for stability analysis): 
+
+– Local heads (Nlocal ): top τlocal = 20% by current-bucket attention ⇒ 72 heads , each caching f + 1 = 4 frames. 
+
+– Anchor heads (Nanchor ): top αanchor = 25% by first-frame attention ⇒ 90 heads , each caching 2f + 1 = 7 frames. 
+
+– Memory heads (Nmem ): remaining ⇒ 198 heads , each caching Bepi +
+
+Bfast + f = 5 + 3 + 3 = 11 frames. The total budget of Head Forcing is therefore about 3,096 frame-slots. Tab. S6 summarizes the budget of each method. Head Forcing uses smaller budget of the total KV cache budget consumed by Self Forcing, Deep Forcing and LongLive as well as comparable budget consumed by Infinity-Rope , while achieving superior generation quality as shown in Tab. 2 of the main paper. This immediately rules out the hypothesis that the gains simply come from larger memory. On the contrary, Head Forcing achieves better results with the help of better KV cache allocation.                       
+
+> Table S6: KV cache budget comparison. All methods are built on the same Self Forcing backbone. Frame-slots =P
+> hChis the total number of cached frames summed across all 360 attention heads. Relative budget is normalized to Head Forcing.
+> Method Cache per Head Frame-slots Relative Budget
+> Self Forcing [25] 21 (uniform) 7,560 244.2% Deep Forcing [61] 16 (uniform) 5.760 186.0% Infinity-RoPE [60] 8 (uniform) 2,880 93.0% LongLive [57] 12 (uniform) 4,320 139.5%
+> Head Forcing (Ours) 4 / 7 / 11 (head-wise) 3,096 100.0%
+
+J Limitations 
+
+While Head Forcing achieves strong results on long autoregressive video genera-tion without additional training, several limitations remain. (1) Offline profiling Head Forcing S17 
+
+dependency. Our method requires a one-time offline profiling step to classify attention heads into local, anchor, and memory types. Although this profiling is lightweight and yields highly stable classifications across different conditions (see Sec. A.3), it must be re-executed for each new base model. Developing a universal, architecture-agnostic head classification rule or profiling-free methods remains an open direction. 
+
+(2) Episodic memory information loss under extreme length. The prompt-guided compression mechanism enables episodic memory to operate within a fixed budget indefinitely. However, after many compression cycles over very long sequences ( e.g ., >5 minutes), the summary frame may gradually lose fine-grained details of early scenes. This is an inherent trade-off between memory capacity and generation length that applies to all bounded-memory approaches. 
+
+K Additional Visual Results 
+
+In this section, we provide more visual results, which are organized as follows: Fig S14 and Fig. S15 presents more qualitative results on single-prompt long video generation (60 s). Fig S16 and Fig. S17 presents more qualitative results on multi-prompt long video generation (60 s). Fig S18 presents more visual results on ultra long video generation (5min). S18 J. Tian et al. Self Forcing 
+
+> LongLive
+> RollingForcing
+> Deep Forcing
+> Infinity Rope
+> CausVid
+> Ours
+
+Prompt: A photorealistic closeup video of two pirate ships battling each other as they sail inside a steaming 
+
+cup of coffee. The ships are intricately detailed, with wooden planks, sails flapping in the breeze, and cannons 
+
+aimed at each other … 
+
+> Self Forcing
+> LongLive
+> RollingForcing
+> Deep Forcing
+> Infinity Rope
+> CausVid
+> Ours
+
+Prompt: A vibrant concert stage scene in the style of a music video, featuring a woman in the spotlight, singing 
+
+passionately. She stands confidently on the stage, microphone in hand, with a captivating expression on her face …
+
+Fig. S14: Qualitative results on single-prompt long video generation (60 s) Head Forcing S19 Self Forcing 
+
+> LongLive
+> RollingForcing
+> Deep Forcing
+> Infinity Rope
+> CausVid
+> Ours
+
+Prompt: A stunning mid -afternoon landscape photograph with a low camera angle, showcasing several giant 
+
+wooly mammoths treading through a snowy meadow …
+
+> Self Forcing
+> LongLive
+> RollingForcing
+> Deep Forcing
+> Infinity Rope
+> CausVid
+> Ours
+
+Prompt: A vibrant and whimsical digital illustration in a cartoon style, depicting a giant humanoid figure 
+
+composed of fluffy blue cotton candy …
+
+Fig. S15: Qualitative results on single-prompt long video generation (60 s) S20 J. Tian et al. Self Forcing 
+
+Infinity -Rope 
+
+LongLiv e
+
+Ours 
+
+Prompt: 
+
+0-10s: A tired programmer is coding intensely on a laptop in a dark, messy apartment late at night. Multiple empty coffee mugs are o n t he desk. The 
+
+only light comes from the computer screen. 
+
+10 -20s: The tired programmer coding in the dark apartment is startled by a soft whirring sound. Their small, friendly robot assi stant, shaped like a 
+
+rolling bin with two arms, glides into the room holding a fresh, steaming cup of coffee. 
+
+20 -30s: The tired programmer and the friendly robot assistant are in the dark apartment. The programmer takes the coffee from th e robot with a 
+
+grateful smile. The robot's digital eyes form a happy expression. 
+
+30 -40s : The tired programmer in the dark apartment takes a sip of the coffee while the friendly robot assistant uses one of its arms to gently tidy 
+
+up the empty mugs on the desk. The programmer watches, touched by the gesture. 
+
+40 -50s: The tired programmer and the friendly robot assistant in the dark apartment have a silent moment of companionship. The progra mme r
+
+returns to coding, re -energized, while the robot stands by, ready to assist further. 
+
+50 -60s: The tired programmer in the dark apartment finally finishes their code and leans back, exhausted but successful. The friendly ro bot 
+
+assistant extends an arm and gives the programmer a gentle, encouraging pat on the shoulder. 
+
+Self Forcing 
+
+Infinity -Rope 
+
+LongLiv e
+
+Ours 
+
+Prompt: 
+
+0-10s: A painter in a white apron is working on a large, abstract canvas in a bright, sunlit art studio. The studio is filled with f ini shed paintings and 
+
+art supplies. The canvas is a swirl of blue and green. 
+
+10 -20s The painter working on the canvas in the sunlit art studio is visited by a renowned, elderly art critic known for his har sh reviews. The critic, 
+
+holding a cane, enters the studio and begins to inspect the work silently. 
+
+20 -30s: The painter in the white apron and the elderly art critic stand in front of the large canvas in the sunlit art studio. T he painter explains 
+
+their vision, gesturing towards the abstract shapes. The critic listens without expression. 
+
+30 -40s : The painter watches anxiously as the elderly art critic in the sunlit studio leans in close to the canvas, examining a single brushstroke. The 
+
+critic squints, his brow furrowed in concentration. The studio is silent. 
+
+40 -50s: The painter in the sunlit studio is stunned when the elderly art critic breaks into a rare, genuine smile. He taps his cane o n t he floor and 
+
+declares the work a masterpiece of modern expression. The painter is speechless. 
+
+50 -60s: The painter and the smiling art critic are sharing a glass of wine in the sunlit art studio, discussing art and life. The cri tic has offered to 
+
+sponsor the painter's next exhibition. The large canvas glows in the afternoon sun. 
+
+Fig. S16: Qualitative results on multi-prompt long video generation (60 s) Head Forcing S21 Prompt: 
+
+0-10s: A realistic video of a Texas Hold'em poker event at a casino. A male player in his late 30s with a medium build, short dark hair, light stubble, 
+
+and a sharp jawline wears a fitted navy blazer over a charcoal crew -neck tee, dark jeans, and a stainless -steel watch. He sits a t a well -lit poker table 
+
+and tightly grips his hole cards, wearing a tense, serious expression. The table is filled with chips of various colors, the dea ler is seen dealing cards, 
+
+and several rows of slot machines glow in the background. The camera focuses on the player's strained concentration. Wide sho t t o medium close -up. 
+
+10 -20s: A realistic video of a Texas Hold'em poker event at a casino. The same male player —late 30s, medium build, short dark hair, light stubble, 
+
+sharp jawline —dressed in a fitted navy blazer over a charcoal tee, dark jeans, and a stainless -steel watch —flicks his cards onto the felt, then leans 
+
+back in the chair with arms spread wide in celebration. The dealer continues dealing to the table as stacks of multicolored c hip s crowd the surface; 
+
+slot machines and nearby patrons fill the background. The camera locks onto the player’s exuberant reaction. Wide shot to med ium close -up. 
+
+20 -30s: A realistic video of a Texas Hold'em poker event at a casino. The same late -30s male player, medium build with short dark hair and light 
+
+stubble, wearing a navy blazer, charcoal tee, dark jeans, and a stainless -steel watch, reveals the winning hand and leans back i n celebration while the 
+
+dealer keeps the game moving. A nearby patron claps and cheers for the winner, amplifying the festive atmosphere. The table b rim s with colorful 
+
+chips, with slot machines and other tables behind. The camera centers on the winner’s reaction as the applause rises. Wide sh ot to medium close -up. 
+
+30 -40s : A realistic video of a Texas Hold'em poker event at a casino. The same male player —late 30s, medium build, short dark hair, light stubble —
+
+still in his navy blazer, charcoal tee, dark jeans, and stainless -steel watch —sits upright and begins neatly arranging the stack s of chips in front of him, 
+
+methodically straightening and organizing the piles. The dealer continues dealing, and rows of slot machines pulse in the bac kgr ound. The camera 
+
+captures the composed, purposeful movements at the well -lit table. Wide shot to medium close -up. 
+
+40 -50s: A realistic video of a Texas Hold'em poker event at a casino. The same late -30s male player with short dark hair, light stubble, and a sharp 
+
+jawline, wearing a fitted navy blazer over a charcoal tee, dark jeans, and a stainless -steel watch, glances over his chips and b reaks into a proud, self -
+
+assured smile, basking in the victorious moment. Multicolored chips crowd the felt, the dealer works the table, and slot mach ine s glow behind. The 
+
+camera emphasizes the winner’s pride and satisfaction. Wide shot to medium close -up. 
+
+50 -60s: A realistic video of a Texas Hold'em poker event at a casino. The same male player —late 30s, medium build, short dark hair, light stubble —
+
+dressed in a navy blazer, charcoal tee, dark jeans, and a stainless -steel watch —shares a celebratory high -five with a nearby pat ron after the win, 
+
+laughter and cheers rippling around the table. Stacks of chips are spread across the felt, the dealer continues dealing, and the background features 
+
+rows of slot machines and other patrons. The camera focuses on the jubilant interaction. Wide shot to medium close -up. 
+
+Self Forcing 
+
+Infinity -Rope 
+
+LongLiv e
+
+Ours 
+
+Prompt: 
+
+0-10s: A little boy in a blue T -shirt stands on a lush green lawn, arms relaxed at his sides, smiling at the camera, natural fresh real istic style. 
+
+10 -20s A little boy in a blue T -shirt starts to step forward, lightly running, with his arms swinging naturally. The grass and b lue sky remain unchanged. 
+
+20 -30s: A little boy in a blue T -shirt runs faster, leaning slightly forward, arms swinging naturally, feet lightly off the grou nd. The background remains 
+
+the same grassy lawn. 
+
+30 -40s : little boy in a blue T -shirt jumps into the air, knees bent, arms raised, performing a light jump. The grass and sky stay consi stent. 
+
+40 -50s: A little boy in a blue T -shirt lands and continues running forward, arms swinging naturally, smiling as he enjoys the run. The b ackground 
+
+remains the same. 
+
+50 -60s: A little boy in a blue T -shirt stops running, hands on his hips with a smile, body leaning slightly forward, sunlight falling o n the grass, natural 
+
+fresh realistic style .
+
+Fig. S17: Qualitative results on multi-prompt long video generation (60 s) S22 J. Tian et al. Prompt: A vibrant and whimsical digital illustration in a cartoon style, depicting a giant humanoid figure composed of 
+
+fluffy blue cotton candy. The humanoid is stomping its feet on the ground, causing a playful disturbance, while 
+
+roaring towards the clear blue sky. The background features a bright, cloudless sky with soft, pastel tones, 
+
+enhancing the dreamlike quality of the scene. The humanoid has expressive eyes and a mischievous smile, with arms 
+
+and legs made of swirling cotton candy. A dynamic, full -body shot from a slightly elevated angle, capturing the 
+
+energetic movement and playful nature of the creature. 
+
+Prompt: A close -up 3D animated scene of a short, fluffy monster kneeling beside a melting red candle. The monster 
+
+has large, wide eyes and an open mouth, gazing at the flame with a look of wonder and curiosity. Its soft, fluffy fur 
+
+contrasts with the warm, dramatic lighting that highlights every detail of its gentle, innocent expression. The pose 
+
+conveys a sense of playfulness and exploration, as if the creature is discovering the world for the first time. The 
+
+background features a cozy, warmly lit room with subtle hints of a fireplace and soft furnishings, enhancing the 
+
+overall atmosphere. The use of warm colors and dramatic lighting creates a captivating and inviting scene.             
+
+> 0s 30s60s
+> 150s 180s 210s 240s
+> 90s12 0s
+> 300s
+> 0s 30s60s
+> 150s 180s 210s 240s
+> 90s12 0s
+> 300s
+
+Fig. S18: Visual results on ultra long video generation (5min)

@@ -1,0 +1,763 @@
+Title: Knowledge Transfer Scaling Laws for 3D Medical Imaging
+
+URL Source: https://arxiv.org/pdf/2605.06859v1
+
+Published Time: Mon, 11 May 2026 00:10:43 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# Knowledge Transfer Scaling Laws for 3D Medical Imaging 
+
+Ho Hin Lee ∗
+
+Vanderbilt University 
+
+Dongna Du 
+
+Zhejiang University 
+
+Chu Wang 
+
+McGill University 
+
+Yuankai Huo 
+
+Vanderbilt University 
+
+Shi Gu 
+
+Zhejiang University 
+
+James C. Gee 
+
+University of Pennsylvania 
+
+Yifan Wu 
+
+University of Pennsylvania 
+
+Abstract 
+
+Vision foundation models are increasingly moving beyond 2D to volumetric do-mains such as 3D medical imaging, where unified pretraining across different imaging modalities (i.e. CT, MRI, and PET) could provide foundational mod-els for diverse clinical tasks. However, training such models requires mixing heterogeneous imaging domains, and current mixture strategies remain largely heuristic. In this work, we observe that different medical imaging domains scale at variable rates during pretraining, and knowledge transfer between domains is strongly asymmetric: training on one domain can substantially improve another, but the reverse may be much weaker. Interestingly, both MAE reconstruction loss and cross-domain transfer follow predictable power-law trends with domain-specific behaviors. Motivated by these findings, we formulate data allocation as a 
+
+scaling-law optimization problem . The derived allocations reveal an interpretable 
+
+hub-and-island structure: highly transferable domains emerge as hubs that benefit many others and deserve strategic allocation, while isolated domains act as islands 
+
+requiring direct investment. Empirically, transfer-aware allocation outperforms data-proportional sampling by up to 58% and generalizes well to unseen budgets with r=0 .989 . Downstream validation on disease classification and organ/lesion segmentation further confirms that the derived transfer-aware mixtures provide stronger pretrained representations for clinical 3D medical imaging tasks. 
+
+1 Introduction 
+
+Clinical imaging spans CT, MRI, and PET, each with distinct acquisition physics, resolution, and clinical signal, yet the fundamental skills required to interpret them (volumetric reasoning, structural context, cross-anatomy knowledge) are shared. A unified 3D medical foundation model that learns reusable representations across modalities and anatomies could support diverse clinical tasks, from organ/lesion segmentation to abnormality discovery and disease monitoring from a single pretrained initialization [ 31 , 42 , 34 , 35 ]. However, training such a unified model requires large-scale hetero-geneous volumetric datasets with diversity, but while architectures and self-supervised objectives have received substantial attention, a more fundamental question remains open: how much of each imaging domain should be used under a fixed training token budget? 
+
+In natural language processing, scaling laws [ 21 , 16 ] have enabled principled data mixture optimiza-tion by modeling how performance scales with compute and data [ 45 , 17 , 32 , 40 ]. However, these formulations assume relatively homogeneous data sources or shared scaling behavior, and have seen limited adoption in vision settings, particularly in 3D medical imaging. In practice, mixtures are still                                                                 
+
+> ∗Corresponding author: ho.hin.lee@vanderbilt.edu Preprint.
+> arXiv:2605.06859v1 [cs.CV] 7 May 2026 10K 50K 100K 200K
+> Training budget T
+> 10 2
+> 10 1
+> MAE validation loss  Li
+> varies 3.5 ×
+> across domains
+> (a) Per-domain power-law scaling
+> Li=Ei+Ci/Ti
+> ABD CT ( =0.41)
+> ABD MRI ( =0.49)
+> BRAIN T1 ( =0.21)
+> BRAIN T2 ( =0.24)
+> HN CT ( =0.44)
+> HN PET ( =0.76)
+> 10K 50K 100K 200K
+> Training budget T
+> 10 1
+> 4 × 10 2
+> 6 × 10 2
+> MAE loss on target domain
+> (b) Cross-domain transfer
+> with asymmetric discount ij
+> ABD CT ABD MRI ( =0.56)
+> ABD MRI ABD CT ( =0.42)
+> ABD CT HN PET ( =0.04)
+> ABD
+> CT
+> ABD
+> MRI
+> BRAIN
+> T1
+> BRAIN
+> T2
+> HN
+> CT
+> HN
+> PET
+> Source j
+> ABD
+> CT
+> ABD
+> MRI
+> BRAIN
+> T1
+> BRAIN
+> T2
+> HN
+> CT
+> HN
+> PET
+> Target  i
+> 1.00 0.56 0.32 0.32 0.25 0.10
+> 0.42 1.00 0.20 0.17 0.13 0.18
+> 0.24 0.21 1.00 0.26 0.16 0.09
+> 0.49 0.30 0.25 1.00 0.17 0.21
+> 0.25 0.20 0.20 0.18 1.00 0.28
+> 0.20 0.03 0.08 0.07 0.05 1.00
+> (c) Transfer matrix ij
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+
+Figure 1: Observations motivating the transfer-aware scaling law. (a) Per-domain MAE loss follows 
+
+Li = Ei + Ci/T βi with domain-specific exponents varying 3.5× (β = 0 .21 for BRAIN T1 to β = 0 .76 for HN PET), indicating that domains benefit from additional data at fundamentally different rates. (b) Cross-domain transfer obeys the same power-law form with a directional discount τij : ABD CT transfers strongly to ABD MRI ( τ =0 .56 ) but weakly to HN PET ( τ =0 .04 ), and the reverse ABD MRI → ABD CT ( τ =0 .42 , dashed) is weaker than the forward direction. (c) Full 6×6 transfer matrix τij (from source j to target i) estimated from pure-domain proxy runs. The matrix is asymmetric ( τij ̸ = τji ) and reveals hub-and-island structure: ABD CT (hub) transfers broadly to most domains, while HN PET (island) is largely isolated. 
+
+chosen by heuristics (i.e. uniform or data-proportional sampling) that treat all imaging domains as interchangeable. However, as shown in Figure 1(a), we observe that each imaging domain exhibit substantially different scaling behavior and the corresponding self-supervised masked autoencoding (MAE) reconstruction loss follows a predictable power law L ≈ E + C/T β , where the scaling exponent β controls how rapidly a domain benefits from additional data, but varies by 3.5× across domains. Furthermore, Figure 1(b) demonstrates that cross-domain transfer also follows the power law discounted by an asymmetric coefficient τij . Such two regularities heterogeneous scaling and 
+
+directional transfer , provide the analytical foundation to optimize data mixtures in closed form. We therefore formulate 3D medical data mixture design as a scaling-law optimization prob-lem [ 21 , 16 , 32 , 17 ]. Rather than directly fitting downstream segmentation performance, we use masked autoencoding (MAE) as a controlled proxy objective that can be applied consistently across heterogeneous 3D imaging domains [ 14 ]. While reconstruction is not the end goal, the quality of learned representations, as measured by reconstruction loss, directly determines how well the pretrained model supports downstream clinical tasks. We propose a transfer-aware scaling law 
+
+with two ingredients: (i) domain-specific scaling exponents βi, which capture how efficiently each domain benefits from additional training budget; and (ii) an asymmetric transfer matrix τij , which measures how effectively training on source domain j contributes to target domain i. Together, these components define a closed-form surrogate for predicting domain-wise MAE loss under arbitrary mixtures. Optimizing this surrogate yields a compute-dependent allocation h∗(T ) without without exhaustive and compute hungry data mixture ablation experiments. The resulting allocations reveal interpretable hub-and-island structure: domains with broad outgoing transfer act as hubs , where compute allocated benefits multiple domains simultaneously, while domains with weak incoming transfer act as islands that require direct investment, as knowledge from hubs cannot be transferred to them effectively. Such deterministic knowledge base structure shows that dataset-size weighting alone is insufficient, where data recipe design must account for both domain-specific scaling and cross-domain transfer. Empirically, across six heterogeneous 3D imaging domains spanning CT, MRI, and PET, the estimated transfer matrix reveals strong asymmetry and the derived optimal allocations differ substantially from uniform and data-proportional heuristics. By scaling up the token budget for pretraining, transfer-aware allocation achieves the lowest MAE loss, outperforming data-proportional allocation by up to 58% , and extrapolates to unseen budgets with strong per-domain agreement ( r = 0 .989 ). We further validate the derived optimal allocation, whose transfer matrices are estimated from principled MAE proxy experiments, on downstream clinical tasks such as abnormal findings classification and lesion segmentation. Our results demonstrate that the proposed transfer-aware data recipe provides a strong prior for supervised 3D medical imaging tasks. In summary, our main contributions are: 2• We formulate cross-domain data allocation in 3D medical imaging as a scaling-law opti-mization problem, using MAE reconstruction loss as a controlled proxy objective across six heterogeneous imaging domains. • We propose a transfer-aware scaling law that jointly models heterogeneous scaling exponents and an asymmetric transfer matrix, yielding a closed-form surrogate for compute-dependent mixture optimization from small-scale proxy runs. • We show that the learned allocations reveal interpretable hub-and-island structure, outper-form standard heuristic mixtures across budgets, extrapolate from small proxy runs to unseen budgets, and provide a useful prior for downstream tasks. 
+
+2 Related Work 
+
+3D medical foundation models and self-supervised pretraining. Self-supervised pretraining has become a key strategy for learning transferable representations from unlabeled 3D medical images, where dense annotations are costly. Early work explored restoration, contrastive, and masked prediction objectives for volumetric data [ 48 , 33 , 34 ], while recent foundation-style models scale pretraining to larger and more heterogeneous corpora, including CT volumes, multi-parametric MRI, and diverse multi-domain medical datasets [ 37 , 31 , 42 , 35 ]. These studies show that heterogeneous 3D data can support reusable representations across tasks and domains. However, they primarily focus on architectures [ 18 , 13 , 12 , 24 , 47 , 26 , 25 ], objectives [ 35 , 23 , 41 , 46 ], and evaluation proto-cols [ 38 , 20 , 36 , 3, 5 ], while the data mixture is typically fixed by corpus construction or heuristic sampling rather than optimized. 
+
+Scaling laws and data-mixture optimization. Scaling laws provide a quantitative framework for predicting how loss changes with model size, data, and compute [ 21 , 16 ]. Recent data-centric extensions further show that training mixtures can be estimated from small-scale proxy runs in-stead of exhaustively swept, including data mixing laws, RegMix, BiMix, and optimal mixture scaling formulations [ 45 , 27 , 11 , 32 ]. Related work on multilingual and general-purpose pretraining also studies proportional, temperature-based, or learned reweighting strategies for imbalanced cor-pora [ 2 , 43 , 8, 40 ]. However, these approaches are largely developed for language, general vision, or native multimodal pretraining, and generally do not model the asymmetric source-to-target transfer that arises across heterogeneous 3D medical domains. 
+
+Cross-domain transfer in medical imaging. Medical imaging domains differ substantially in acquisition physics, spatial resolution, anatomical coverage, and clinical signal. Prior multi-domain and multi-modal work has shown that joint training can improve transfer and generalization, in-cluding Med3D, Hermes, and recent 3D foundation models [ 7 , 10 , 31 , 42 ]. More broadly, transfer effectiveness can be predictable and directional [ 15 ]. Nevertheless, most medical imaging studies evaluate transfer under a fixed mixture, rather than parameterizing transfer as a quantity for allocation. In contrast, we estimate an asymmetric transfer matrix and use it to optimize compute-aware data allocation across 3D medical domains. 
+
+3 Method 
+
+We formulate heterogeneous 3D medical data mixture design as a transfer-aware scaling-law opti-mization problem. Given a fixed self-supervised pretraining budget, our goal is to predict the masked autoencoding (MAE) validation loss induced by a candidate data mixture and choose the mixture that minimizes the expected loss across target domains. Our method is built on two observations. First, different 3D medical domains exhibit different scaling behavior: some domains continue to benefit from additional data, while others saturate more quickly. Second, cross-domain transfer is directional: training on source domain j may benefit target domain i differently from how training on i benefits j.We capture these effects with domain-specific scaling exponents and an asymmetric transfer matrix. 
+
+3.1 Problem setup 
+
+We consider self-supervised pretraining on K heterogeneous 3D medical imaging domains 
+
+D1, . . . , DK . Each domain corresponds to a modality-anatomy pair, such as abdominal CT, abdominal MRI, brain MRI, or head-and-neck PET (HN-PET). Given a domain weight vector h = ( h1, . . . , h K ),3we define the mixture distribution 
+
+mix( h) = 
+
+> K
+
+X
+
+> j=1
+
+hj Dj , h ∈ ∆K−1 
+
+> ϵ
+
+, (1) where 
+
+∆K−1 
+
+> ϵ
+
+=
+
+h ∈ RK : hj ≥ ϵ, 
+
+> K
+
+X
+
+> j=1
+
+hj = 1 
+
+ . (2) Thus, domain j is sampled with probability hj . The lower bound ϵ prevents degenerate zero-allocation mixtures and ensures that every domain remains represented during mixture optimization. Let T denote the total pretraining budget, measured in volume draws. Training with mixture h
+
+allocates hj T expected samples to domain j. We train a 3D masked autoencoder with parameters 
+
+θ using samples from mix( h). Let ℓ(x, θ ) denote the reconstruction loss for a 3D volume x. For a target domain Di, the target-domain MAE loss is 
+
+Li(θ) = Ex∼D i [ℓ(x, θ )] . (3) After training on mixture h for budget T , the optimization procedure returns parameters θ∗(h, T ).The loss induced by this training run on target domain i is 
+
+Li(h, T ) = Li (θ∗(h, T )) . (4) Our goal is to predict Li(h, T ) for each target domain without exhaustively training models under many candidate mixtures. We therefore learn a surrogate bLi(h, T ) for each target domain and choose the mixture that minimizes the average predicted loss: 
+
+h∗(T ) ∈ arg min 
+
+> h∈∆K−1
+> ϵ
+
+1
+
+K
+
+> K
+
+X
+
+> i=1
+
+bLi(h, T ). (5) This objective treats all target domains equally. A weighted version is introduced in Section 3.3. 
+
+3.2 Transfer-aware scaling law 
+
+We now derive the predictive law used in Eq. (5) . The derivation has three components: domain-specific self-scaling, directed cross-domain transfer, and a mixture-level effective budget. 
+
+Domain-specific self-scaling. We first model how each domain scales when trained in isolation. When the model is trained only on samples from Di, we model the validation MAE loss on the same domain using a power law: 
+
+Li(T ) = Ei + Ci
+
+T βi , (6) where Ei ≥ 0 is the asymptotic loss floor, Ci > 0 controls the reducible loss, and βi > 0 is the scaling exponent for target domain i. The exponent βi controls the marginal benefit of additional effective data. A larger βi indicates that the domain continues to improve more rapidly with additional pretraining samples, whereas a smaller βi indicates faster saturation. Unlike mixture laws that assume a shared exponent across domains, we allow βi to vary with the target domain. This is important for 3D medical imaging because the domains differ not only in dataset size, but also in modality, anatomical coverage, spatial resolution, and signal characteristics. The self-scaling law therefore captures the intrinsic data-scaling behavior of each target domain before considering transfer. 
+
+Directed cross-domain transfer. Self-domain scaling alone only accounts for samples drawn from the same domain as the target. However, pretraining on one 3D medical domain can improve representations for another domain. We model this effect through a directed transfer matrix τ ∈
+
+[0 , 1] K×K . The entry τij measures how effectively training on source domain Dj contributes to the target loss on Di. We set τii = 1 by definition. For i̸ = j, τij converts source-domain samples into target-domain effective samples. When the model is trained only on source domain Dj , we predict 4the loss on target domain Di by reusing the target-domain scaling parameters and discounting the budget: 
+
+Li←j (T ) = Ei + Ci
+
+(τij T )βi . (7) This gives τij a direct interpretation: T samples from source domain j are equivalent, for target domain i, to τij T samples from the target domain itself. A value close to one indicates strong transfer, while a value near zero indicates weak transfer. As the matrix is directed, so we do not require 
+
+τij = τji . Such directionality is central to our formulation. For example, a source domain with strong anatomical structure may provide useful representations for several targets, while a specialized target domain may not provide the same benefit in reverse. By estimating τij for each ordered pair, the model can distinguish transferable sources from domains that require direct allocation. 
+
+Transfer-aware mixture law. For a general mixture h, source domain j receives hj T samples. Its contribution to target domain i is discounted by τij (the transfer coefficient from source j to target i), yielding τij hj T effective target-domain samples. The total effective budget reaching target domain i
+
+is therefore 
+
+Teff ,i (h, T ) = 
+
+> K
+
+X
+
+> j=1
+
+τij hj T. (8) Substituting this effective budget into the self-domain scaling law in Eq. (6) gives our transfer-aware scaling law: 
+
+bLi(h, T ) = Ei + Ci
+
+PKj=1 τij hj T
+
+βi . (9) Equation (9) is the central surrogate used for mixture allocation. It is closed-form, differentiable with respect to h, and can be evaluated for arbitrary budgets once its parameters are estimated. The law separates two effects that are entangled in direct mixture sweeps: the target-domain scaling rate, controlled by βi, and the source-to-target transfer structure, controlled by τij . This separation allows us to ask whether a domain should receive budget because it is a high-value target, because it is a transferable source, or because it cannot be reached effectively through other sources. 
+
+Special cases. Our formulation recovers simpler data-mixture laws as special cases. If cross-domain transfer is disabled by setting τij = δij , where δij is the Kronecker delta ( δij = 1 if i = j and 0
+
+otherwise), then each target receives effective budget only from its own domain: 
+
+bLi(h, T ) = Ei + Ci
+
+(hiT )βi . (10) We refer to this as a transfer-naive mixture law. If we further constrain all domains to share the same exponent, βi = β, the model reduces to a shared-exponent mixture law. Our formulation therefore generalizes these alternatives by combining domain-specific scaling and directed cross-domain transfer. 
+
+3.3 Fitting and optimal mixture estimation 
+
+Once the functional form in Eq. (9) is specified, we estimate its parameters from small-scale pure-domain pretraining runs. We then optimize the fitted surrogate over the mixture simplex. The fitting procedure has two stages. 
+
+Fitting self-domain scaling parameters. For each domain i, we train using only samples from Di
+
+at several small-scale data budgets and record the validation MAE loss across random seeds. We fit 
+
+(Ei, C i, β i) by minimizing: 
+
+min 
+
+> Ei,C i,β i
+
+Ed, e 
+
+
+
+L(d,e ) 
+
+> i
+
+− Ei − Ci
+
+dβi
+
+2
+
+, (11) where the expectation averages uniformly over budgets d and seeds e. We solve this bounded nonlinear least-squares problem using trust-region reflective optimization [ 6], with constraints Ei ≥ 0, Ci > 0,and βi ∈ [0 .01 , 2.0] .510K 50K 100K 200K                         
+
+> Training budget T
+> 10 1
+> 2 × 10 2
+> 3 × 10 2
+> 4 × 10 2
+> 6 × 10 2
+> Mean MAE loss (6 domains)
+> up to 58% gap
+> (a) Mixture strategy comparison
+> Transfer-Aware (Ours): =0.425
+> Data-Proportional: =0.325
+> Uniform: =0.347
+> Transfer-Naive: =0.275
+> 10K 50K 100K 200K
+> Training budget T
+> 2 × 10 2
+> 3 × 10 2
+> 4 × 10 2
+> 6 × 10 2
+> Average MAE loss
+> Extrapolation
+> region
+> (b) Extrapolation to 200K
+> Fitted ( =0.424)
+> Observed (fitting)
+> Observed 200K (0.0224)
+> Predicted 200K (0.0227)
+> 0.00 0.01 0.02 0.03 0.04
+> Observed loss @ 200K
+> 0.00
+> 0.01
+> 0.02
+> 0.03
+> 0.04
+> Predicted loss @ 200K
+> r= 0.989
+> (c) Per-domain prediction
+> ABD CT
+> ABD MRI
+> BRAIN T1
+> BRAIN T2
+> HN CT
+> HN PET
+
+Figure 2: Scaling law validation and extrapolation. (a) Transfer-Aware allocation achieves the steepest scaling ( β = 0 .425 ) and lowest MAE loss across all training budgets, outperforming Data-Proportional by up to 
+
+58% . (b) The scaling law fitted on {10 K, 50 K, 100 K} extrapolates to the held-out 200 K budget within 1.2% 
+
+error. (c) Per-domain predicted vs. observed loss at B = 200 K shows strong agreement across all six domains (r = 0 .989 ). 
+
+Fitting directed transfer coefficients. For each directed pair (i, j ) with i̸ = j, we train on source domain Dj and evaluate on target domain Di. Holding the target-domain scaling parameters 
+
+(Ei, C i, β i) fixed, we estimate the transfer coefficient τij (from source j to target i) by minimizing the expected squared residual over training budgets and random seeds: 
+
+ˆτij = arg min 
+
+τ ≥0
+
+Ed, e 
+
+
+
+L(d,e )
+
+i←j − Ei − Ci
+
+(τ d )βi
+
+2
+
+, (12) where d indexes the training budget and e indexes random seeds at that budget. The expectation weights each budget level equally regardless of the number of seeds evaluated, ensuring the fit is unbiased across budget scales. This two-stage procedure separates intrinsic target-domain scaling from cross-domain transfer and avoids jointly fitting all K2 + 2 K parameters. Each off-diagonal transfer coefficient is fit independently using the same bounded trust-region reflective solver. 
+
+Parameter count and estimation cost. The model requires 3K self-domain parameters 
+
+{Ei, C i, β i}Ki=1 and K(K − 1) off-diagonal transfer coefficients {τij }i̸=j . For K domains, the fitting procedure uses K self-domain configurations and K(K − 1) directed source-to-target configu-rations, for a total of K2 pure-domain configurations. These runs are performed at small scale and are used only to estimate the scaling-law surrogate. Once fitted, the surrogate can be optimized for new budgets without additional mixture-training sweeps. 
+
+Estimating the optimal mixture. With all knowledge transfer scaling-law parameters τij ’s esti-mated, we solve for the data mixture weights h = ( h1, . . . , h K ) that minimize the predicted loss across all target domains. Recall that hj specifies the fraction of the total training budget T allocated to domain j, with P
+
+j hj = 1 and hj ≥ ϵ. Each target domain i receives an effective budget computed by Eq. (8) with cross-domain transfer matrix τij , and the surrogate bLi(h, T ) predicts the resulting MAE loss. The optimal mixture minimizes the weighted sum of predicted losses across targets: 
+
+h∗(T ) ∈ arg min 
+
+h∈∆K−1
+
+> ϵ
+
+KX
+
+i=1 
+
+wi bLi(h, T ), (13) where wi ≥ 0 controls the relative importance of target domain i in reconstruction loss. Setting 
+
+wi = 1 /K weights all domains equally, which we use throughout our experiments. Unequal weights allow practitioners to prioritize specific clinical domains if desired. As bLi(h, T ) is closed-form and differentiable in h, we optimize Eq. (13) using gradient-based constrained optimization. We use SLSQP [ 22 ], as it natively enforces both the equality constraint P
+
+j hj = 1 and inequality constraints 
+
+hj ≥ ϵ that standard unconstrained solvers (e.g., L-BFGS) cannot handle directly [ 32 ]. The resulting allocation is budget-dependent: as T changes, the marginal value of assigning samples to each source domain shifts through both the target-domain exponent βi and the transfer matrix τ , yielding a compute-dependent allocation rule rather than a single static mixture. 6Table 1: Effective budget decomposition under Transfer-Aware allocation at T =100 K. The effective budget reaching target domain i is Teff ,i = PKj=1 τij · hj · T , where each source domain j contributes τij · hj · T
+
+effective samples. Self-contributions ( τii =1 ) are shown in bold . ABD_CT (hub, h∗=23 .7% ) provides the largest cross-domain contribution to four targets. HEAD_PET (island, h∗=56 .3% ) receives almost no incoming transfer and relies on its large direct allocation. Floor domains ( h∗=5% ) achieve 3.7–6.1× amplification through incoming transfer. 
+
+Source contribution τij · hj · T
+
+Target i ABD-CT ABD-MRI BRAIN-T1 BRAIN-T2 HN-CT HN-PET Teff ,i Amplif.      
+
+> (h=23 .7% )(h=5% )(h=5% )(h=5% )(h=5% )(h=56 .3% )
+
+ABD_CT (hub) 23,700 2,800 1,200 2,450 1,250 2,252 33,652 1.4×
+
+ABD_MRI 11,139 5,000 800 1,600 700 1,689 20,928 4.2×
+
+BRAIN_T1 7,584 1,000 5,000 1,300 1,950 3,378 20,212 4.0×
+
+BRAIN_T2 8,295 1,300 1,100 5,000 950 1,689 18,334 3.7×
+
+HEAD_CT 5,925 700 1,950 950 5,000 15,764 30,289 6.1×
+
+HEAD_PET (island) 948 150 300 150 1,400 56,300 59,248 1.1×
+
+Table 2: Pretraining MAE reconstruction loss ( ↓). Left: average loss across six domains at different budgets. Right: per-domain loss at B = 100 K. Gray values denote relative increase over Transfer-Aware.                                                                       
+
+> Datamix Strategies Mean MAE across budgets Per-domain MAE at B= 100 K
+> 10 K50 K100 K200 KABD-CT ABD-MRI Brain-T1 Brain-T2 HN-CT HN-PET Mean Uniform 0.0853 (+7%) 0.0671 (+49%) 0.0345 (+31%) 0.0228 (+2%) 0.0499 0.0427 0.0202 0.0196 0.0641 0.0106 0.0345 Data-Prop. 0.0843 (+5%) 0.0712 (+58%) 0.0365 (+38%) 0.0233 (+4%) 0.0525 0.0449 0.0213 0.0201 0.0631 0.0169 0.0365 Transfer-Naïve 0.0835 (+4%) 0.0799 (+77%) 0.0399 (+51%) 0.0283 (+26%) 0.0594 0.0476 0.0234 0.0217 0.0692 0.0183 0.0399 Transfer-Aware 0.0801 0.0451 0.0264 0.0224 0.0399 0.0297 0.0180 0.0174 0.0479 0.0057 0.0264
+
+4 Experimental Design 
+
+We evaluate whether transfer-aware scaling laws select better 3D medical pretraining mixtures than standard allocation heuristics, and whether the resulting pretrained encoder transfers to downstream supervised tasks. Our study spans six heterogeneous 3D medical domains: abdominal CT (ABD-CT), abdominal MRI (ABD-MRI), brain MRI-T1 (BRAIN-T1), brain MRI-T2 (BRAIN-T2), head-and-neck CT (HN-CT), and head-and-neck PET (HN-PET). All volumes are resampled to 1.5 mm 
+
+isotropic resolution and pretrained using a 3D masked autoencoder (MAE) proxy on 96 3 patches. Full preprocessing, model architecture, and optimization details are provided in Appendix A. 
+
+Mixture strategies. We compare the proposed Transfer-Aware allocation against three baselines that represent common data-mixture heuristics. Uniform assigns equal mass to every domain, 
+
+hi = 1 /K . Data-Proportional assigns mass proportional to the number of available volumes in each domain, reflecting the common default when no scaling-law information is available. Transfer-Naïve 
+
+uses the fitted per-domain scaling laws but disables cross-domain transfer by setting τij = δij ,isolating the contribution of the directed transfer matrix: it shares the same self-domain calibration as Transfer-Aware but cannot exploit source-to-target transfer. All strategies use the same total pretraining budget T , so differences in performance reflect allocation quality rather than compute. 
+
+Scaling-law estimation and optimization. Given these four strategies, we estimate the transfer-aware scaling law from K2 = 36 proxy runs: K = 6 self-domain runs and K(K−1) = 30 directed source-to-target runs. Each configuration is evaluated at budgets B ∈ { 10 K, 50 K, 100 K, 200 K}
+
+volume draws, and validation MAE loss is measured on the target domain. We fit self-domain parameters (Ei, C i, β i) and directed transfer coefficients τij as described in Section 3.3, then optimize the mixture over the constrained simplex with floor ϵ=0 .05 to obtain h∗. Unless otherwise stated, all target domains are weighted equally in the objective. To interpret the resulting allocation structure, we decompose each mixture into target-specific effective budgets Teff ,i = P 
+
+> j
+
+τij hj T , which measure how much direct and transferred pretraining signal each target receives (Section 5). 
+
+Downstream validation. Beyond the MAE proxy objective, we test whether the derived mixture structure transfers to supervised clinical tasks by finetuning the pretrained ViT encoders on both dense prediction and image-level recognition benchmarks. For segmentation, we evaluate on AMOS 2022 for 16-class abdominal organ segmentation (reporting CT and MRI subsets separately) [ 19 ], BraTS 2023 Adult Glioma for multi-label brain tumor segmentation [ 1], HECKTOR 2025 and BHSD 7Table 3: Downstream performance across pretraining strategies. (*: p < 0.01, with Paired Wilcoxon signed-rank test to Data-Proportional mixture pretraining baseline)                                                       
+
+> Classification (Accuracy (AUC) %) Segmentation (Dice %) OASIS-1 SynBrain-PET OrganMNIST3D AMOS BraTS HECKTOR BHSD Pretraining Brain MRI Brain PET CT ABD-CT ABD-MRI Brain-T1 Brain-T2 HN-CT HN-CT
+> No mixture
+> From scratch 65.1 (73.8) 75.4 (95.8) 84.6 (98.8) 76.0 62.2 45.2 57.8 62.4 53.4 Single-Modality only 67.4 (76.0) 67.1 (92.8) 88.6 (99.3) 79.3 68.3 51.3 62.1 66.7 55.6
+> Data mixture (T= 100 K) Data-Proportional 66.9 (73.6) 69.7 (94.5) 88.9 (99.4) 81.6 68.8 50.4 61.4 67.8 57.2
+> Transfer-Aware (Ours) 69.7 (78.4)* 78.1 (95.9)* 90.3 (99.4)* 83.1 *69.4 *55.1 *65.4 *71.1 *61.2
+
+for head-and-neck CT lesion segmentation [ 30 , 39 ]. For classification, we use three benchmarks that probe complementary aspects of 3D representation transfer: OASIS-1 for structural brain MRI-T1 classification related to aging and cognitive impairment [ 29 ], SynBrain-PET for brain PET classification testing transfer to functional/metabolic imaging, and OrganMNIST3D for 3D abdominal organ recognition from CT volumes [ 44 ]. Across all tasks, segmentation decoders, skip connections, and classification heads are randomly initialized, and all finetuning protocols are held fixed across pretraining strategies. We report Dice (%) for segmentation and accuracy with AUC for classification. 
+
+5 Scaling Law Analysis ABD CT  
+
+> ABD MRI BRAIN T1
+> BRAIN T2
+> HN CT HN PET
+> 10%
+> 20%
+> 30%
+> 40%
+> 50%
+> 60%
+> hub
+> island
+> Data allocation across strategies
+> Transfer-Aware (Ours)
+> Transfer-Naïve
+> Data-Proportional
+> Uniform
+
+Figure 3: Data allocation across strate-gies. Transfer-Aware concentrates budget on the hub (ABD-CT) and island (HN-PET), while heuristics spread budget uniformly or by dataset size. 
+
+The learned transfer structure is asymmetric. Fig-ure 1(c) shows the estimated directed transfer matrix τij 
+
+across the six 3D medical domains. Transfer is highly non-uniform and asymmetric: some sources provide broad benefit across targets, while others receive limited ex-ternal support. In particular, ABD-CT acts as a high-yield source, contributing substantially to multiple targets, whereas HN-PET behaves as a low-transfer island and relies primarily on direct allocation. This structure is re-flected in the effective-token decomposition in Table 1, and a non-uniform optimized mixture visualized in Fig-ure 3. At T = 100 K, ABD-CT receives 23 .7% of the direct budget but provides the largest cross-domain con-tribution to several targets, including ABD-MRI, BRAIN-T1, and BRAIN-T2. In contrast, HN-PET receives 56 .3% 
+
+of the direct budget because its incoming transfer from other domains is weak. These results show that the opti-mized mixture is not simply proportional to dataset size or uniformly spread across domains; it reflects a learned source–target transfer structure. 
+
+Transfer-aware allocation improves MAE pretraining. Table 2 compares Transfer-Aware allo-cation with Uniform, Data-Proportional, and Transfer-Naïve baselines under the same total budget. Transfer-Aware achieves the lowest mean MAE loss at every budget shown in Figure 2(a). The advan-tage is largest in the intermediate, data-bound regime: at B = 50 K, Transfer-Aware obtains a mean loss of 0.0451 , compared with 0.0671 for Uniform, 0.0712 for Data-Proportional, and 0.0799 for Transfer-Naïve, corresponding to a 58% relative improvement over Data-Proportional. At B = 100 K,Transfer-Aware reaches 0.0264 , improving over Uniform, Data-Proportional, and Transfer-Naïve by 31% , 38% , and 51% , respectively. The comparison with Transfer-Naïve is especially important because it uses the same per-domain scaling calibration but disables cross-domain transfer by setting 
+
+τij = δij . The large gap between Transfer-Aware and Transfer-Naïve therefore isolates the benefit of modeling directed transfer, rather than only fitting separate per-domain scaling curves. The per-domain results at B = 100 K further show that the gain is broad-based: Transfer-Aware achieves the lowest MAE loss on all six domains. The largest reduction occurs on HN-PET, where loss decreases from 0.0169 under Data-Proportional to 0.0057 under Transfer-Aware, consistent with the learned allocation assigning more direct budget to domains that receive little incoming transfer. 8The scaling law extrapolates to a held-out budget. To test whether the fitted parameters remain stable beyond the calibration regime, we fit the law using budgets B ∈ { 10 K, 50 K, 100 K} and predict performance at the held-out budget B = 200 K. Figure 2(b) shows that the predicted average loss closely matches the observed value: 0.0227 predicted versus 0.0224 observed. Figure 2(c) further shows strong per-domain agreement, with correlation r = 0 .989 across the six domains. This supports the use of small proxy runs to estimate mixture parameters for larger pretraining budgets. At 
+
+B = 200 K, the relative advantage of Transfer-Aware narrows compared with the intermediate-budget regime. This suggests that the proxy model may be approaching either the irreducible loss floor or a capacity-limited regime, where additional data provides diminishing returns regardless of allocation. We therefore interpret the strongest gains as evidence for transfer-aware allocation in the data-bound regime, while larger-model validation remains an important direction for future work. 
+
+6 Downstream Finetuning Results 
+
+Transfer-aware pretraining improves classification. On image-level classification, Transfer-Aware achieves the best performance across all three benchmarks. On OASIS-1 brain MRI, it improves accuracy from 66 .9% under Data-Proportional to 69 .7% , and AUC from 73 .6% to 78 .4% .On SynBrain-PET, the gain is larger: Transfer-Aware reaches 78 .1% accuracy and 95 .9% AUC, compared with 69 .7% accuracy and 94 .5% AUC for Data-Proportional. This result is consistent with the scaling-law analysis, where PET behaves as a weak-transfer domain that benefits from targeted direct allocation. On OrganMNIST3D, Transfer-Aware also obtains the highest accuracy, improving from 88 .9% to 90 .3% , while matching the strongest AUC at 99 .4% . These results indicate that the optimized mixture improves global volume-level representations, not only voxel-level reconstruction. 
+
+Transfer-aware pretraining improves segmentation. The same trend holds for dense prediction. On AMOS, Transfer-Aware achieves 83 .1 Dice on abdominal CT and 69 .4 Dice on abdominal MRI, outperforming Data-Proportional by 1.5 and 0.6 points, respectively. The gains are larger on brain and head-and-neck tasks. On BraTS, Transfer-Aware improves over Data-Proportional from 50 .4 to 
+
+55 .1 Dice on Brain T1 and from 61 .4 to 65 .4 Dice on Brain T2. On head-and-neck CT segmentation, Transfer-Aware improves HECKTOR from 67 .8 to 71 .1 Dice and BHSD from 57 .2 to 61 .2 Dice. Across all six segmentation tasks, Transfer-Aware yields the best performance among the compared pretraining strategies. 
+
+Proxy improvements translate to downstream transfer. Overall, the downstream results mir-ror the proxy-loss ordering observed in Table 2: Transfer-Aware consistently outperforms Data-Proportional, which in turn generally improves over training from scratch. This agreement suggests that the MAE proxy is not merely optimizing reconstruction loss in isolation, but provides a useful signal for selecting pretraining mixtures that transfer to supervised classification and segmentation. The gains across MRI, CT, and PET tasks further indicate that modeling directed transfer is beneficial for learning broadly reusable 3D medical representations under a fixed pretraining budget. 
+
+7 Discussion 
+
+Our transfer-aware scaling law demonstrates that heterogeneous 3D medical data mixtures can be optimized analytically rather than searched exhaustively. The framework achieves the lowest MAE loss at every budget tested, extrapolates to unseen budgets with 1.2% error ( r=0 .989 ), and transfers to downstream clinical tasks. The learned allocations reveal interpretable hub-and-island structure that provides actionable guidance for practitioners training unified 3D medical foundation models. 
+
+Limitations. Two modeling assumptions merit further examination. First, our mixture law assumes transfer contributions compose linearly ( Teff ,i = P 
+
+> j
+
+τij hj T ), which cannot capture synergistic or interfering interactions between source domains. The strong empirical performance suggests first-order transfer dominates in our six-domain setting, but nonlinear interaction terms may become important as domain count or modality diversity increases. Second, the transfer matrix τ is estimated once from small-scale proxy runs and held constant across budgets. Our extrapolation results validate this within the 10 K–200 K range, but transfer structure could evolve at substantially larger scales as models shift from learning broadly transferable low-level features to more domain-specific 9representations. Modeling τij (T ) as a budget-dependent function is a natural extension for future work. A broader impact discussion is provided in Appendix D. 
+
+8 Conclusion 
+
+We introduced a transfer-aware scaling law for 3D medical data mixture optimization. By modeling both domain-specific scaling behavior and directed cross-domain transfer, our framework converts heterogeneous pretraining mixture design from a heuristic choice into an explicit compute-aware optimization problem. Across six diverse CT, MRI, and PET domains, the learned allocation improves MAE pretraining loss, extrapolates accurately to a held-out budget, and yields pretrained encoders that transfer better to downstream classification and segmentation tasks. These results highlight data allocation as a key design axis for scalable 3D medical foundation models and suggest that proxy-scale scaling laws can guide more efficient use of heterogeneous medical imaging data. 
+
+References 
+
+[1] Adewole, M., Rudie, J.D., Gbdamosi, A., Toyobo, O., Raymond, C., Zhang, D., Omidiji, O., Akinola, R., Suwaid, M.A., Emegoakor, A., et al.: The brain tumor segmentation (brats) challenge 2023: Glioma segmentation in sub-saharan africa patient population (brats-africa). ArXiv pp. arXiv–2305 (2023) [2] Arivazhagan, N., Bapna, A., Firat, O., Lepikhin, D., Johnson, M., Krikun, M., Chen, M.X., Cao, Y., Foster, G., Cherry, C., et al.: Massively multilingual neural machine translation in the wild: Findings and challenges. arXiv preprint arXiv:1907.05019 (2019) [3] Bai, Y., Ying, J., Cao, Y., Lv, X., He, Y., Wang, X., Yu, J., Zeng, K., Xiao, Y., Lyu, H., et al.: Benchmarking foundation models with language-model-as-an-examiner. Advances in Neural Information Processing Systems 36 , 78142–78167 (2023) [4] Barnard, L., Botha, H., Corriveau-Lecavalier, N., Graff-Radford, J., Dicks, E., Gogineni, V., Zhang, G., Burkett, B.J., Johnson, D.R., Huls, S.J., et al.: An fdg-pet–based machine learning framework to support neurologic decision-making in alzheimer disease and related disorders. Neurology 105 (2), e213831 (2025) [5] Bassi, P.R., Li, W., Tang, Y., Isensee, F., Wang, Z., Chen, J., Chou, Y.C., Roy, S., Kirchhoff, Y., Rokuss, M., et al.: Touchstone benchmark: Are we on the right way for evaluating ai algorithms for medical segmentation? Advances in Neural Information Processing Systems 37 ,15184–15201 (2024) [6] Branch, M.A., Coleman, T.F., Li, Y.: A subspace, interior, and conjugate gradient method for large-scale bound-constrained minimization problems. SIAM Journal on Scientific Computing 
+
+21 (1), 1–23 (1999) [7] Chen, S., Ma, K., Zheng, Y.: Med3d: Transfer learning for 3d medical image analysis. arXiv preprint arXiv:1904.00625 (2019) [8] Chung, H.W., Constant, N., Garcia, X., Roberts, A., Tay, Y., Narang, S., Firat, O.: Unimax: Fairer and more effective language sampling for large-scale multilingual pretraining. arXiv preprint arXiv:2304.09151 (2023) [9] Dosovitskiy, A., Beyer, L., Kolesnikov, A., Weissenborn, D., Zhai, X., Unterthiner, T., Dehghani, M., Minderer, M., Heigold, G., Gelly, S., et al.: An image is worth 16x16 words: Transformers for image recognition at scale. arXiv preprint arXiv:2010.11929 (2020) [10] Gao, Y.: Training like a medical resident: Context-prior learning toward universal medical image segmentation. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 11194–11204 (2024) [11] Ge, C., Ma, Z., Chen, D., Li, Y., Ding, B.: Bimix: A bivariate data mixing law for language model pretraining. arXiv preprint arXiv:2405.14908 (2024) 10 [12] Hatamizadeh, A., Nath, V., Tang, Y., Yang, D., Roth, H.R., Xu, D.: Swin unetr: Swin trans-formers for semantic segmentation of brain tumors in mri images. In: International MICCAI Brainlesion Workshop. pp. 272–284. Springer (2022) [13] Hatamizadeh, A., Tang, Y., Nath, V., Yang, D., Myronenko, A., Landman, B., Roth, H.R., Xu, D.: Unetr: Transformers for 3d medical image segmentation. In: Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision. pp. 574–584 (2022) [14] He, K., Chen, X., Xie, S., Li, Y., Dollár, P., Girshick, R.: Masked autoencoders are scalable vision learners. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 16000–16009 (2022) [15] Hernandez, D., Kaplan, J., Henighan, T., McCandlish, S.: Scaling laws for transfer. arXiv preprint arXiv:2102.01293 (2021) [16] Hoffmann, J., Borgeaud, S., Mensch, A., Buchatskaya, E., Cai, T., Rutherford, E., Casas, D., Hendricks, L.A., Welbl, J., Clark, A., et al.: Training compute-optimal large language models. arXiv preprint arXiv:2203.15556 10 (2022) [17] Ilse, M., Sharma, H., Schwaighofer, A., Bond-Taylor, S., Pérez-García, F., Melnichenko, O., Sykes, A.M.G., Horst, K.K., Khandelwal, A., Reynolds, M., et al.: Data scaling laws for radiology foundation models. arXiv preprint arXiv:2509.12818 (2025) [18] Isensee, F., Jaeger, P.F., Kohl, S.A., Petersen, J., Maier-Hein, K.H.: nnu-net: a self-configuring method for deep learning-based biomedical image segmentation. Nature methods 18 (2), 203–211 (2021) [19] Ji, Y., Bai, H., Yang, J., Ge, C., Zhu, Y., Zhang, R., Li, Z., Zhang, L., Ma, W., Wan, X., et al.: Amos: A large-scale abdominal multi-organ benchmark for versatile medical image segmentation. arXiv preprint arXiv:2206.08023 (2022) [20] Jin, R., Xu, Z., Zhong, Y., Yao, Q., Dou, Q., Zhou, S.K., Li, X.: Fairmedfm: fairness bench-marking for medical imaging foundation models. Advances in Neural Information Processing Systems 37 , 111318–111357 (2024) [21] Kaplan, J., McCandlish, S., Henighan, T., Brown, T.B., Chess, B., Child, R., Gray, S., Rad-ford, A., Wu, J., Amodei, D.: Scaling laws for neural language models. arXiv preprint arXiv:2001.08361 (2020) [22] Kraft, D.: A software package for sequential quadratic programming. Forschungsbericht-Deutsche Forschungs- und Versuchsanstalt fur Luft- und Raumfahrt (1988) [23] Krishnan, R., Rajpurkar, P., Topol, E.J.: Self-supervised learning in medicine and healthcare. Nature Biomedical Engineering 6(12), 1346–1352 (2022) [24] Lee, H.H., Bao, S., Huo, Y., Landman, B.A.: 3d ux-net: A large kernel volumetric convnet modernizing hierarchical transformer for medical image segmentation. In: The Eleventh Inter-national Conference on Learning Representations (2022) [25] Lee, H.H., Liu, Q., Bao, S., Huo, Y., Landman, B.A.: Rep3d: Re-parameterize large 3d kernels with low-rank receptive modeling for medical imaging. arXiv preprint arXiv:2505.19603 (2025) [26] Lee, H.H., Liu, Q., Bao, S., Yang, Q., Yu, X., Cai, L.Y., Li, T., Huo, Y., Koutsoukos, X., Landman, B.A.: Scaling up 3d kernels with bayesian frequency re-parameterization for medical image segmentation. arXiv preprint arXiv:2303.05785 (2023) [27] Liu, Q., Zheng, X., Muennighoff, N., Zeng, G., Dou, L., Pang, T., Jiang, J., Lin, M.: Regmix: Data mixture as regression for language model pre-training. arXiv preprint arXiv:2407.01492 (2024) [28] Loshchilov, I., Hutter, F.: Decoupled weight decay regularization. arXiv preprint arXiv:1711.05101 (2017) 11 [29] Marcus, D.S., Wang, T.H., Parker, J., Csernansky, J.G., Morris, J.C., Buckner, R.L.: Open access series of imaging studies (oasis): cross-sectional mri data in young, middle aged, nondemented, and demented older adults. Journal of cognitive neuroscience 19 (9), 1498–1507 (2007) [30] Quetin, S., Enger, S.A.: Automatic lesion and lymph node segmentation from pet and ct scans of the head and neck region: a hecktor 2025 challenge report. In: Fourth Head and Neck Cancer Tumor Lesion Segmentation, Diagnosis and Prognosis (2025) [31] Rui, S., Chen, L., Tang, Z., Wang, L., Liu, M., Zhang, S., Wang, X.: Multi-modal vision pre-training for medical image analysis. In: Proceedings of the Computer Vision and Pattern Recognition Conference. pp. 5164–5174 (2025) [32] Shukor, M., Bethune, L., Busbridge, D., Grangier, D., Fini, E., El-Nouby, A., Ablin, P.: Scaling laws for optimal data mixtures. arXiv preprint arXiv:2507.09404 (2025) [33] Taleb, A., Loetzsch, W., Danz, N., Severin, J., Gaertner, T., Bergner, B., Lippert, C.: 3d self-supervised methods for medical imaging. arXiv preprint arXiv:2006.03829 (2020) [34] Tang, Y., Yang, D., Li, W., Roth, H.R., Landman, B., Xu, D., Nath, V., Hatamizadeh, A.: Self-supervised pre-training of swin transformers for 3d medical image analysis. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 20730–20740 (2022) [35] Wald, T., Ulrich, C., Suprijadi, J., Ziegler, S., Nohel, M., Peretzke, R., Kohler, G., Maier-Hein, K.: An openmind for 3d medical vision self-supervised learning. In: Proceedings of the IEEE/CVF International Conference on Computer Vision. pp. 23839–23879 (2025) [36] Wang, D., Wang, X., Wang, L., Li, M., Da, Q., Liu, X., Gao, X., Shen, J., He, J., Shen, T., et al.: A real-world dataset and benchmark for foundation model adaptation in medical image classification. Scientific Data 10 (1), 574 (2023) [37] Wang, G., Wu, J., Luo, X., Liu, X., Li, K., Zhang, S.: Mis-fm: 3d medical image segmenta-tion using foundation models pretrained on a large-scale unannotated dataset. arXiv preprint arXiv:2306.16925 (2023) [38] Wang, J., Wang, X., Lyu, L., Chen, J., Ma, F.: Fedmeki: A benchmark for scaling medical foun-dation models via federated knowledge injection. Advances in Neural Information Processing Systems 37 , 1082–1116 (2024) [39] Wu, B., Xie, Y., Zhang, Z., Ge, J., Yaxley, K., Bahadir, S., Wu, Q., Liu, Y., To, M.S.: Bhsd: A 3d multi-class brain hemorrhage segmentation dataset. In: International Workshop on Machine Learning in Medical Imaging. pp. 147–156. Springer (2023) [40] Xie, S.M., Pham, H., Dong, X., Du, N., Liu, H., Lu, Y., Liang, P.S., Le, Q.V., Ma, T., Yu, A.W.: Doremi: Optimizing data mixtures speeds up language model pretraining. Advances in Neural Information Processing Systems 36 , 69798–69818 (2023) [41] Xie, Y., Zhang, J., Xia, Y., Wu, Q.: Unimiss: Universal medical self-supervised learning via breaking dimensionality barrier. In: European Conference on Computer Vision. pp. 558–575. Springer (2022) [42] Xu, T., Hosseini, S., Anderson, C., Rinaldi, A., Krishnan, R.G., Martel, A.L., Goubran, M.: A generalizable 3d framework and model for self-supervised learning in medical imaging. npj Digital Medicine 8(1), 639 (2025) [43] Xue, L., Constant, N., Roberts, A., Kale, M., Al-Rfou, R., Siddhant, A., Barua, A., Raffel, C.: mt5: A massively multilingual pre-trained text-to-text transformer. In: Proceedings of the 2021 conference of the North American chapter of the association for computational linguistics: Human language technologies. pp. 483–498 (2021) [44] Yang, J., Shi, R., Wei, D., Liu, Z., Zhao, L., Ke, B., Pfister, H., Ni, B.: Medmnist v2-a large-scale lightweight benchmark for 2d and 3d biomedical image classification. Scientific data 10 (1), 41 (2023) 12 [45] Ye, J., Liu, P., Sun, T., Zhan, J., Zhou, Y., Qiu, X.: Data mixing laws: Optimizing data mixtures by predicting language modeling performance. arXiv preprint arXiv:2403.16952 (2024) [46] Ye, Y., Xie, Y., Zhang, J., Chen, Z., Wu, Q., Xia, Y.: Continual self-supervised learning: Towards universal multi-modal medical data representation learning. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 11114–11124 (2024) [47] Yu, X., Yang, Q., Zhou, Y., Cai, L.Y., Gao, R., Lee, H.H., Li, T., Bao, S., Xu, Z., Lasko, T.A., et al.: Unest: local spatial representation learning with hierarchical transformer for efficient medical segmentation. Medical Image Analysis p. 102939 (2023) [48] Zhou, Z., Sodha, V., Pang, J., Gotway, M.B., Liang, J.: Models genesis. Medical image analysis 
+
+67 , 101840 (2021) 13 A Experimental Details 
+
+A.1 Dataset Description Pretraining datasets. Our six pretraining domains are drawn from three publicly available 3D medical imaging collections spanning CT, MRI, and PET (Table 4). To simulate realistic data imbalance across domains, we subsample each source dataset to a controlled size: 500 volumes for high-availability domains (ABD-CT, BRAIN-T1, BRAIN-T2, HN-CT) and 150 volumes for low-availability domains (ABD-MRI, HN-PET). This 3.3× imbalance ratio reflects practical clinical settings where some modalities (e.g., CT) are far more abundant than others (e.g., PET or MRI), and ensures that data-proportional allocation produces meaningfully different mixtures from uniform allocation. The specific volume counts are chosen to be large enough for stable MAE training at our proxy scale with time and cost efficiency (i.e. Finished pretraining within a day for empirical obser-vation) while remaining computationally tractable for K2 = 36 proxy runs across four budget levels. All pretraining volumes are unlabeled and used exclusively for self-supervised MAE reconstruction. 
+
+Table 4: Pretraining domain statistics. “Available” refers to the total unlabeled volumes in the source dataset; “Selected” is the number subsampled for our experiments. All volumes are resampled to 1.5 mm isotropic resolution. 
+
+Domain Modality Available Selected Source 
+
+ABD-CT CT 1100 500 AMOS 2022 [19] ABD-MRI MRI 700 150 AMOS 2022 [19] BRAIN-T1 MRI (T1 + ce) 2052 500 BraTS 2023 [1] BRAIN-T2 MRI (T2 + FLAIR) 2052 500 BraTS 2023 [1] HN-CT CT 700 500 HECKTOR 2025 [30] HN-PET PET 700 150 HECKTOR 2025 [30] 
+
+Downstream finetuning datasets. To validate that the MAE-derived mixture structure transfers beyond the proxy objective, we finetune pretrained encoders on six supervised downstream tasks spanning segmentation and classification across all three modalities (Table 5). Downstream subjects are held out from pretraining to avoid data leakage. For segmentation, we use the labeled subsets of the same source collections (AMOS, BraTS, HECKTOR) as well as an additional stroke CT dataset (CPAISD). For classification, we use three benchmarks that probe complementary aspects of 3D representation transfer: structural brain MRI (OASIS-1), functional brain PET (SynBrain-PET), and abdominal CT organ recognition (OrganMNIST3D). 
+
+Table 5: Downstream finetuning datasets. Segmentation tasks report Dice (%); classification tasks report accuracy and AUC. All finetuning protocols are held fixed across pretraining strategies.                                         
+
+> Dataset Task Classes Number of Subjects (Train/Val/Test) Metric Domain
+> Segmentation
+> AMOS 2022 [19] Organ seg. 16 200 (160/20/20) Dice ABD-CT / MRI BraTS 2023 [1] Tumor seg. 3480 (400/40/40) Dice BRAIN-T1 / T2 HECKTOR 2025 [30] Tumor seg. 3524 (418/53/53) Dice HN-CT BHSD 2024 [39] Lesion seg. 392 (72/10/10) Dice HN-CT
+> Classification
+> OASIS-1 [29] Brain class. 2235 (165/35/35) Acc / AUC BRAIN-T1 SynBrain-PET [4] PET class. 5500 (348/76/76) Acc / AUC HN-PET OrganMNIST3D [44] Organ class. 11 1,743 (972/161/610) Acc / AUC ABD-CT
+
+A.2 Preprocessing Pretraining preprocessing. All pretraining volumes are reoriented to RAS and resampled to 
+
+1.5 mm isotropic resolution using trilinear interpolation. Domain-specific intensity normalization maps all volumes to [−1, 1] based on modality and anatomy, as summarized in Table 6. After normalization, foreground regions are cropped, volumes are padded to at least 96 3 voxels, and a random 96 3 patch is extracted for training. Light augmentation is applied during pretraining: random intensity scaling ( ±10% , p = 0 .3), random contrast adjustment ( p = 0 .2), and random Gaussian noise ( σ = 0 .02 , p = 0 .15 ). A 75% random patch masking ratio is applied for masked autoencoding. 14 Table 6: Domain-specific intensity preprocessing. All domains share the same spatial preprocessing (RAS orientation, 1.5 mm isotropic resampling, foreground cropping, 96 3 patching). 
+
+Domain Family Intensity normalization Output range 
+
+ABD-CT CT HU window [−160 , 240] , linear rescale [−1, 1] 
+
+HN-CT CT HU window [−200 , 300] , linear rescale [−1, 1] 
+
+ABD-MRI MRI z-norm (nonzero), clip ±3σ, rescale [−1, 1] 
+
+BRAIN-T1 MRI z-norm (nonzero), clip ±5σ, rescale [−1, 1] 
+
+BRAIN-T2 MRI z-norm (nonzero), clip ±5σ, rescale [−1, 1] 
+
+HN-PET PET z-norm (nonzero), clip ±5σ, rescale [−1, 1] 
+
+Finetuning preprocessing. Finetuning transforms are designed to match the pretraining intensity and resolution pipeline exactly, ensuring that pretrained encoder weights see the same input distri-bution. Labels are resampled using nearest-neighbor interpolation to preserve discrete class values. Table 7 summarizes the domain-specific finetuning configuration. The key design choices are: • BraTS (BRAIN-T1/T2): Labels {0, 1, 2, 4} are converted to three overlapping binary channels (WT, TC, ET) after spatial transforms and random cropping, enabling multi-label sigmoid training. The conversion is placed after RandCropByPosNegLabeld in MONAI because the cropper requires single-channel integer labels to identify foreground voxels. • HN-CT (HECKTOR, BHSD): Small tumor/lesion targets use pos=4, neg=1 with 
+
+num_samples=4 to ensure sufficient foreground exposure during training. • AMOS (ABD-CT/MRI): Standard organ segmentation with pos=1, neg=1 and 
+
+num_samples=2 .                                                           
+
+> Table 7: Finetuning configuration per downstream domain.
+> Domain Intensity pos neg samples Loss Dice metric
+> ABD-CT HU [−160 ,240] →[−1,1] 112DiceCE (softmax) incl. background ABD-MRI z-norm, ±3σ→[−1,1] 112DiceCE (softmax) incl. background BRAIN-T1 z-norm, ±5σ→[−1,1] 412DiceCE (sigmoid) excl. background BRAIN-T2 z-norm, ±5σ→[−1,1] 412DiceCE (sigmoid) excl. background HN-CT HU [−200 ,300] →[−1,1] 414DiceCE (softmax) excl. background
+
+Finetuning augmentation. All segmentation tasks share the same augmentation pipeline: random intensity shift ( ±0.1, p = 0 .5) and random affine transform (rotation ±π/ 30 , scale ±10% , p = 1 .0). No augmentation is applied during validation. 
+
+Inference. Training-time validation uses sliding-window inference with sw_batch_size = 1 and overlap = 0 .25 for computational efficiency. Final evaluation uses sw_batch_size = 4 and overlap 
+
+= 0 .7 for higher accuracy. All predictions and metrics are computed at the resampled 1.5 mm 
+
+resolution. 
+
+A.3 Model Architecture 
+
+The MAE proxy model uses a Vision Transformer (ViT) [ 9] with 768 -dimensional hidden size, 12 
+
+transformer layers, 12 attention heads, MLP dimension 3072 , and 16 3 patch size. The ViT encoder is embedded within the UNETR [ 13 ] framework, which provides a CNN decoder for masked patch reconstruction during pretraining. Each domain uses a dedicated convolutional input adapter that projects single-channel 96 3 volumes to the shared patch embedding space. During pretraining, 75% 
+
+of patches are randomly masked and the model reconstructs masked patches using per-patch MSE loss [14]. 
+
+A.4 Pretraining Optimization 
+
+All pretraining runs use AdamW [ 28 ] with learning rate 1.5 × 10 −4, batch size 4, and 50 epochs. Training samples are drawn according to the prescribed mixture weights h using weighted random 15 Table 8: UNETR parameter breakdown. Only the ViT encoder is initialized from the pretrained MAE checkpoint; the CNN decoder and task-specific heads are randomly initialized for each downstream task. 
+
+Component Parameters Initialization 
+
+ViT encoder ( vit.* ) 116,679,936 Pretrained (MAE) CNN decoder ( encoder1–4, decoder2–5 ) 4,443,140 Random Output head ( out ) varies by task Random 
+
+Total ∼121M –sampling without replacement within each epoch. We use a cache rate of 1.0 for MONAI Cache-Dataset to maximize throughput. Each configuration is run with 2–3 random seeds and results are averaged to reduce variance in both scaling-law fitting and final evaluation. 
+
+A.5 Downstream Model Initialization Segmentation: UNETR with pretrained ViT encoder. For segmentation tasks, we use UN-ETR [ 13 ], which combines a ViT encoder with a CNN decoder connected through skip connections at multiple resolutions. The pretrained MAE checkpoint stores the full UNETR state dict (ViT encoder + CNN reconstruction decoder). During finetuning initialization, we load only the ViT encoder weights (vit.* keys) and randomly initialize the CNN decoder branches ( encoder1 –encoder4 ,
+
+decoder2 –decoder5 , out ). This is deliberate: the ViT encoder learns spatial representations from MAE that transfer well to segmentation, but the CNN decoder was trained for pixel-level recon-struction (regression), which differs fundamentally from segmentation (per-voxel classification). Loading reconstruction decoder weights can cause negative transfer. The segmentation output head is initialized with the correct number of output channels for the target task. Weight loading proceeds as follows: 1. Load the MAE checkpoint containing unetr_state_dict and metadata ( scale_factor ,
+
+num_layers ). 2. Build a fresh UNETR with out_channels = num_classes for the target task. 3. Extract all keys matching vit.* from the checkpoint and load them into the new UNETR’s ViT encoder, verifying shape compatibility. 4. All remaining parameters (CNN decoder, skip connections, output head) retain random initialization. 
+
+Classification: ViT encoder with MLP head. For classification tasks, we extract the same pretrained ViT encoder and attach a lightweight MLP classification head. The ViT processes the input 
+
+96 3 volume into a sequence of patch embeddings, which are globally average-pooled to produce a single feature vector of dimension d = 768 . The pooled feature is passed through LayerNorm and an MLP head to map it to the target classes: 
+
+ˆy = fMLP (LN (GAP(ViT( x)))) ,
+
+where GAP denotes global average pooling over the patch token sequence. The MLP head is randomly initialized, while the ViT encoder is loaded from the same pretrained checkpoint and finetuned according to the downstream training schedule. 
+
+From-scratch baseline. Both segmentation and classification baselines use the identical architec-ture with all parameters randomly initialized (no pretrained weights), isolating the effect of pretraining from architectural differences. 
+
+A.6 Downstream Finetuning Protocol 
+
+Finetuning uses AdamW with learning rate 1e−4, batch size 2, and 200 epochs for all downstream tasks. For segmentation, we use DiceCE loss with softmax for multi-class tasks (AMOS, HECKTOR, BHSD) and DiceCE loss with sigmoid for multi-label segmentation (BraTS). For classification, we use cross-entropy loss. All finetuning protocols (i.e. optimizer, learning rate, epochs, augmentation, and evaluation) are held fixed across pretraining strategies to ensure fair comparison. 16 Segmentation augmentation. Training augmentation follows [ 24 ]: foreground cropping, spatial padding to 96 3, random cropping via RandCropByPosNegLabeld (pos = 1 , neg = 1 for organ segmentation; pos = 4 , neg = 1 for small lesion/tumor tasks) in MONAI package, random intensity shifts ( ±0.1, p = 0 .5), and random affine transforms (rotation ±π/ 30 , scale ±10% ). Validation uses sliding-window inference with overlap 0.5 for both validation and final evaluation. 
+
+A.7 Fixed Model Size 
+
+We fix model size and optimize over data mixture and budget, rather than jointly optimizing model size as in Chinchilla-style scaling laws [ 16 ]. This is deliberate: 3D medical imaging at 96 3 resolution is GPU-memory-bound, and model architecture is typically standardized across benchmarks [ 13 , 24 ]. The practical question facing practitioners is how to allocate a fixed data budget across heterogeneous domains, not how to trade off model size against data. Our scaling law therefore models L(h, T ) at fixed model size N , making the surrogate directly actionable for the regime where most 3D medical pretraining operates. Extending the framework to jointly optimize L(N, h, T ) is a natural direction for future work as hardware constraints relax. 
+
+B Additional Results 
+
+B.1 Domain Characterization  
+
+> Table 9: Domain characterization from the transfer matrix and prescribed allocations.
+
+Domain ¯τout ¯τin Role h∗ 
+
+> TA
+
+hDP 
+
+ABD-CT 0.29 0.32 Hub 23.7% 21.7% ABD-MRI 0.24 0.22 – 5.0% 6.5% BRAIN-T1 0.21 0.25 Easy 5.0% 21.7% BRAIN-T2 0.26 0.21 Easy 5.0% 21.7% HN-CT 0.25 0.25 – 5.0% 21.7% HN-PET 0.09 0.09 Island 56.3% 6.5% Table 9 summarizes the role of each domain as determined by the estimated transfer matrix. ABD-CT acts as a hub with the highest mean outgoing transfer ( ¯τout = 0 .29 ), contributing meaningfully to four other domains. HN-PET is an island with negligible incoming and outgoing transfer ( ¯τ = 0 .09 ), reflecting its low-resolution metabolic signal that shares little representational structure with the other five domains. BRAIN-T1 and BRAIN-T2 are classified as “easy” domains due to their rapid saturation ( β ∈ [0 .18 , 0.24] ), indicating strong anatomical regularity that is captured with relatively little data. 
+
+B.2 Transfer Amplification       
+
+> Table 10: Transfer amplification at B= 100 K. Floor domains ( h= 5% ) achieve 3.7–6.1×effective budget through cross-domain transfer, and still outperform Data-Proportional.
+
+Domain hi ·T Teff Boost TA (Ours) DP ∆
+
+ABD-CT 23,700 33,652 1.4 × 0.399 0.525 −24% ABD-MRI 5,000 20,928 4.2 × 0.297 0.449 −34% BRAIN-T1 5,000 20,212 4.0 × 0.180 0.213 −15% BRAIN-T2 5,000 18,334 3.7 × 0.174 0.201 −13% HN-CT 5,000 30,289 6.1 × 0.479 0.631 −24% HN-PET 56,300 59,248 1.1 × 0.057 0.169 −66% Table 10 shows the transfer amplification effect at B = 100 K. Floor domains ( h = 5% ) receive only 
+
+5,000 direct volume draws but achieve 3.7–6.1× effective budget through cross-domain transfer. De-spite this minimal direct allocation, all floor domains achieve lower MAE loss under Transfer-Aware 17 than under Data-Proportional, demonstrating a Pareto improvement across all domains simultane-ously. The largest improvement is on HN-PET ( −66% ), where Transfer-Aware allocates 56 .3% of the budget versus only 6.5% under Data-Proportional. 
+
+B.3 Scaling Exponent Comparison         
+
+> Table 11: Fitted scaling exponents ( Li=Ci/T βi). Transfer-Aware achieves 1.31 ×higher mean β.
+
+TA (Ours) DP Domain β C β C Ratio ABD-CT 0.407 5.02 0.302 2.05 1.35 ×
+
+ABD-MRI 0.487 9.51 0.352 3.01 1.38 ×
+
+BRAIN-T1 0.209 0.21 0.173 0.15 1.21 ×
+
+BRAIN-T2 0.243 0.30 0.225 0.27 1.08 ×
+
+HN-CT 0.436 8.12 0.330 3.24 1.32 ×
+
+HN-PET 0.724 39.80 0.466 4.96 1.55 ×
+
+Mean 0.425 4.06 0.325 1.77 1.31 ×
+
+Table 11 compares the fitted scaling exponents under Transfer-Aware and Data-Proportional allocation. Transfer-Aware achieves a 1.31 × higher mean scaling exponent ( βTA = 0 .425 vs. βDP = 0 .325 ), indicating that each additional unit of compute yields more improvement under Transfer-Aware allocation. The largest exponent ratio is on HN-PET ( 1.55 ×), reflecting that direct investment in the island domain produces the steepest returns. Brain domains show the smallest ratios ( 1.08 –1.21 ×), consistent with their rapid saturation. 
+
+B.4 Effective Budget Predicts Loss       
+
+> Table 12: Effective budget ratio predicts loss ratio with Pearson r= 0 .992 at B= 100 K.
+
+Domain T TA eff /T DP eff LDP /L TA ∆
+
+ABD-CT 0.72 1.32 −24% ABD-MRI 0.69 1.51 −34% BRAIN-T1 0.45 1.18 −15% BRAIN-T2 0.46 1.16 −13% HN-CT 0.71 1.32 −24% HN-PET 3.80 2.96 −66% Table 12 validates the transfer matrix by comparing the effective budget ratio between Transfer-Aware and Data-Proportional allocations with the corresponding loss ratio at B = 100 K. The two quantities correlate at r = 0 .992 , confirming that τij , estimated independently from pure-domain proxy runs, correctly predicts which domains gain effective compute and by how much. HN-PET shows the most extreme effective budget ratio ( 3.80 ×) and the largest loss improvement ( 2.96 ×). 
+
+B.5 Per-Domain Scaling Curves 
+
+Figure 4 shows per-domain MAE loss across all four mixture strategies on log-log axes. Transfer-Aware achieves a steeper scaling exponent on all six domains, with the largest gains on HN-PET (β : 0 .724 vs. 0.466 ) and ABD-MRI ( β : 0 .487 vs. 0.352 ). Brain domains show the smallest inter-strategy gap, consistent with their rapid saturation at low β values. The 3.5× heterogeneity in β
+
+across domains ( 0.209 –0.724 ) confirms that a single shared scaling exponent, as assumed by prior work, is insufficient for heterogeneous 3D medical data mixtures. 
+
+B.6 Floor Constraint Ablation 
+
+Figure 5 shows the effect of varying the floor constraint ϵ from 2.5% to 12 .5% . The optimal value is 
+
+ϵ = 5% : lower floors ( 2.5% ) over-concentrate budget on just two domains (ABD-CT and HN-PET), 18 10K 50K 100K 200K                                       
+
+> 10 1
+> 3 × 10 2
+> 4 × 10 2
+> 6 × 10 2
+> MAE loss
+> ABD CT
+> 10K 50K 100K 200K
+> 10 1
+> 3 × 10 2
+> 4 × 10 2
+> 6 × 10 2
+> ABD MRI
+> 10K 50K 100K 200K
+> 2 × 10 2
+> 3 × 10 2
+> BRAIN T1
+> 10K 50K 100K 200K
+> Budget T
+> 2 × 10 2
+> 3 × 10 2
+> 4 × 10 2
+> MAE loss
+> BRAIN T2
+> 10K 50K 100K 200K
+> Budget T
+> 10 1
+> 4 × 10 2
+> 6 × 10 2
+> HEAD CT
+> 10K 50K 100K 200K
+> Budget T
+> 10 2
+> HEAD PET
+> Transfer-Aware (Ours) Data-Proportional Uniform Transfer-Naïve
+
+Figure 4: Per-domain scaling laws (log-log) comparing transfer-aware and data-proportional allocation. Transfer-aware achieves a steeper scaling exponent β on all 6 domains, with the largest gains on HEAD PET ( β : 0 .724 
+
+vs. 0.466 ) and ABD MRI ( β : 0 .487 vs. 0.352 ). BRAIN T1 and BRAIN T2 show the smallest differences, consistent with these domains being near saturation at low β values. The 3.5× heterogeneity in β across domains (0.209 –0.724 ) confirms that a single shared scaling exponent, as assumed by prior work, is insufficient for heterogeneous medical data mixtures. 2.5% 5.0% 7.5% 10.0% 12.5%           
+
+> Floor constraint
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> Allocation weight  h *
+> i
+> uniform
+> (a) Optimal allocation vs. floor constraint
+> ABD CT
+> ABD MRI
+> BRAIN T1
+> BRAIN T2
+> HEAD CT
+> HEAD PET
+> 2.5% 5.0% 7.5% 10.0% 12.5%
+> Floor constraint
+> 0.0275
+> 0.0300
+> 0.0325
+> 0.0350
+> 0.0375
+> 0.0400
+> 0.0425
+> 0.0450
+> Mean MAE loss (6 domains)
+> best: =5%
+> (b) Overall loss vs. floor constraint
+> Transfer-Aware
+> Transfer-Naïve
+> ABD CT ABD MRI BRAIN T1 BRAIN T2 HEAD CT HEAD PET
+> 0.00
+> 0.01
+> 0.02
+> 0.03
+> 0.04
+> 0.05
+> 0.06
+> 0.07
+> 0.08
+> MAE loss (Transfer-Aware)
+> (c) Per-domain loss at each floor
+> =2.5%
+> =5.0%
+> =7.5%
+> =10.0%
+> =12.5%
+
+Figure 5: Floor constraint ablation. (a) As the floor ϵ increases, the optimizer loses flexibility: HEAD PET allocation drops from 56 .3% to 37 .5% and ABD CT from 33 .7% to 12 .5% . (b) Mean MAE loss is minimized at 
+
+ϵ=5% ; higher floors force budget into domains that receive sufficient signal through transfer, degrading overall performance. (c) Per-domain losses confirm that ϵ=5% achieves the best or near-best loss on every domain simultaneously. 
+
+while higher floors ( ≥ 10% ) force budget into domains that receive sufficient signal through transfer, eliminating the advantage of the transfer matrix. At ϵ = 10% , Transfer-Aware actually underperforms Transfer-Naïve, confirming that an over-constrained floor removes the optimizer’s ability to exploit transfer structure. 
+
+C Compute Cost 
+
+The total estimation cost consists of K2 = 36 pure-domain proxy runs at four budgets each. Each proxy run trains a 12 M-parameter ViT for 50 epochs, requiring approximately 10 − 20 GPU-hours on a single NVIDIA A100 depending on domain size and resolution. Once the scaling law is fitted, optimizing a new mixture for any budget takes less than one second on a single CPU core (100 SLSQP restarts). By comparison, a single full-scale pretraining run at B = 200 K requires approximately 3 days, and an exhaustive grid search over even a coarse 5-point discretization of the 5-dimensional mixture simplex would require 55 = 3 ,125 such runs. 19 D Broader Impact 
+
+By replacing exhaustive mixture search with principled scaling-law optimization, our framework reduces the compute cost of training 3D medical foundation models, lowering the barrier for resource-constrained institutions. However, the framework optimizes a self-supervised proxy (MAE loss) rather than clinical outcomes directly. Practitioners should validate downstream performance on their specific clinical tasks before deployment. Additionally, the optimized mixture inherits any biases present in the source datasets (i.e If certain patient populations are underrepresented in specific imaging domains), the allocation will not address this imbalance. Incorporating fairness-aware objectives into the mixture optimization is an important direction for future work. 20

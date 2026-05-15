@@ -1,0 +1,1194 @@
+Title: SurgicalMamba: Dual-Path SSD with State Regramming for Online Surgical Phase Recognition
+
+URL Source: https://arxiv.org/pdf/2605.14889v1
+
+Published Time: Fri, 15 May 2026 01:31:42 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# SURGICAL MAMBA : D UAL -P ATH SSD WITH STATE 
+
+# REGRAMMING FOR ONLINE SURGICAL PHASE RECOGNITION 
+
+Sukju Oh, Sukkyu Sun ∗
+
+Department of Computer Science and Artificial Intelligence Dongguk University, Seoul 04620, Republic of Korea 
+
+dhtjrwn119@dgu.ac.kr (S. Oh); sukkyu.sun@dgu.ac.kr (S. Sun) 
+
+> ∗
+
+Corresponding author. 
+
+# ABSTRACT 
+
+Online surgical phase recognition (SPR) underpins context-aware operating-room systems and re-quires committing to a prediction at every frame from past context alone. Surgical video poses three demands that natural-video recognizers do not jointly address: procedures span tens of thou-sands of frames, time flows non-uniformly as long routine stretches are punctuated by brief phase-defining transitions, and the visual domain is narrow so backbone features are strongly correlated across channels. Existing recognizers either let per-frame cost grow with elapsed length, or hold cost bounded but advance state at a uniform rate with channel-independent dynamics, leaving the latter two demands unaddressed. We present SurgicalMamba , a causal SPR model built on Mamba2’s structured state-space duality (SSD) that holds per-frame cost at O(d). It introduces three SSD-compatible components, each targeting one demand: a dual-path SSD block that sep-arates long- and short-term regimes at the level of recurrent state; intensity-modulated stepping ,a continuous-time time-warp that adapts the slow path’s effective rate to phase-relevant informa-tion; and state regramming , a per-chunk Cayley rotation that opens cross-channel mixing in the otherwise axis-aligned SSM recurrence. The learned rotation planes inherit a phase-aligned struc-ture without any direct supervision, offering an interpretable internal signature of surgical work-flow. Across seven public SPR benchmarks, SurgicalMamba reaches state-of-the-art accuracy and phase-level Jaccard under strict online evaluation: 94 .6% /82 .7% on Cholec80 ( +0 .7 pp/ +2 .2 pp over the strongest prior) and 89 .5% /68 .9% on AutoLaparo ( +1 .7 pp/ +2 .0 pp), at 119 fps on a sin-gle GPU. Ablations isolate the contribution of each component. The code is publicly available at 
+
+https://github.com/sukjuoh/Surgical-Mamba .
+
+Keywords surgical phase recognition · state space models · Mamba · online inference · Cholec80 
+
+# 1 Introduction 
+
+Online surgical phase recognition aims to identify the current phase of an ongoing surgical procedure from streaming endoscopic video, and serves as the foundation for context-aware operating-room systems including intra-operative decision support, automated documentation, and real-time skill assessment [Maier-Hein et al., 2017, Garrow et al., 2021, Demir et al., 2023, Hashimoto et al., 2018, Mascagni et al., 2022]. Unlike offline phase segmentation, the online setting requires causal inference: the model must commit to a prediction at frame t using only frames 1: t, with bounded per-frame latency suitable for real-time deployment [Twinanda et al., 2016a, Jin et al., 2018]. Surgical video presents a recognition setting that differs in substantive ways from natural video. Procedures last 30–90 minutes [Twinanda et al., 2016a, Wagner et al., 2023], so a correct prediction often depends on context tens of thousands of frames in the past. Within these long horizons, time itself does not flow uniformly: long stretches of routine activity are punctuated by brief, visually subtle transitions—an instrument exchange, the first incision, the placement of a clip—whose temporal density of phase-relevant information is much higher than the surrounding 
+
+> arXiv:2605.14889v1 [cs.CV] 14 May 2026
+
+A PREPRINT 
+
+(A) 
+
+(B)                 
+
+> Figure 1. Two of SurgicalMamba’s core mechanisms. (A) Intensity-modulated temporal stepping ( λ). A learned per-frame scalar λ(green) modulates the temporal dynamics of the SSM, enabling video-specific adaptation. Near a phase transition (vertical dashed line), λrises sharply, which in turn drives the effective SSM decay dA (blue) down. The reduced dA shrinks the contribution of accumulated past state to the current step, producing explicit forgetting at moments where the surgical context changes. (B) State regramming ( Z). The SSM hidden state ht, which evolves under channel-independent dynamics, is rotated by an input-conditioned orthogonal map at chunk boundaries. The rotation preserves norm (state remains on the sphere) but re-projects information into a content-dependent basis, producing h′
+> tin which channels are mixed.
+
+video. And the visual domain itself is unusually narrow: a restricted field of view, repeating instruments, and similar tissue and lighting across an entire procedure mean that backbone features extracted from surgical frames are highly correlated, in a way that features from natural video are not. These properties manifest as the well-documented inter-phase similarity and intra-phase variation [Jin et al., 2018, Czempiel et al., 2020]. Substantial progress has been made on this task from several directions, including recurrent and convolutional temporal models [Jin et al., 2018, Czempiel et al., 2020, Rivoir et al., 2024], memory- and retrieval-augmented designs [Jin et al., 2021, Yang et al., 2025], Transformer-based recognizers [Liu et al., 2025, 2023, Yang et al., 2024, Yue et al., 2023], and learning strategies tailored to surgical data [Huang et al., 2025]. Yet two limitations remain across the literature. 
+
+Per-frame inference cost grows with elapsed video length. Transformer-based methods attend over a causally preceding scope that either grows with elapsed video length or is artificially capped by a sliding window—trading long context for bounded compute. Memory- and retrieval-augmented designs face a similar trade-off: their external feature stores grow with the video, and the cost of attention against the stored features grows with it. Recurrent recognizers hold per-frame cost bounded but, in practice, rely on a hidden state whose effective capacity saturates well before the span of an hour-long procedure. 2A PREPRINT 
+
+The temporal axis is processed at a uniform effective rate, and the per-channel structure of the recurrence is left unexamined. Existing recognizers, regardless of family, advance their internal state at a fixed effective rate per frame, with no learned mechanism for accelerating state turnover near phase boundaries or slowing it down within sustained activity. And in recurrent backbones whose dynamics are factorized per channel for efficiency, the assumption of channel-wise independent evolution is not necessarily appropriate for the narrow visual domain of surgical video, where backbone features are strongly correlated. We propose SurgicalMamba , an online phase recognizer that takes each of these issues as a design constraint. We build on Mamba2 [Gu and Dao, 2024, Dao and Gu, 2024], a selective state-space model whose recurrence runs at constant per-frame cost regardless of elapsed video length, and whose training-time chunked scan and inference-time recurrence compute the same function; the chunked-scan structure of Mamba2’s SSD form, in particular, aligns naturally with the chunk-granular state update we introduce below. A prior surgical application of state-space models [Cao et al., 2024] demonstrated the promise of this family for SPR but uses a bidirectional scan over the buffered past; ours is built end-to-end around the causal, streaming property. SurgicalMamba is built around three components. A dual-path Mamba2 block addresses the long/short-term tension by separating the two regimes at the level of recurrent state. A slow path carries SSM state across many minutes of video, holding the long-term context required for disambiguation, while a fast path resets at clip boundaries and remains responsive to short-term events. The two paths share an input but operate through independent projections and SSM scans, with a one-way conditioning link from slow to fast so that short-term reactions are informed by long-term context. 
+
+Intensity-modulated temporal stepping ( λ) addresses the non-uniform flow of phase-relevant information. Treating wall-clock time as an external coordinate, we posit an underlying “surgical time” that flows faster near event-rich moments; a learned per-frame scalar λ, supervised by a transition-proximity target, defines the local rate of this intrinsic time and warps the slow path’s discretization step accordingly. The construction is a principled change of time variable, exact under closed-form discretization at the per-frame granularity at which λ is predicted. It also doubles as an explicit forgetting mechanism that vanilla Mamba lacks [Chen et al., 2024, Wang et al., 2025]: as illustrated in Fig. 1 (A), when λ rises near a phase transition, the effective SSM decay dA drops correspondingly, shrinking the contribution of accumulated past state and allowing the recurrence to release stale context exactly where the surgical workflow is changing. 
+
+State regramming ( Z) addresses the channel-independence assumption built into Mamba2’s recurrence. At each chunk boundary, an input-conditioned orthogonal rotation—the Cayley transform of a low-rank skew-symmetric ma-trix predicted from the chunk’s content—is applied to the SSM hidden state. As shown in Fig. 1 (B), the rotation moves the hidden state ht along the unit sphere to a new orientation h′
+
+> t
+
+, preserving its norm but re-projecting information into a content-dependent basis. This opens a channel for cross-dimensional mixing while leaving the SSM recurrence weights and the SSD scan structure intact, letting the model carry the same accumulated information forward in a re-oriented frame that exposes cross-channel structure an axis-aligned recurrence cannot capture. All three components operate within Mamba2’s SSD framework and preserve O(d) per-frame inference. We evaluate SurgicalMamba on seven surgical phase recognition datasets including Cholec80 [Twinanda et al., 2016a], AutoLa-paro [Wang et al., 2022], and M2CAI16 [Twinanda et al., 2016b], achieving state-of-the-art online phase-recognition accuracy with ablations isolating each component. 
+
+Main contributions: 
+
+• A dual-path Mamba2 block that separates long-term memory and short-term reactivity at the level of recur-rent state. • Intensity-modulated temporal stepping ( λ): a continuous-time time-warp that adapts the slow path’s effec-tive rate to the local density of phase-relevant information. • State regramming ( Z): a chunk-granular, exactly norm-preserving rotation of the SSM hidden state via a Cayley map of a low-rank skew-symmetric matrix. The learned rotation planes inherit a phase-aligned block structure without any direct supervision on Z, providing an interpretable internal signature of the surgical workflow. • State-of-the-art accuracy with O(d) per-frame inference, suited to the streaming requirements of online sur-gical phase recognition. 3A PREPRINT 
+
+# 2 Related Work 
+
+2.1 Surgical phase recognition 
+
+Surgical phase recognition has progressed in waves, each addressing a limitation of the previous. The earliest end-to-end methods paired CNN backbones with recurrent or convolutional temporal models for direct phase prediction [Twinanda et al., 2016a, Jin et al., 2018, 2020, Czempiel et al., 2020]. SV-RCNet operated on ten-second clips with an LSTM, MTRCNet-CL added auxiliary tool-presence supervision, and TeCNO replaced the LSTM with a multi-stage temporal convolutional network with a long receptive field. These models established that long-range temporal context matters for phase recognition, but they either looked at very short windows during inference or, in TeCNO’s case, required the full video at once and were therefore offline by construction. Transformer-based recognizers were introduced to model longer-range dependencies more flexibly. Trans-SVNet [Gao et al., 2021] applied self-attention over short windows of CNN features. TMRNet [Jin et al., 2021] added an attention-queried memory bank, allowing access to historical features beyond the recurrent window. LoVIT [Liu et al., 2025] introduced a two-stage long-video Transformer with a cumulative-history representation supervised by an asymmetric-Gaussian transition target—a target shape we adopt for our intensity loss in §3.6. Surgformer [Yang et al., 2024] used hierarchical sparse attention for multi-scale aggregation, while SKiT [Liu et al., 2023] and CMTNet [Yue et al., 2023] explored key-information transformers and cascade phase-level transformers respectively. These methods substantially improved long-range reasoning, yet they share a structural cost when deployed online: per-frame attention work either grows with elapsed video length or is artificially capped by a sliding window. Our recurrent design is motivated in part by this trade-off, holding per-frame cost bounded without giving up access to long-horizon context. A second feature of this literature is its near-universal reliance on a two-stage pipeline—a visual feature encoder trained on isolated frames and frozen, followed by a temporal model trained on the stored features. The decoupling is a memory concession but leaves a distribution gap between training-time and test-time features that the temporal model has no opportunity to compensate for. BNPitfalls [Rivoir et al., 2024] made single-stage end-to-end training viable for surgical workflow analysis by identifying batch-normalization statistics divergence under long-clip training as the primary obstacle, and showing that BN-free backbones (ConvNeXt [Liu et al., 2022]) combined with carrying the LSTM hidden state across clip boundaries deliver strong end-to-end results. We adopt this single-stage paradigm. The cross-clip hidden-state carry is the specific design element we draw on: where BNPitfalls carries an LSTM hidden state across clip boundaries, we carry both the SSM state and the convolution state of a Mamba2 block across boundaries instead. We further augment this with a learned per-chunk orthogonal refresh, addressing a separate concern that we discuss in §3.4. 
+
+DACAT [Yang et al., 2025] builds on BNPitfalls and adds a parallel branch: a frame-wise branch (ConvNeXt V2-T [Woo et al., 2023] + LSTM with hidden-state carry) is augmented by an adaptive clip-aware branch that maintains an unbounded feature cache {f1, . . . , f t}, a parameter-free Max-R operator that retrieves the past clip with maximum suffix-sum correlation to the current frame, and a cross-attention fusion. The framing as “dual-stream” is suggestive but the structure is, in effect, retrieval-augmented single-stream processing: both branches are keyed to the current frame, and the second branch’s role is to fetch a visually similar past clip to reinforce the present prediction. This places considerable weight on the assumption that the most informative past context is the past most visually similar to now—an assumption that is in tension with the inter-phase similarity intrinsic to surgical video, where visually similar moments routinely belong to different phases. The authors note this directly, identifying Max-R brittleness under interference frames such as blood and smoke. The retrieval mechanism also imposes a streaming-cost asymmetry that an SSM-based design avoids: the per-frame Max-R dot-product scales as O(t d ), the cross-attention scales with the variable-length retrieved clip, and the cache itself grows as O(t d ).Our work shares the intuition that a single recurrent path is insufficient, but realizes “dual” along a different axis. A slow path accumulates long-horizon context across clips, while a fast path resets at clip boundaries to remain sensitive to short-term events. The two paths are not selecting between similar pasts; they are processing the same input stream 
+
+at structurally different temporal scales, communicating through a one-way conditioning link from slow to fast. The whole construction lives within recurrent state, sharing a single backbone forward and preserving O(d) per-frame cost. 
+
+MTTRNet [Huang et al., 2025] returns to a two-stage pipeline and instead attacks the train/test feature-distribution gap directly. Stage one trains a feature encoder using a “sequence of clips” strategy with an auxiliary graph-convolutional temporal regularizer that is discarded at inference. Stage two introduces a K-fold cross-mimicking scheme: K teacher encoders are trained on disjoint folds, the held-out fold features are stored in a feature bank, and a student encoder is multi-teacher-distilled before an LSTM temporal encoder is trained on the mimicked features. MTTRNet attacks the same gap that BNPitfalls bypasses architecturally, but at the cost of training K+1 feature encoders. We work within the single-stage paradigm and target the architectural design of the temporal recurrence itself, leaving the feature-distribution problem to be resolved by joint training rather than by post-hoc alignment. 4A PREPRINT 
+
+2.2 State-space models for long sequences 
+
+The S4 line of work [Gu et al., 2022] cast a linear time-invariant state-space recurrence as a sequence model, demon-strating that linear-cost recurrences could match attention quality on long-range benchmarks. Mamba [Gu and Dao, 2024] introduced input-dependent (selective) discretization parameters ∆, B, C , enabling content-aware information routing while preserving the constant per-frame cost that makes recurrences attractive for streaming. Mamba2 [Dao and Gu, 2024] reformulated the selective scan in terms of structured state-space duality (SSD), exposing a chunked-scan algorithm that is matrix-multiplication friendly while preserving the per-frame recurrent form—this dual train-ing/inference structure is what our chunk-granular state regramming is built on top of. SSMs have since been extended to visual domains, with Vim [Zhu et al., 2024], VMamba [Liu et al., 2024], and VideoMamba [Li et al., 2024] adapt-ing selective scans to images and videos through bidirectional or multi-directional traversal of the spatial or spatio-temporal grid. Within medical imaging, Mamba variants have appeared for segmentation [Ma et al., 2024, Wang et al., 2024] and 3D analysis. The first application of Mamba to surgical phase recognition is SR-Mamba [Cao et al., 2024], which pairs a ResNet34 spatial extractor with a bidirectional Mamba decoder fusing forward and backward Mamba scans over the per-frame feature sequence. SR-Mamba demonstrates the effectiveness of selective state-space models on this task and estab-lishes that bidirectional context is highly informative when the full video is available at inference time. The bidi-rectional design, however, sits in tension with the streaming setting. The backward direction can be made causal by restricting the scan to the buffered past {f1, . . . , f t}, but the backward states for every past position must be recom-puted whenever a new frame arrives, since the “future” of frame τ ≤ t has changed. Per-frame inference therefore scales as O(t d ) rather than the O(d) of forward-only Mamba—the same growing-cost pattern as causal attention or retrieval, realized through a backward sweep. SR-Mamba’s own ablation reports a substantial accuracy gap between a forward-only vanilla Mamba decoder and the bidirectional variant. In the offline setting where SR-Mamba operates, this gap motivates the bidirectional de-sign. Under a strict streaming constraint, however, bidirectional inference is not free, and the question shifts to what a forward-only recurrence needs to recover comparable accuracy. The vanilla forward Mamba evaluated by SR-Mamba uses a single SSM state without cross-clip carry, state-refresh, or time-warp mechanisms; our dual-path block, per-chunk state regramming, and intensity-modulated time-warp are extensions designed to address these specific shortfalls within the causal direction. 
+
+2.3 Orthogonal parameterizations in recurrent models 
+
+Orthogonal and unitary recurrent networks [Arjovsky et al., 2016, Mhammedi et al., 2017, Jing et al., 2017] constrain the recurrence weight matrix to be norm-preserving as a remedy for exploding and vanishing gradients in deep recur-rent unrolls, with parameterizations ranging from Householder reflections and Givens rotations to Cayley transforms of skew-symmetric matrices [Helfrich et al., 2018, Lezcano-Casado and Martínez-Rubio, 2019]. The Cayley map is a well-established choice in this setting: it gives a closed-form, differentiable orthogonal map without an expensive ma-trix exponential, and the same parameterization has appeared in Stiefel-manifold optimization and in normalizing-flow constructions. Our state regramming mechanism adopts a low-rank Cayley parameterization in the same spirit, but addresses a differ-ent concern. Mamba2’s per-head scalar-A recurrence forces each channel of the hidden state to evolve independently— an efficiency-driven choice that sits uneasily with the narrow visual domain of surgical video, where backbone features are strongly correlated. Our rotation acts on the hidden state itself, once per chunk and conditioned on that chunk’s content, opening a channel for cross-dimensional mixing while leaving the SSM recurrence weights and the SSD scan structure intact. The rotation is parameterized by separating its geometric ingredients: unit vectors U, V define the low-rank subspace of rotation planes, and angles σ set the magnitudes within those planes, so the chunk’s content se-lects where to rotate and by how much , independently. The low rank keeps the per-chunk footprint small while giving the rotation enough degrees of freedom to repackage state in content-dependent directions. 
+
+2.4 Adaptive temporal stepping and transition-aware modeling 
+
+Phase-recognition methods often supervise auxiliary signals near phase boundaries—boundary-aware loss reweight-ing, transition classifiers, asymmetric Gaussian transition targets [Liu et al., 2025]—to sharpen predictions at moments where errors are most costly. These signals improve boundary localization but leave the recurrent computation itself uniform across the temporal axis. In a separate line, adaptive computation [Graves, 2016, Banino et al., 2021] intro-duces input-dependent recurrence depth or stepping, but these designs typically gate computation entirely rather than continuously modulate it, and have not been adapted to streaming SSM recurrences. Our intensity λ(t) draws on both threads: it is supervised by a transition-proximity Gaussian target in the spirit of LoViT, while its operational role is to 5A PREPRINT 
+
+multiplicatively warp the SSM discretization step on the slow path—a continuous-time time-warp formulation rather than a gating signal. λ controls only the discretization step; memory write and memory read are governed by the SSM recurrence and by state regramming respectively. 
+
+# 3 Method 
+
+3.1 Preliminaries: state-space models and Mamba 
+
+This subsection fixes notation and reviews the components that SurgicalMamba reuses. Readers familiar with Mamba2 [Dao and Gu, 2024] may proceed to §3.2. 
+
+3.1.1 Continuous-time linear state-space model 
+
+A continuous-time linear state-space model maps an input signal x : R → Rdin to an output y : R → Rdout through a latent state h : R → RN governed by 
+
+dh(t)dt = A h (t) + B(t) x(t), y(t) = C(t) h(t) + D x (t), (1) with A ∈ RN ×N , B(t) ∈ RN ×din , C(t) ∈ Rdout ×N , D ∈ Rdout ×din . The structure of A is constrained (typically diagonal or HiPPO-initialized) so the recurrence is provably stable; B, C, D may depend on the input. 
+
+3.1.2 Discretization via zero-order hold 
+
+Sequence models operate on discrete samples xn = x(tn) at times {tn}n≥0, typically uniform with step ∆. Assuming 
+
+x(t) is piecewise-constant on each interval [tn, t n + ∆] (zero-order hold, ZOH) and integrating the ODE in closed form gives the exact discrete recurrence 
+
+hn = ¯A h n−1 + ¯B x n, yn = C h n + D x n, (2) with discrete-time matrices 
+
+¯A = exp(∆ A), ¯B = (∆ A)−1 exp(∆ A) − I ∆B ≈ ∆B (for ∥∆A∥ small). (3) In the structured-A regime adopted by Mamba2, A is a per-channel real scalar a ∈ R<0, so ¯A = exp(∆ a) is a per-channel multiplicative decay. 
+
+3.1.3 Selective state-space model: Mamba 
+
+S4 [Gu et al., 2022] fixed ∆, B, C as global parameters. Mamba [Gu and Dao, 2024] makes them input-dependent :small linear projections of the current input xn produce ∆( xn), B (xn), C (xn), giving the recurrence content-aware step size, write coefficient, and read coefficient. This selectivity is what closes the quality gap to Transformers on language modeling while preserving linear-time inference. 
+
+3.1.4 Mamba2 and structured state-space duality 
+
+Mamba2 [Dao and Gu, 2024] further restricts A to a per-head scalar (within a head, all state channels share one decay rate) and exposes a structured state-space duality : the same recurrence can be expressed as a matrix multiplication of a structured (1-semiseparable) matrix with the input sequence. Three properties of this formulation are central to our work. First, the SSM’s inner channel dimension dinner is split into H heads of width P (so dinner = H P ). Each head has its own scalar Ah and per-head ∆; B and C are shared within a group of heads. Second, given a clip of L frames partitioned into nc = L/C chunk chunks of size Cchunk , the scan factors into intra-chunk parallel computation (a fused matrix multiply over the Cchunk frames) plus inter-chunk state passing of a single 
+
+RH×P ×N state tensor. Third, the chunked-scan output for a chunk is bit-identical (under exact arithmetic) to running the per-step recurrence over the same frames with the same initial state—the same associative reduction in different orders. SurgicalMamba’s parallel training and per-frame deployment exploit this equivalence: the same weights operate in both modes without re-training. 6A PREPRINT 
+
+Figure 2. Overview of SurgicalMamba. Top: The model takes a stream of surgical frames {xt−3, x t−2, x t−1, x t}, extracts per-frame visual features through a partially frozen ConvNeXt backbone, projects them to the model dimension via a visual projection, processes them through N stacked Dual-Path Surgical Mamba blocks, and produces phase predictions through an Out Head. Each Dual-Path Surgical Mamba block contains a Slow SSD path and a Fast SSD path, fused and refined by a feed-forward network. 
+
+Bottom left: The Surgical Mamba block in detail. The Slow SSD path applies a causal 1D convolution, an SSD scan, and an Intensity Net that predicts the per-frame scalar λ supervised by a Gaussian transition target Ltrans . λ modulates the SSD output and is also passed to the Fast SSD path as a conditioning signal. Both paths apply a chunk-boundary rotation. The Fast SSD path resets at clip boundaries and operates with a SiLU-gated linear projection. Bottom right: The Out Head combines linear projections, a causal 1D convolution, an SSD scan, a rotation, and a SiLU-gated residual into final phase logits. 
+
+3.2 Overview 
+
+Given a streamed RGB video, online phase recognition produces, at each time t, a probability vector ˆpt ∈ ∆C−1 over 
+
+C phase classes using only frames I1: t. For training, videos are partitioned into non-overlapping clips of length L
+
+and slow-path states are carried clip-to-clip with truncated back-propagation through time (TBPTT). We write ∆n =∆( xn) for the input-dependent discretization step; quantities subscripted with slow or fast belong to the corresponding path of the dual-path block. SurgicalMamba follows the standard recipe of a per-frame visual encoder, a temporal model, and a classifier, but redesigns the temporal model. Figure 2 shows the full pipeline. A clip of frames is encoded by a ConvNeXt [Liu et al., 2022] into per-frame visual features, projected to the model dimension D by a linear layer followed by LayerNorm, and passed through K stacked hybrid blocks. Each hybrid block is a residual SSM-then-FFN module: the SSM component is our novel SurgicalMamba block, which routes the same input through two parallel SSD paths—a slow 7A PREPRINT 
+
+path that carries state across clips, and a fast path that resets at clip boundaries—and fuses their outputs; the FFN is a standard two-layer GELU MLP. A final output head produces per-frame phase logits. Three components distinguish SurgicalMamba from a standard Mamba2-based recognizer: the dual-path block (§3.3), the intensity-modulated discretization step on the slow path (§3.3.1), and the per-chunk state regramming applied on both paths (§3.4). Hyperparameter choices, fine-tuning protocol, and other implementation details are deferred to §4.3. 
+
+3.3 Dual-path SurgicalMamba block 
+
+The SurgicalMamba block takes a sequence h ∈ RB×L×D and produces an output of the same shape, plus an updated cross-clip state. Internally it operates two parallel SSM paths—slow and fast—that share the input but use indepen-dent projections and independent selective scans. The slow path carries SSM state and convolution state across clip boundaries, holding the long-term context required for disambiguating visually similar phases; the fast path resets at every clip boundary and remains responsive to short-term events within a clip. Conditioning runs one way, from slow to fast: the slow path’s output enters the fast path’s selective parameters, but not the reverse. The full computation is summarized in Algorithm 1; the subsections that follow expand each path’s design. 
+
+3.3.1 Slow path: cross-clip memory and intensity-modulated step 
+
+The slow path holds long-term context. Two design choices distinguish it from a standard Mamba2 block: cross-clip state carry, and an intensity-modulated discretization step that warps the underlying continuous-time SSM. 
+
+Cross-clip carry. The slow path maintains two states across clip boundaries. The SSM hidden state is initialized at clip start from the prior clip’s final state, h(0)  
+
+> slow
+
+= h⋆
+
+> slow
+
+, so the chunked SSD scan continues the recurrence from where it left off. The depthwise-conv buffer is also carried: at clip start, the prior clip’s last dconv − 1 frames (where dconv 
+
+is the depthwise causal Conv1d kernel size) are prepended to xslow before the causal Conv1d (line 2 of Algorithm 1), so the convolution output is exactly what would have been produced had the two clips been processed as a single contiguous sequence. The forward pass therefore acts as if clips were concatenated, while gradients are bounded by the truncation window. 
+
+Intensity-modulated discretization as continuous-time time-warp. We motivate the intensity λ as a principled change of time variable in the underlying continuous SSM, not as an ad-hoc multiplier on ∆t. Recall (§3.1.2) that the slow path’s state obeys 
+
+dh(t)dt = A h (t) + B(t) x(t), (4) where t is wall-clock time. Standard Mamba discretizes this assuming t flows at a uniform rate; the input selectivity over ∆( x) enables content-aware step sizes, but the underlying time axis is uniform. We instead hypothesize that each surgical procedure has its own intrinsic temporal scale—a “surgical time” τ that flows faster near event-rich moments (instrument exchanges, tissue events, phase boundaries) and at the nominal rate during sustained activities. Let λ : R → [0 , 1] be a learned per-frame intensity predicted from the input, and define the intrinsic time as the integral 
+
+τ (t) := 
+
+Z t
+
+> 0
+
+ 1 + λ(s) ds = t +
+
+Z t
+
+> 0
+
+λ(s) d s. (5) By the fundamental theorem of calculus, the local rate is α(t) := d τ / dt = 1 + λ(t) ∈ [1 , 2] . λ acts as an excess-time-flow signal: λ ≡ 0 gives τ = t (intrinsic and wall-clock time agree), while λ > 0 advances intrinsic time faster than wall-clock time. We posit that the SSM dynamics are stationary in intrinsic time: 
+
+dh
+
+dτ = A h (τ ) + B(τ ) x(τ ). (6) Re-expressing the recurrence in wall-clock time via the chain rule, 
+
+dh(t)dt = dh
+
+dτ
+
+dτ
+
+dt =  1 + λ(t)  A h (t) + B(t) x(t) . (7) To discretize over the wall-clock frame step ∆, we use the fact that λ is predicted once per frame and therefore the rate 
+
+α is piecewise constant on every frame interval [n∆, (n + 1)∆] ; write αn := 1 + λn. Closed-form ZOH integration of the warped ODE on this interval is exact: 
+
+¯An = exp  αn ∆ A, ¯Bn = ( αn ∆ A)−1 exp( αn ∆ A) − I αn ∆ B ≈ αn ∆ B, (8) 8A PREPRINT 
+
+Algorithm 1 SurgicalMamba block (clip-level forward). 
+
+Notation. 
+
+• B: batch size • L: clip length • D: model dimension • P : per-head channel dimension • nc: chunks per clip • h: block input • z: gating stream • λt: per-frame intensity • ϕ(c): chunk summary • U, V : rotation-plane vectors • θ: rotation angles • S: skew-symmetric matrix • Z(c): orthogonal rotation 
+
+Require: Clip input h ∈ RB×L×D ; carried slow state (h⋆
+
+> slow
+
+, s ⋆
+
+> conv
+
+)
+
+Ensure: Output out ∈ RB×L×D and updated slow state 1: [ xfast , z ] ← W fast in h, xslow ← W slow in h ▷ dual input projection 2: xconv slow ← SiLU (Conv1d slow ([ s⋆ 
+
+> conv
+
+∥ xslow ])) ▷ causal conv with carried buffer 3: xconv fast ← SiLU (Conv1d fast (xfast )) 
+
+4: [ ∆ tslow raw , B slow , C slow ] ← W slow  
+
+> x
+
+xconv slow 
+
+5: λt ← σ(MLP λ(xconv slow ,t )) ▷ intensity prediction 6: ∆slow  
+
+> t
+
+← (1 + λt) softplus (W slow  
+
+> ∆
+
+∆tslow raw + b slow  
+
+> ∆
+
+) ▷ time-warped step 7: for chunk c = 1 , . . . , n c do 
+
+8: (y(c)
+
+> slow
+
+, h (c)
+
+> slow
+
+) ← SSD (xconv ,(c) 
+
+> slow
+
+, ∆slow ,(c), A slow , B slow ,(c), C slow ,(c); h(c−1)  
+
+> slow
+
+)
+
+9: ϕ(c) 
+
+> slow
+
+← LN P
+
+  1
+
+> Cchunk
+
+P 
+
+> t
+
+y(c)
+
+> slow
+
+[ : , :, :, t ] ▷ chunk summary 10: [ Uslow ∥ Vslow ], θ slow ← MLP slow  
+
+> U V
+
+(ϕ(c)
+
+> slow
+
+), softplus (MLP slow  
+
+> θ
+
+(ϕ(c)
+
+> slow
+
+)) ; normalize U, V 
+
+11: Sslow ← Uslow diag (θslow ) V ⊤ 
+
+> slow
+
+− Vslow diag (θslow ) U ⊤ 
+
+> slow
+
+▷ skew-symmetric 12: Z(c) 
+
+> slow
+
+← (I − 12 Sslow )−1(I + 12 Sslow ) ▷ Cayley map → orthogonal Z
+
+13: h(c) 
+
+> slow
+
+← h(c) 
+
+> slow
+
+Z(c) 
+
+> slow
+
+▷ state regramming 14: end for 
+
+15: [ ∆ tfast raw , B fast , C fast ] ← W fast  
+
+> x
+
+[ xconv fast ∥ch yslow ] ▷ slow-conditioned selection (channel-wise concat at each frame) 16: ∆fast  
+
+> t
+
+← softplus (W fast  
+
+> ∆
+
+∆tfast raw + b fast  
+
+> ∆
+
+)
+
+17: for chunk c = 1 , . . . , n c do 
+
+18: (y(c) 
+
+> fast
+
+, h (c) 
+
+> fast
+
+) ← SSD (xconv ,(c) 
+
+> fast
+
+, ∆fast ,(c), A fast , B fast ,(c), C fast ,(c); h(c−1)  
+
+> fast
+
+)
+
+19: ϕ(c) 
+
+> fast
+
+← LN P
+
+  1
+
+> Cchunk
+
+P 
+
+> t
+
+y(c) 
+
+> fast
+
+[ : , :, :, t ]
+
+20: [ Ufast ∥ Vfast ], θ fast ← MLP fast  
+
+> U V
+
+(ϕ(c) 
+
+> fast
+
+), softplus (MLP fast  
+
+> θ
+
+(ϕ(c) 
+
+> fast
+
+)) ; normalize U, V 
+
+21: Sfast ← Ufast diag (θfast ) V ⊤ 
+
+> fast
+
+− Vfast diag (θfast ) U ⊤
+
+> fast
+
+22: Z(c) 
+
+> fast
+
+← (I − 12 Sfast )−1(I + 12 Sfast )
+
+23: h(c) 
+
+> fast
+
+← h(c) 
+
+> fast
+
+Z(c) 
+
+> fast
+
+▷ state regramming 24: end for 
+
+25: y ← yslow + yfast ▷ sum fusion 26: out ← Wout RMSNorm (y · SiLU (z)) ▷ gated read-out 27: return out and (h(nc) 
+
+> slow
+
+, last conv buffer )
+
+with the same small-∥∆A∥ approximation as in §3.1.2. Equivalently, time-warping by αn is identical to running the standard Mamba2 ZOH discretization with ∆ replaced by αn∆ at frame n: no change to the SSD kernel, the structured matrices, or the state shape—only the scalar discretization step is reweighted. 
+
+Parameterization and design properties. We instantiate λ as 
+
+λ(t) = σ MLP λ(xconv slow (t))  ∈ [0 , 1] , (9) with MLP λ a small bottleneck MLP and σ the logistic sigmoid. The resulting α = 1 + λ ∈ [1 , 2] range is chosen with three properties in mind. With λ ≡ 0 the construction recovers the standard Mamba2 selective SSM with uniform time, so the time-warp is a nested extension that cannot underperform the baseline given enough capacity. The lower bound 
+
+α ≥ 1 prevents deceleration, which would shrink ∆ and push ¯A → I, freezing the state—equivalent to ignoring the current frame, undesirable precisely when the model is uncertain about a transition. The upper bound α ≤ 2 prevents unbounded acceleration, which would drive ¯A = exp(∆ A) → 0 (since A < 0 componentwise) and erase the carried memory in a single step. The time-warp is restricted to the slow path because the fast path lacks cross-clip backup: transient over-acceleration on the fast path would cost exactly the within-clip context it is meant to provide, while on 9A PREPRINT 
+
+the slow path it is recoverable from preceding state. A derivative-based analysis of how λ controls the effective decay 
+
+¯An, justifying the anti-correlation visualized in Fig. 1 (A), is given in Appendix B. Supervision of λ by a Gaussian transition target is described in §3.6. 
+
+3.3.2 Fast path: clip-local with slow-conditioning 
+
+The fast path is a clip-local observer. Both the fast SSM state and the fast conv buffer reset at every clip boundary (h(0)  
+
+> fast
+
+= 0 , zero-padded conv). Its role is to react to within-clip events that demand a prediction without benefit of long history—instrument motion, smoke or blood onset, brief tool interactions. Carrying state across clips would dilute this short-term selectivity and duplicate the slow path’s long-memory function. Within a clip, the fast state does propagate across chunk boundaries and is rotated at chunk boundaries (§3.4)—chunk-level carry is preserved; only clip-level carry is severed. The fast input projection W fast  
+
+> x
+
+takes as input the channel-wise concatenation [ xconv fast ∥ch yslow ] (line 15 of Algorithm 1), where yslow is the slow path’s full clip output. The fast path’s selective parameters (∆ fast , B fast , C fast ) are therefore functions of both the within-clip frame content and the slow path’s long-context summary at the same time index. This asymmetric conditioning serves two purposes. Whether a grasper appearing at frame t signals “Calot dissection beginning” or “gallbladder retraction” depends on instruments seen many minutes earlier—context the slow path holds. Reverse conditioning (fast → slow) would let transient within-clip events such as smoke or blood write into the slow state’s projections and risk corrupting carried context. The conditioning enters via W fast  
+
+> x
+
+only, not the input projection 
+
+W fast in , the convolution, or the output, so the slow summary shapes the fast path’s selectivity without directly summing into its state evolution. The fast SSD scan is otherwise the standard Mamba2 form, with no λ modulation. 
+
+3.3.3 Sum fusion and gated output 
+
+The two path outputs are summed channel-wise and gated by the input projection’s gating stream: 
+
+y = yslow + yfast , out = Wout RMSNorm (y · SiLU (z)) . (10) Sum fusion keeps the SSM inner dimension fixed at the Mamba2-canonical value and avoids doubling the output projection’s parameter count. Because z is emitted by the fast input projection, the gate reflects the local frame’s content; it modulates the fused output without suppressing the slow path’s information flow internally, since gating happens at the read-out, not during the slow scan. RMSNorm before Wout mirrors the Mamba2-standard pre-projection normalization. The result is added residually to the block’s input outside the SurgicalMamba module. 
+
+3.4 State regramming via Cayley rotation 
+
+Standard Mamba2 advances the SSM state h ∈ RH×P ×N only through the input-driven recurrence h ← A h + Bx .We introduce an additional state-update step, applied at chunk boundaries within a clip, that rotates each head’s state by an input-dependent orthogonal matrix Z ∈ RN ×N . We refer to this operation as state regramming because it re-projects the same information into a different basis without altering its norm—analogous to a Gram–Schmidt re-orthogonalization, but learned and input-conditioned. 
+
+3.4.1 Per-chunk feature aggregation 
+
+At the end of chunk c, the per-head SSD output y(c) ∈ RB×H×P ×Cchunk is mean-pooled along the chunk’s time axis and LayerNorm-ed per-head: 
+
+ϕ(c) = LN P
+
+ 1
+
+> Cchunk
+
+PCchunk  
+
+> t=1
+
+y(c)[ : , :, :, t ]
+
+
+
+∈ RB×H×P . (11) This descriptor summarizes “what happened during this chunk”, per head. LayerNorm bounds its magnitude so the downstream MLPs see well-conditioned inputs. 
+
+3.4.2 Per-head low-rank skew-symmetric construction 
+
+ϕ(c) is fed to two per-head MLPs (each MLP has independent weights for each of the H heads, computed by a single batched einsum): 
+
+[U ∥ V ] = MLP U V (ϕ(c)) ∈ RB×H×2N r , θ = softplus  MLP θ (ϕ(c)) ∈ RB×H×r 
+
+> ≥0
+
+, (12) where r is the chosen rank. After reshaping U, V ∈ RB×H×N ×r , each is column-wise L2-normalized so that θ alone controls rotation magnitude. We then form the low-rank product 
+
+eS = U diag (θ) V⊤ ∈ RB×H×N ×N , S = eS − eS⊤, (13) 10 A PREPRINT 
+
+so that S is exactly skew-symmetric. This factorization separates the rotation’s geometric ingredients: U and V define the low-rank subspace of rotation planes (where to rotate), and θ sets the rotation angles within those planes (by how much). The low rank keeps the per-chunk parameter and compute footprint small while still giving the rotation enough degrees of freedom to repackage state in content-dependent directions. 
+
+3.4.3 Cayley map and state rotation 
+
+The orthogonal rotation matrix is the Cayley transform of S:
+
+Z = ( I − 12 S)−1 (I + 12 S) ∈ RB×H×N ×N . (14) Because S is skew-symmetric, Z is exactly orthogonal; the Cayley form is differentiable everywhere (the inverse exists for any real S) and avoids the cost of a matrix exponential. The state is then rotated head-wise: 
+
+h(c) ← h(c) Z(c). (15) The next chunk’s SSD scan uses the rotated h(c) as initial state. The same operation (with separate parameters) is applied to both paths. 
+
+3.4.4 What the rotation does to the recurrence 
+
+The state-regramming step does not alter the within-chunk SSD scan; Mamba2’s standard recurrence runs unchanged on every chunk. At each chunk boundary, however, the orthogonal Z(c) acts on the state alone, without a compensating rotation of B and C. Because Mamba2’s per-head scalar A commutes with any orthogonal Q, the within-chunk scan is rotation-equivariant in the state basis—rotating h → h Q together with B → B Q and C → C Q yields the identical output. State regramming deliberately breaks this equivariance: only the state is rotated, so the next chunk’s fresh, per-frame B(c+1) , C (c+1) projections see the carried state in a re-oriented basis. Each chunk therefore summarizes itself and selects the basis in which that summary will be presented to the next chunk. Crucially, the rotation preserves norm exactly, 
+
+h(c) Z(c) 
+
+> F
+
+= h(c) 
+
+> F
+
+, (16) so the carried state’s energy is neither amplified nor attenuated—only its directionality is content-conditioned. A more detailed analysis of how state regramming interacts with Mamba2’s 1-semiseparable matrix structure, including the composition of rotations across multiple chunk boundaries and the consequences for read-out, is given in Appendix A. We initialize the per-head MLPs so that heads start with mutually orthogonal rotation directions, producing Z ≈ I but with diverse first-order deviations that diverge meaningfully under gradient pressure (details in §4.3). 
+
+3.5 Output head 
+
+A final block—a lightweight SSD-augmented module—maps the last hybrid block’s output to per-frame phase logits (Fig. 2, bottom right). The hybrid block output is layer-normalized and projected by a linear layer to two streams: an input stream and a gating stream z′. The input stream is passed through a causal Conv1d, an SSD scan, and a chunk-wise rotation—mirroring the slow path’s internal structure but without cross-clip carry. The result is multiplied by SiLU (z′) and projected to C phase classes by a final linear layer. 
+
+3.6 Training objectives 
+
+Let ˆpb,t ∈ ∆C−1 be the predicted phase distribution at clip position (b, t ), yb,t the ground-truth label, and ⊮b,t the validity mask. The total loss on a clip is 
+
+L = LCE + wsm Lsmooth + wint Lint . (17) 
+
+Classification loss. Standard cross-entropy with label smoothing, masked by ⊮.
+
+Transition-aware temporal smoothness. A naive frame-to-frame KL penalty over-smooths phase boundaries, where the prediction should change abruptly. We compute a per-frame confidence cb,t = 1 − H(ˆ pb,t )/ log C and weight each adjacent-pair KL by the product of its endpoints’ confidences: 
+
+Lsmooth = E(b,t )
+
+h
+
+cb,t cb,t +1 KL  ˆpb,t ∥ ˆpb,t +1 
+
+i
+
+. (18) Smoothing is enforced where the model is locally confident (within a phase) and is automatically released near transi-tions (where the model is uncertain). 11 A PREPRINT                          
+
+> Table 1. Details of the datasets used in our experiments. “–” denotes no separate validation split, following the convention adopted in prior work [Jin et al., 2018, 2020, Huang et al., 2025]. Dataset # classes # videos train : val : test Cholec80 [Twinanda et al., 2016a] 780 40 : – : 40 M2CAI16 [Twinanda et al., 2016b] 841 27 : – : 14 Cataract-101 [Schoeffmann et al., 2018] 10 101 63 : 10 : 28 AutoLaparo [Wang et al., 2022] 721 10 : 4 : 7 HeiChole [Wagner et al., 2023] 724 12 : 6 : 6 Heidelberg [Maier-Hein et al., 2021] 14 30 18 : 6 : 6 GraSP [Ayobi et al., 2024] 11 13 6 : 2 : 5
+
+Intensity auxiliary loss. For each layer ℓ, the predicted intensity logit ˜λ(ℓ) is supervised against an asymmetric Gaussian transition map g(t) computed from the labels: for each phase-change time t∗, g(t) rises with a short standard deviation before t∗ and decays with a longer one after t∗, peaking at g(t∗) = 1 ; the overall g(t) is the maximum across all transitions. The asymmetric Gaussian follows LoVIT [Liu et al., 2025], reflecting the asymmetric uncertainty around a phase boundary—more visual evidence after the transition is needed to commit. The loss is per-layer BCE-with-logits, averaged across layers: 
+
+Lint = 1
+
+> KK
+
+X
+
+> ℓ=1
+
+BCE  ˜λ(ℓ) 
+
+> t
+
+, g (t); 1 . (19) 
+
+# 4 Experiments 
+
+4.1 Datasets 
+
+We evaluate SurgicalMamba on seven public surgical video datasets covering laparoscopic cholecystectomy, gyneco-logical surgery, cataract surgery, and grasping-task surgery. Dataset statistics are summarized in Table 1. 
+
+Cholec80 [Twinanda et al., 2016a] is the standard benchmark for cholecystectomy phase recognition, with 80 videos annotated for 7 phases. We use 40 videos for training and 40 for testing without a separate validation split, following the convention adopted in prior work [Jin et al., 2018, Czempiel et al., 2020, Liu et al., 2025, Yang et al., 2025, Huang et al., 2025]. M2CAI16 [Twinanda et al., 2016b], a related cholecystectomy benchmark, similarly omits a validation split. 
+
+Cataract-101 [Schoeffmann et al., 2018] contains 101 cataract surgery videos with 10 phases. AutoLaparo [Wang et al., 2022] contains 21 hysterectomy videos with 7 phases. HeiChole [Wagner et al., 2023] contains 24 cholecystec-tomy videos with 7 phases. Heidelberg [Maier-Hein et al., 2021] contains 30 multi-procedure videos with 14 phases. 
+
+GraSP [Ayobi et al., 2024] contains 13 videos with 11 phases for holistic surgical scene understanding. For these five datasets, we use the train/val/test splits defined by the respective dataset authors. All videos are sub-sampled to 1 fps following the standard surgical-phase-recognition protocol [Twinanda et al., 2016a, Jin et al., 2018]. We evaluate under a strict online streaming protocol: at each frame t, the model commits to a prediction using only frames I1: t, with per-frame work that does not depend on the look-back length. 
+
+4.2 Evaluation metrics 
+
+Following the conventions in surgical phase recognition [Jin et al., 2018, Funke et al., 2023, Huang et al., 2025], we report four metrics: Accuracy (Acc), Precision (Pr), Recall (Re), and Jaccard index (Jac). Accuracy is a video-wise metric measuring the model’s overall performance on each video, defined as Acc = 1
+
+V
+
+> V
+
+X
+
+> v=1
+
+acc v , (20) where V is the number of test videos and acc v is the percentage of correctly classified frames in video v.Precision, recall, and Jaccard index are phase-wise metrics, computed for each phase and then averaged across phases within a video and across videos: Pr = 1
+
+P · V
+
+> V
+
+X
+
+> v=1
+> P
+
+X
+
+> p=1
+
+T P vp
+
+T P vp + F P vp
+
+, (21) 12 A PREPRINT 
+
+Table 2. Comparison with state-of-the-art methods on the Cholec80 dataset under both the 10-second relaxed boundary and the strict (unrelaxed) protocol. “–” indicates that the metric is not reported in the original paper. The best results in each column are in bold. Method Acc Pr Re Jac 
+
+Relaxed (10-second boundary) 
+
+PhaseNet [Twinanda et al., 2016a] 78.8 ± 4.7 71.3 ± 15.6 76.6 ± 16.6 –EndoNet [Twinanda et al., 2016a] 81.7 ± 4.2 73.7 ± 16.1 79.6 ± 7.9 –SV-RCNet [Jin et al., 2018] 85.3 ± 7.3 80.7 ± 7.0 83.5 ± 7.5 –MTRCNet-CL [Jin et al., 2020] 89.2 ± 7.6 86.9 ± 4.3 88.0 ± 6.9 –TeCNO [Czempiel et al., 2020] 88.6 ± 7.8 81.6 ± 7.0 85.2 ± 6.7 75.1 ± 6.9 Opera [Czempiel et al., 2021] 91.2 ± 6.4 82.2 ± 7.0 86.9 ± 8.6 –TMRNet [Jin et al., 2021] 90.1 ± 7.6 90.3 ± 3.3 89.5 ± 5.0 79.1 ± 5.7 Trans-SVNet [Gao et al., 2021] 90.3 ± 7.1 90.7 ± 5.0 88.8 ± 7.4 79.3 ± 6.6 Not E2E [Yi et al., 2022] 91.5 ± 7.1 – 86.8 ± 8.5 77.2 ± 11.2 UATD [Ding et al., 2023] 91.9 ± 5.6 89.5 ± 4.4 90.5 ± 5.9 79.9 ± 8.5 CMTNet [Yue et al., 2023] 92.9 ± 5.9 90.1 ± 7.1 92.0 ± 4.4 81.5 ± 10.4 LoViT [Liu et al., 2025] 92.4 ± 6.3 89.9 ± 6.1 90.6 ± 4.4 81.2 ± 9.1 SKiT [Liu et al., 2023] 93.4 ± 5.2 90.9 91.8 82.6 SR-Mamba [Cao et al., 2024] 92.6 ± 8.6 90.3 ± 5.2 90.6 ± 7.2 81.5 ± 8.6 Surgformer [Yang et al., 2024] 93.4 ± 6.4 91.9 ± 4.7 92.1 ± 5.8 84.1 ± 8.0 DACAT [Yang et al., 2025] 95.5 ± 4.3 93.6 ± 4.1 93.4 ± 5.3 87.4 ± 8.1 MTTR-Net [Huang et al., 2025] 95.0 ± 4.9 92.7 ± 5.1 91.2 ± 10.3 84.7 ± 11.0 
+
+SurgicalMamba (Ours) 96.0 ± 3.6 94.9 ± 4.2 94.4 ± 6.2 88.5 ± 8.1 
+
+Strict (unrelaxed) 
+
+Trans-SVNet [Gao et al., 2021] 89.1 ± 7.0 84.7 83.6 72.5 LoViT [Liu et al., 2025] 91.5 ± 6.1 83.1 86.5 74.2 SKiT [Liu et al., 2023] 92.5 ± 5.1 84.6 88.5 76.7 Surgformer [Yang et al., 2024] 92.4 ± 6.4 87.9 ± 6.9 89.3 ± 7.8 79.9 ± 10.2 MTTR-Net [Huang et al., 2025] 93.9 ± 5.0 88.8 ± 6.9 88.2 ± 10.8 80.5 ± 11.8 
+
+SurgicalMamba (Ours) 94.6 ± 3.7 89.6 ± 8.7 90.5 ± 8.1 82.7 ± 11.5 
+
+Re = 1
+
+P · V
+
+> V
+
+X
+
+> v=1
+> P
+
+X
+
+> p=1
+
+T P vp
+
+T P vp + F N vp
+
+, (22) Jac = 1
+
+P · V
+
+> V
+
+X
+
+> v=1
+> P
+
+X
+
+> p=1
+
+T P vp
+
+T P vp + F P vp + F N vp
+
+, (23) where T P vp , F P vp , F N vp denote true positive, false positive, and false negative counts for phase p in video v, and P is the number of phases. For Cholec80, we follow the established convention of reporting results both with and without the 10-second relaxed boundary [Twinanda et al., 2016b]. For M2CAI16, we report results under the 10-second relaxed-boundary protocol. 
+
+4.3 Implementation details 
+
+We use ConvNeXt-Tiny [Liu et al., 2022] pre-trained on ImageNet as the visual backbone, with the bottom two stages frozen and the top two stages fine-tuned jointly with the temporal model. Input frames are resized to 224 × 224 and sub-sampled to 1 fps. Training uses AdamW with a learning rate of 10 −4 (scaled by 0.5 for the backbone) and a cosine schedule with 10 warmup epochs over 50 total epochs. The smoothness and intensity losses are weighted as 
+
+wsm = 1 .0 and wint = 1 .0. The asymmetric Gaussian transition target uses σℓ = 2 frames before the transition and 
+
+σr = 12 frames after. We use K = 4 SurgicalMamba blocks and a single Mamba2-style block as the output head. The SSD chunk size is Cchunk = 64 (32 for M2CAI16 and AutoLaparo) and state regramming uses rank r = 16 . TBPTT uses a window of k = 6 (12 for AutoLaparo) clips. All experiments are run on a single NVIDIA RTX A6000 GPU. 13 A PREPRINT                                                                                                                                                                                                 
+
+> Table 3. Comparison with state-of-the-art methods on the M2CAI16 and AutoLaparo datasets. M2CAI16 follows the 10-second relaxed-boundary protocol, while AutoLaparo follows the strict protocol. Method Acc Pr Re Jac
+> M2CAI16 (10-second relaxed boundary)
+> SV-RCNet [Jin et al., 2018] 81.7 ±8.1 81.0 ±8.3 81.6 ±7.2 65.4 ±8.9 TMRNet [Jin et al., 2021] 87.0 ±8.6 87.8 ±6.9 88.4 ±5.3 75.1 ±6.9 Trans-SVNet [Gao et al., 2021] 87.2 ±9.3 88.0 ±6.7 87.5 ±5.5 74.7 ±7.7 UATD [Ding et al., 2023] 87.6 ±8.7 88.2 ±7.4 87.9 ±9.6 75.7 ±9.5 CMTNet [Yue et al., 2023] 88.2 ±9.2 88.3 ±7.8 88.7 ±6.2 76.1 ±9.2 DACAT [Yang et al., 2025] 91.3 ±9.3 90.8 ±7.6 90.6 ±6.7 80.7 ±8.8
+> SurgicalMamba (Ours) 92.2 ±8.8 91.8 ±7.2 91.4 ±7.7 83.3 ±9.7
+> AutoLaparo (strict)
+> SV-RCNet [Jin et al., 2018] 75.6 64.0 59.7 47.2 TMRNet [Jin et al., 2021] 78.2 66.0 61.5 49.6 Trans-SVNet [Gao et al., 2021] 78.3 64.2 62.1 50.7 LoViT [Liu et al., 2025] 81.4 ±7.6 85.1 65.9 55.9 SKiT [Liu et al., 2023] 82.9 ±6.8 81.8 70.1 59.9 Surgformer [Yang et al., 2024] 85.7 ±6.9 82.3 75.7 66.7 MTTR-Net [Huang et al., 2025] 85.4 ±9.2 78.8 76.8 65.6 BNPitfalls [Rivoir et al., 2024] 86.8 ±1.5 78.2 72.0 64.2 DACAT [Yang et al., 2025] 87.8 ±7.6 78.5 75.0 66.9
+> SurgicalMamba (Ours) 89.5 ±6.8 90.6 76.2 68.9 Table 4. Comparison with state-of-the-art methods on the Cataract-101 dataset. “–” indicates values not reported in the original paper. Method Acc Pr Re Jac Qi et al. [Qi et al., 2019] 88.1 –––He et al. [He et al., 2022] 94.5 93.1 91.6 –MT-RCNet [Jin et al., 2020] 94.7 92.3 91.8 85.7 RCNeSt [Xia and Jia, 2021] 95.4 92.6 92.3 85.8 CB-RCNeSt [Xia and Jia, 2021] 96.4 94.9 94.7 90.2 MTTR-Net [Huang et al., 2025] 96.9 ±2.7 95.7 ±3.2 96.2 ±2.2 92.1 ±4.8
+> SurgicalMamba (Ours) 96.9 ±3.1 96.2 ±2.5 96.7 ±2.2 93.2 ±3.7
+
+4.4 Comparison with state-of-the-art methods 
+
+We compare SurgicalMamba with recent surgical phase recognition methods on seven public datasets. Baseline results are taken from the respective original papers; when a method has been reproduced on a benchmark by a more recent work, we cite that source. All comparisons follow the evaluation protocol described in §4.2. We first conduct comparison on Cholec80, the standard benchmark for surgical phase recognition. The results in Table 2 show that SurgicalMamba achieves superior performance across all metrics under both the relaxed and strict protocols. Compared to the strongest prior methods (DACAT for relaxed, MTTR-Net for strict), our model improves accuracy by 0.5 pp and Jaccard by 1.1 pp under the relaxed protocol, and accuracy by 0.7 pp and Jaccard by 2.2 pp under the strict protocol. While many existing methods achieve relatively high accuracy, their phase-level Jaccard scores remain noticeably lower, indicating poor recognition of certain surgical phases. SurgicalMamba narrows this gap with 88.5% relaxed Jaccard and 82.7% strict Jaccard, demonstrating its effectiveness in recognizing challenging surgical phases. The standard deviations on Jaccard (8.1 relaxed, 11.5 strict) are also among the lowest in the table, indicating consistent performance across the 40 test videos. We further evaluate our method on six additional surgical phase recognition datasets. On M2CAI16 (Table 3), Surgi-calMamba reaches 92.2% accuracy and 83.3% Jaccard, improving over DACAT by 0.9 pp and 2.6 pp respectively. On AutoLaparo, our method attains 89.5% accuracy and 68.9% Jaccard, with the most notable gain in precision (90.6% vs 78.5% for DACAT), suggesting that the dual-path mechanism effectively suppresses false positives despite the limited training data (21 videos). On Cataract-101 (Table 4), a non-laparoscopic benchmark, SurgicalMamba matches MTTR-Net in accuracy (96.9%) but improves on all phase-level metrics, with the most pronounced gain on Jaccard ( 93.2% 
+
+vs 92.1%, +1.1 pp), confirming better fine-grained phase localization on a substantially different surgical procedure. 14 A PREPRINT                                                                 
+
+> Table 5. Comparison with state-of-the-art methods on the HeiChole dataset. Method Acc Pr Re Jac ResNet50 [He et al., 2016] 68.5 ±12.3 66.0 58.0 44.7 SV-RCNet [Jin et al., 2018] 70.2 ±11.6 67.5 59.6 45.2 TeCNO [Czempiel et al., 2020] 78.3 ±8.8 79.7 69.9 58.3 Trans-SVNet [Gao et al., 2021] 78.0 ±9.6 77.9 68.0 56.4 MTTR-Net [Huang et al., 2025] 80.1 ±10.9 80.3 75.8 64.5
+> SurgicalMamba (Ours) 86.4 ±8.7 82.0 78.0 70.3 Table 6. Comparison with state-of-the-art methods on the Heidelberg (HeiCo) dataset. Method Acc Jac Dylan et al. [Dylan team, 2017] 21 8Andrei et al. [Andrei team, 2017] 57 25 Robin et al. [Robin team, 2017] 60 38 Sebastian et al. [Bodenstedt et al., 2017] 61 40 MTTR-Net [Huang et al., 2025] 70 ±14 44 ±20
+> SurgicalMamba (Ours) 72.1 ±15.1 47.3 ±18.1
+
+We also evaluate our method on two competition datasets: HeiChole (Table 5) and Heidelberg (Table 6). Following [Huang et al., 2025], baselines on HeiChole are reproduced on the publicly available 24-video subset under the 12:6:6 split. SurgicalMamba outperforms all prior methods across every metric on both datasets, achieving 86.4% / 70.3% (Acc/Jac) on HeiChole—a 6.3 pp and 5.8 pp improvement over MTTR-Net—and 72.1% / 47.3% on Heidelberg. Finally, to validate generalizability across surgical contexts, we evaluate on GraSP (Table 7), a prostatectomy bench-mark using mean Average Precision (mAP) as the official phase-level metric. SurgicalMamba achieves 77.7% mAP, matching MTTR-Net’s 77.7% in mean while reducing the standard deviation from 13.8 to 12.4, indicating more con-sistent recognition across the 5 test videos. According to these results, SurgicalMamba not only achieves superior performance on the standard Cholec80 bench-mark but also exhibits strong generalizability across different surgical procedures, including laparoscopic cholecystec-tomy, hysterectomy, cataract surgery, multi-procedure surgical workflows, and prostatectomy. The consistent improve-ments on smaller and more challenging benchmarks (HeiChole, AutoLaparo, Heidelberg) suggest that the structured temporal modeling provides a stronger inductive bias under limited training data and domain shift, conditions where prior methods tend to degrade most. Beyond mean accuracy, two observations point to robustness rather than dataset-specific tuning: the per-video Jaccard standard deviations on Cholec80 (8.1 relaxed, 11.5 strict) are among the lowest in their respective tables, and on GraSP the mAP standard deviation drops from MTTR-Net’s 13.8 to 12.4—consistent gains in inter-video consistency on top of the mean-level improvements. We complement these accuracy comparisons with a streaming-efficiency analysis in §4.5, which reports per-frame throughput, computational cost, and memory footprint against the same prior methods. 
+
+4.5 Streaming Efficiency Analysis 
+
+We test SurgicalMamba’s design claim that per-frame inference cost remains O(d) and does not grow with elapsed video length, against the same prior methods used in §4.4. Table 9 reports the comparison. SurgicalMamba is the fastest method at 119 .08 fps, well above the typical 25 –30 fps endoscopic capture rate and ahead of MTTR-Net ( 97 .86 ), DACAT ( 58 .99 ), and Surgformer ( 13 .85 ). The throughput ranking tracks the time-complexity column: Surgformer’s attention and DACAT’s growing feature cache both scale with elapsed length T , while SurgicalMamba’s chunked SSD recurrence does not, so the measured 119 fps is its steady-state cost regardless of how long the procedure runs. Raw compute is consistent with this picture: at 4.55 GFLOPs SurgicalMamba is on par with MTTR-Net ( 4.14 ) and an order of magnitude below Surgformer ( 446 .64 ). The trade-off appears in peak memory ( 0.81 GB) and parameter count ( 198 .56 M), the largest in the table, reflecting the dual-path block’s two SSD scans together with Z and λ. We view this as a deliberate trade-off for streaming inference: a sub-
+
+1 GB footprint is well within single-GPU capacity, parameter count does not affect per-frame latency once the model is loaded, and the bounded, T -independent per-frame cost—SurgicalMamba’s headline property—is preserved. 15 A PREPRINT                                                                                                                                               
+
+> Table 7. Comparison with state-of-the-art methods on the GraSP dataset using the official mean Average Precision (mAP) metric. Method mAP SlowFast [Feichtenhofer et al., 2019] 70.7 TAPIR [Ayobi et al., 2024] 74.6 TAPIS-VST [Ayobi et al., 2024] 70.9 TAPIS [Ayobi et al., 2024] 76.1 MTTR-Net [Huang et al., 2025] 77.7 ±13.8
+> SurgicalMamba (Ours) 77.7 ±12.4 Table 8. Component ablation on Cholec80. Each variant removes one architectural component or the auxiliary smoothness loss from the full SurgicalMamba (Acc/Pr/Re/Jac in %, mean ±std over 40 test videos). All four ingredients contribute to the final performance, with state regramming having the largest impact on phase-level metrics under the strict protocol. Variant Acc Pr Re Jac
+> Relaxed (10-second boundary)
+> w/o rotation Z95.60 ±4.20 92.97 ±4.25 93.71 ±7.95 87.05 ±9.05 w/o intensity λ95.08 ±6.07 93.37 ±4.47 93.49 ±5.04 86.70 ±8.75 w/o fast path 95.85 ±4.03 94.28 ±4.03 93.47 ±8.65 88.03 ±9.44 w/o smooth loss 95.84 ±3.69 93.54 ±4.71 94.43 ±5.41 87.70 ±8.48
+> Full 96.05 ±3.55 94.91 ±4.24 94.38 ±6.16 88.48 ±8.14
+> Strict (unrelaxed)
+> w/o rotation Z94.01 ±4.28 88.07 ±7.68 89.77 ±9.82 80.71 ±12.07 w/o intensity λ93.69 ±6.05 88.72 ±8.06 89.26 ±7.30 81.12 ±11.99 w/o fast path 94.27 ±4.14 88.92 ±8.91 88.67 ±10.84 81.24 ±12.69 w/o smooth loss 94.38 ±3.82 88.55 ±8.59 90.36 ±7.80 81.80 ±11.81
+> Full 94.61 ±3.71 89.59 ±8.70 90.48 ±8.11 82.73 ±11.50
+
+4.6 Ablation Studies 
+
+We conduct two complementary ablation studies on Cholec80, verifying the necessity of each proposed component and examining the sensitivity of SurgicalMamba to the three core hyperparameters governing these components. 
+
+4.6.1 Component ablation 
+
+We isolate the contribution of each of the three architectural components introduced in §3—state regramming (§3.4), intensity-modulated stepping (§3.3.1), and the fast path (§3.3.2)—by removing one at a time from the default config-uration and reporting the change in Cholec80 performance. Results are summarized in Table 8. Removing any of the three components degrades every reported metric under both protocols, confirming that each contributes to the final performance. The phase-level Jaccard under the strict protocol is the most informative measure of the effect since it penalizes both miss and over-prediction without the 10-second tolerance: full SurgicalMamba reaches 82 .7% , while the three ablated variants drop to 80 .7% (w/o rotation ), 81 .1% (w/o intensity ), and 81 .2% (w/o fast path ). The ordering identifies state regramming as the single most impactful component (−2.0% p strict Jaccard), consistent with its role of opening cross-dimensional mixing that the axis-aligned scalar-A recurrence cannot otherwise express (§3.4, Appendix A). The intensity modulation and the fast path each contribute roughly −1.5% p, reflecting their complemen-tary roles— λ shaping the temporal flow of the slow path’s memory, and the fast path supplying clip-local reactivity to short-term events (§3.3.1, §3.3.2). Removing the transition-aware temporal smoothness loss Lsmooth (§3.6) costs an additional 0.9% p strict Jaccard, confirming that this auxiliary objective contributes modestly but consistently on top of the three architectural components. One further observation worth noting: removing the intensity signal also visibly inflates the per-video accuracy standard deviation (relaxed 3.55 → 6.07 , strict 3.71 → 6.05 ), suggesting that λ’s transition-aware supervision additionally stabilizes recognition across videos with different procedural pac-ing. As with the hyperparameter sweeps below, the absolute differences are modest relative to inter-video variance on Cholec80, but the consistent ordering across metrics and protocols indicates that all four ingredients carry their weight. 16 A PREPRINT 
+
+Table 9. Streaming-efficiency comparison on Cholec80, measured on a single RTX A6000 GPU with batch size 1 over 256 -frame clips. Speed is per-frame throughput; GFLOPs and GPU memory are per-clip; parameters are total trainable. The last column shows each method’s dominant per-frame time complexity. DACAT and Surgformer use official codebases; MTTR-Net is reproduced from its published description. 
+
+Method Speed (fps) GFLOPs GPU mem. (GB) Params (M) Time complexity MTTR-Net [Huang et al., 2025] 97.86 4.14 0.21 39.26 O(N + K2 + d2)
+
+Surgformer [Yang et al., 2024] 13.85 446.64 0.89 177.97 O(T · N 2 · L)
+
+DACAT [Yang et al., 2025] 58.99 9.18 0.31 65.40 O(N + C · d), C → ∞ 
+
+SurgicalMamba (Ours) 119.08 4.55 0.81 198.56 O(N + L · d2)
+
+T : elapsed video length; L: clip length; d: SSM inner channel dimension ( dinner in §3.1.4); N : SSM state dimension; K:convolution kernel size; C: feature cache size (grows with T ). 
+
+Figure 3. Hyperparameter sensitivity on Cholec80. We sweep the rotation rank r (top), the chunk size Lc (middle), and the state dimension N (bottom) while keeping the remaining two hyperparameters fixed at the default (r=16 , L c=64 , N =64) , marked by vertical dotted lines. Solid blue and dashed red curves denote relaxed and strict evaluation protocols, respectively; shaded regions show one standard deviation across the 40 test videos. The mean trajectories vary within 0.7% p in strict accuracy and lie well within the inter-video standard deviation, indicating that SurgicalMamba is robust to hyperparameter choice. 
+
+4.6.2 Hyperparameter analysis 
+
+We sweep the three core hyperparameters of SurgicalMamba—rotation rank r, chunk size Lc, and state dimension 
+
+N —one at a time around the default (r=16 , L c=64 , N =64) , with results reported in Fig. 3. Across all twelve config-urations, strict accuracy varies only within 94 .1–94 .8% (a spread of 0.7% p) and the mean trajectories lie well within the per-video standard deviation on Cholec80. The rotation rank is essentially flat over r ∈ { 4, 8, 16 , 32 }, indicating that the proposed rotation mechanism is inherently low-rank and parameter-efficient. The chunk size exhibits a thresh-old rather than an inverted-U: Lc=16 underperforms due to excessive rotation accumulation, while Lc ∈ { 32 , 64 , 128 }
+
+form a tight plateau, confirming that cross-chunk propagation scales gracefully to long contexts. The state dimension shows a mild inverted-U with both extremes degrading similarly, and N =64 is adopted as it attains the highest strict Jaccard among the plateau values. Overall, the robustness of these sweeps indicates that the gains of SurgicalMamba stem from the architectural components above rather than from hyperparameter tuning. 17 A PREPRINT    
+
+> Figure 4. Phase prediction on Cholec80 video 41. From top: ground truth, SurgicalMamba ( Ours ), MTTR-Net, and DACAT. SurgicalMamba recovers all phases with stable predictions inside each phase and tight transition boundaries, while MTTR-Net misses the CleanCoag phase entirely.
+
+4.7 Qualitative Analysis 
+
+To complement the aggregate metrics in §4.4 and the ablations in §4.6, we examine SurgicalMamba qualitatively from three angles on Cholec80: (i) the predicted phase sequence on a representative test video, comparing against the strongest prior methods (§4.7.1); (ii) the per-chunk rotation planes induced by state regramming, visualized as a chunk-to-chunk similarity matrix to expose phase-aligned block structure (§4.7.2); and (iii) the per-frame intensity 
+
+λ(t) together with the corresponding effective decay dA, illustrating the forgetting mechanism in action on a single procedure (§4.7.3). 
+
+4.7.1 Predicted phase sequence 
+
+Figure 4 compares SurgicalMamba with MTTR-Net [Huang et al., 2025] and DACAT [Yang et al., 2025]—the two strongest prior methods under the strict and relaxed protocols respectively—on a single Cholec80 test video. Three qualitative patterns stand out. First, MTTR-Net misses the CleanCoag phase entirely, continuing a neighboring label across the interval; SurgicalMamba and DACAT both recover the phase, with SurgicalMamba aligning more tightly to the ground-truth interval. Second, both baselines scatter predictions during long sustained phases—MTTR-Net within Preparation , DACAT around the late GBPack /GBRetract boundary—while SurgicalMamba produces a near-monotonic segmentation. Third, SurgicalMamba localizes the Preparation -to-CalotDiss transition and the ClipCut 
+
+interval within a tighter window than either baseline. Together, these three patterns are the per-video manifestation of the strict-protocol Jaccard improvement in Table 2. The three patterns line up with the three architectural components and are revisited mechanistically in §4.7.2 and §4.7.3. Briefly: state regramming re-orients the carried state at chunk boundaries, giving short phases such as Clean-Coag their own basis instead of being absorbed by the longer adjacent phase; the dual-path slow path carries context across clips, keeping predictions stable inside phases against brief visual perturbations; and intensity-modulated step-ping lowers the effective decay precisely at phase transitions, letting the slow path absorb new-phase evidence quickly. 
+
+4.7.2 Rotation planes encode phase-aligned structure 
+
+To examine how state regramming behaves in practice, we visualize its two geometric ingredients separately: where 
+
+the rotation acts (the plane, Fig. 5) and by how much it rotates (the angle, Fig. 6). Figure 5 shows the cosine similarity between the rotation planes used at each pair of chunks during inference. Within 
+
+each phase, similarity is high (bright blocks along the diagonal): the per-chunk MLPs select consistent planes across consecutive chunks of the same phase. Across phase boundaries, similarity drops sharply (dark off-diagonal bands), most clearly between Preparation and CalotTriangle , between ClipCut and GBDiss , and at the late-phase transitions. This is the empirical signature predicted by the matrix view in Appendix A: state regramming is content-conditioned re-projection, and its content here is the surgical phase, so the rotation planes inherit the phase structure of the video without any direct phase supervision on Z.The functional consequence is that hidden states from the same phase share a basis and concentrate in a common sub-region of the state space, while hidden states from different phases are pushed into separable sub-spaces—each phase is given its own representational slot rather than competing for capacity inside one shared basis. This is the mechanism behind the categorical recovery of CleanCoag in §4.7.1: the short phase receives a distinct basis at its 18 A PREPRINT 
+
+Figure 5. Chunk-to-chunk cosine similarity of state-regramming rotation planes on a Cholec80 test video ( 1 = same plane, 0 =orthogonal). Side bars mark ground-truth phase membership. Bright block-diagonal structure aligned with phase boundaries shows that each phase receives its own rotation basis, with sharp re-orientation at transitions. 
+
+Figure 6. Per-chunk rotation angles on a Cholec80 test video. Maximum (dashed), mean (solid), and minimum (dotted) angle over the r = 16 planes per head, with SSM heads partitioned into three groups by trajectory similarity. The spread within each head (max ∼ 105 –125 ◦, min near 0◦) reflects a division of labor between transformative and near-identity planes; trajectories are nearly flat across the procedure, so phase content is carried by where the rotation acts (Fig. 5) rather than by its magnitude. 
+
+onset, instead of being absorbed by the much longer adjacent phase. Methods that propagate state through a fixed, axis-aligned recurrence have no analogous mechanism, which is consistent with MTTR-Net’s outright miss on the same phase. Figure 6 traces the corresponding rotation angles, summarizing the r = 16 planes per head by their per-chunk maxi-mum, mean, and minimum. The three statistics together describe a stable, structured angle profile: each head devotes a few planes to large rotations (maximum ∼ 105 –125 ◦), maintains a broad mid-range population (mean ∼ 40 –50 ◦), 19 A PREPRINT                 
+
+> Figure 7. Per-frame intensity λ(t)(top) and effective decay dA= exp( A·∆t·(1 + λ)) (bottom) on a Cholec80 test video. Shaded colors denote ground-truth phases; blue band is the 10–90 percentile across SSM heads, dark line the mean. λstays near zero during sustained phases and spikes at phase boundaries; dAdips correspondingly at transitions and holds a plateau near 0.92
+> within phases. Forgetting is engaged only at boundaries; context is retained within phases.
+
+and keeps a few planes close to identity (minimum near 0◦). This profile is nearly invariant across chunks and phases, in contrast to the rotation planes themselves, which shift sharply at phase boundaries. The spread of angles within each head indicates an internal division of labor across its planes: the high-magnitude planes execute aggressive re-orientations capable of separating phase identity, the near-identity planes effectively pass the corresponding state directions through unchanged, and the mid-range fills the spectrum between. Each head therefore acts as a graded composition of transformative and preserving sub-rotations applied jointly to the carried state. The three head groups diverge most clearly at the maximum angle while remaining similar at the mean and minimum, so head specialization—also visible in the per-head response to λ in Fig. 7—is expressed through how aggressively each head rotates along its dominant directions, not through a uniform shift of the entire angular budget. Together with the plane-side behavior, state regramming carries phase content through where it rotates while each head’s representational role is shaped by how strongly it rotates along its dominant directions. 
+
+4.7.3 Intensity and effective decay in action 
+
+Figure 7 traces the intensity signal λ(t) and the resulting effective decay dA along an entire test video. The intensity is sparse: it remains close to zero throughout the long CalotTriangle and GBDiss phases, despite substantial visual variation within those phases, and concentrates at and around phase boundaries—a pronounced peak before the Clip-Cut /GBDiss transition, and a cluster of peaks at the late CleanCoag /GBPack /GBRetract sequence where multiple short phases follow in quick succession. The effective decay dA dips correspondingly at the same phase transitions. Each dip multiplies the carried state by a smaller factor at the boundary, so new-phase evidence injected through the Btxt
+
+term becomes dominant within a small number of frames rather than being averaged into the much larger pre-boundary context. This is the mechanism behind the tighter transition timing in §4.7.1: the boundaries that SurgicalMamba lo-calizes most tightly are precisely the frames where λ spikes. Two finer features refine this picture. The 10 –90 percentile band across SSM heads shows that different heads contract by different amounts at the same transition (lower percentile below dA = 0 .75 , upper percentile near the across-head mean), so the model does not reset uniformly: some heads act as rapid switchers absorbing the new phase quickly, while others retain context across the boundary, combining responsiveness with continuity at a single transition. Dur-ing sustained phases the across-head mean of dA stays on a plateau near 0.92 , retaining state across roughly twelve frames per e-fold within a phase; forgetting is engaged only where needed. This selective retention is what underwrites the intra-phase stability in §4.7.1: predictions inside a phase do not scatter because the slow path’s memory has not been overwritten there. 
+
+# 5 Limitations 
+
+The principal limitation of SurgicalMamba concerns the operational interpretability of state regramming, although it is partial rather than total. The mathematical behavior of Z is fully characterized—the per-chunk rotation is ex-20 A PREPRINT 
+
+actly orthogonal, preserves the hidden-state norm, and re-projects information into a content-dependent basis (§3.4, Appendix A)—and at the structural level the learned rotation planes inherit a phase-aligned block structure without any direct phase supervision (§4.7.2). Z is therefore not opaque: planes selected by the per-chunk MLPs respond to phase context, and the resulting block structure of Fig. 5 provides a recognizable interpretive surface. What remains less direct, however, is what happens inside this re-projection at the level of individual hidden-state directions. The plane-similarity view is an aggregate signature—it tells us that consecutive chunks within a phase share a basis and that consecutive phases do not, but it does not, by itself, expose how a particular direction of h(t) is being rotated into another at the moment a rotation is applied. Two consequences follow. First, at the channel level, Z is realized as a content-dependent dense bilinear map (Eq. 32) whose expressive power comes from mixing across hidden-state dimensions; the price of this expressiveness is that the resulting pairings—which hidden-state direction is rotated into which, and how that pairing corresponds to surgical semantics such as instrument appearance or bleeding—are no longer easy to read off the operator. In this respect Z differs from the intensity signal λ, which is supervised by an explicit transition target and admits a direct interpretation as a forgetting signal (§4.7.3). Second, within Z itself, the angle profile in Fig. 6 shows each head specializing its r = 16 planes into a graded mixture of high- and low-magnitude rotations, suggesting an internal division of labor across planes; which planes carry which kind of role, and whether the resulting split is the one a phase-aware design would prescribe, is not something the present analysis settles. Together, these two aspects mark the boundary of what we read off Z: structural alignment with phase con-tent is established, while channel-level grounding is left to follow-up work on rotation-based state-space operators. The empirical effectiveness of state regramming (§4.4, §4.6) is consistent with the mechanism the structural analysis identifies, even if the channel-level reading is not yet exhaustive. A second limitation concerns the supervision of the intensity signal λ. In this work, λ is trained against a phase-transition Gaussian target (§3.6), which is well-defined for surgical phase recognition because phase boundaries are an annotated and clinically meaningful structural cue. Extending SurgicalMamba to other temporal-segmentation tasks— surgical step or gesture recognition, action segmentation, or more general event detection—would require choosing an analogous cue (e.g., step boundaries, action boundaries, salience-weighted change points). Whether the same phase-style target suffices, or whether a task-specific or self-supervised alternative is preferable, is a question that we have not addressed and that would warrant further investigation when transferring the architecture beyond phase recognition. 
+
+# 6 Conclusion 
+
+We presented SurgicalMamba, a causal and streaming recognizer for online surgical phase recognition built on Mamba2’s structured state-space duality. Three SSD-compatible mechanisms—a dual-path block that separates long-and short-term temporal regimes at the level of recurrent state, intensity-modulated stepping that adapts the slow path’s effective rate near phase transitions, and per-chunk state regramming that re-projects the hidden state through a content-conditioned Cayley rotation—together hold per-frame cost at O(d) while delivering state-of-the-art accu-racy across seven public benchmarks, with the largest gains on the smaller and more challenging ones. Qualitative analysis traces these gains to mechanisms the formal derivations anticipate: rotation planes acquire a phase-aligned block structure without direct phase supervision, the intensity signal concentrates at phase boundaries and drives the effective decay down precisely where the surgical context changes, and the same trained weights run at 119 frames per second in streaming mode. The broader implication is that the streaming constraint of online recognition does not require relinquishing long-horizon modeling capacity: a recurrence built around explicit forgetting and content-dependent state re-orientation can match offline-style accuracy at constant per-frame cost. The limitations identified in §5—channel-level ground-ing of state regramming, and the choice of supervisory cue for the intensity signal when transferring beyond phase recognition—naturally chart the next directions: a more granular account of which hidden-state directions are rotated into which under Z, and how an analogous transition cue should be specified for related surgical-video tasks such as step or gesture recognition. Beyond surgical workflow, the design pattern of carrying a long-horizon state through bounded-norm, content-conditioned re-orientation may be useful wherever a system must reason over long video at fixed cost while remaining responsive to discrete transitions in scene content. 
+
+# Declaration of interests 
+
+The authors declare that they have no conflict of interest. 21 A PREPRINT 
+
+# Acknowledgments 
+
+This research was supported by the MSIT (Ministry of Science and ICT), Korea, under the ITRC (Information Tech-nology Research Center) support program (IITP-2026-RS-2020-II201789), and the Artificial Intelligence Convergence Innovation Human Resources Development (IITP-2026-RS-2023-00254592) supervised by the IITP (Institute for In-formation & Communications Technology Planning & Evaluation). 
+
+# Declaration of Generative AI 
+
+During the preparation of this work, the author(s) used GPT-5 only for English language editing and proofreading. After using this tool, the author(s) reviewed and edited the content as needed and take(s) full responsibility for the content of the publication. 
+
+# References 
+
+Andrei team. Surgical workflow analysis in the SensorOR (EndoVis 2017 sub-challenge participant). https:// endovissub2017-workflow.grand-challenge.org/ , 2017. M. Arjovsky, A. Shah, and Y. Bengio. Unitary evolution recurrent neural networks. In ICML , 2016. N. Ayobi, S. Rodríguez, A. Pérez, I. Hernández, N. Aparicio, E. Dessevres, S. Peña, J. Santander, J. I. Caicedo, N. Fernández, and P. Arbeláez. Pixel-wise recognition for holistic surgical scene understanding. Medical Image Analysis , 2024. arXiv preprint arXiv:2401.11174. A. Banino, J. Balaguer, and C. Blundell. PonderNet: Learning to ponder. arXiv preprint arXiv:2107.05407 , 2021. S. Bodenstedt, M. Wagner, D. Katic, P. Mietkowski, B. Mayer, H. Kenngott, B. Müller-Stich, R. Dillmann, and S. Speidel. Unsupervised temporal context learning using convolutional neural networks for laparoscopic workflow analysis. arXiv preprint arXiv:1702.03684 , 2017. R. Cao, J. Wang, and Y.-H. Liu. SR-Mamba: Effective surgical phase recognition with state space model. arXiv preprint arXiv:2407.08333 , 2024. Y. Chen, X. Zhang, S. Hu, X. Han, Z. Liu, and M. Sun. Stuffed mamba: Oversized states lead to the inability to forget. 
+
+arXiv preprint arXiv:2410.07145 , 2024. T. Czempiel, M. Paschali, M. Keicher, W. Simson, H. Feussner, S. T. Kim, and N. Navab. TeCNO: Surgical phase recognition with multi-stage temporal convolutional networks. In MICCAI , pages 343–352, 2020. T. Czempiel, M. Paschali, D. Ostler, S. T. Kim, B. Busam, and N. Navab. OperA: Attention-regularized transformers for surgical phase recognition. In MICCAI , pages 604–614, 2021. T. Dao and A. Gu. Transformers are SSMs: Generalized models and efficient algorithms through structured state space duality. In ICML , 2024. K. C. Demir, H. Schieber, T. Weise, D. Roth, M. May, A. Maier, and S. H. Yang. Deep learning in surgical workflow analysis: a review of phase and step recognition. IEEE Journal of Biomedical and Health Informatics , 27(11): 5405–5417, 2023. X. Ding, X. Yan, Z. Wang, W. Zhao, J. Zhuang, X. Xu, and X. Li. Less is more: Surgical phase recognition from timestamp supervision. IEEE Transactions on Medical Imaging , 42(6):1897–1910, 2023. Dylan team. Surgical workflow analysis in the SensorOR (EndoVis 2017 sub-challenge participant). https:// endovissub2017-workflow.grand-challenge.org/ , 2017. C. Feichtenhofer, H. Fan, J. Malik, and K. He. SlowFast networks for video recognition. In ICCV , 2019. I. Funke, D. Rivoir, and S. Speidel. Metrics matter in surgical phase recognition. arXiv preprint arXiv:2305.13961 ,2023. X. Gao, Y. Jin, Y. Long, Q. Dou, and P.-A. Heng. Trans-svnet: accurate phase recognition from surgical videos via hybrid embedding aggregation transformer. In MICCAI , 2021. C. R. Garrow, K.-F. Kowalewski, L. Li, M. Wagner, M. W. Schmidt, S. Engelhardt, D. A. Hashimoto, H. G. Kenngott, S. Bodenstedt, S. Speidel, et al. Machine learning for surgical phase recognition: a systematic review. Annals of Surgery , 273(4):684–693, 2021. A. Graves. Adaptive computation time for recurrent neural networks. arXiv preprint arXiv:1603.08983 , 2016. 22 A PREPRINT 
+
+A. Gu and T. Dao. Mamba: Linear-time sequence modeling with selective state spaces. In Conference on Language Modeling (COLM) , 2024. A. Gu, K. Goel, and C. Ré. Efficiently modeling long sequences with structured state spaces. In ICLR , 2022. D. A. Hashimoto, G. Rosman, D. Rus, and O. R. Meireles. Artificial intelligence in surgery: promises and perils. 
+
+Annals of Surgery , 268(1):70–76, 2018. K. He, X. Zhang, S. Ren, and J. Sun. Deep residual learning for image recognition. In CVPR , pages 770–778, 2016. Z. He, A. Mottaghi, A. Sharghi, M. A. Jamal, and O. Mohareri. An empirical study on activity recognition in long surgical videos. In Machine Learning for Health (ML4H) , pages 356–372, 2022. K. Helfrich, D. Willmott, and Q. Ye. Orthogonal recurrent neural networks with scaled Cayley transform. In ICML ,2018. K. Huang, X.-L. Yuan, R.-D. Liu, L.-S. Ye, Y. Zhou, B. Hu, and Z. Yi. Multi-teacher temporal regulation network for surgical workflow recognition. IEEE Transactions on Medical Imaging , 44(11):4690–4703, 2025. Y. Jin, Q. Dou, H. Chen, L. Yu, J. Qin, C.-W. Fu, and P.-A. Heng. SV-RCNet: workflow recognition from surgical videos using recurrent convolutional network. IEEE Transactions on Medical Imaging , 37(5):1114–1126, 2018. Y. Jin, H. Li, Q. Dou, H. Chen, J. Qin, C.-W. Fu, and P.-A. Heng. Multi-task recurrent convolutional network with correlation loss for surgical video analysis. Medical Image Analysis , 59:101572, 2020. Y. Jin, Y. Long, C. Chen, Z. Zhao, Q. Dou, and P.-A. Heng. Temporal memory relation network for workflow recognition from surgical video. IEEE Transactions on Medical Imaging , 40(7):1911–1923, 2021. L. Jing, Y. Shen, T. Dubˇ cek, J. Peurifoy, S. Skirlo, Y. LeCun, M. Tegmark, and M. Soljaˇ ci´ c. Tunable efficient unitary neural networks (EUNN) and their application to RNNs. In ICML , 2017. M. Lezcano-Casado and D. Martínez-Rubio. Cheap orthogonal constraints in neural networks: A simple parametriza-tion of the orthogonal and unitary group. In ICML , 2019. K. Li, X. Li, Y. Wang, Y. He, Y. Wang, L. Wang, and Y. Qiao. VideoMamba: State space model for efficient video understanding. In ECCV , 2024. Y. Liu, J. Huo, J. Peng, R. Sparks, P. Dasgupta, A. Granados, and S. Ourselin. SKiT: a fast key information video transformer for online surgical phase recognition. In ICCV , pages 21074–21084, 2023. Y. Liu, Y. Tian, Y. Zhao, H. Yu, L. Xie, Y. Wang, Q. Ye, and Y. Liu. VMamba: Visual state space model. arXiv preprint arXiv:2401.10166 , 2024. Y. Liu, M. Boels, L. C. Garcia-Peraza-Herrera, T. Vercauteren, P. Dasgupta, A. Granados, and S. Ourselin. LoViT: Long video transformer for surgical phase recognition. Medical Image Analysis , 2025. Z. Liu, H. Mao, C.-Y. Wu, C. Feichtenhofer, T. Darrell, and S. Xie. A ConvNet for the 2020s. In CVPR , 2022. J. Ma, F. Li, and B. Wang. U-Mamba: Enhancing long-range dependency for biomedical image segmentation. arXiv preprint arXiv:2401.04722 , 2024. L. Maier-Hein, S. S. Vedula, S. Speidel, N. Navab, R. Kikinis, A. Park, M. Eisenmann, H. Feussner, G. Forestier, S. Giannarou, et al. Surgical data science for next-generation interventions. Nature Biomedical Engineering , 1(9): 691–696, 2017. L. Maier-Hein, M. Wagner, T. Ross, A. Reinke, S. Bodenstedt, P. M. Full, H. Hempe, D. Mindroc-Filimon, P. Scholz, T. N. Tran, et al. Heidelberg colorectal data set for surgical data science in the sensor operating room. Scientific Data , 8(1):101, 2021. P. Mascagni, D. Alapatt, L. Sestini, M. S. Altieri, A. Madani, Y. Watanabe, A. Alseidi, J. A. Redan, S. Alfieri, G. Costamagna, et al. Computer vision in surgery: from potential to clinical value. npj Digital Medicine , 5(1):163, 2022. Z. Mhammedi, A. Hellicar, A. Rahman, and J. Bailey. Efficient orthogonal parametrisation of recurrent neural net-works using Householder reflections. In ICML , 2017. B. Qi, X. Qin, J. Liu, Y. Xu, and Y. Chen. A deep architecture for surgical workflow recognition with edge information. In IEEE International Conference on Bioinformatics and Biomedicine (BIBM) , pages 1358–1364, 2019. D. Rivoir, I. Funke, and S. Speidel. On the pitfalls of batch normalization for end-to-end video learning: a study on surgical workflow analysis. Medical Image Analysis , 94:103126, 2024. Robin team. Surgical workflow analysis in the SensorOR (EndoVis 2017 sub-challenge participant). https:// endovissub2017-workflow.grand-challenge.org/ , 2017. 23 A PREPRINT 
+
+K. Schoeffmann, M. Taschwer, S. Sarny, B. Münzer, M. J. Primus, and D. Putzgruber. Cataract-101: video dataset of 101 cataract surgeries. In Proceedings of the 9th ACM Multimedia Systems Conference (MMSys) , pages 421–425, 2018. doi: 10.1145/3204949.3208137. A. P. Twinanda, S. Shehata, D. Mutter, J. Marescaux, M. De Mathelin, and N. Padoy. Endonet: a deep architecture for recognition tasks on laparoscopic videos. IEEE Transactions on Medical Imaging , 36(1):86–97, 2016a. A. P. Twinanda, S. Shehata, D. Mutter, J. Marescaux, M. De Mathelin, and N. Padoy. Workshop and challenges on modeling and monitoring of computer assisted interventions (M2CAI). http://camma.u-strasbg.fr/ m2cai2016/ , 2016b. M. Wagner, B.-P. Müller-Stich, A. Kisilenko, D. Tran, P. Heger, L. Mündermann, D. M. Lubotsky, B. Muüller, T. Davi-tashvili, M. Capek, et al. Comparative validation of machine learning algorithms for surgical workflow and skill analysis with the HeiChole benchmark. Medical Image Analysis , 86:102770, 2023. Y. Wang, Y. Chen, J. Yan, J. Lu, and X. Sun. MemMamba: Rethinking memory patterns in state space model. arXiv preprint arXiv:2510.03279 , 2025. Z. Wang, B. Lu, Y. Long, F. Zhong, T.-H. Cheung, Q. Dou, and Y. Liu. AutoLaparo: A new dataset of integrated multi-tasks for image-guided surgical automation in laparoscopic hysterectomy. In MICCAI , pages 486–496, 2022. Z. Wang, J.-Q. Zheng, Y. Zhang, G. Cui, and L. Li. Mamba-UNet: UNet-like pure visual mamba for medical image segmentation. arXiv preprint arXiv:2402.05079 , 2024. S. Woo, S. Debnath, R. Hu, X. Chen, Z. Liu, I. S. Kweon, and S. Xie. ConvNeXt V2: Co-designing and scaling ConvNets with masked autoencoders. In CVPR , pages 16133–16142, 2023. T. Xia and F. Jia. Against spatial–temporal discrepancy: contrastive learning-based network for surgical workflow recognition. International Journal of Computer Assisted Radiology and Surgery , 16(5):839–848, 2021. K. Yang, Q. Li, and Z. Wang. DACAT: Dual-stream adaptive clip-aware time modeling for robust online surgical phase recognition. In ICASSP , 2025. S. Yang, L. Luo, Q. Wang, and H. Chen. Surgformer: Surgical transformer with hierarchical temporal attention for surgical phase recognition. In MICCAI , pages 606–616, 2024. F. Yi, Y. Yang, and T. Jiang. Not end-to-end: Explore multi-stage architecture for online surgical phase recognition. In ACCV , 2022. W. Yue, H. Liao, Y. Xia, V. Lam, J. Luo, and Z. Wang. Cascade multi-level transformer network for surgical workflow analysis. IEEE Transactions on Medical Imaging , 42(10):2817–2831, 2023. L. Zhu, B. Liao, Q. Zhang, X. Wang, W. Liu, and X. Wang. Vision mamba: Efficient visual representation learning with bidirectional state space model. In ICML , 2024. 
+
+# Appendix A Matrix view of state regramming 
+
+This appendix analyzes how state regramming (§3.4) interacts with the 1-semiseparable matrix structure of Mamba2’s SSD form. We first set up notation consistent with §3 and recall the vanilla intra-chunk SSD block (§A.1–A.2), then derive the cross-chunk block with a single boundary rotation (§A.3). We generalize to multiple chunk boundaries and present the resulting block structure of the full transfer matrix (§A.4), and close with the implications for read-out and the location of state regramming inside the SMA framework (§A.5). 
+
+A.1 Setup 
+
+We follow the notation of §3. Fix a single head with per-head scalar A ∈ R<0 and per-head channel dimension 
+
+P = 1 ; the general case is recovered by stacking. Frames are indexed by n, and the discrete decay at frame n is 
+
+¯an = exp(∆ nA). Define the cumulative decay 
+
+a(t:s) := 
+
+> t
+
+Y
+
+> n=s+1
+
+¯an, a(t:t) = 1 . (24) A sequence of length T is partitioned into chunks of size Cchunk , indexed by c ∈ { 0, 1, 2, . . . }. Within chunk c, the per-frame selective vectors B(c) 
+
+> s
+
+∈ RN and C(c) 
+
+> t
+
+∈ RN are computed from the chunk’s input. The boundary rotation 
+
+Z(c) ∈ O(N ) applied at the end of chunk c is the Cayley map of an input-conditioned skew-symmetric matrix, as defined in §3.4. 24 A PREPRINT 
+
+Conventions. Following the implementation in Algorithm 1 and the boundary update of §3.4, we adopt the row-vector convention throughout this appendix. The recurrence is 
+
+ht = ¯ at ht−1 + xt B⊤ 
+
+> t
+
+, yt = ht Ct, (25) state regramming applies h(c) ← h(c) Z(c) at chunk boundaries, and yt ∈ R is a scalar under P = 1 . Transposes appearing on B and C reflect this row-vector setup. 
+
+A.2 Intra-chunk block (vanilla SSD) 
+
+Inside chunk c, no rotation is applied. Unrolling the recurrence from h(c) 
+
+> −1
+
+= 0 gives, for t, s both in chunk c,
+
+h(c) 
+
+> t
+
+=
+
+> t
+
+X
+
+> u=0
+
+a(t:u) xu (B(c) 
+
+> u
+
+)⊤, y(c) 
+
+> t
+
+= h(c) 
+
+> t
+
+C(c) 
+
+> t
+
+=
+
+> t
+
+X
+
+> u=0
+
+a(t:u)  (B(c) 
+
+> u
+
+)⊤C(c)
+
+> t
+
+ xu. (26) Writing y = Mcc x for the chunk’s input–output map, the intra-chunk block has entries 
+
+Mcc [t, s ] = a(t:s) ( B(c) 
+
+> s
+
+)⊤ C(c) 
+
+> t
+
+(27) This is the standard SSD form: a 1-semiseparable kernel L(c,c ) with L(c,c )[t, s ] = a(t:s), element-wise multiplied with the rank-N outer product C(c) (B(c))⊤ (so that  C(c)(B(c))⊤[t, s ] = C(c) 
+
+> t
+
+· B(c) 
+
+> s
+
+= ( B(c) 
+
+> s
+
+)⊤C(c) 
+
+> t
+
+, matching (27)). State regramming does not modify this block. 
+
+A.3 Cross-chunk block with one boundary rotation 
+
+Consider two adjacent chunks c′ and c′ + 1 , and let h(c′) 
+
+> Cchunk −1
+
+denote the final hidden state of chunk c′. The rotation 
+
+Z(c′) is applied at the boundary, so the next chunk receives 
+
+h(c′+1) 0 := h(c′) 
+
+> Cchunk −1
+
+Z(c′). (28) For t in chunk c′ + 1 and s in chunk c′, we trace the contribution of xs to yt. From §A.2, 
+
+h(c′) 
+
+> Cchunk −1
+
+⊃ a(Cchunk −1: s) xs (B(c′) 
+
+> s
+
+)⊤, (29) where “ ⊃” denotes the xs-contribution. After rotation, 
+
+h(c′+1) 0 ⊃ a(Cchunk −1: s) xs (B(c′) 
+
+> s
+
+)⊤ Z(c′). (30) Within chunk c′ + 1 , this initial-state contribution decays by a(t:Cchunk −1) before being read by C(c′+1)  
+
+> t
+
+. Composing the decays as a(t:Cchunk −1) a(Cchunk −1: s) = a(t:s) and identifying the coefficient of xs,
+
+M(c′+1) c′ [t, s ] = a(t:s) ( B(c′) 
+
+> s
+
+)⊤ Z(c′) C(c′+1)  
+
+> t
+
+(31) Compared with the vanilla cross-chunk form a(t:s) ( Bs)⊤Ct, the only change is the orthogonal factor Z(c′) inserted between the chunk-c′ write and the chunk-(c′ + 1) read. 
+
+Element-wise reading. Expanding the bilinear form in (31), 
+
+(B(c′) 
+
+> s
+
+)⊤ Z(c′) C(c′+1)  
+
+> t
+
+= 
+
+> N−1
+
+X 
+
+> i=0
+> N−1
+
+X
+
+> j=0
+
+B(c′) 
+
+> s,i
+
+z(c′) 
+
+> ij
+
+C(c′+1)  
+
+> t,j
+
+. (32) Contrast with the vanilla case B⊤ 
+
+> s
+
+Ct = P 
+
+> i
+
+Bs,i Ct,i , which pairs only matched dimensions. State regramming re-places this diagonal pairing with a content-dependent dense pairing weighted by z(c′) 
+
+> ij
+
+: any state dimension i written by B(c′) 
+
+> s
+
+can be read by any state dimension j of the next chunk’s C(c′+1)  
+
+> t
+
+. This is the precise mechanism by which state regramming opens a channel for cross-dimensional mixing while leaving the SSD scan structure of (27) intact. 25 A PREPRINT 
+
+Table 10. Rotation factor Zc′,c appearing in each block Mcc ′ of the transfer matrix for T = 4 Cchunk . Diagonal blocks reduce to vanilla SSD; each super-diagonal step accumulates one boundary rotation. 
+
+c \ c′ 0 1 2 30 I 0 0 01 Z(0) I 0 02 Z(0) Z(1) Z(1) I 03 Z(0) Z(1) Z(2) Z(1) Z(2) Z(2) I
+
+A.4 Composition across multiple chunk boundaries 
+
+Carrying the same unrolling across k boundaries, the contribution of xs in chunk c′ to yt in chunk c′ + k accumulates one rotation per boundary crossed. Define 
+
+Zc′,c := Z(c′) Z(c′+1) · · · Z(c−1) =
+
+> c−1
+
+Y
+
+> j=c′
+
+Z(j) (c > c ′), Zc,c := I. (33) The general block of the full transfer matrix is then 
+
+Mcc ′ [t, s ] = a(t:s) ( B(c′) 
+
+> s
+
+)⊤ Zc′,c C(c) 
+
+> t
+
+(c ≥ c′), (34) with Mcc ′ = 0 for c < c ′ (causal). 
+
+Block structure of M . For T = 4 Cchunk the full transfer matrix is block lower-triangular, 
+
+M =
+
+
+
+M00 0 0 0
+
+M10 M11 0 0
+
+M20 M21 M22 0
+
+M30 M31 M32 M33 
+
+ , (35) with one boundary rotation accumulated per super-diagonal step away from the main diagonal. Table 10 lists the rotation product Zc′,c appearing in each block. 
+
+Orthogonality is closed under composition. A product of orthogonal matrices is orthogonal, so Zc′,c ∈ O(N )
+
+for every (c′, c ). The carried state’s norm is preserved exactly across an arbitrary number of chunk boundaries; state regramming does not accumulate amplification or attenuation. The geometric decay of long-horizon contributions is governed entirely by a(t:s), exactly as in vanilla Mamba2—the rotation re-shapes the direction of long-horizon contributions while the SSM’s exponential decay still governs their magnitude .
+
+The “lifetime” of a single rotation. A given Z(c) appears in every block Mc′′ c′ with c′ ≤ c < c ′′ : once applied at the end of chunk c, it is permanently embedded in the propagation of every chunk-c′ (or earlier) input to every chunk-
+
+c′′ (or later) output. A boundary rotation therefore acts not as a one-step refresh but as a persistent re-orientation of all long-horizon information flow passing through that boundary. 
+
+Order-dependence. Orthogonal matrices do not commute in general, so Zc′,c depends on the order of intervening chunks. The basis in which a chunk-c′ memory is presented to chunk c thus reflects the trajectory of chunk contents between them, not their unordered set, giving the model a path-dependent encoding of context that an axis-aligned scalar-A recurrence cannot express. 
+
+A.5 Read-out, SMA view, and N-semiseparability Effective read-out. Equation (34) admits an algebraically equivalent reorganization absorbing the rotation into the read-out: eC(c,c ′) 
+
+> t
+
+:= Z⊤ 
+
+> c′,c
+
+C(c) 
+
+> t
+
+, Mcc ′ [t, s ] = a(t:s) ( B(c′) 
+
+> s
+
+)⊤ eC(c,c ′) 
+
+> t
+
+. (36) The effective read-out eC(c,c ′) 
+
+> t
+
+is a path-dependent, history-aware projection of the original C(c) 
+
+> t
+
+: although C(c) 
+
+> t
+
+is computed only from chunk-c input, the basis in which it reads a chunk-c′ memory is shaped by every intervening boundary through Zc′,c . The read-out’s rank is unchanged—an orthogonal rotation preserves rank, so eC(c,c ′) 
+
+> t
+
+remains a rank-1 projection per output channel. State regramming does not enlarge the read-out capacity within any single chunk; it only redirects what each chunk reads. This is consistent with the empirical observation in §4.6.2 that the rotation rank r used to parameterize the skew-symmetric generator has only a mild effect on accuracy. 26 A PREPRINT 
+
+SMA view. Within the structured state-space duality of Mamba2, the standard SMA form reads 
+
+Yt = X
+
+> s
+
+Lts Qt K⊤ 
+
+> s
+
+Vs (standard SMA) , (37) where (Q, K, V ) correspond to (C, B, x ) and Lts = a(t:s) on the lower triangle. State regramming generalizes this to 
+
+Yt = X
+
+> s
+
+Lts Qt Wc(t),c (s) K⊤ 
+
+> s
+
+Vs, Wc(t),c (s) = Zc(s),c (t), (38) where c(·) maps a frame index to its chunk. The new factor W is a chunk-pair-dependent orthogonal matrix inserted between query and key, equal to the identity for same-chunk interactions and accumulating one rotation per boundary crossed. Only the query–key contraction is modified; the temporal kernel L and the value path V are untouched. 
+
+Four-factor block decomposition and N-semiseparability. The vanilla SSD off-diagonal block factorizes as 
+
+M std  
+
+> cc ′
+
+= L(c,c ′) ⊙  B(c′)(C(c))⊤, exposing two rank-controlling factors. State regramming yields the four-factor form 
+
+Mcc ′ = L(c,c ′) ⊙
+
+
+
+B(c′) Zc′,c (C(c))⊤
+
+. (39) The new factor Zc′,c is an N × N orthogonal matrix and therefore preserves the rank bound: rank( Mcc ′ ) ≤ N . State regramming retains the N -semiseparable structure of Mamba2’s SSD form, and consequently its O(d) per-frame inference cost. The only additional per-chunk operations are one N × N Cayley map (line 12 of Algorithm 1) and one 
+
+N × N orthogonal multiply on the state (line 13), both amortized over Cchunk frames. Taken together, the analysis in this appendix shows that state regramming is a conservative extension of Mamba2’s chunked SSD scan: the intra-chunk block, the chunk-granular state shape, the N -semiseparable rank bound, the O(d)
+
+per-frame inference cost, and the geometric decay of long-horizon contributions are all preserved, while the basis in which carried information is read becomes content-dependent and path-dependent through the accumulated boundary rotations. 
+
+# B Derivative-based analysis of the intensity-modulated decay 
+
+The qualitative behavior visualized in Fig. 1 (A)—a rise in λ near a phase transition accompanied by a drop in the effective decay dA := log ¯An = αn∆A—admits a direct derivative-based justification under the time-warp con-struction of §3.3.1. We make this explicit here, and contrast the mechanism with Mamba2’s content-driven selective 
+
+∆.
+
+Sign of the derivative. For the slow-path scalar A < 0 and the warped step αn = 1 + λn, the partial derivatives of the decay with respect to λn are 
+
+∂ dAn
+
+∂λ n
+
+= ∆ A < 0, (40) 
+
+∂ ¯An
+
+∂λ n
+
+= ∆ A exp( αn ∆ A) < 0. (41) Increasing λn therefore strictly decreases both dAn and ¯An. The anti-correlation between λ and dA shown in Fig. 1 (A) is thus a deterministic consequence of (40), not a learned correlation: every rise in λ is mechanically accompanied by a drop in dA.
+
+State-level effect. Substituting into the recurrence, 
+
+hn = ¯An hn−1 + ¯Bn xn, (42) a smaller ¯An shrinks the contribution of the carried state hn−1 to the current step while leaving the input-driven term 
+
+¯Bn xn in place. The recurrence releases stale context precisely at frames where λ is high—i.e., at frames identified by the auxiliary intensity loss Lint (§3.6) as proximal to a phase transition. 27 A PREPRINT 
+
+Contrast with Mamba2’s selective ∆. Mamba2 also has an input-dependent step ∆( xn) whose derivative satisfies 
+
+∂ ¯An/∂ ∆n = A exp(∆ nA) < 0, structurally identical to (41). The mechanism of intensity modulation is in this sense not new: a learnable per-frame rescaling of the discretization step. What is new is the supervision signal driving λ.Rather than being shaped only by the downstream classification loss as ∆( xn) is, λ is supervised by the asymmetric-Gaussian transition target g(t) defined in §3.6, which encodes the prior that phase boundaries are the moments at which the slow-path memory should be most aggressively wiped. The two scalars therefore play complementary roles— ∆( xn) as an unsupervised, content-driven step, and λ(xn) as a transition-aware, label-supervised forgetting signal—and operate side by side on the slow path with their product αn softplus (W∆ ∆traw + b∆) giving the final per-frame discretization step (line 6 of Algorithm 1). 28
