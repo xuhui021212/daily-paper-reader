@@ -1,0 +1,407 @@
+Title: OmniDrop: Layer-wise Token Pruning for Omni-modal LLMs via Query-Guidance
+
+URL Source: https://arxiv.org/pdf/2605.14458v1
+
+Published Time: Fri, 15 May 2026 00:42:15 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# OmniDrop: Layer-wise Token Pruning for Omni-modal LLMs via Query-Guidance 
+
+Yeo Jeong Park Hyemi Jang Minseo Choi Jongsun Lee Jooyoung Choi Yongkweon Jeon ∗
+
+Samsung Research 
+
+{yeo_j.park, hye_mi.jang, mins.choi}@samsung.com {jongsun3.lee, jy9718.choi, dragwon.jeon}@samsung.com 
+
+## Abstract 
+
+Omni-modal large language models have demonstrated remarkable potential in holistic multimodal understanding; however, the token explosion caused by high-resolution audio and video inputs remains a critical bottleneck for real-time applica-tions and long-form reasoning. Existing omni-modal token compression methods typically prune tokens at the input embedding level, relying on audio-video similar-ity or temporal co-occurrence as proxies for semantic relevance. In practice, such assumptions are often unreliable. To address this limitation, we propose OmniDrop, a training-free, layer-wise token pruning framework that progressively prunes audiovisual tokens within the LLM decoder layers rather than at the input-level, allowing early layers to preserve sufficient omni-modal information fusion before aggressively removing tokens in deeper layers. We further utilize text queries as guidance for modality-agnostic and task-adaptive token pruning. We also introduce a temporal diversity score that encourages balanced token survival to preserve global temporal context. Experimental results across various audiovisual bench-marks demonstrate that OmniDrop outperforms all baselines by up to 3.58 points while reducing prefill latency by up to 40% and memory usage by up to 14.7%. 
+
+## 1 Introduction 
+
+The recent paradigm shift in large language models (LLMs) has led to the emergence of Omni-modal LLMs (Omni-LLMs) [ 4, 9, 15 , 19 , 28 , 30 ], which seamlessly integrate and process multiple modalities such as text, audio, and video. By enabling a more holistic understanding of complex environments, Omni-LLMs have demonstrated significant potential in diverse applications, ranging from real-time multimodal assistants to sophisticated video reasoning tasks [ 27 , 23 , 20 , 6 ]. Despite their impressive capabilities, a critical bottleneck remains: computational efficiency. A primary challenge in Omni-LLMs is the token explosion caused by high-resolution temporal data. Audio and video signals produce significantly more tokens than text [ 22 ]; for instance, a mere one-minute video clip is projected into more than 10k audio and video tokens by encoders in Qwen2.5-Omni [ 28 ]. This massive sequence length leads to quadratic growth in both computational and memory overheads [ 25 , 26 ], hindering real-time interactions and limiting the model’s scalability for long-form content. Recent studies have introduced various token compression methods to address these inefficiencies, including audio-guided compression [ 31 ], modality-asymmetric compression [ 7], and semantic-aware alignment [ 18 ]. Despite their methodological diversity, these methods share a common design choice: they perform compression at the input embedding level, assuming that audio-video tokens are semantically aligned either through a shared representation space or through temporal co-occurrence. 
+
+> ∗Corresponding Author Preprint.
+> arXiv:2605.14458v1 [cs.AI] 14 May 2026
+
+However, these assumptions are often unreliable for two reasons. First, audio and video embeddings may not be sufficiently aligned in the shared input embedding space. Although audio and video tokens are projected into the same LLM embedding space, they occupy distinct subspaces, suggesting limited cross-modal alignment before LLM processing. Second, temporal co-occurrence does not necessarily imply semantic correspondence. An audio event and a visual event may occur at the same time but describe different aspects of the scene or even originate from different sources. For example, background music, off-screen narration, ambient sounds, and scene transitions may carry information that is not directly grounded in the visible content. As a result, input-level pruning [ 31 , 18 ] that relies on embedding-level distance between audio and video tokens or on temporal co-occurrence may discard important modality-specific evidence and lead to suboptimal token selection. In contrast, we empirically observe that audio and video tokens become progressively integrated through the LLM decoder layers. As the fusion of omni-modal representations progresses, the model begins to distinguish informative tokens from the middle layers onward. We propose OmniDrop, a training-free, layer-wise token pruning framework built on three key ideas. First, we prune audiovisual tokens progressively across decoder layers rather than at the input stage. This design allows shallow layers to first exchange omni-modal information before redundant tokens are removed in deeper layers. Second, we use the text query as a semantic mediator between modalities. Instead of directly comparing audio and video tokens, we evaluate how each modality responds to the text query. This enables dynamically preserving more audio tokens for audio-centric tasks and more visual tokens for video-centric tasks, ensuring minimal information loss during compression. Third, due to query-guided pruning, tokens from a few highly responsive tokens may dominate, while other tokens are wiped out. To counteract this, we introduce a temporal diversity score (TDS) built upon the chunked prefilling mechanism commonly used in Omni-LLMs, encouraging balanced token survival across temporal segments. Experimental results on diverse audiovisual benchmarks [ 8, 13 , 29 , 10 ] show that our method consistently outperforms existing omni-modal token compression approaches. Our framework achieves superior efficiency-performance trade-offs, offering a practical solution for scalable and responsive Omni-LLMs. Our contributions are summarized as follows: • We analyze omni-modal processing in Omni-LLMs and show that input-level audio-video similarity provides a weak signal for token pruning, as audio and video embeddings are not sufficiently aligned before LLM processing. • We propose OmniDrop, a training-free, layer-wise token pruning framework for Omni-LLMs. It adopts a progressive pruning schedule that leverages text queries to estimate query-conditioned audio/video token relevance, enabling task-adaptive token pruning without training or architectural modifications. • We validate OmniDrop through extensive experiments on diverse audiovisual understanding bench-marks. Our method aggressively reduces the token retention ratio to as low as 20%, achieving up to 3.58-point gains over other baselines while reducing prefill latency by up to 40% and memory usage by up to 14.7%. 
+
+## 2 Preliminary & Motivation 
+
+2.1 Architecture of Omni-LLMs 
+
+Typically, an Omni-LLM consists of multimodal encoders—an audio encoder ΦA and a video encoder 
+
+ΦV —integrated with an LLM backbone. Given audio data A and video data V, the encoders project the multimodal inputs into the joint embedding space of the LLM: 
+
+ZA = Φ A(A) ∈ RnA×d, ZV = Φ V (V) ∈ RnV ×d, (1) where nA and nV denote the number of audio and video embedding tokens, respectively, and d
+
+represents the hidden dimension of the LLM. These projected embeddings ZA and ZV are then injected into the LLM in a manner analogous to text tokens. To ensure temporal alignment between the visual and auditory streams, Omni-LLMs employ a time-interleaving method. The audiovisual sequence is segmented into several chunks based on a fixed 2(a) (b) Figure 1: (a) PCA visualization of audio and video token distributions in the LLM embedding space. (b) Distribution of cosine similarities among audio-audio, video-video and audio-video token pairs. temporal window ( e.g. , 2 seconds). Within each chunk i, the corresponding video representations 
+
+Vi ∈ Rnv ×d and audio representations Ai ∈ Rna×d are arranged sequentially, where nv and na
+
+represent the number of video and audio tokens per chunk. This structured arrangement ensures that tokens from both modalities share the same temporal context are processed simultaneously. Consequently, the final input sequence X fed into the LLM is organized as a concatenated stream: 
+
+X = [ Tsys , V 1, A 1, V 2, A 2, . . . , V m, A m, Tquery ], (2) where Tsys is the system prompt, m is the total number of chunks and Tquery represents the user’s instructions or query prompts. 
+
+2.2 Revisiting the utility of embedding-level cross-modal similarity 
+
+Recent token compression methods [ 31 , 18 , 11 ] for Omni-LLMs rely on audio-video correspondence at the input embedding level. However, this signal might be unreliable, and we provide multiple evidence below. 
+
+Pre-LLM embeddings are weakly aligned across modalities. 
+
+Table 1: Ablation studies on the Om-niZip [ 31 ] at 35% retention ratio on WorldSense [13] benchmark.          
+
+> Method WS Acc. (%) 3B 7B OmniZip 46.15 46.37 w/o AC stage 46.19 46.78
+> Random-ksampling 46.25 46.50
+
+PCA visualization in Fig. 1 (a) shows that audio and video tokens tend to occupy distinct subspaces rather than form-ing a semantically shared representation. Fig. 1 (b) shows the distribution of cosine similarities between intra- and cross-modal tokens. Intra-modal similarities exhibit broad distributions, whereas cross-modal ones range from 0.0 to 0.2, precluding the identification of meaningful relation-ships. Hence, cross-modal cosine similarity at the input embedding level may be uninformative for identifying semantically aligned cross-modal token pairs. 
+
+Similarity-based selection is not better than random. 
+
+In OmniZip [ 31 ], audio anchor consolidation (AC) merges non-salient audio tokens into anchors based on cross-modal similarity. This process relies on the assumption that input-level similarity signifies semantic alignment. To test this assumption, we conduct an ablation study with a retained ratio of 35% on WorldSense [ 13 ]benchmark, comparing the original AC against two variants: (1) entirely removing AC stage, and (2) selecting merged tokens via random-k sampling instead of top-k selection by similarities. As shown in Tab. 1, removing the AC stage or employing random-k sampling yields better or comparable results compared to the original similarity-based AC across all configurations. For instance, removing AC improve the WorldSense [ 13 ] score for OmniZip-7B and OmniZip-3B to 46.78% and 46.19%, respectively. Even random-k sampling shows a slight performance gain over similarity-based selection ( e.g. , 46.25% vs. 46.15% for the 3B model). These observations reinforce the notion that cosine similarity at the embedding level provides no distinct advantage over random token selection. 3Text tokens    
+
+> Audiovisual chunks
+> Layer 3 Layer 14 Layer 22
+> (a) (b)
+> Top 20% Attention Recall
+> Layer Index
+> Text tokens
+> Audiovisual chunks
+> Text tokens
+> Audiovisual chunks
+> Text tokens
+> Audiovisual chunks
+> Text tokens
+> Audiovisual chunks
+> Text tokens
+> Audiovisual chunks
+> 1.0
+> 0.0
+
+Figure 2: (a) Layer-wise text-to-audiovisual attention scores, averaged within each audiovisual chunk and normalized for better visualization. We show representative decoder layers, i.e., Layers 3, 14, and 22. The first and second rows correspond to the queries “ Who said in the video that ‘...’? ” and “In which part of the video does the man with ... appear? ”, respectively. (b) Top-20% attention recall of text-to-audio and text-to-video attention scores across decoder layers. Given the insufficient alignment of pre-LLM embeddings, cross-modal similarity-based compression at the input level remains suboptimal. Instead, we perform pruning within intermediate decoder layers, leveraging emergent omni-modal interactions for more effective token selection. 
+
+2.3 Analysis of omni-modal processing in LLM decoder layers Token importance is query-dependent. To better understand how audio and video tokens are processed inside the LLM, we analyze text-to-audiovisual attention patterns across decoder layers in Qwen2.5-Omni-7B. In particular, we investigate how the model responds to different text queries when the same audio-video input is provided. Given two queries, “Who said in the video that ‘...’?” 
+
+and “In which part of the video does the man with ... appear?” , we visualize the attention scores from text tokens to audiovisual tokens at each decoder layer. For clearer visualization, we average the attention scores of tokens within each audiovisual chunk. As shown in Fig. 2 (a), the model gradually shifts its attention toward the audiovisual chunks corresponding to the correct answer for both queries. For example, in the top row, the correct answer corresponds to a person appearing in the early part of the video, and the model progressively concentrates its attention on the corresponding early chunks. In contrast, in the bottom row, the answer is grounded in a segment appearing later in the video, and the attention accordingly shifts toward the later chunks. This indicates that the model naturally identifies query-specific evidence through decoder-layer processing, highlighting that the importance of audiovisual token is query-dependent .
+
+Attention sparsity is layer-dependent. We define top-20% attention recall [ 16 , 17 ] as the fraction of total attention mass captured by the top 20% largest attention values, where system prompts are excluded to focus on semantically meaningful interactions. Text-to-audio and text-to-video attention maps are averaged over 64 sample videos from the WorldSense benchmark [13]. As shown in Fig. 2 (b), the top-20% attention recall for both modalities remains below 0.6 in the early decoder layers. At this stage, text tokens actively attend to a broad range of tokens regardless of modality. Through this process, audiovisual evidence is aggregated into the updated text representations. As this process repeats across decoder layers, the text representations progressively contains integrated audio-video information. Consequently, it remains difficult to identify a small set of clearly text-relevant tokens in the early layers. As the representations pass through the decoder, the attention recall gradually increases, reaches its first peak in the middle layers and remains relatively high in the later layers. This trend suggests that text-to-audiovisual attention becomes progressively more selective after the middle layers, allowing the model to better distinguish informative tokens from less relevant ones. These observations motivate us to propose a layer-adaptive pruning strategy. Before the middle layers, token pruning should be performed conservatively to allow sufficient omni-modal information 4Temporal Diversity Score(TDS)     
+
+> Average
+> 𝑐 !"#
+> ×𝝀 𝒅𝒊𝒗
+> Drop
+> lowest -𝑘 $tokens
+> 𝒏 𝑻
+> 𝒏 𝑨
+> 𝒍 +𝒏 𝑽
+> 𝒍
+> 𝑺
+> 𝑫
+> 𝑺 𝒇𝒊𝒏𝒂𝒍
+> Sum
+> (b)
+> Find
+> lowest -2𝑘 $tokens
+
+(a)     
+
+> Progressive Layer -wise Token Pruning(PLP)
+> Omni -modal LLM
+> Pruning ratio increases
+> ...
+> ...
+> Intra -modal
+> pruning
+> Intra -modal
+> pruning
+> Video
+> Tokens
+> Audio
+> Tokens
+> Text
+> Tokens
+> …
+> Layer 0 Layer 1 Layer L -1
+> PLP PLP PLP
+> 𝒑 𝒇𝒊𝒏𝒂𝒍
+> 𝒑 𝒊𝒏𝒊𝒕
+> …
+> Model depth
+> Layer -wise
+> Pruning
+> Ratio ( 𝒑 )
+
+Figure 3: Overview of OmniDrop. (a) Progressive layer-wise token pruning (PLP) schedule based on the sigmoid function (Eqs. (3) and (4)). (b) Query-guided token importance (Eq. 5) with a temporal diversity score (Alg. 1) for audiovisual tokens at each layer. integration. Once the model begins to exhibit clearer text-relevant token preferences from the middle layers, pruning can be applied more aggressively, targeting tokens that receive concentrated attention from text. 
+
+## 3 OmniDrop 
+
+We propose OmniDrop that enhances the efficiency of Omni-modal LLMs via adaptive layer-wise token pruning. Unlike embedding-level compression methods, OmniDrop dynamically adjusts audio-video token retention by leveraging text-based semantic guidance and temporal diversity. 
+
+3.1 Progressive layer-wise token pruning 
+
+As analyzed in Sec. 2.2, audio and video embeddings are not sufficiently aligned before entering the LLM, but become progressively integrated throughout the decoder layers. Since the model has not yet formed reliable query-relevant token preferences in the early-to-middle layers, a pruning strategy should preserve more tokens in shallow layers and apply stronger reduction in deep layers once query-relevant evidence becomes more clearly identifiable. We thus propose a progressive layer-wise token pruning (PLP) strategy. To reflect that informative audiovisual tokens become progressively more distinguishable across decoder layers, we define the dynamic pruning ratio pl for the l-th layer as follows: 
+
+pl = pinit + ( pf inal − pinit ) · σ(l, t mid , β ), (3) where pinit and pf inal denote the initial and final pruning ratios, respectively. The transition between these ratios is scheduled by a sigmoid function applied over the L total layers, defined as 
+
+σ(l, t mid , β ) = 11 + exp( −β · ( lL−2 − tmid )) , (4) where β and tmid represent the slope parameter and the midpoint of the sigmoid function, respectively. As shown in Fig. 3 (a), PLP is applied up to the penultimate layer ( i.e. , Layer L − 2) to preserve the hidden states immediately preceding the language modeling head. This schedule, based on our observations in Sec. 2.3, is designed to preserve sufficient information in early layers for omni-modal fusion, while aggressively pruning redundant tokens from the middle layers onward. 5Algorithm 1 Temporal Diversity Score (TDS) 
+
+Require: Importance scores S, chunk indices C, pruning budget kl, diversity weight λdiv 
+
+Ensure: Set of tokens to prune P 
+
+> 1:
+
+cmax ← chunk_idx (argmax S) ▷ Identify the key chunk  
+
+> 2:
+
+Icand ← indices of 2kl-lowest scores in S ▷ Candidate buffer  
+
+> 3:
+
+{Di}2kl 
+
+> i=1
+
+← | cmax − ci|/ max( C) ▷ Normalized temporal distance  
+
+> 4:
+
+{ST DS,i }2kl 
+
+> i=1
+
+← Si + λdiv · Di ▷ Score augmentation  
+
+> 5:
+
+P ← indices of kl-lowest tokens based on ST DS  
+
+> 6:
+
+return P
+
+3.2 Query-guided token importance 
+
+To eliminate less informative audio and video tokens, we utilize text queries as guidance. By leveraging text information, we can selectively retain only the task-relevant tokens required by the query. Within a fixed token budget, the model adaptively allocates more tokens to the modality that is more relevant to the task—retaining more video tokens for video-centric tasks and more audio tokens for audio-centric tasks. For tasks that require both modalities, the model preserves a balanced distribution between them. The query-guided token importance score S is calculated as follows: 
+
+S = 1
+
+nTnTX
+
+> q
+
+Attn q→{ V,A }, (5) where nT is the number of text tokens and Attn q→{ V,A } represents the attention score map from the current text token q to the video ( V ) and audio ( A) tokens. The score S indicates how strongly the text tokens, on average, attend to audio and video tokens. To reduce the length of the sequence, we remove the kl tokens with the lowest scores S according to the pruning ratio pl defined in Eq. (3). For each layer l, the number of pruned tokens kl is determined by 
+
+kl = (nlA + nlV ) · pl
+
+ , (6) where nlA and nlV represent the total number of audio and video tokens present at the l-th layer, respectively, and ⌊·⌋ denotes the floor function. The pruning intensity follows the predefined sigmoid schedule, targeting the least semantically relevant tokens. 
+
+3.3 Temporal diversity-aware token pruning 
+
+While text-based importance scoring ( S) effectively identifies query-relevant tokens, an over-reliance on text attention can lead to capturing only fragmentary information. In tasks that require an understanding of long-form temporal dynamics or the sequential context of events, focusing solely on high-text-attention segments may result in a loss of overall context. To address this, we introduce a temporal diversity score (TDS), designed to ensure a balanced representation of the entire sequence while pruning. The procedure is summarized in Alg. 1 and consists of the following steps: 1. Identify the key chunk ( cmax ) (line 1): We first determine the chunk index cmax that includes the token achieving the highest importance score S in the current layer. 2. Candidate selection (line 2): Rather than pruning kl tokens immediately, we select an expanded candidate set Icand consisting of the 2kl tokens with the lowest scores based on S.3. Distance-based diversity scoring (line 3): For all tokens in the candidate set, we compute a normalized distance factor D relative to the key chunk cmax , defined as D = |cmax −ci| 
+
+> max( C)
+
+, where 
+
+ci represents the chunk index of token i, and max( C) denotes the maximum chunk index in the sequence. 4. Final score integration (line 4): The final importance score ST DS is defined as the weighted sum of the initial score S and the diversity factor D: ST DS = S + λdiv · D, where λdiv is a hyperparameter controlling the weight of diversity. Thus, tokens located temporally farther from the primary attention peak ( cmax ) receive a score boost, making them less likely to be pruned. 6Based on ST DS , we drop the kl-lowest tokens. Consequently, our method prioritizes dropping tokens that are both textually irrelevant and temporally redundant relative to the most significant event. 
+
+3.4 Intra-modality token pruning prior to LLM 
+
+Previous studies [ 31 , 24 , 21 ] have shown that each modality often contains tokens that are either non-salient or redundant, which unnecessarily increase the computational burden of Omni-LLMs. In addition, as shown in Fig. 1 (b), some intra-modal token pairs exhibit high cosine similarity, indicating substantial redundancy within each modality. Therefore, before feeding audiovisual tokens into the LLM, we first perform independent modality-specific pruning to improve inference efficiency while preserving informative content. For audio tokens, we follow OmniZip [ 31 ], which retains only tokens with the highest attention scores from the last layer of the audio encoder, assuming that highly attended tokens carry the most salient acoustic information. For video tokens, we adopt the Temporal Token Merging (TTM) strategy used in Dycoke [ 24 ], which filters out consecutive and redundant visual tokens based on cosine similarity between them. This step effectively compresses repeated visual content while maintaining essential scene dynamics. After intra-modality pruning, 70% of audio tokens and 40% of video tokens remain, resulting in a total retention of 45% of tokens. 
+
+## 4 Experiments 
+
+To evaluate the performance of our framework, we conduct experiments on several representative benchmarks: VideoMME [ 8] for video understanding, WorldSense [ 13 ] for question-answering requiring audiovisual integration, and AVUT [ 29 ] for audio-centric video understanding. We evaluate our proposed framework on the Qwen2.5-Omni [ 28 ] (7B and 3B) models, publicly available Omni-LLMs, comparing with existing SOTA training-free methods: OmniZip [31] and DASH [18]. Since OmniDrop employs progressive layer-wise pruning, we report the average token retention ratio across all layers to ensure a fair comparison with fixed-ratio baseline methods. We configure the pruning schedule ( pinit , p f inal ) based on the target retention: ( 0.0, 0.2) and ( 0.02 , 0.5) for 30% and 20% on the 7B model, and ( 0.0, 0.15 ) and ( 0.02 , 0.5) for the 3B variant, respectively. We set the sigmoid parameters at tmid = 0 .5 and β = 20 , except for the 3B model’s 20% retention configuration, where tmid is 0.55 . The weight for the diversity score, λdiv , is set to 0.2. The diversity-aware mechanism is applied from the mid-section of the decoder layers (layer 14 for the 7B model and layer 19 for the 3B model). We conduct all experiments on a single NVIDIA H100 GPU and employ FlashAttention [ 5 ] to reduce memory usage. We provide the hyperparameters of other baselines and more experimental details in the Appendix A. 
+
+4.1 Comparison with baselines 
+
+Tab. 2 compares OmniDrop with OmniZip and DASH across multiple benchmarks. We report the average accuracy of all domains for both VideoMME and AVUT, with detailed scores provided in the Appendix C. Overall, OmniDrop consistently achieves superior performance under aggressive compression while maintaining high efficiency. Notably, at 30% retention, OmniDrop outperforms all baselines and even surpasses the 100% full-token baseline on VideoMME (66.52 vs. 64.67 for 7B; 63.07 vs. 62.51 for 3B). This advantage persists even at an extreme 20% retention ratio, with OmniDrop consistently outperforming existing baselines and achieving a particularly large gain of 3.58 points on AVUT under the 7B setting (63.67 vs. 60.09). The robustness of OmniDrop is further highlighted by its minimal performance degradation when scaling down from 30% to 20% retention. The average drop for OmniDrop is only 0.18 (7B) and 0.47 (3B) points, significantly lower than the drops exceeding 1.0 point observed in OmniZip and DASH. These results, consistent across both 7B and lightweight 3B models, demonstrate that our framework effectively preserves critical omni-modal information even under extreme token reduction. OmniDrop also delivers substantial gains in inference efficiency on the WorldSense benchmark. It reduces prefill time by 39.9% (7B) and 28.1% (3B), while decreasing GPU memory footprint by 11.3% and 14.7%, respectively. These results confirm that OmniDrop improves the memory-efficiency of Omni-LLM inference without compromising task accuracy. Although OmniDrop retains 7Table 2: Comprehensive performance and efficiency comparison of different methods on Qwen2.5-Omni models. Avg. ∆Perf. denotes the average performance change across four benchmarks when reducing the retained ratio from 30% to 20%.                                                                                                                
+
+> Method Retained Ratio (%) VideoMME WorldSense AVUT Avg.
+> ∆Perf.
+> Prefill Time (s) Latency / Sample (s) GPU Mem (GB)
+> Qwen2.5-Omni-7B 100 64.67 46.85 65.17 –1.73 1.82 28.92 OmniZip [31] 30 65.85 45.55 61.76 –1.06 1.15 25.76 20 64.85 44.10 61.07 -1.08 0.97 1.05 25.65 DASH [18] 30 65.67 45.87 60.96 –1.07 1.15 25.68 20 64.96 44.61 60.09 -1.09 1.02 1.11 25.65 OmniDrop 30 66.52 46.60 64.01 –1.05 1.15 25.65
+> 20 66.44 46.50 63.67 -0.18 1.04 1.14 25.65
+> Qwen2.5-Omni-3B 100 62.51 46.63 62.40 –1.35 1.40 18.63 OmniZip [31] 30 62.52 45.71 60.27 –0.95 0.99 15.98 20 61.59 44.99 59.28 -0.98 0.94 0.98 15.91 DASH [18] 30 62.26 44.83 60.21 –1.03 1.08 15.91 20 60.96 44.10 58.48 -1.36 0.97 1.02 15.91 OmniDrop 30 63.07 46.78 61.53 –0.99 1.03 15.90
+> 20 63.07 46.19 60.55 -0.47 0.97 1.02 15.90
+
+approximately 45% of tokens in the early layers, its highly aggressive pruning in the later layers keeps the average GPU memory usage and latency nearly comparable to those of other baselines that remove a large fraction of tokens at the input-level. 
+
+4.2 Ablation study 
+
+Table 3: Ablation studies on the PLP schedule and TDS. 
+
+Method Ratio WS AVUT Intra-pruning 45 46.50 64.19 Intra-pruning 30 44.33 59.34 PLP - Exp 30 46.53 63.90 PLP - Sig 30 46.53 63.84 + TDS (Ours) 30 46.60 64.01 
+
+PLP - Exp 20 45.93 63.03 PLP - Sig 20 46.25 63.32 + TDS (Ours) 20 46.50 63.67 
+
+Table 4: Ablation studies on guidance type. 
+
+Method Ratio WS AVUT Audio guidance 30 45.59 60.84 Text guidance (Ours) 30 46.78 61.53 
+
+Audio guidance 20 43.25 56.57 Text guidance (Ours) 20 46.19 60.55 
+
+Progressive layer-wise token pruning (PLP). 
+
+Tab. 3 presents ablation studies on Qwen2.5-Omni-7B to evaluate the effectiveness of each component in OmniDrop. Compared with the baseline that applies only intra-modality token pruning, PLP substantially improves performance under tighter token budgets. At the 30% reten-tion ratio, the baseline drops to 44.33 on World-Sense and 59.34 on AVUT, whereas PLP re-stores performance to 46.53 and 63.90, respec-tively. This demonstrates that layer-wise prun-ing is significantly more effective than applying compression before LLM injection. When PLP is additionally applied using either exponential (pl = pinit × (pf inal /p init ) lN −2 ) or sigmoid de-cay at the 30% ratio, both schedules yield nearly identical performance. However, the difference is more pronounced under the more aggressive 20% setting. In this case, the sigmoid schedule consistently outperforms the exponential schedule, improving WorldSense from 45.93 to 46.25 and AVUT from 63.03 to 63.32. These results indicate that a schedule that preserves most tokens in the early layers and performs more aggressive pruning from the middle layers onward is more effective for maintaining performance under extreme compression. 
+
+Temporal diversity score (TDS). In Tab. 3, TDS further improves results at all token budgets. At the 30% ratio, TDS increases WorldSense from 46.53 to 46.60 and AVUT from 63.84 to 64.01. Under the more aggressive 20% ratio, the gains become larger, improving WorldSense from 46.25 to 46.50 and AVUT from 63.32 to 63.67. These results indicate that preserving temporally diverse tokens becomes increasingly important as the compression ratio becomes more aggressive. 8(a) (b)   
+
+> Audio Retained Ratio Video Retained Ratio
+> Layer Index Layer Index
+> Ratio (%)
+> Ratio (%)
+
+Figure 4: Comparison of audio/video retained ratio per decoder-layer across three different tasks, 
+
+Audio Source Localization (ASL), Scene Recognition (SR), and Audio Recognition (AR). (a) Audio retained ratios across tasks. (b) Video retained ratio across tasks. Our query-guided pruning enables retention ratios adapted to task requirements without explicit task labels. 
+
+Query-guided token importance. While existing baselines [ 31 , 18 ] compress video tokens based on audio guidance, we further evaluate whether audio-to-video attention can serve as a reliable criterion for token importance. Specifically, we replace text-to-audiovisual attention with audio-to-video attention when computing the token importance score S. However, constructing the audio-to-video attention map incurs substantial computational overhead, causing Out-of-Memory errors on Qwen2.5-Omni-7B. We therefore perform this ablation using the 3B model. As shown in Tab. 4, audio-guided pruning consistently degrades performance, with a particularly large drop under the 20% retained-token setting. This suggests that text-guided attention provides a more reliable signal for distinguishing important audiovisual tokens. 
+
+4.3 Task-adaptive token retention via query-guidance 
+
+To verify whether our query-guided token importance facilitates task-adaptive pruning, we analyze the token retention behavior across three distinct tasks from the WorldSense benchmark: Scene Recognition (SR), Audio Recognition (AR), and Audio Source Localization (ASL). These tasks represent varying degrees of modality-specific information: SR is a visual-centric task where the model must identify environments based on visual cues. AR is an audio-centric task focused on identifying sounds or speech. ASL requires the integration of both auditory and visual signals to pinpoint a sound source. Fig. 4 illustrates the retained ratio of audio and video tokens across LLM decoder layers for each task. In Fig. 4(a), which displays audio token retention, we observe that the AR task maintains the highest ratio, followed by ASL and SR. This confirms that for audio-centric tasks, our scoring mechanism prioritizes the preservation of auditory information. Conversely, (b) shows that the video token retention ratio is highest for SR, followed by ASL, and lowest for AR. Notably, the ASL task, which necessitates both modalities, maintains a balanced retention of tokens compared to the modality-specific tasks. These results demonstrate that our query-guided scoring effectively ensures task-adaptive token retention. 
+
+## 5 Conclusion 
+
+We have proposed OmniDrop, a training-free, layer-wise token pruning framework for efficient Omni-LLMs. By using query texts as guidance, OmniDrop enables task-relevant and modality-adaptive token retention. Our progressive layer-wise pruning preserves early omni-modal integration while removing non-salient tokens in deeper layers, and a temporal diversity score prevents the loss of global context caused by focusing solely on highly query-relevant tokens. Extensive experiments on multiple audiovisual benchmarks demonstrate that OmniDrop consistently outperforms existing token compression methods by up to 3.58 points while reducing prefill latency by up to 40% and memory consumption by up to 14.7%. 
+
+Limitations and future work. Despite these encouraging results, several limitations remain. First, OmniDrop currently depends on text prompts for token selection, which restricts its applicability in scenarios where only audio and video inputs are available. Developing methods that directly capture 9semantic relationships between audio and video without textual guidance remains an important open challenge. Second, as a training-free framework, several components of OmniDrop, including pruning schedules and hyperparameter choices, are determined empirically. Future work may explore whether these decisions can be learned or jointly optimized using calibration data to further improve robustness and generalization. 10 References 
+
+[1] Saeed Ranjbar Alvar, Gursimran Singh, Mohammad Akbari, and Yong Zhang. Divprune: Diversity-based visual token pruning for large multimodal models, 2025. [2] Daniel Bolya, Cheng-Yang Fu, Xiaoliang Dai, Peizhao Zhang, Christoph Feichtenhofer, and Judy Hoffman. Token merging: Your vit but faster, 2023. [3] Liang Chen, Haozhe Zhao, Tianyu Liu, Shuai Bai, Junyang Lin, Chang Zhou, and Baobao Chang. An image is worth 1/2 tokens after layer 2: Plug-and-play inference acceleration for large vision-language models, 2024. [4] Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Marcel Blistein, Ori Ram, Dan Zhang, Evan Rosen, et al. Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. arXiv preprint arXiv:2507.06261 , 2025. [5] Tri Dao. FlashAttention-2: Faster attention with better parallelism and work partitioning. In 
+
+International Conference on Learning Representations (ICLR) , 2024. [6] Amala Sanjay Deshmukh, Kateryna Chumachenko, Tuomas Rintamaki, Matthieu Le, Tyler Poon, Danial Mohseni Taheri, Ilia Karmanov, Guilin Liu, Jarno Seppanen, Arushi Goel, et al. Nemotron 3 nano omni: Efficient and open multimodal intelligence. arXiv preprint arXiv:2604.24954 , 2026. [7] Yue Ding, Yiyan Ji, Jungang Li, Xuyang Liu, Xinlong Chen, Junfei Wu, Bozhou Li, Bohan Zeng, Yang Shi, Yushuo Guan, Yuanxing Zhang, Jiaheng Liu, Qiang Liu, Pengfei Wan, and Liang Wang. Omnisift: Modality-asymmetric token compression for efficient omni-modal large language models, 2026. [8] Chaoyou Fu, Yuhan Dai, Yongdong Luo, Lei Li, Shuhuai Ren, Renrui Zhang, Zihan Wang, Chenyu Zhou, Yunhang Shen, Mengdan Zhang, Peixian Chen, Yanwei Li, Shaohui Lin, Sirui Zhao, Ke Li, Tong Xu, Xiawu Zheng, Enhong Chen, Caifeng Shan, Ran He, and Xing Sun. Video-mme: The first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis, 2025. [9] Chaoyou Fu, Haojia Lin, Xiong Wang, Yi-Fan Zhang, Yunhang Shen, Xiaoyu Liu, Haoyu Cao, Zuwei Long, Heting Gao, Ke Li, Long Ma, Xiawu Zheng, Rongrong Ji, Xing Sun, Caifeng Shan, and Ran He. Vita-1.5: Towards gpt-4o level real-time vision and speech interaction, 2025. [10] Yuying Ge, Yixiao Ge, Chen Li, Teng Wang, Junfu Pu, Yizhuo Li, Lu Qiu, Jin Ma, Lisheng Duan, Xinyu Zuo, Jinwen Luo, Weibo Gu, Zexuan Li, Xiaojing Zhang, Yangyu Tao, Han Hu, Di Wang, and Ying Shan. Arc-hunyuan-video-7b: Structured video comprehension of real-world shorts, 2025. [11] Chao Gong, Depeng Wang, Zhipeng Wei, Ya Guo, Huijia Zhu, and Jingjing Chen. Echoingpixels: Cross-modal adaptive token reduction for efficient audio-visual llms, 2025. [12] Kaiming He, Xinlei Chen, Saining Xie, Yanghao Li, Piotr Dollár, and Ross Girshick. Masked autoencoders are scalable vision learners. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 16000–16009, June 2022. [13] Jack Hong, Shilin Yan, Jiayin Cai, Xiaolong Jiang, Yao Hu, and Weidi Xie. Worldsense: Evaluating real-world omnimodal understanding for multimodal llms, 2026. [14] Po-Yao Huang, Hu Xu, Juncheng Li, Alexei Baevski, Michael Auli, Wojciech Galuba, Florian Metze, and Christoph Feichtenhofer. Masked autoencoders that listen. In S. Koyejo, S. Mo-hamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh, editors, Advances in Neural Information Processing Systems , volume 35, pages 28708–28720. Curran Associates, Inc., 2022. [15] Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al. Gpt-4o system card. arXiv preprint arXiv:2410.21276 , 2024. 11 [16] Huiqiang Jiang, YUCHENG LI, Chengruidong Zhang, Qianhui Wu, Xufang Luo, Surin Ahn, Zhenhua Han, Amir H. Abdi, Dongsheng Li, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. MInference 1.0: Accelerating pre-filling for long-context LLMs via dynamic sparse attention. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. [17] Dongwon Jo, Jiwon Song, Yulhwa Kim, and Jae-Joon Kim. Fastkv: Kv cache compression for fast long-context processing with token-selective propagation. arXiv preprint arXiv:2502.01068 ,2025. [18] Bingzhou Li and Tao Huang. Dash: Dynamic audio-driven semantic chunking for efficient omnimodal token compression, 2026. [19] Yadong Li, Jun Liu, Tao Zhang, Song Chen, Tianpeng Li, Zehuan Li, Lijun Liu, Lingfeng Ming, Guosheng Dong, Da Pan, et al. Baichuan-omni-1.5 technical report. arXiv preprint arXiv:2501.15368 , 2025. [20] Huawei Lin, Yunzhi Shi, Tong Geng, Weijie Zhao, Wei Wang, and Ravender Pal Singh. Agent-omni: Test-time multimodal reasoning via model coordination for understanding anything, 2025. [21] Yueqian Lin, Yuzhe Fu, Jingyang Zhang, Yudong Liu, Jianyi Zhang, Jingwei Sun, Hai "Helen" Li, and Yiran Chen. Speechprune: Context-aware token pruning for speech information retrieval, 2025. [22] Enxin Song, Wenhao Chai, Guanhong Wang, Yucheng Zhang, Haoyang Zhou, Feiyang Wu, Haozhe Chi, Xun Guo, Tian Ye, Yanting Zhang, et al. Moviechat: From dense token to sparse memory for long video understanding. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 18221–18232, 2024. [23] Keda Tao, Wenjie Du, Bohan Yu, Weiqiang Wang, Jian Liu, and Huan Wang. Active perception agent for omnimodal audio-video understanding, 2026. [24] Keda Tao, Can Qin, Haoxuan You, Yang Sui, and Huan Wang. Dycoke: Dynamic compression of tokens for fast video large language models, 2025. [25] Yi Tay, Mostafa Dehghani, Dara Bahri, and Donald Metzler. Efficient transformers: A survey. 
+
+ACM Computing Surveys , 55(6):1–28, 2022. [26] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information processing systems , 30, 2017. [27] Zheng WEI, Mingchen Li, Zeqian Zhang, Ruibin Yuan, Pan Hui, Huamin Qu, James Evans, Maneesh Agrawala, and Anyi Rao. Omniagent: Long-video generation via cross-modal multi-agent orchestration, 2025. [28] Jin Xu, Zhifang Guo, Jinzheng He, Hangrui Hu, Ting He, Shuai Bai, Keqin Chen, Jialin Wang, Yang Fan, Kai Dang, Bin Zhang, Xiong Wang, Yunfei Chu, and Junyang Lin. Qwen2.5-omni technical report, 2025. [29] Yudong Yang, Jimin Zhuang, Guangzhi Sun, Changli Tang, Yixuan Li, Peihan Li, Yifan Jiang, Wei Li, Zejun Ma, and Chao Zhang. Audio-centric video understanding benchmark without text shortcut, 2025. [30] Yuan Yao, Tianyu Yu, Ao Zhang, Chongyi Wang, Junbo Cui, Hongji Zhu, Tianchi Cai, Haoyu Li, Weilin Zhao, Zhihui He, et al. Minicpm-v: A gpt-4v level mllm on your phone. arXiv preprint arXiv:2408.01800 , 2024. [31] Yan Zhao, Zhengxue Cheng, Junxuan Zhang, Dajiang Zhou, Qunshan Gu, Qi Wang, and Li Song. Omnizip: Learning a unified and lightweight lossless compressor for multi-modal data. arXiv preprint arXiv:2602.22286 , 2026. 12 Appendices A Additional experimental details 
+
+We follow the preprocessing settings of OmniZip [ 31 ] and DASH [ 18 ]. To handle the longer videos in VideoMME [ 8] and retain finer temporal resolution, we set the maximum number of input frames to 768. For all other datasets, we use a maximum of 128 input frames. Each audiovisual chunk contains 50 audio tokens and 288 video tokens. For intra-modality pruning, we use different hyperparameters for each modality. We set the audio pruning ratio to 0.3. For video token pruning, we apply a temporal token merging (TTM) strategy to every four consecutive frames with a pruning rate of 0.8, resulting in an overall video retention ratio of 40%. We utilize the official implementations of the existing methods for comparative analysis. In our experiment with OmniZip 2, we set ρa = 0 .45 and ρv = 0 .75 for the 30% retention, and ρa = 0 .45 and ρv = 0 .85 for the 20%. Also, we adjust the upper and lower limits of the pruning rate ( ρmax , ρmin ) to prevent excessive pruning and align with our target retention ratios: (0.85, 0.40) for the 30% target and (0.95, 0.45) for the 20%. Other hyperparameters were kept unchanged. With DASH 3, we maintain original configuration, except that the target retention ratios ρa and ρv are set to the same values as those used for OmniZip. For visualization in Fig. 1, we sample 64 videos from WorldSense [ 13 ] and extract audio and video embeddings using the corresponding encoders. For the PCA visualization in Fig. 1 (a), we first fit PCA with two components using a balanced subset of audio and video tokens. We then transform all tokens using the fitted PCA. For visualization, we sample 10,000 tokens according to the original modality ratio, resulting in 1,392 audio tokens and 8,608 video tokens. For the cosine similarity analysis in Fig. 1 (b), we compute all pairwise cosine similarities within each video for audio-audio, video-video, and audio-video token pairs. The resulting similarities are flattened and concatenated across all 64 videos. For KDE visualization, we randomly sample 100,000 values from each distribution. 
+
+## B Related works and comparison with OmniZip and DASH 
+
+Understanding modality-specific redundancy inherent in the input data is crucial to improving the efficiency of multimodal LLMs. For example, He et al. [ 12 ] shows that a significant portion of visual patches can be omitted without losing global context. Similarly, audio signals exhibit temporal and spectral redundancy, often reflected in strong local correlations in spectrograms [ 14 ]. This gap between raw data representation and actual information density provides strong motivation for pruning or merging redundant tokens. Token compression methods have also been widely studied by exploiting modality-specific redundancy. In the visual domain, spatial redundancy among image patches is reduced by pruning low-importance tokens [ 3], merging similar ones [ 2 ], or selecting informative subsets [ 1]. These concepts extend to video through dynamic frame or patch removal [ 24 ] and to audio via attention-guided pruning [ 21 ]. However, uni-modal strategies are insufficient for Omni-LLMs, where independent compression poses a potential risk of disrupting temporal correspondence and cross-modal alignment. This necessitates token selection based on cross-modal interaction. Therefore, recent Omni-LLM token compression have begun to incorporate cross-modal cues when determining token importance or redundancy. Recent Omni-LLM token compression methods [ 31 , 7, 11 , 18 ] have explored different ways to reduce the computational cost of processing long audio-video inputs. Some approaches, such as OmniSift [ 7] and Echoing-Pixels [ 11 ], rely on additional training to learn token selection or allocation policies. In contrast, another line of work [ 31 , 18 ] aims to compress tokens in a training-free manner, making them easier to apply to existing Omni-LLMs without modifying model parameters. Below, we focus on training-free Omni-LLM token compression methods, OmniZip [ 31 ] and DASH [ 18 ], and provide a detailed comparison with our approach. 
+
+OmniZip [31 ] is an audio-guided audiovisual token compression framework. It first uses attention scores from the audio encoder to identify important audio tokens. Less important audio tokens are not simply discarded; if they are highly similar to video tokens, they are merged into nearby anchor tokens. For video tokens, OmniZip adopts Interleaved Spatio-Temporal Compression, which alternately reduces temporal redundancy by merging cross-frame tokens and spatial redundancy by pruning intra-frame tokens. In addition, the retention ratio of video tokens is determined based on the saliency scores of the retained audio tokens, allowing video pruning to be guided by audio importance. Therefore, OmniZip relies on the assumption that audio and video tokens with high input-level similarity are semantically related or redundant.   
+
+> 2OmniZip: https://github.com/KD-TAO/OmniZip
+> 3DASH: https://github.com/laychou666/DASH
+
+13 Table 5: Comparison of OmniZip, DASH, and OmniDrop. 
+
+Feature OmniZip [31] DASH [18] OmniDrop [Ours] Main Idea Audio-guided Structure-aware Text-guided layer-wise 
+
+Pruning Stage Input-level Input-level Progressive Layer-wise 
+
+Key Metrics 1.Audio self-attn. 1.Boundary probability 1.Query to (A/V) attn. 2.A-V Cos similarity 2.Density-based uniqueness 2.Temporal Distance Score 3.Audio self-attn. 
+
+Assumption A-V similarity denotes se-mantic relevance Co-occurrence shares con-text Text query defines rele-vance; loosely coupled at input-level 
+
+DASH [ 18 ] compresses audiovisual tokens by exploiting semantic structure. It first detects semantic boundaries in the audio stream using intra-audio cosine similarity. These audio-derived boundaries are then projected onto the video stream to perform dynamic segmentation. This step assumes that audio and video signals occurring at the same time tend to share the same semantic context ( e.g. scene changes, topic transitions). DASH then selects important audio tokens using tri-signal fusion, which combines boundary probability, density, and attention score. For video tokens, DASH performs boundary-aware pruning, where tokens near likely semantic boundaries are assigned higher importance and are more likely to survive. Similar to OmniZip, DASH uses the audio retention rate as a proxy for segment-level information density to determine the video token retention ratio. However, both methods rely on audio-derived signals as a proxy for cross-modal token importance, which can fail under weak audio-video correlation, noise, or task-irrelevant co-occurrences. 
+
+OmniDrop does not rely on input-level audio-video similarity or temporal co-occurrence to determine modality correlation. Instead, OmniDrop uses the text query as a task-specific pruning signal. Specifically, audio and video tokens are evaluated according to their attention with the text query, and tokens that show low attention to the query are considered less relevant and are pruned regardless of their modality. This allows OmniDrop to remove unnecessary audio and video tokens based on their contribution to the target query, rather than based on predefined audio-video similarity assumptions. OmniDrop further introduces a temporal diversity score (TDS). Since tokens around key chunks, which strongly interact with the text query, are already likely to survive, OmniDrop gives relatively higher scores to tokens that are temporally farther from such key chunks. Beyond the scoring mechanism, OmniDrop fundamentally differs from prior work in where pruning occurs. While OmniZip and DASH operate at the input embedding level, OmniDrop performs pruning progressively within the LLM decoder layers. This design is enabled by our text-guided scoring, which remains valid even after omni-modal fusion. In contrast, the scoring mechanisms of OmniZip and DASH are inherently tied to the input level. OmniZip’s audio-video cosine similarity assumes that the two modalities remain directly comparable, and DASH assumes audio-derived semantic boundaries. However, once self-attention layers progressively fuse audio and video representations, both assumptions break down: cosine similarity no longer reflects cross-modal relationships, and intra-audio similarity no longer provides reliable boundary. Thus, OmniDrop’s text-guided scoring is not merely an alternative criterion but a necessary design choice for unlocking layer-wise pruning in Omni-LLMs .
+
+## C Detailed performance of WorldSense and AVUT 
+
+Due to page limitations, Sec. 4.1 reports only the average performance on the WorldSense [ 13 ] and AVUT [ 29 ]benchmarks. In this section, we provide detailed scores for each domain and sub-task for a more fine-grained analysis. As shown in Tab. 6, OmniDrop shows robust performance across a wide range of WorldSense domains. For Qwen2.5-Omni-7B, OmniDrop achieves the best average scores at both 30% and 20% retained ratios, while also obtaining top or highly competitive results in multiple domains such as Music, Culture & Politics, Sports, Film & TV, and Games. This suggests that the gain of OmniDrop does not come from a narrow improvement in a single category, but from consistently preserving informative tokens across diverse domains. This tendency is also clear in the Qwen2.5-Omni-3B setting. At the 30% retained ratio, OmniDrop achieves the best scores in most domains, except for Daily Life and Film & TV. Even at the more aggressive 20% retained ratio, OmniDrop remains 
+
+14 Table 6: Performance comparison of various methods on the WorldSense [13] benchmark.                                                                                                                                                    
+
+> Method Ret. Ratio (%) Music Cult. Tech Daily Film Sports Perf. Games Avg. & Pol. & Sci. Life & TV
+> Qwen2.5-Omni-7B 100 48.77 53.40 50.61 46.81 44.06 42.70 43.07 43.35 46.85 OmniZip [31] 30 46.06 52.43 49.59 47.42 41.69 41.16 43.45 38.63 45.55 20 45.57 49.84 48.37 46.05 40.37 38.84 41.20 38.63 44.10 DASH [18] 30 46.06 51.13 51.84 46.20 43.27 43.26 41.57 39.06 45.87 20 47.29 50.81 48.98 45.14 40.63 41.86 38.58 39.48 44.61 OmniDrop 30 47.54 53.07 50.82 46.81 43.01 43.72 41.95 43.35 46.60
+> 20 46.80 53.40 50.61 46.50 42.74 43.72 42.70 43.78 46.50
+> Qwen2.5-Omni-3B 100 46.06 51.46 51.02 45.74 45.38 44.88 45.69 40.77 46.63 OmniZip [31] 30 43.10 50.49 51.02 47.11 44.06 41.63 42.70 42.49 45.71 20 43.35 48.22 50.61 47.11 42.48 40.70 40.82 42.49 44.99 DASH [18] 30 43.84 48.54 50.20 44.83 44.59 42.79 39.70 40.34 44.83 20 43.84 47.25 49.80 44.07 42.74 40.70 39.33 42.49 44.10 OmniDrop 30 44.33 52.43 51.22 46.35 43.80 45.12 45.32 45.06 46.78
+> 20 43.60 50.49 51.63 45.59 45.12 43.26 44.94 43.78 45.06
+
+Table 7: Performance comparison of various methods on the AVUT [29] benchmark. 
+
+Method Ret. Ratio (%) EL OR OM IE CC CM Avg. 
+
+Qwen2.5-Omni-7B 100 37.65 69.77 60.71 85.28 44.07 67.39 65.17 OmniZip [31] 30 35.88 68.49 55.10 83.13 39.83 63.07 61.76 20 36.47 65.59 55.10 83.44 39.83 61.87 61.07 DASH [18] 30 37.06 64.95 54.08 86.20 40.68 60.19 60.96 20 37.06 66.24 52.04 86.20 40.68 57.55 60.09 OmniDrop 30 37.06 68.49 57.14 85.89 40.68 67.63 64.01 
+
+20 35.88 67.52 57.91 86.81 41.53 65.71 63.67 
+
+Qwen2.5-Omni-3B 100 31.76 65.59 58.67 85.28 43.22 63.55 62.40 OmniZip [31] 30 32.94 62.70 53.83 84.36 44.07 61.39 60.27 20 32.94 62.70 50.77 83.13 43.22 61.39 59.28 DASH [18] 30 34.12 62.70 54.59 84.97 41.53 60.19 60.21 20 34.71 61.41 51.79 84.66 39.83 57.07 58.48 OmniDrop 30 31.18 65.27 58.16 84.36 44.07 61.39 61.53 
+
+20 31.76 63.67 56.89 83.74 43.22 60.19 60.55 competitive across categories and achieves strong scores in Technology & Science, Film & TV, Performance, and Games. Tab. 7 presents detailed sub-task results on the AVUT benchmark, covering event localization (EL), object matching (OM), OCR matching (OR), information extraction (IE), content counting (CC), and character matching (CM). OmniDrop consistently achieves strong and balanced performance across these diverse sub-tasks. For Qwen2.5-Omni-7B, OmniDrop obtains the best average scores at both 30% and 20% retained ratios. In particular, it achieves the best performance on all sub-tasks, demonstrating that the method preserves audiovisual cues required for different types of audio-centric video understanding tasks. A similar trend is observed for Qwen2.5-Omni-3B. At the 30% retained ratio, OmniDrop performs best on most of the sub-tasks. Although OmniDrop shows lower accuracy than others on EL under the 3B setting, it still achieves performance comparable to the original model. These results further confirm that OmniDrop offers a robust and balanced pruning strategy, maintaining task-relevant information across diverse tasks under aggressive compression. 
+
+## D Analysis of omni-modal processing in Qwen2.5-Omni-3B 
+
+While the primary analysis in Sec. 2.3 focuses on Qwen2.5-Omni-7B, we further investigate the 3B variant to verify whether the same trend holds across model scales. In Fig. 5(a), we visualize text-to-audiovisual attention patterns using the same sample videos and queries as in Sec. 2.3. 
+
+15 Text tokens   
+
+> Audiovisual chunks
+> Layer 9 Layer 19 Layer 31
+
+(a) (b)  
+
+> Text tokens
+> Audiovisual chunks
+> Text tokens
+> Audiovisual chunks
+> Text tokens
+> Audiovisual chunks
+> Text tokens
+> Audiovisual chunks
+> Text tokens
+> Audiovisual chunks
+
+Layer Index 
+
+> Top 20% Attention Recall
+> 1.0
+> 0.0
+
+Figure 5: (a) Layer-wise text-to-audiovisual attention scores, averaged within each audiovisual chunk and normalized for better visualization. We show representative decoder layers, i.e., Layers 9, 19, and 31. The first and second rows correspond to the queries “ Who said in the video that ‘...’? ” and “In which part of the video does the man with ... appear? ”, respectively. (b) Top-20% attention recall of text-to-audio and text-to-video attention scores across decoder layers. 
+
+Similar to the 7B model, the attention maps of the 3B model also highlight audiovisual chunks corresponding to the correct answers for both queries. This indicates that the 3B model can naturally distinguish query-specific evidence after sufficient decoder-layer processing. We further report the top-20% attention coverage of text-to-other-modality interactions, following the same setting as the 7B analysis. As shown in Fig. 5(b), the coverage remains below 0.6 in the early layers, then gradually increases and reaches peaks above 0.7 from the middle layers onward. This suggests that attention becomes increasingly concentrated on a smaller set of query-relevant audiovisual tokens. Overall, the 3B model shows a trend consistent with the 7B model, supporting our assumption that informative audiovisual tokens emerge progressively across decoder layers. These findings further justify applying our layer-wise adaptive pruning strategy to different model scales. 
+
+## E Determining pruning ratios for a fixed token budget 
+
+We implement a sigmoid-scheduled pruning rate with a high steepness parameter ( k = 20 ), creating a quasi-step transition that bisects the network into preservation and aggressive compression phases. This approach ensures a clear functional separation between early-layer omni-modal fusion and late-layer computational efficiency. To facilitate fair comparison with prior methods that operate under a fixed token budget, we calibrate our sigmoid schedule to retain 30% of tokens on average. Thus, we derive the pfinal parameter necessary to maintain a global token budget of 30% for the Qwen2.5-Omni-7B architecture ( L = 28 ). This derivation is conducted under the specific constraints of tmid = 0 .5 and pinit = 0 .
+
+E.1 Cumulative token retained ratio dynamics 
+
+Given that pruning is applied cumulatively across layers, the retained ratio of audio-video tokens rl just before being fed into layer l evolves as a geometric decay process: 
+
+rl+1 = rl · (1 − pl).
+
+Starting with an initial retained ratio r0 = 0 .45 —a value established through a preliminary intra-modality pruning stage to remove intra-modal redundancies—the objective is to reach a target mean retained ratio 
+
+¯R = 1
+
+> L
+
+PL−1 
+
+> l=0
+
+rl = 0 .30 over L = 28 layers. 
+
+E.2 Pruning ratio optimization for target retained ratio 
+
+Under the bisection strategy ( pinit = 0 , t mid = 0 .5), the model maintains the initial retained ratio for the first half of the layers ( l ∈ [0 , 13] ) and initiates exponential decay in the second half ( l ∈ [14 , 27] ). The mean retained ratio ¯r is approximated by the arithmetic mean of the two phases: 
+
+16 ¯R ≈ ¯rphase1 + ¯ rphase2 
+
+2
+
+1. Phase 1 (Preservation): Since pinit = 0 , the mean retained ratio is constant: ¯rphase1 = r0 = 0 .45 .2. Phase 2 (Aggressive compression): To satisfy ¯R = 0 .30 , the required mean retained ratio for Phase 2 is: 
+
+¯rphase2 = 2 ¯R − ¯rphase1 = 2(0 .30) − 0.45 = 0 .15 
+
+Using a linear approximation of the geometric decay and Taylor expansion, the mean retained ratio of Phase 2 corresponds approximately to the ratio at midpoint of the Phase 2 ( i.e. Layer 21 , the 7-th layer in the Phase 2). Thus: 
+
+r0 · (1 − pfinal )7 ≈ ¯rphase2 
+
+(1 − pfinal )7 ≈ 0.15 0.45 = 0 .333 
+
+pfinal ≈ 1 − (0 .333) 1/7 ≈ 0.146 
+
+While the theoretical derivation suggests pfinal ≈ 0.146 to converge at the target mean retained ratio of 30% ,we adopt a more conservative setting of pfinal = 0 .2. This provides a safety margin to guarantee that the final average ratio remains strictly below the 0.3 threshold across various input sequences. Furthermore, for scenarios requiring more extreme pruning, the initial pruning ratio pinit can be increased above zero. 
+
+17

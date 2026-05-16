@@ -1,0 +1,895 @@
+Title: RubiConv – Efficient Boundary-Respecting Convolutions
+
+URL Source: https://arxiv.org/pdf/2605.08451v1
+
+Published Time: Tue, 12 May 2026 00:22:22 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# RubiConv - Efficient Boundary-Respecting Convolutions 
+
+Linda Friso ∗† Annie Marsden ∗ † Xinyi Chen † Arushi Gupta † Peter L. Bartlett † ‡ 
+
+Mark Braverman † § Elad Hazan † § 
+
+## Abstract 
+
+Convolutional architectures have emerged as powerful alternatives to Transform-ers for sequence modeling. The primary advantage is that they offer improved theoretical sequence length complexity by leveraging the Fast Fourier Transform (FFT). However, this theoretical improvement does not always meaningfully land in practice. One critical obstacle is that applying standard FFTs is not amenable to the large-scale training pipeline wherein data is packed from different sources into a single sequence for hardware efficiency. Indeed, standard FFT algorithms are not easily amenable to document packing. Existing workarounds suffer from severe inefficiencies, crippling the practical performance of convolutional archi-tectures. We close this gap with RubiConv, a novel algorithm for performing hardware-efficient, boundary-respecting convolutions on packed sequences. Ex-tensive experiments show that RubiConv achieves significant speedups over both attention and standard FFT-based baselines. This work makes the theoretical effi-ciency of long convolutional models a practical reality for large-scale, real-world data packing. 
+
+## 1 Introduction 
+
+The landscape of sequence modeling has been enriched by a new class of architectures based on long convolutions. Models like Hyena [15], M2-BERT [5, 17], FlashSTU [13], and foundational State Space Models (SSMs) like S4 [9] achieve strong long-context reasoning abilities across do-mains from language to genomics. Their computational engine is the Fast Fourier Transform (FFT) convolution, which provides a favorable O(N log N ) complexity [4] compared to the O(N 2) cost of attention in Transformers. In practice, however, a major obstacle arises in large-scale LLM training pipelines: documents of highly variable length are routinely concatenated or “packed” together into fixed-size sequences to maximize GPU/TPU utilization. Current attention-based architectures handle packing via masking, and recent works like PackMamba [19] have adapted selective, scan-based SSMs [8, 12, 11] to this setting by dynamically resetting hidden states. However, convolutional-based architectures cannot account for document packing in the same way. FFT-based algorithms to compute convolutions are hampered. Continuous convolutions inherently suffer from boundary bleed-over between adjacent documents. Furthermore, FFT-based algorithms compound this by treating the sequence as periodic, introducing global wrap-around artifacts where the sequence’s end corrupts its beginning. Thus, de-spite their asymptotic advantage, standard FFT convolutions are fundamentally incompatible with packed sequences, creating a gap between theory and practice. Current solutions are inefficient 
+
+> ∗joint first author
+> †Google Deepmind
+> ‡UC Berkeley
+> §Princeton University Preprint.
+> arXiv:2605.08451v1 [cs.LG] 8 May 2026
+
+compromises, such as processing documents iteratively (sacrificing parallelism) or padding all doc-uments to a uniform length (wasting memory and computation). Another solution is to ignore document boundaries completely. However, the resulting data corrup-tion can degrade model quality by introducing a training-dependent artifact. Furthermore, in settings where documents come from different sources, this uncontrolled information leakage represents a critical privacy and security vulnerability. This paper introduces RubiConv, a novel and highly efficient algorithm for performing boundary-respecting convolutions on packed sequences. Our approach is inspired by Bailey’s FFT algorithm [3], which is naturally amenable to run quickly on modern hardware accelerators. However, Bai-ley’s FFT cannot simultaneously compute multiple FFTs of various packed sequences. Instead, RubiConv’s key innovation is to ensure modular computation across multiple documents simul-taneously by changing the permutation mapping and computing different k-point DFTs using a block-diagonal matrix structure which depends on each document’s sequence length. This preserves document boundaries while leveraging highly optimized GEMM kernels on GPUs and TPUs. To provide a comprehensive analysis of the problem, we also develop and analyze two alterna-tive methods that illustrate the trade-offs in different computational regimes. First, a Full-Matrix 
+
+variant provides an exact O(N 2) baseline that is effective for very short sequences. Second, a 
+
+Cooley-Tukey variant uses arithmetic masking to achieve optimal O(N log N ) asymptotic com-plexity, demonstrating a path to theoretical efficiency for extremely long sequences. We discuss these alternatives in Section 3. While they offer valuable theoretical insight, our experiments show that RubiConv, with its Θ( N 3/2) complexity but superior hardware efficiency, is the fastest and most practical solution for typical sequence lengths found in large-scale model training. RubiConv makes the theoretical promise of long convolutions a practical reality for real-world data packing, achieving significant speedups over both standard FFTs and attention. 
+
+1.1 Related Work 
+
+The need to process packed sequences of variable-length documents is a practical constraint in large-scale model training, designed to maximize hardware utilization. While packing optimizations exist for attention models and selective SSMs (e.g., state-resetting in PackMamba [19]), standard FFT-based convolutions remain fundamentally incompatible with this data format. Their circular nature, where the convolution is computed modulo the sequence length, causes “wrap-around” artifacts that incorrectly mix information between independent documents packed into a single tensor. Our work directly addresses this gap between the theoretical efficiency of long convolutions and their practical deployment. 
+
+Approaches to Fast Convolution. Several algorithms have been developed to accelerate con-volutions. The most direct method expresses the convolution as a multiplication with a Toeplitz matrix [7], but this approach is impractical for long sequences due to its quadratic O(N 2) complex-ity. The foundational algorithm for fast convolution is the Cooley-Tukey FFT, a divide-and-conquer method that achieves the well-known O(N log N ) complexity by recursively breaking the transform into smaller computations known as ”butterfly” operations. As we show in Section 3, this algorithm can be adapted to the packed setting via arithmetic masking. 
+
+Matrix-Decomposition FFTs. A highly influential line of work accelerates FFTs by reformulat-ing them as a series of dense matrix multiplications (GEMMs), making them well-suited for modern hardware. Bailey’s FFT [2] is a classic example, using a 4-step process that reshapes the input vec-tor into a 2D matrix to improve performance on systems with hierarchical memory. More recently, 
+
+FlashFFTConv [6] maps this same underlying arithmetic to modern GPUs, fusing the operations in SRAM to avoid costly memory transfers. 
+
+Our Contribution in Context. The primary limitation of prior matrix-decomposition methods, including both Bailey’s FFT and FlashFFTConv, is that they are designed and optimized for a single, contiguous sequence. Applying them to packed data would require iterating through each document individually, which sacrifices parallelism and negates their performance advantages. RubiConv 
+
+takes a fundamentally different approach. Instead of iterating, it modifies the core Bailey’s algorithm by introducing new left and right matrix operators that are aware of the packed structure. By using a 2⊙     
+
+> Element-wise multiply by hybrid twiddle matrix
+> ⨂
+> Document 1 Document 2 Document 3
+> Reshape in row-major order Concatenate horizontally
+> Left multiply by first DFT matrix
+> Right multiply by block diagonal DFT matrix
+> -point DFT -point DFT -point DFT
+> Flatten in column-major order
+
+Figure 1: Visual representation of RubiConv. block-diagonal matrix for the second DFT, it correctly computes the convolution for all documents in a single, parallel pass, thus solving the long-standing challenge of applying these efficient algorithms to packed sequences. 
+
+## 2 RubiConv: An Accelerated Boundary-Respecting Convolution 
+
+RubiConv is a novel algorithm for performing boundary-respecting convolutions on packed se-quences that is specifically designed for modern hardware accelerators. The method is inspired by Bailey’s 4-step FFT, which computes an L-point DFT by reshaping a 1D vector of length L = mk 
+
+into an m × k matrix, applying a first DFT along the columns, element-wise multiplying by a “twiddle factor” matrix, and then applying a second DFT along the rows. RubiConv (Algorithm 1, Figure 1) proceeds with a similar general structure but with several key differences: • First, RubiConv appends min( Li, L F ) − 1 zeros to each document to enforce linear FFTs, where Li denotes the length of document i and LF denotes the filter length. Then it pads the result to ensure its length is divisible by k, obtaining a length L′
+
+> i
+
+. Typically picking 
+
+k = 256 provides an optimal tradeoff between padding amount (which is best if k is small) and hardware efficiency (which favors matrix multiplications of specific sizes). • Now that the greatest common divisor of the document lengths is at least k, RubiConv re-shapes the sequence into a matrix with k rows so that no single column contains sequences corresponding to different documents. • The “twiddle matrix” is constructed differently than in Bailey’s algorithm. In Bailey’s, the 
+
+(a, b )-th entry of the twiddle matrix is ωab L , where ωL denotes the L-th root of unity. In RubiConv, the twiddle matrix is a hybrid of several roots of unity that will ultimately be used to output several different bases for the DFT according to the sequence lengths. • The second DFT adapts to sequences lengths of the documents being packed. The matrix has a block diagonal structure where block i corresponds to the L′
+
+> i
+
+/k -point DFT. Following the inverse transform, truncating the output to the original valid length of each document removes this padding, ensuring a strictly causal receptive field without intra-document wrap-around artifacts. Theorem 2.1 guarantees the correctness of RubiConv and provides a computational com-plexity analysis. The proof of Theorem 2.1 is in Appendix A.2. To make Algorithm 1 performant on a TPU we included several important heuristics and hardware-aware modifications that are detailed in Appendix B. 
+
+Theorem 2.1. The RubiConv Algorithm as described in Alg. 1, when applied to a packed sequence 
+
+[x(1) , x(2) , . . . , x(n)] with original document lengths L1, . . . , L n and filter length LF , outputs the packed sequence [x(1) , x(2) , . . . , x(n)] such that for each i = 1 , . . . , n , x(i) is the L′
+
+> i
+
+-point DFT of 
+
+x(i), where L′ 
+
+> i
+
+= k⌈(Li + min( Li, L F ) − 1) /k ⌉. Moreover, RubiConv-data preprocessing has a 
+
+3Algorithm 1 RubiConv: Boundary-Respecting Convolution  
+
+> 1:
+
+function RUBI CONV -D ATA -P ROCESSING (inputs, document lengths, k) 
+
+> 2:
+
+For any integer j, let Fj be the matrix corresponding to the j-point DFT, where 
+
+(Fj )ℓm = exp(2 πi · ℓm/j ). 
+
+> 3:
+
+[x(1) , . . . , x(n)] ← inputs  
+
+> 4:
+
+[L1, . . . , L n] ← document lengths  
+
+> 5:
+
+for i = 1 , . . . , n do  
+
+> 6:
+
+Append min( Li, L F ) − 1 zeros to x(i) for causality. Then pad to nearest multiple of k. 
+
+> 7:
+
+L′ 
+
+> i
+
+← k⌈(Li + min( Li, L F ) − 1) /k ⌉ 
+
+> 8:
+
+mi ← L′
+
+> i
+
+/k  
+
+> 9:
+
+T(i) ← FLi [: k, : mi] ▷ Extract twiddle factors  
+
+> 10:
+
+Construct and store first DFT matrix: M1 ← Fk 
+
+> 11:
+
+Construct and store twiddle matrix: T ← [T(1) , . . . , T(n)]. 
+
+> 12:
+
+Construct and store second DFT matrix: 
+
+M2 ← BlockDiagonal [Fm1 , . . . , Fmn ] 
+
+> 13:
+
+X(i) ← reshaped x(i) with shape k × mi in row-major order  
+
+> 14:
+
+P1 is the reshaping map, 
+
+P1([ x(1) , . . . , x(n)]) = X(1) X(2) . . . X(n) 
+
+> 15:
+
+Construct output permutation P2 map such that for a k × (m1 + · · · + mn) matrix 
+
+X = [ X1 X2 . . . Xn], (P2X) = [ flat (X1), . . . , flat (Xn)] where flat (X) flattens the matrix in column-major order and slices to original document lengths.  
+
+> 16:
+
+end for  
+
+> 17:
+
+return T , M1, M2, P1, P2 
+
+> 18:
+
+end function  
+
+> 19:
+
+function RUBI CONV (inputs, document lengths, k) 
+
+> 20:
+
+Reshape the data: Y ← P1(inputs ) 
+
+> 21:
+
+Apply the first DFT: Y′ ← M1Y 
+
+> 22:
+
+Apply twiddle factors element-wise: Y′′ ← T ⊙ Y′ 
+
+> 23:
+
+Apply the second block-diagonal DFT matrix: Y′′′ ← Y′′ M2 
+
+> 24:
+
+out ← P2(Y′′′ ) 
+
+> 25:
+
+return out  
+
+> 26:
+
+end function 
+
+computational complexity and memory footprint of O  Ltotal + kn + ( Ltotal /k )2 + n2 + Ltotal n/k 
+
+and RubiConv has computational complexity O  kL total + L2
+
+> total
+
+/k + k2n + n2k + Ltotal n.
+
+Corollary 2.2 shows that, for a certain regime, RubiConv’s complexity matches Bailey’s algorithm as if no documents were packed together. 
+
+Corollary 2.2 (Corollary to Theorem 2.1) . If the number of packed documents satisfies n =Θ
+
+
+
+L1/2
+
+> total
+
+
+
+and we pick k = Θ( L1/2
+
+> total
+
+) the preprocessing step has complexity O(Ltotal ) and Rubi-Conv has an overall complexity of O(L3/2
+
+> total
+
+).
+
+## 3 Alternative Boundary-Preserving Formulations 
+
+While RubiConv represents our primary contribution and the most practical solution for modern hardware, the core principle of boundary preservation can be extended to other convolution algo-rithms. In this section, we present two alternative formulations to provide a comprehensive analysis of the problem. While these methods are not empirically competitive with RubiConv for typical large-scale deep learning workloads on accelerators, they map the bounds of the solution space and illustrate the critical trade-offs between asymptotic complexity and hardware utilization. 43.1 An Asymptotically Optimal Variant: RubiConv-CooleyTukey 
+
+It is theoretically possible to achieve the optimal asymptotic complexity of O(N log N ) by adapting the classic iterative Cooley-Tukey FFT algorithm. Our variant, RubiConv-CooleyTukey, achieves this not by altering the FFT’s overarching structure, but by arithmetically masking butterfly oper-ations iteratively to prevent data from crossing document boundaries. The core idea is to proceed through the standard Cooley-Tukey stages, where each stage handles a particular DFT size, and generate twiddle factors based on each element’s parent document length. At stage i, the DFT size is m = 2 i, and if a document is too short to participate in the current DFT size (i.e., its length is less than m), its twiddle factors are set to identity values. This effectively turns the butterfly update into a no-op for that document, preserving its state from the last valid stage. At a high level, the algorithm opens up the Cooley-Tukey stages and enforces document boundaries by masking in each stage, thus maintaining the asymptotic runtime of the FFT. The algorithm (de-tailed in Alg. 2) begins with a per-document bit-reversal and proceeds with these masked butterfly stages across the packed tensor. We include a visualization of the algorithm in Appendix C. 
+
+Algorithm 2 RubiConv-CooleyTukey: Boundary-Respecting Cooley-Tukey  
+
+> 1:
+
+function RUBI CONV -C OOLEY TUKEY (input array , pattern ) 
+
+> 2:
+
+▷ Assume inputs are padded such that each document length is a power of 2  
+
+> 3:
+
+Let y be a copy of input array . 
+
+> 4:
+
+for all document block in pattern do  
+
+> 5:
+
+Reorder elements within y for this block into bit-reversed order.  
+
+> 6:
+
+end for  
+
+> 7:
+
+max log2 len ← maximum log2-size from pattern  
+
+> 8:
+
+for s ← 1 to max log2 len do  
+
+> 9:
+
+m ← 2s 
+
+> 10:
+
+for all element at index i in y do  
+
+> 11:
+
+doc len ← length of document containing element i 
+
+> 12:
+
+if doc len ≥ m then  
+
+> 13:
+
+(Tw0 [i], TwF [i], TwB [i]) ← CalculateStandardFFTFactors (i, s ) 
+
+> 14:
+
+else  
+
+> 15:
+
+(Tw0 [i], TwF [i], TwB [i]) ← (1 , 0, 0)  
+
+> 16:
+
+end if  
+
+> 17:
+
+end for  
+
+> 18:
+
+y ← (y ⊙ Tw0 ) + ( roll (y, m/ 2) ⊙ TwF ) + ( roll (y, −m/ 2) ⊙ TwB ) 
+
+> 19:
+
+end for  
+
+> 20:
+
+return y 
+
+> 21:
+
+end function Correctness, Complexity, and Hardware Limitations This method correctly computes the con-catenation of independent, per-document FFTs. An inductive proof shows that at every stage s, the values within each document’s slice are identical to those from a standard Cooley-Tukey FFT run on that document. However, because an active node will still read across a boundary even if the write is masked, preventing information mixing requires padding each document to the nearest power of two. This alignment ensures cross-document butterfly pairings never occur. While preserving the 
+
+O(N log N ) complexity for the padded sequence, it introduces severe memory bloat. Crucially, while RubiConv-CooleyTukey is theoretically optimal, it is fundamentally misaligned with modern accelerator architectures like TPUs and GPUs. These devices achieve peak, high-bandwidth performance through large, dense matrix multiplications (GEMMs). The iterative, memory-bound butterfly updates required by the CT algorithm result in poor hardware utilization. This architectural bottleneck, compounded by the power-of-two padding requirement, renders the 
+
+O(N log N ) approach impractical for large-scale model training. 53.2 A Direct Quadratic-Time Variant via Block-Diagonal Matrices 
+
+The most straightforward way to ensure boundary-respecting convolution is to represent the convo-lution operator as an explicit block-diagonal matrix . For a packed vector x = [ x(1) ∥ · · · ∥ x(B)],we construct a large matrix A = diag( A1, . . . , A B ), where each block Ab is the matrix operator for the convolution on document b. Depending on the desired padding, Ab can be a circulant matrix (for circular convolution) or a Toeplitz matrix (for linear convolution). The convolution is then a single matrix-vector product, y = Ax . By its block-diagonal construction, the operator mathematically guarantees that it cannot mix information between documents, as each block Ab only acts on the corresponding input segment x(b).
+
+Complexity. Forming and applying this matrix costs Θ( P 
+
+> b
+
+L2 
+
+> b
+
+), which is upper-bounded by 
+
+Θ( N 2). Although asymptotically inefficient compared to FFT-based methods, this approach serves as a simple, exact, and brute-force baseline. It preserves documents boundaries and maps cleanly to GEMM kernels, making it highly competitive for processing extremely short sequences where the overhead of FFTs is unjustified, or for validating the numerical outputs of more complex algorithms. 
+
+3.3 Synthesizing the Solution Space 
+
+The development of these alternatives clearly bounds the design space for packed sequence con-volutions. The Full-Matrix approach ( O(N 2)) maps perfectly to hardware GEMMs but is too computationally expensive for long contexts. Conversely, the RubiConv-CooleyTukey approach (O(N log N )) is algorithmically optimal but hostile to modern accelerator memory hierarchies. Therefore, RubiConv—with its Θ( N 3/2) complexity—emerges as the most pragmatic solution. It is the only method that successfully marries theoretical boundary preservation with the dense GEMM operations that modern AI accelerators demand. 
+
+## 4 Experimental Evaluation 
+
+4.1 Runtime and Efficiency 
+
+In this section we analyze the efficiency of RubiConv by comparing it to other convolution baselines as well as splash attention. 
+
+4.1.1 Experimental Setup Baselines We analyze the scaling behavior of RubiConv execution time with respect to sequence length, model dimension, and convolution filter size, comparing it against the following baselines: 1. jnp.convolve . This baseline processes a packed sequence by iterating through each document. For a given document, it masks all tokens belonging to other documents and applies a causal convolution using the JAX NumPy function jnp.convolve . This ap-proach correctly handles document boundaries but incurs the cost of performing a sequen-tial loop over the documents in the packed sequence. 2. jax.lax.conv . This method is identical to the jnp.convolve 
+
+baseline but substitutes the convolution operation with JAX’s optimized 
+
+jax.lax.conv general dilated function. 3. Splash Attention. As a hardware performance baseline, we compare against Splash Atten-tion, a highly optimized Pallas software kernel for TPUs (OpenXLA Contributors, 2024) that maintains standard attention computations within on-chip SRAM. Although architec-turally distinct from a convolution, this comparison contextualizes the runtime of RubiConv against one of the fastest and most widely adopted layers in large-scale language models 5.
+
+> 5If the ultimate goal of RubiConv is to unlock convolutional architecture blocks that truly serve as an alternative to the transformer’s global attention block, then we would like to ensure its efficiency is comparable or better.
+
+6Benchmarking protocol Unless otherwise specified, all runtime measurements for convolution algorithms evaluate a single convolution operation within a single network layer, mirroring a stan-dard language model training setup. The input is a tensor X ∈ RL×D (where L is the sequence length and D is the model’s dimension), and the convolution filter is represented as F ∈ RLF ×D
+
+(where LF is the filter length). The convolution is applied independently to each of the D feature channels, acting as a depthwise convolution. All runtime scaling experiments are conducted on a system with 4 TPU v7 devices. RubiConv and the baselines are sharded along the sequence di-mension. When RubiConv reshapes the sequence into a 2D matrix (mapping sequence length to rows and columns), the sequence-axis sharding translates to column-axis sharding. Consequently, the algorithm’s subsequent row-wise matrix multiplications execute locally, while the column-wise multiplications are automatically sharded across TPUs. To obtain stable and reliable measurements, we report the mean runtime over 5 trials, preceded by 5 untimed warm-up iterations, and 95% confidence intervals. For each configuration of batch size, sequence length, and model dimension, identical input data was used across all algorithms to ensure a fair comparison. 
+
+Data To ensure our scaling experiments are representative of real-world scenarios, we established an empirical document length distribution. We derived this distribution by tokenizing a 10B-token sample of the 1.3T-token FineWeb-Edu dataset [14] using the Gemma 3 [18] tokenizer. While the token values in our experimental dataset are synthetic, the document boundaries are determined by sampling document lengths from this empirical distribution. 
+
+4.1.2 Results 
+
+Algorithm 1 decomposes RubiConv into data pre-processing and an FFT component. As de-tailed in Appendix B, pre-processing— such as computing document-based permutations and DFT matrices— is dependent only on the current segment ids. In language models, this overhead amor-tizes efficiently across multiple convolutional layers. Hence we report two benchmarks: RubiConv (Total) for the full pipeline, and RubiConv (Conv Only) for the isolated FFT execution. 
+
+Sequence length scaling We measure the scaling of different convolution algorithms with respect to sequence length up to 218 , keeping the model dimension constant and the convolution filter size equal to the sequence length. RubiConv performance is measured with documents padded to a mul-tiple of k = 256 . Figure 2 shows that RubiConv exhibits superior asymptotic scaling compared to iterative convolution baselines. While brute-force methods are competitive for extremely short se-quences, RubiConv quickly overtakes them, consistently outperforming all competing convolutional methods across standard context lengths. On the single dimensional example we see that for con-text lengths exceeding 216 , RubiConv is faster than Splash Attention, empirically demonstrating the feasibility of our method in practical, large-scale training regimes. This advantage doesn’t appear with higher model dimension (1024), however for long enough sequences (sequence length 260k) RubiConv is competitive with splash attention. 
+
+Model dimension scaling We measure the scaling of different convolution algorithms with respect to the model dimension D, keeping the sequence length and convolution filter size equal to 214 . Ru-biConv performance is measured with documents padded to a multiple of k = 256 , and Splash Attention performance is measured with the head dimension equal to min(256 , D ). Figure 3a il-lustrates that RubiConv scales efficiently with the model dimension, maintaining a performance advantage over the convolution baselines. 
+
+Convolution filter size scaling We measure the scaling of different convolution algorithms with respect to the convolution filter size, keeping the sequence length equal to 214 and the model di-mension equal to 1024 . RubiConv performance is measured with documents padded to a multiple of k = 256 . Figure 3b shows that, unlike other convolutional baselines, RubiConv runtime remains computationally tractable with long filter sizes, making it suitable for extremely long convolutions. 
+
+4.2 The Necessity of Boundary-Aware Convolutions 
+
+Packing documents into a single sequence for efficient training causes standard convolutions to mix representations across boundaries. Evaluating a hybrid model on synthetic packed-sequence tasks reveals that standard convolutions conflate independent contexts, dropping accuracy to near-chance 7(a) Scaling with sequence length ( L), with filter size LF = L and model dimension D = 1 .     
+
+> (b) Scaling with sequence length ( L), with filter size LF=L, model dimension D= 1024 .
+
+Figure 2: Scaling of different convolution algorithms with respect to sequence length.          
+
+> (a) Scaling with model dimension ( D) with se-quence length L= 2 14 , filter size LF= 2 14 .
+> (b) Scaling with filter size ( F) with sequence length L= 2 14 , model dimension D= 1024 .
+
+Figure 3: Scaling of different algorithms with respect to convolution filter size and model dimension. at high packing densities. In contrast, boundary-respecting convolutions sustain high accuracy, prov-ing that strict boundary preservation is a functional prerequisite for reliable reasoning. 
+
+Tasks and Training We evaluate two synthetic tasks (Table 1): Noisy Recall [16] and Associative Retrieval [1]. Models train on sequences of 24 dynamically generated, concatenated documents. For Noisy Recall the data consists of a target symbol and a variable number of distractors, e.g. 
+
+[v, n1 . . . n k, ASK , v] and the task is to recall the target symbol v. Noisy Recall tightly packs variable-length documents, right-padding to a maximum length. Associative Retrieval uses fixed-length documents with entity–attribute pairs, e.g. [N1 likes A1. . . . What likes Nq ? →
+
+Aq ], sampled without replacement to prevent contradictions; query targets are chosen uniformly at random. To enable boundary-aware masking, models receive per-position document IDs. Cross-entropy loss is computed exclusively at the answer position per document and AdamW optimizer is used ( β1=0 .9, β2=0 .95 , weight decay 0.01 , LR 3×10 −3). Experiments were executed on a single Google Cloud TPU v2. Performance is evaluated via answer accuracy (argmax prediction matching the target) over 8 test batches, reporting averages and 95% confidence intervals across 5 seeds. 8Model Architecture We employ a lightweight hybrid architecture interleaving standard multi-head causal self-attention blocks with learned long-convolution layers. For the convolutions, we use learned depthwise causal filters of shape (T, d ), where T is the sequence length and d is the model width. We use sequence-length filters to evaluate the convolution’s capacity for long-range dependency modeling. Token and positional embeddings are added at the input, and a final layer norm and linear head project to next-token logits. For both tasks, we train a 2-layer model with model dimension d = 64 , 4 attention heads and training batch size of 4.NOISY RECALL ASSOCIATIVE RETRIEVAL                          
+
+> Document format [v, n 1. . . n k,ASK , v ][N1likes A1.. . . What likes Nq?→Aq]
+> Answer token Target symbol vAttribute name Aq
+> Documents per sequence 24 24
+> Vocab size 258 (256 symbols + 2 special) 15 (5 names + 5 attrs + 5 special)
+> Max distractors / facts k≤30 distractors exactly 2 facts per doc
+
+Table 1: Synthetic tasks configurations. 
+
+Convolution Modes To isolate the effect of convolution boundary mixing, we ablate two vari-ants while keeping the architecture and standard causal attention fixed. Crucially, attention crosses document boundaries in both settings; therefore, any performance discrepancy is solely attributable to the convolution layer. We compare a boundary-respecting variant, where document-ID meta-data masks the kernel to restrict aggregation to intra-document tokens, against a document-mixing 
+
+variant, which applies the kernel causally across the entire packed sequence. 
+
+Results As illustrated in Figure 4, boundary-respecting convolutions demonstrate rapid and stable convergence, achieving full accuracy well before the end of the training window on both tasks. In contrast, standard document-mixing convolutions severely delay learning, exhibit high variance, and fail to reach comparable accuracy within 20,000 steps.  
+
+> (a) Noisy Recall accuracy. (b) Associative Retrieval accuracy.
+
+Figure 4: Answer accuracy vs training duration comparison for boundary respecting and documents mixing convolutions. We report the average of 5 training runs with 95% confidence intervals. 
+
+## 5 Conclusion 
+
+We have addressed the critical challenge of applying fast, FFT-based convolutions to the packed se-quences commonly used in large-scale training pipelines. While standard FFTs are asymptotically efficient, their circular nature makes them incompatible with this data format, creating a gap be-tween their theoretical promise and practical utility. This paper introduces RubiConv , a novel and performant algorithm that definitively solves this problem. By adapting the matrix-decomposition approach of Bailey’s FFT, RubiConv performs correct, boundary-respecting convolutions on packed data without resorting to inefficient iterative processing or wasteful padding. The core innovation of RubiConv is its reformulation of the packed convolution problem as a series of parallel matrix multiplications. By structuring the second DFT operator as a block-diagonal 
+
+9matrix , we mathematically guarantee that no information is mixed across document boundaries, all within a single computational pass. This approach maps elegantly to modern hardware accelerators, leveraging highly optimized GEMM kernels to achieve significant speedups over existing baselines and attention mechanisms. While its theoretical complexity is Θ( N 3/2), our experiments confirm it is the most practical and efficient solution for the sequence lengths found in real-world workloads. To provide a complete theoretical analysis, we also presented alternative boundary-preserving for-mulations, including an asymptotically optimal O(N log N ) Cooley-Tukey variant (RubiConv-CooleyTukey) and a direct O(N 2) matrix baseline. By providing a correct, performant, and scalable solution for this ubiquitous data format, RubiConv bridges the final gap to deploying long convo-lutional models efficiently at scale. This work paves the way for the wider adoption and continued improvement of a powerful class of architectures for long-sequence modeling. 10 References 
+
+[1] Jimmy Ba, Geoffrey E Hinton, Volodymyr Mnih, Joel Z Leibo, and Catalin Ionescu. Using fast weights to attend to the recent past. Advances in neural information processing systems ,29, 2016. [2] David H. Bailey. FFTs in external or hierarchical memory. In Proceedings of the 1989 ACM/IEEE Conference on Supercomputing , pages 234–242, 1989. [3] David H Bailey. FFTs in external or hierarchical memory. The Journal of Supercomputing ,4(1):23–35, 1990. [4] James W Cooley and John W Tukey. An algorithm for the machine calculation of complex fourier series. Mathematics of Computation , 19(90):297–301, 1965. [5] Daniel Y Fu, Simran Arora, Jessica Grogan, Isys Johnson, Sabri Eyuboglu, Armin W Thomas, Benjamin Spector, Michael Poli, Atri Rudra, and Christopher R´ e. Monarch mixer: A sim-ple sub-quadratic GEMM-based architecture. In Advances in Neural Information Processing Systems , 2023. [6] Daniel Y. Fu, Hermann Kumbong, Eric Nguyen, and Christopher R´ e. FlashFFTConv: Efficient Convolutions for Long Sequences with Tensor Cores. arXiv preprint arXiv:2311.05908 , 2023. [7] Robert M. Gray. Toeplitz and Circulant Matrices: A Review. Foundations and Trends in Communications and Information Theory , 2(3):155–239, 2006. [8] Albert Gu and Tri Dao. Mamba: Linear-time sequence modeling with selective state spaces. 
+
+arXiv preprint arXiv:2312.00752 , 2023. [9] Albert Gu, Karan Goel, and Christopher R´ e. Efficiently modeling long sequences with struc-tured state spaces. In International Conference on Learning Representations , 2022. [10] Anatolii Karatsuba and Yuri Ofman. Multiplication of many-digital numbers by automatic computers. Doklady Akademii Nauk SSSR , 145(2):293–294, 1962. [11] Aakash Lahoti, Kevin Y Li, Berlin Chen, Caitlin Wang, Aviv Bick, J. Zico Kolter, Tri Dao, and Albert Gu. Mamba-3: Improved sequence modeling using state space principles. In 
+
+International Conference on Learning Representations , 2026. [12] Barak Lenz, Opher Lieber, Amos Arazi, Amit Bergman, Alex Manevich, Ben Peleg, and Barak Aviram. Jamba: Hybrid transformer-mamba language models. In The Thirteenth International Conference on Learning Representations , 2025. [13] Y. Isabel Liu, Windsor Nguyen, Yagiz Devre, Evan Dogariu, Anirudha Majumdar, and Elad Hazan. FlashSTU: Fast spectral transform units. arXiv preprint arXiv:2409.10489 , 2024. [14] Guilherme Penedo, Hynek Kydl´ ıˇ cek, Anton Lozhkov, Margaret Mitchell, Colin A Raffel, Le-andro Von Werra, Thomas Wolf, et al. The FineWeb datasets: Decanting the web for the finest text data at scale. Advances in Neural Information Processing Systems , 37:30811–30849, 2024. [15] Michael Poli, Stefano Massaroli, Eric Nguyen, Daniel Y Fu, Tri Dao, Stephen Baccus, Yoshua Bengio, Stefano Ermon, and Christopher R´ e. Hyena hierarchy: Towards larger convolutional language models. In International Conference on Machine Learning . PMLR, 2023. [16] Michael Poli, Jue Wang, Stefano Massaroli, et al. Mechanistic design and scaling of hybrid architectures. arXiv preprint arXiv:2403.17844 , 2024. [17] Jon Saad-Falcon, Daniel Y Fu, Simran Arora, Neel Guha, and Christopher R´ e. Benchmark-ing and building long-context retrieval models with LoCo and M2-BERT. In International Conference on Machine Learning , 2024. 11 [18] Gemma Team, Aishwarya Kamath, Johan Ferret, Shreya Pathak, Nino Vieillard, Ramona Mer-hej, Sarah Perrin, Tatiana Matejovicova, Alexandre Ram´ e, Morgane Rivi` ere, Louis Rouil-lard, Thomas Mesnard, Geoffrey Cideron, Jean bastien Grill, Sabela Ramos, Edouard Yvinec, Michelle Casbon, Etienne Pot, Ivo Penchev, Ga¨ el Liu, Francesco Visin, Kathleen Kenealy, Lu-cas Beyer, Xiaohai Zhai, Anton Tsitsulin, Robert Busa-Fekete, Alex Feng, Noveen Sachdeva, Benjamin Coleman, Yi Gao, Basil Mustafa, Iain Barr, Emilio Parisotto, David Tian, Matan Eyal, Colin Cherry, Jan-Thorsten Peter, Danila Sinopalnikov, Surya Bhupatiraju, Rishabh Agarwal, Mehran Kazemi, Dan Malkin, Ravin Kumar, David Vilar, Idan Brusilovsky, Jiaming Luo, Andreas Steiner, Abe Friesen, Abhanshu Sharma, Abheesht Sharma, Adi Mayrav Gilady, Adrian Goedeckemeyer, Alaa Saade, Alex Feng, Alexander Kolesnikov, Alexei Bendebury, Alvin Abdagic, Amit Vadi, Andr´ as Gy¨ orgy, Andr´ e Susano Pinto, Anil Das, Ankur Bapna, Antoine Miech, Antoine Yang, Antonia Paterson, Ashish Shenoy, Ayan Chakrabarti, Bilal Piot, Bo Wu, Bobak Shahriari, Bryce Petrini, Charlie Chen, Charline Le Lan, Christopher A. Choquette-Choo, CJ Carey, Cormac Brick, Daniel Deutsch, Danielle Eisenbud, Dee Cattle, Derek Cheng, Dimitris Paparas, Divyashree Shivakumar Sreepathihalli, Doug Reid, Dustin Tran, Dustin Zelle, Eric Noland, Erwin Huizenga, Eugene Kharitonov, Frederick Liu, Gagik Amirkhanyan, Glenn Cameron, Hadi Hashemi, Hanna Klimczak-Pluci´ nska, Harman Singh, Harsh Mehta, Harshal Tushar Lehri, Hussein Hazimeh, Ian Ballantyne, Idan Szpektor, Ivan Nardini, Jean Pouget-Abadie, Jetha Chan, Joe Stanton, John Wieting, Jonathan Lai, Jordi Or-bay, Joseph Fernandez, Josh Newlan, Ju yeong Ji, Jyotinder Singh, Kat Black, Kathy Yu, Kevin Hui, Kiran Vodrahalli, Klaus Greff, Linhai Qiu, Marcella Valentine, Marina Coelho, Marvin Ritter, Matt Hoffman, Matthew Watson, Mayank Chaturvedi, Michael Moynihan, Min Ma, Nabila Babar, Natasha Noy, Nathan Byrd, Nick Roy, Nikola Momchev, Nilay Chauhan, Noveen Sachdeva, Oskar Bunyan, Pankil Botarda, Paul Caron, Paul Kishan Rubenstein, Phil Culliton, Philipp Schmid, Pier Giuseppe Sessa, Pingmei Xu, Piotr Stanczyk, Pouya Tafti, Rakesh Shivanna, Renjie Wu, Renke Pan, Reza Rokni, Rob Willoughby, Rohith Vallu, Ryan Mullins, Sammy Jerome, Sara Smoot, Sertan Girgin, Shariq Iqbal, Shashir Reddy, Shruti Sheth, Siim P˜ oder, Sijal Bhatnagar, Sindhu Raghuram Panyam, Sivan Eiger, Susan Zhang, Tianqi Liu, Trevor Yacovone, Tyler Liechty, Uday Kalra, Utku Evci, Vedant Misra, Vincent Roseberry, Vlad Feinberg, Vlad Kolesnikov, Woohyun Han, Woosuk Kwon, Xi Chen, Yin-lam Chow, Yuvein Zhu, Zichuan Wei, Zoltan Egyed, Victor Cotruta, Minh Giang, Phoebe Kirk, Anand Rao, Kat Black, Nabila Babar, Jessica Lo, Erica Moreira, Luiz Gustavo Mar-tins, Omar Sanseviero, Lucas Gonzalez, Zach Gleicher, Tris Warkentin, Vahab Mirrokni, Evan Senter, Eli Collins, Joelle Barral, Zoubin Ghahramani, Raia Hadsell, Yossi Matias, D. Scul-ley, Slav Petrov, Noah Fiedel, Noam Shazeer, Oriol Vinyals, Jeff Dean, Demis Hassabis, Ko-ray Kavukcuoglu, Clement Farabet, Elena Buchatskaya, Jean-Baptiste Alayrac, Rohan Anil, Dmitry, Lepikhin, Sebastian Borgeaud, Olivier Bachem, Armand Joulin, Alek Andreev, Cas-sidy Hardin, Robert Dadashi, and L´ eonard Hussenot. Gemma 3 technical report, 2025. [19] Haoran Xu, Ziqian Liu, Rong Fu, Zhongling Su, Zerui Wang, Zheng Cai, Zhilin Pei, and Xingcheng Zhang. Packmamba: Efficient processing of variable-length sequences in mamba training. arXiv preprint arXiv:2408.03865 , 2024. 12 A Appendix 
+
+A.1 The Crossover Point of Algorithmic vs Hardware Efficiency 
+
+A central motivation for using FFT-based convolutions is their favorable asymptotic complexity of 
+
+O(N log N ) compared to the O(N 2) of direct convolution or standard attention mechanisms. How-ever, in practice, this theoretical advantage is mediated by the underlying hardware. Modern accel-erators like GPUs and TPUs have highly optimized, low-level kernels for dense matrix-matrix and matrix-vector multiplications, which can outperform algorithmically superior methods at smaller problem sizes. To empirically ground the need for efficient, long-sequence convolution algorithms, we conducted an experiment to identify the “crossover point” where the algorithmic efficiency of the Fast Fourier Transform overtakes the raw performance of a hardware-optimized dense matrix-vector multiplica-tion. 
+
+Experimental Setup 
+
+We benchmarked three distinct operations on CPU, GPU, and TPU backends across a range of sequence lengths ( N = 2 8 to N = 2 16 ): 1. Random Matrix-Vector Multiplication ( O(N 2)): A multiplication between a dense, un-structured random matrix and a vector. This measures the baseline performance of a brute-force, hardware-optimized GEMV (General Matrix-Vector) operation. 2. DFT Matrix-Vector Multiplication ( O(N 2)): A multiplication using an explicitly con-structed, dense DFT matrix. This isolates the effect of matrix structure, if any, without leveraging a specialized algorithm. 3. FFT Algorithm ( O(N log N )): The standard, highly optimized JAX FFT implementation, which uses an efficient Cooley-Tukey-style algorithm. 
+
+Results and Analysis 
+
+The results, shown below, clearly illustrate the trade-off between hardware specialization and algo-rithmic complexity.         
+
+> (a) Performance on CPU. The algo-rithmic advantage of the FFT is ap-parent even at relatively small se-quence lengths, with a crossover point occurring early.
+> (b) Performance on GPU (NVIDIA T4). The crossover point is pushed to a larger sequence length due to the GPU’s parallelism, but the FFT’s superior scaling eventually dominates.
+> (c) Performance on TPU (v3). The effect is even more pronounced, with the crossover at a very large sequence length. For modern LLMs, the O(Nlog N)FFT is es-sential.
+
+Figure 5: Performance comparison of matrix-vector multiplication methods on different hard-ware architectures. These plots show the point at which the algorithmic efficiency of the FFT (O(N log N )) overcomes the hardware optimization for dense matrix operations ( O(N 2)). These results confirm that while hardware optimizations can make brute-force methods competitive for shorter sequences, algorithmic efficiency is paramount for scaling to the long contexts required by state-of-the-art models. This provides a strong motivation for developing methods like RubiConv, which make the theoretical efficiency of FFT-based convolutions a practical reality in production settings. 13 A.2 Formal RubiConv Guarantee: Proof of Theorem 2.1 
+
+Proof of Theorem 2.1. From Algorithm 1 we have the following notation and assumptions: • We have n vectors x(1) , . . . , x(n) each with length L′ 
+
+> i
+
+= k × mi.• ωn is the n-th root of unity exp(2 πi/n )
+
+• Fk is the k × k matrix with (a, b )-th entry ωab k .• X(i) is the k × mi matrix of x(i) reshaped in row-major order, 
+
+X(i) =
+
+
+
+x(i)0 x(i)1 . . . x(i)
+
+> mi−1
+
+x(i) 
+
+> mi
+
+x(i) 
+
+> mi+1
+
+. . . x(i)2mi−1
+
+... ...
+
+x(i)(k−1) mi x(i)
+
+> km i−1
+
+
+
+• T(i) is the k × mi twiddle-matrix with (a, b )-th entry ωab L′
+
+> i
+
+First we show that it suffices to consider the result of a single document since the algorithm is equivalent to an algorithm that handles each separately. Indeed, first it constructs the matrix 
+
+Y ← X(1) X(2) . . . X(n).
+
+Then it left multiplies by Fk,
+
+Y′ ← FkY = FkX(1) FkX(2) . . . FkX(n).
+
+Next it applies the twiddle factors through element-wise multiplication. The twiddle matrix is T =T(1) T(2) . . . T(n) where each T(i) has the same dimensions as X(i). Therefore 
+
+Y′′ ← T ⊙ Y′ = T(1) ⊙ FkX(1) T(2) ⊙ FkX(2) . . . T(n) ⊙ FkX(n) .
+
+Next it right multiplies by M2
+
+M2 = BlockDiagonal [Fm1 , Fm2 , . . . , Fmn ] = 
+
+
+
+Fm1
+
+Fm2
+
+. . .
+
+Fmn
+
+ .
+
+Notice that Fmi has dimension mi × mi and T(i) ⊙ FkX(i) has dimension k × mi. Therefore, 
+
+Y′′′ ← Y′′ M2 =
+
+h 
+
+T(1) ⊙ FkX(1) 
+
+Fm1
+
+
+
+T(2) ⊙ FkX(2) 
+
+Fm2 . . . 
+
+
+
+T(n) ⊙ FkX(n)
+
+Fmn
+
+i
+
+.
+
+Therefore, it suffices to consider 
+
+
+
+T(i) ⊙ FkX(i)
+
+Fmi for a single document since they are non-interacting. This expression is Bailey’s algorithm for the L′ 
+
+> i
+
+= ( k × mi)-point DFT, which is guaranteed to output a matrix 
+
+
+
+T(i) ⊙ FkX(i)
+
+Fmi =
+
+
+
+x0 xk . . . x(mi−1) k
+
+x1 xk+1 . . . x(mi−1) k+1 
+
+... ...
+
+xk−1 x2k−1 . . . xmik−1
+
+ ,
+
+such that xj = PL′ 
+
+> i−1
+> ℓ=0
+
+ωjℓ L′
+
+> i
+
+x(i) 
+
+> ℓ
+
+. Therefore, if we flatten the above expression in column-major order we get x0 . . . xL′
+
+> i−1
+
+ which is the L′
+
+> i
+
+-point DFT of x(i). Finally, by definition P2 is the map which flattens Y′′′ in column-major order for each document separately and concatenates them so that they maintain the packing order. 14 Next we prove the computational complexity analysis. First we note that the computational com-plexity of the data pre-processing step is bounded by the size of the outputs it must create. Given fixed value k, filter length LF , and document lengths L1, . . . , L n (for a fixed batch), Rubi-Conv increases each document length by at most Li + k so L′ 
+
+> i
+
+≤ 2Li + k and mi ≤ 2Li/k + 1 .Let Ltotal = L1 + · · · + Ln and mtotal := Pni=1 mi ≤ (2 Ltotal /k ) + n. Ignoring precision, T
+
+requires at most O(km total ) bits, M2 requires at most O(m2
+
+> total
+
+) bits, the map P1 can be repre-sented in O(Ltotal + kn ) bits, and the map P2 can be represented in O(km total ) bits. Therefore the data preprocessing has complexity and memory requirement (per batch and ignoring precision) of O  Ltotal + kn + ( Ltotal /k )2 + n2 + 2 Ltotal n/k . Picking k = O(√Ltotal ) gives a complexity of 
+
+O
+
+
+
+Ltotal + n2 + L1/2
+
+> total
+
+n
+
+
+
+. Then as long as n ≤ O(√Ltotal ) we have that the data preprocessing has cost O(Ltotal ).Next we consider the cost of the main RubiConv algorithm. Assume a standard dense matrix multi-plication with cubic cost. Observe that X and T have shape k × mtotal , M1 has shape k × k, and M2
+
+has shape mtotal × mtotal Therefore the main costs of the algorithm are as follows: • Left multiply by the first k-point DFT matrix M1 costs Θ( k2mtotal )
+
+• Element wise multiply by adaptive twiddle matrix T costs Θ( km total )
+
+• Right multiply by the adaptive block-diagonal DFT matrix M2 costs Θ( km 2
+
+> total
+
+)
+
+Therefore the total cost is Θ  k2mtotal + km 2
+
+> total
+
+. Assume we pick k = L1/2
+
+> total
+
+. Using that mtotal ≤
+
+(2 Ltotal /k ) + n yields that the complexity is Θ
+
+
+
+L3/2 
+
+> total
+
++ nL total + n2L1/2
+
+> total
+
+
+
+. Therefore, whenever the number of packed documents n is bounded by L1/2 
+
+> total
+
+we obtain total cost Θ
+
+
+
+L3/2
+
+> total
+
+
+
+, which is the same cost as Bailey’s algorithm if n = 1 and no packing were present. 15 B Implementation Details of RubiConv 
+
+Algorithm 1 only gives a description of the pseudcode, however several additional steps are required to make it performant when implemented on a TPU. These are detailed in this section. 
+
+2D Frequency-Domain Reshaping. To minimize computational overhead and avoid unnecessary memory operations, our implementation maintains the data in its two-dimensional matrix form fol-lowing the forward RubiConv transform. Rather than unpadding and flattening the data back to its original 1D formulation, the element-wise multiplication between the batch and filter representa-tions is performed directly within this 2D frequency domain. However, projecting this product back via the inverse transform (iFFT) requires a structural realignment; the 2D matrix must be reshaped to ensure the data sequences are correctly ordered prior to the inverse operations. The explicit al-gorithm detailing the construction of this intermediate reshaping matrix is described in Algorithm 3. 
+
+Algorithm 3 RubiConv: Pre-IFFT Reshaping Map Construction  
+
+> 1:
+
+function RUBI CONV -IFFT-R ESHAPE -M AP (document lengths, k) 
+
+> 2:
+
+for j = 1 , . . . , batch size do  
+
+> 3:
+
+[L1, . . . , L nj ] ← document lengths [j] 
+
+> 4:
+
+cstart ← 1 ▷ Initialize global column tracker  
+
+> 5:
+
+for i = 1 , . . . , n j do  
+
+> 6:
+
+r ← (k − (Li (mod k))) (mod k) 
+
+> 7:
+
+mi ← (Li + r)/k ▷ Number of columns for document i 
+
+> 8:
+
+for u = 1 , . . . , k do ▷ Iterate over rows  
+
+> 9:
+
+for v = 1 , . . . , m i do ▷ Iterate over local columns  
+
+> 10:
+
+c ← cstart + v − 1 ▷ Global source column index  
+
+> 11:
+
+▷ Calculate 1D frequency index f (0-indexed) from column-major FFT output  
+
+> 12:
+
+f ← (v − 1) · k + ( u − 1)  
+
+> 13:
+
+▷ Map f to row-major destination coordinates (u′, v ′) for the IFFT  
+
+> 14:
+
+u′ ← ⌊ f /m i⌋ + 1  
+
+> 15:
+
+v′ ← (f (mod mi)) + 1  
+
+> 16:
+
+c′ ← cstart + v′ − 1 ▷ Global destination column index  
+
+> 17:
+
+▷ Store the source coordinate (u, c ) at the destination (u′, c ′) 
+
+> 18:
+
+Prow [j]( u′, c ′) ← u 
+
+> 19:
+
+Pcol [j]( u′, c ′) ← c 
+
+> 20:
+
+end for  
+
+> 21:
+
+end for  
+
+> 22:
+
+cstart ← cstart + mi ▷ Advance global column tracker  
+
+> 23:
+
+end for  
+
+> 24:
+
+end for  
+
+> 25:
+
+return P row , Pcol  
+
+> 26:
+
+end function Precomputation of Adaptive Structures for Multi-Layer Models To accelerate model training and eliminate redundant computations in a multi-layer architecture, we optimize the generation of data-dependent components. A key computational challenge is that the twiddle matrix T and the second, block-diagonal DFT matrix M2 are adaptive —they depend on the specific lengths of the documents packed within the input batch. To avoid runtime overhead during training, the required matrix construction and data preparation (including the grid reshaping maps Mrow , Mcol ) are per-formed only once as a preprocessing step. Since these structures depend exclusively on the static document boundaries of the batch, they remain invariant across all layers. Sharing these precom-puted structures across the network fully amortizes the construction cost, ensuring that the adaptive nature of the transform accelerates, rather than bottlenecks, overall training throughput. 
+
+Optimizing Dual Real FFTs via Conjugate Symmetry To eliminate the overhead of computing separate forward transforms for a real-valued input batch B and filter F, we pack them into a single 16 complex tensor Z = B + iF and apply a single forward pass of RubiConv-FFT (i.e., the core frequency operations from Algorithm 1, bypassing the P1 and P2 reshaping maps). Because real-valued signals exhibit conjugate symmetry ( B(j) = B∗(−j) and F(j) = F∗(−j)), we isolate the individual transforms directly from Z(j) using O(N ) arithmetic, bypassing a second FFT transform entirely: 
+
+B(j) = 12 (Z(j) + Z∗(−j)) , F(j) = 12i (Z(j) − Z∗(−j)) (B.1) To compute the inverse transform after point-wise frequency multiplication, we reuse the forward kernel via the standard identity IFFT (X) = 1 
+
+> N
+
+FFT (X∗)∗. The full procedure is detailed in Algorithm 4. 
+
+Algorithm 4 Optimized RubiConv Convolution (Real-to-Complex Packing)  
+
+> 1:
+
+function OPTIMIZED -R UBI CONV -C ONV (B, F, document lengths , P1, Pifft row , Pifft col , P2, k ) 
+
+> 2:
+
+▷ 1. Padding & Packing (Implicit Batch Dimension)  
+
+> 3:
+
+Bpad , Fpad ← PAD -T O-G RID (B, F, document lengths , k ) 
+
+> 4:
+
+Z ← Bpad + i Fpad ▷ Pack real signals into a single complex tensor  
+
+> 5:
+
+▷ 2. Forward FFT  
+
+> 6:
+
+Z′ ← RUBI CONV -FFT (ℜ(Z), ℑ(Z), document lengths , k ) ▷ Returns 2D grid (Alg 1)  
+
+> 7:
+
+▷ 3. Per-Document Frequency Reversal & Symmetry Recovery  
+
+> 8:
+
+▷ For document d with length Nd = Md × Cd, grid indices m ∈ [0 , k ) and c ∈ [0 , C d): 
+
+> 9:
+
+Zrev (< m, c > ) ← Z′ (−m) mod k, (−c − 1m> 0) mod Cd(c)
+
+ 
+
+> 10:
+
+B′ ← 12
+
+
+
+Z′ + Zrev  
+
+> 11:
+
+F′ ← − i
+
+> 2
+
+
+
+Z′ − Zrev  
+
+> 12:
+
+▷ 4. Point-wise Multiplication  
+
+> 13:
+
+S ← B′ ⊙ F′ 
+
+> 14:
+
+▷ 5. Pre-IFFT Reshaping & Inverse FFT  
+
+> 15:
+
+Sreshaped ← S(Pifft row , Pifft col ) 
+
+> 16:
+
+Y ← RUBI CONV -FFT (ℜ(Sreshaped ), −ℑ (Sreshaped ), document lengths , k ) 
+
+> 17:
+
+▷ 6. Final Scaling & Unpadding  
+
+> 18:
+
+Yscaled (< m, c > ) ← ℜ (Y(< m, c > )) Nd(c) ▷ d (c) maps column to document index  
+
+> 19:
+
+return P 2(Yscaled ) 
+
+> 20:
+
+end function Arithmetic Intensity and Karatsuba Multiplication Because RubiConv is fundamentally for-mulated via dense matrix multiplications (GEMMs) of complexity O(N 3/2), these operations dom-inate the execution time. To optimize these internal GEMMs, we apply the Karatsuba algorithm [10]. This reduces the required real multiplications from four to three per complex product, substituting them with cheaper additions and lowering the overall arithmetic intensity of the transform. We re-tain standard complex multiplication for the element-wise twiddle factor application, as its O(N )
+
+complexity does not justify the addition overhead of Karatsuba. At the macro level, packing the batch and filter into a single forward pass directly halves this dom-inating computational overhead. More crucially for bandwidth-bound accelerators, executing one transform instead of two halves the number of heavy kernel launches and global memory accesses. Finally, compilers like XLA aggressively fuse the O(N ) frequency-reversal and arithmetic recovery steps alongside the Karatsuba additions, ensuring these auxiliary operations execute entirely within fast on-chip memory with negligible latency. 
+
+Optimal Document Padding As described in Section 2, RubiConv requires padding all docu-ments to a multiple of k. We ablate on the optimal value of k for each sequence length by considering a fixed filter size of 215 and a fixed model dimension of 1024 .Figure 6 shows that for packed sequences Ltotal ≤ 215 the optimal value is k = 256 and for se-quences 216 ≤ Ltotal ≤ 218 the optimal value is k = 512 .17 Figure 6: RubiConv runtime across sequence length for different values of k, the greatest common divisors for padded documents. 18 C Alternative Boundary-Preserving Formulations 
+
+Section 3 describes RubiConv-CooleyTukey, a boundary respecting algorithm for convolutions that adapts the classic iterative Cooley-Tukey FFT algorithm. We include the algorithm illustration in Figure 7. 
+
+Figure 7: Visual representation of RubiConv-CooleyTukey. The top layer represents the original document. An arrow without a label represents point-wise multiplication with 1, otherwise it repre-sents multiplication with the label. 19
