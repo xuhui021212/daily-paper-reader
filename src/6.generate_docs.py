@@ -36,7 +36,7 @@ RANGE_DATE_RE = re.compile(r"^(\d{8})-(\d{8})$")
 
 # LLM 配置（使用 llm.py 内的 BLT 客户端）
 BLT_API_KEY = os.getenv("BLT_API_KEY")
-BLT_MODEL = os.getenv("BLT_SUMMARY_MODEL", "gemini-3-flash-preview")
+BLT_MODEL = os.getenv("BLT_SUMMARY_MODEL", "gemini-2.5-flash")
 LLM_CLIENT = None
 if BLT_API_KEY:
     LLM_CLIENT = BltClient(api_key=BLT_API_KEY, model=BLT_MODEL)

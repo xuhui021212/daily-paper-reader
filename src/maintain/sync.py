@@ -37,7 +37,7 @@ SCRIPT_DIR = os.path.dirname(__file__)
 ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 TODAY_STR = str(os.getenv("DPR_RUN_DATE") or "").strip() or datetime.now(timezone.utc).strftime("%Y%m%d")
 CONFIG_FILE = os.path.join(ROOT_DIR, "config.yaml")
-DEFAULT_EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+DEFAULT_EMBED_MODEL = os.getenv("DPR_EMBED_MODEL") or "BAAI/bge-small-en-v1.5"
 SYNC_START_TS = time.time()
 
 

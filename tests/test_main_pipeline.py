@@ -74,7 +74,7 @@ class MainPipelineTest(unittest.TestCase):
         self.assertEqual(env["LLM_PRIMARY_BASE_URL"], "https://summary.example.com/v1")
         self.assertEqual(env["BLT_SUMMARY_MODEL"], "gpt-4.1-mini")
 
-    def test_main_skips_rerank_for_non_blt_base_and_builds_fallback(self):
+    def test_main_runs_rerank_for_non_blt_base(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             src_dir = root / "src"
@@ -109,16 +109,8 @@ class MainPipelineTest(unittest.TestCase):
                 self.mod.main()
 
             labels = [item[0] for item in calls]
-            self.assertNotIn("Step 3 - Rerank", labels)
+            self.assertIn("Step 3 - Rerank", labels)
             self.assertIn("Step 4 - LLM refine", labels)
-
-            rerank_path = root / "archive" / token / "rank" / f"arxiv_papers_{token}.json"
-            self.assertTrue(rerank_path.exists())
-            data = json.loads(rerank_path.read_text(encoding="utf-8"))
-            ranked = data["queries"][0]["ranked"]
-            self.assertEqual([item["paper_id"] for item in ranked], ["p1", "p2", "p3"])
-            self.assertEqual(ranked[0]["star_rating"], 5)
-            self.assertGreaterEqual(ranked[1]["star_rating"], ranked[2]["star_rating"])
 
     def test_main_keeps_rerank_in_blt_mode(self):
         with tempfile.TemporaryDirectory() as tmpdir:

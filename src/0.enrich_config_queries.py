@@ -15,7 +15,7 @@ from llm import BltClient
 SCRIPT_DIR = os.path.dirname(__file__)
 CONFIG_FILE = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "config.yaml"))
 
-MODEL_NAME = os.getenv("BLT_REWRITE_MODEL", "gemini-3-flash-preview")
+MODEL_NAME = os.getenv("BLT_REWRITE_MODEL", "gemini-2.5-flash")
 
 def log(message: str) -> None:
   ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")

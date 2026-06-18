@@ -76,7 +76,7 @@ class LlmRefineRecoveryTest(unittest.TestCase):
         captured = {}
 
         class FakeClient:
-            model = "gemini-3-flash-preview"
+            model = "gemini-2.5-flash"
 
             def chat_structured(self, messages, schema_name, schema, strict, allow_json_object_fallback):
                 captured["messages"] = messages

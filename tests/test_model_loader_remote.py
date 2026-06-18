@@ -52,6 +52,44 @@ class RemoteSentenceTransformerTest(unittest.TestCase):
         self.assertEqual(first_call.kwargs["headers"]["Authorization"], "Bearer test-key")
         self.assertEqual(first_call.kwargs["timeout"], 30)
 
+    @patch("src.model_loader.requests.post")
+    def test_remote_encode_supports_openai_compatible_embeddings(self, mock_post):
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {
+            "data": [
+                {"index": 1, "embedding": [0.0, 5.0]},
+                {"index": 0, "embedding": [3.0, 4.0]},
+            ]
+        }
+        mock_post.return_value = resp
+
+        model = RemoteSentenceTransformer(
+            model_name="text-embedding-v2",
+            endpoint="https://api.agicto.cn/v1",
+            api_key="test-key",
+            api_format="openai",
+            timeout=30,
+            default_batch_size=2,
+        )
+        arr = model.encode(
+            ["a", "b"],
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            batch_size=2,
+        )
+
+        self.assertEqual(model.endpoint, "https://api.agicto.cn/v1/embeddings")
+        self.assertEqual(arr.shape, (2, 2))
+        np.testing.assert_allclose(arr[0], np.asarray([0.6, 0.8], dtype=np.float32), atol=1e-6)
+        np.testing.assert_allclose(arr[1], np.asarray([0.0, 1.0], dtype=np.float32), atol=1e-6)
+        first_call = mock_post.call_args_list[0]
+        self.assertEqual(
+            first_call.kwargs["json"],
+            {"model": "text-embedding-v2", "input": ["a", "b"]},
+        )
+        self.assertEqual(first_call.kwargs["headers"]["Authorization"], "Bearer test-key")
+
     @patch("src.model_loader._load_local_sentence_transformer")
     @patch("src.model_loader.requests.post")
     def test_remote_encode_falls_back_to_local_model_when_remote_fails(self, mock_post, mock_load_local):

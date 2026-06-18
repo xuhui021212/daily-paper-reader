@@ -41,6 +41,7 @@ class RemoteSentenceTransformer:
     model_name: str,
     endpoint: str,
     api_key: str = "",
+    api_format: str = "",
     timeout: int = _DEFAULT_REMOTE_TIMEOUT_SECONDS,
     default_batch_size: int = 8,
     local_device: str = "cpu",
@@ -52,7 +53,8 @@ class RemoteSentenceTransformer:
     log: Callable[[str], None] = _log_default,
   ):
     self.model_name = model_name
-    self.endpoint = self._normalize_endpoint(endpoint)
+    self.api_format = self._normalize_api_format(api_format, endpoint)
+    self.endpoint = self._normalize_endpoint(endpoint, self.api_format)
     self.api_key = str(api_key or "").strip()
     self.timeout = max(int(timeout or _DEFAULT_REMOTE_TIMEOUT_SECONDS), 1)
     self.default_batch_size = max(int(default_batch_size or 1), 1)
@@ -66,10 +68,24 @@ class RemoteSentenceTransformer:
     self._remote_disabled_reason = ""
 
   @staticmethod
-  def _normalize_endpoint(endpoint: str) -> str:
+  def _normalize_api_format(api_format: str, endpoint: str) -> str:
+    text = str(api_format or "").strip().lower()
+    if text in {"openai", "openai-compatible", "embeddings"}:
+      return "openai"
+    endpoint_text = str(endpoint or "").strip().lower().rstrip("/")
+    if "api.agicto.cn" in endpoint_text or endpoint_text.endswith("/v1"):
+      return "openai"
+    return "legacy"
+
+  @staticmethod
+  def _normalize_endpoint(endpoint: str, api_format: str = "legacy") -> str:
     text = str(endpoint or "").strip().rstrip("/")
     if not text:
       raise ValueError("远程 embedding 服务地址不能为空（DPR_EMBED_API_URL）")
+    if api_format == "openai":
+      if text.endswith("/embeddings"):
+        return text
+      return f"{text}/embeddings"
     if text.endswith("/embed"):
       return text
     return f"{text}/embed"
@@ -165,7 +181,7 @@ class RemoteSentenceTransformer:
 
       self._log(
         f"[INFO] 远程 embedding：model={self.model_name} "
-        f"endpoint={self.endpoint} total={len(texts)} batch={safe_batch_size}"
+        f"endpoint={self.endpoint} format={self.api_format} total={len(texts)} batch={safe_batch_size}"
       )
 
       for chunk_index, chunk in enumerate(chunks, start=1):
@@ -173,7 +189,11 @@ class RemoteSentenceTransformer:
         response = requests.post(
           self.endpoint,
           headers=headers,
-          json={"texts": chunk},
+          json=(
+            {"model": self.model_name, "input": chunk}
+            if self.api_format == "openai"
+            else {"texts": chunk}
+          ),
           timeout=self.timeout,
         )
         if response.status_code == 401 and headers.get("Authorization"):
@@ -184,12 +204,29 @@ class RemoteSentenceTransformer:
           response = requests.post(
             self.endpoint,
             headers=headers,
-            json={"texts": chunk},
+            json=(
+              {"model": self.model_name, "input": chunk}
+              if self.api_format == "openai"
+              else {"texts": chunk}
+            ),
             timeout=self.timeout,
           )
         response.raise_for_status()
         data = response.json()
-        embeddings = data.get("embeddings")
+        if self.api_format == "openai":
+          items = data.get("data")
+          if not isinstance(items, list):
+            raise RuntimeError("remote embedding response missing data field")
+          try:
+            items = sorted(
+              [item for item in items if isinstance(item, dict)],
+              key=lambda item: int(item.get("index", 0)),
+            )
+          except Exception:
+            items = [item for item in items if isinstance(item, dict)]
+          embeddings = [item.get("embedding") for item in items]
+        else:
+          embeddings = data.get("embeddings")
         if not isinstance(embeddings, list):
           raise RuntimeError("远程 embedding 服务返回缺少 embeddings 字段")
         try:
@@ -329,6 +366,7 @@ def load_sentence_transformer(
 ):
   remote_endpoint = str(os.getenv("DPR_EMBED_API_URL") or _DEFAULT_REMOTE_EMBED_ENDPOINT or "").strip()
   remote_api_key = str(os.getenv("DPR_EMBED_API_KEY") or _DEFAULT_REMOTE_EMBED_API_KEY or "").strip()
+  remote_api_format = str(os.getenv("DPR_EMBED_API_FORMAT") or "").strip()
   if allow_remote and remote_endpoint:
     remote_timeout_text = os.getenv("DPR_EMBED_API_TIMEOUT", str(_DEFAULT_REMOTE_TIMEOUT_SECONDS))
     try:
@@ -347,6 +385,7 @@ def load_sentence_transformer(
       model_name=model_name,
       endpoint=str(remote_endpoint).strip(),
       api_key=remote_api_key,
+      api_format=remote_api_format,
       timeout=remote_timeout,
       local_device=device,
       local_retries=retries,

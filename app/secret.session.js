@@ -201,10 +201,10 @@
       const defaults = Array.isArray(utils.DEFAULT_PLATO_CHAT_MODELS)
         ? utils.DEFAULT_PLATO_CHAT_MODELS
         : [
-            'gemini-3-flash-preview-thinking-1000',
+            'gemini-2.5-flash',
             'deepseek-v3.2',
             'gpt-5-chat',
-            'gemini-3-pro-preview',
+            'gemini-2.5-pro',
           ];
     return sanitizeModelList(defaults, 99);
   };
@@ -916,7 +916,7 @@
           label: 'GPT-5 Chat · 通用高质量对话',
         },
         {
-          value: 'gemini-3-flash-preview-thinking-1000',
+          value: 'gemini-2.5-flash',
           label: 'Gemini 3 Flash（思考版，推荐）',
         },
         {
@@ -1324,13 +1324,13 @@
             summaryBaseUrl: getDefaultPlatoBaseUrl(),
             summaryModel: model,
             chatModels: defaultPlatoModels,
-            rewriteModel: 'gemini-3-flash-preview',
-            filterModel: 'gemini-3-flash-preview',
+            rewriteModel: 'gemini-2.5-flash',
+            filterModel: 'gemini-2.5-flash',
             skipRerank: false,
             reranker: {
               apiKey,
               baseUrl: getDefaultPlatoBaseUrl(),
-              model: 'qwen3-reranker-4b',
+              model: 'qwen3-rerank',
             },
           };
         }
@@ -1344,13 +1344,13 @@
           chatModels: customDraft.models,
           chatApiKey: customDraft.apiKey,
           chatBaseUrl: customDraft.baseUrl,
-          rewriteModel: 'gemini-3-flash-preview',
-          filterModel: 'gemini-3-flash-preview',
+          rewriteModel: 'gemini-2.5-flash',
+          filterModel: 'gemini-2.5-flash',
           skipRerank: false,
           reranker: {
             apiKey,
             baseUrl: getDefaultPlatoBaseUrl(),
-            model: 'qwen3-reranker-4b',
+            model: 'qwen3-rerank',
           },
         };
       };

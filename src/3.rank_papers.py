@@ -411,8 +411,8 @@ def main() -> None:
   parser.add_argument(
     "--rerank-model",
     type=str,
-    default=os.getenv("BLT_RERANK_MODEL") or os.getenv("RERANK_MODEL") or "qwen3-reranker-4b",
-    help="BLT Rerank 模型名称（默认 qwen3-reranker-4b）。",
+    default=os.getenv("BLT_RERANK_MODEL") or os.getenv("RERANK_MODEL") or "qwen3-rerank",
+    help="BLT Rerank 模型名称（默认 qwen3-rerank）。",
   )
 
   args = parser.parse_args()

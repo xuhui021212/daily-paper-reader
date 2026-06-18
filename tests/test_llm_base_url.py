@@ -89,7 +89,7 @@ class LlmBaseUrlTest(unittest.TestCase):
             },
             clear=True,
         ):
-            client = BltClient(api_key="test-key", model="gemini-3-flash-preview")
+            client = BltClient(api_key="test-key", model="gemini-2.5-flash")
             client.chat([{"role": "user", "content": "hello"}])
 
         self.assertEqual(
