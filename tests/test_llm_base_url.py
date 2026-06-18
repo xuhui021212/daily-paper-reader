@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from llm import LLMClient
+from llm import BltClient, LLMClient
 
 
 class LlmBaseUrlTest(unittest.TestCase):
@@ -76,6 +76,25 @@ class LlmBaseUrlTest(unittest.TestCase):
         self.assertEqual(
             mock_post.call_args.args[0],
             "https://api.openai.com/v1/chat/completions",
+        )
+
+    @patch("llm.requests.post")
+    def test_blt_client_prefers_agicto_base_url(self, mock_post):
+        mock_post.return_value = self._mock_response()
+        with patch.dict(
+            "os.environ",
+            {
+                "AGICTO_BASE_URL": "https://api.agicto.cn/v1",
+                "BLT_API_BASE": "https://api.bltcy.ai/v1",
+            },
+            clear=True,
+        ):
+            client = BltClient(api_key="test-key", model="gemini-3-flash-preview")
+            client.chat([{"role": "user", "content": "hello"}])
+
+        self.assertEqual(
+            mock_post.call_args.args[0],
+            "https://api.agicto.cn/v1/chat/completions",
         )
 
 

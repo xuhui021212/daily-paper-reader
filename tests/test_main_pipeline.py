@@ -100,7 +100,10 @@ class MainPipelineTest(unittest.TestCase):
                 sys, "argv", ["main.py"]
             ), patch.dict(
                 os.environ,
-                {"LLM_PRIMARY_BASE_URL": "https://api.openai.com/v1"},
+                {
+                    "BLT_API_KEY": "test-key",
+                    "LLM_PRIMARY_BASE_URL": "https://api.openai.com/v1",
+                },
                 clear=True,
             ):
                 self.mod.main()
@@ -143,7 +146,10 @@ class MainPipelineTest(unittest.TestCase):
                 sys, "argv", ["main.py"]
             ), patch.dict(
                 os.environ,
-                {"LLM_PRIMARY_BASE_URL": "https://api.bltcy.ai/v1"},
+                {
+                    "BLT_API_KEY": "test-key",
+                    "LLM_PRIMARY_BASE_URL": "https://api.bltcy.ai/v1",
+                },
                 clear=True,
             ):
                 self.mod.main()

@@ -20,7 +20,7 @@ ARCHIVE_DIR = os.path.join(ROOT_DIR, "archive", TODAY_STR)
 RANKED_DIR = os.path.join(ARCHIVE_DIR, "rank")
 CONFIG_FILE = os.path.join(ROOT_DIR, "config.yaml")
 
-DEFAULT_FILTER_MODEL = os.getenv("BLT_FILTER_MODEL") or "gemini-3-flash-preview-nothinking"
+DEFAULT_FILTER_MODEL = os.getenv("BLT_FILTER_MODEL") or "gemini-3-flash-preview"
 DEFAULT_FILTER_CONCURRENCY = 4
 MAX_FILTER_RETRIES = 3
 
@@ -893,7 +893,7 @@ def main() -> None:
         "--filter-model",
         type=str,
         default=DEFAULT_FILTER_MODEL,
-        help="model for filter (gemini-3-flash-preview-nothinking).",
+        help="model for filter (gemini-3-flash-preview).",
     )
     parser.add_argument(
         "--max-output-tokens",

@@ -488,6 +488,12 @@
       const secretNameBltSummaryModel = 'BLT_SUMMARY_MODEL';
       const secretNameBltFilterModel = 'BLT_FILTER_MODEL';
       const secretNameBltRewriteModel = 'BLT_REWRITE_MODEL';
+      const secretNameAgictoKey = 'AGICTO_API_KEY';
+      const secretNameAgictoBase = 'AGICTO_BASE_URL';
+      const secretNameAgictoModel = 'AGICTO_MODEL';
+      const secretNameAgictoSummaryModel = 'AGICTO_SUMMARY_MODEL';
+      const secretNameAgictoFilterModel = 'AGICTO_FILTER_MODEL';
+      const secretNameAgictoRewriteModel = 'AGICTO_REWRITE_MODEL';
       const secretNameSkipRerank = 'DPR_SKIP_RERANK';
       const secretNameRerankKey = 'Reranker_LLM_API_KEY';
       const secretNameRerankUrl = 'Reranker_LLM_BASE_URL';
@@ -533,6 +539,12 @@
         { name: secretNameBltSummaryModel, value: summarizedModel },
         { name: secretNameBltFilterModel, value: filterModel || summarizedModel },
         { name: secretNameBltRewriteModel, value: rewriteModel || summarizedModel },
+        { name: secretNameAgictoKey, value: summarizedApiKey },
+        { name: secretNameAgictoBase, value: summarizedBaseUrl },
+        { name: secretNameAgictoModel, value: summarizedModel },
+        { name: secretNameAgictoSummaryModel, value: summarizedModel },
+        { name: secretNameAgictoFilterModel, value: filterModel || summarizedModel },
+        { name: secretNameAgictoRewriteModel, value: rewriteModel || summarizedModel },
         { name: secretNameSkipRerank, value: skipRerank ? 'true' : 'false' },
       ];
 
@@ -1313,7 +1325,7 @@
             summaryModel: model,
             chatModels: defaultPlatoModels,
             rewriteModel: 'gemini-3-flash-preview',
-            filterModel: 'gemini-3-flash-preview-nothinking',
+            filterModel: 'gemini-3-flash-preview',
             skipRerank: false,
             reranker: {
               apiKey,
@@ -1333,7 +1345,7 @@
           chatApiKey: customDraft.apiKey,
           chatBaseUrl: customDraft.baseUrl,
           rewriteModel: 'gemini-3-flash-preview',
-          filterModel: 'gemini-3-flash-preview-nothinking',
+          filterModel: 'gemini-3-flash-preview',
           skipRerank: false,
           reranker: {
             apiKey,

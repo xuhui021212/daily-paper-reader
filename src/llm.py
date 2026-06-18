@@ -134,6 +134,8 @@ class LLMClient:
     def _provider_name(self, base_url: str | None = None) -> str:
         try:
             url = (base_url or self.base_url or '').lower()
+            if 'agicto' in url:
+                return 'agicto'
             if 'deepseek' in url:
                 return 'deepseek'
             if 'siliconflow' in url or 'siliconflow.cn' in url:
@@ -609,6 +611,7 @@ class BltClient(LLMClient):
         legacy_base = base_url or os.getenv('BLT_API_BASE', DEFAULT_BLT_BASE_URL)
         primary_base = (
             os.getenv("LLM_PRIMARY_BASE_URL")
+            or os.getenv("AGICTO_BASE_URL")
             or os.getenv("BLT_PRIMARY_BASE_URL")
             or os.getenv("GPTBEST_BASE_URL")
             or PRIMARY_LLM_BASE_URL
