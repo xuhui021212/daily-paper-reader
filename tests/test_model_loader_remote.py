@@ -117,6 +117,25 @@ class RemoteSentenceTransformerTest(unittest.TestCase):
         local_model.encode.assert_called_once()
         self.assertEqual(arr.shape, (1, 2))
 
+    @patch.dict(os.environ, {"DPR_EMBED_REQUIRE_REMOTE": "1"}, clear=True)
+    @patch("src.model_loader._load_local_sentence_transformer")
+    @patch("src.model_loader.requests.post")
+    def test_remote_encode_can_require_remote_without_local_fallback(self, mock_post, mock_load_local):
+        mock_post.side_effect = requests.exceptions.Timeout("remote timeout")
+        model = RemoteSentenceTransformer(
+            model_name="text-embedding-v2",
+            endpoint="https://api.agicto.cn/v1",
+            api_key="test-key",
+            api_format="openai",
+            timeout=30,
+            default_batch_size=2,
+        )
+
+        with self.assertRaises(requests.exceptions.Timeout):
+            model.encode(["a"], convert_to_numpy=True, normalize_embeddings=True, batch_size=2)
+
+        mock_load_local.assert_not_called()
+
     @patch("src.model_loader._load_local_sentence_transformer")
     @patch("src.model_loader.requests.post")
     def test_remote_failure_disables_remote_for_later_calls(self, mock_post, mock_load_local):

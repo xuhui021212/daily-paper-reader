@@ -1,0 +1,95 @@
+name: migrate-embeddings
+
+on:
+  workflow_dispatch:
+    inputs:
+      tables:
+        description: "Comma-separated tables, or all"
+        required: false
+        default: "all"
+      limit:
+        description: "Max rows per table, 0 means all"
+        required: false
+        default: "0"
+      dry_run:
+        description: "Count rows only, do not write embeddings"
+        required: false
+        default: "false"
+      force:
+        description: "Re-embed even rows already marked with the target model"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-paper-reader-embedding-migration
+  cancel-in-progress: false
+
+jobs:
+  migrate_embeddings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL || 'https://lyucdwgefyfbmaiopjbk.supabase.co' }}
+      SUPABASE_SCHEMA: public
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      DPR_EMBED_API_URL: ${{ secrets.DPR_EMBED_API_URL || secrets.AGICTO_BASE_URL || 'https://api.agicto.cn/v1' }}
+      DPR_EMBED_API_KEY: ${{ secrets.DPR_EMBED_API_KEY || secrets.AGICTO_API_KEY }}
+      DPR_EMBED_API_FORMAT: ${{ secrets.DPR_EMBED_API_FORMAT || 'openai' }}
+      DPR_EMBED_MODEL: ${{ secrets.DPR_EMBED_MODEL || 'text-embedding-v2' }}
+      DPR_EMBED_DIM: ${{ secrets.DPR_EMBED_DIM || '1536' }}
+      DPR_EMBED_REQUIRE_REMOTE: "1"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-dpr-migrate-embeddings-${{ hashFiles('requirements.txt') }}
+
+      - name: Install deps
+        run: |
+          python - <<'PY'
+          import re
+          lines = open("requirements.txt", "r", encoding="utf-8").read().splitlines()
+          lines = [line for line in lines if line.strip() and not re.match(r"^sqlite3\b", line)]
+          open("/tmp/req.txt", "w", encoding="utf-8").write("\n".join(lines))
+          PY
+          python -m pip install --upgrade pip
+          python -m pip install uv
+          uv pip install --system -r /tmp/req.txt
+
+      - name: Migrate embeddings
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_SERVICE_KEY}" ]; then
+            echo "[ERROR] Missing SUPABASE_SERVICE_KEY"
+            exit 1
+          fi
+          if [ -z "${DPR_EMBED_API_KEY}" ]; then
+            echo "[ERROR] Missing DPR_EMBED_API_KEY or AGICTO_API_KEY"
+            exit 1
+          fi
+
+          ARGS=(
+            --tables "${{ github.event.inputs.tables }}"
+            --limit "${{ github.event.inputs.limit }}"
+          )
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            ARGS+=(--force)
+          fi
+          python src/maintain/migrate_embeddings.py "${ARGS[@]}"

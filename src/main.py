@@ -573,8 +573,6 @@ def main() -> None:
     ]
     if embed_model:
         embedding_step_args += ["--model", embed_model]
-        if embed_model.strip().lower() != "baai/bge-small-en-v1.5":
-            embedding_step_args.append("--disable-supabase-vector")
     run_step(
         "Step 2.2 - Embedding",
         embedding_step_args,

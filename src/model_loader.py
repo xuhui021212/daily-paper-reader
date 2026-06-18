@@ -31,6 +31,13 @@ def is_remote_embedding_enabled() -> bool:
   return bool(str(os.getenv("DPR_EMBED_API_URL") or _DEFAULT_REMOTE_EMBED_ENDPOINT or "").strip())
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+  raw = str(os.getenv(name) or "").strip().lower()
+  if not raw:
+    return default
+  return raw in {"1", "true", "yes", "on"}
+
+
 class RemoteSentenceTransformer:
   """兼容 SentenceTransformer.encode 接口的远程 embedding 包装器。"""
 
@@ -253,6 +260,8 @@ class RemoteSentenceTransformer:
       return merged if convert_to_numpy else merged.tolist()
     except Exception as exc:
       self._log(f"[WARN] 远程 embedding 请求失败，将自动回退本地模型：{exc}")
+      if _env_bool("DPR_EMBED_REQUIRE_REMOTE", False):
+        raise
       self._disable_remote(exc)
       return self._encode_via_local(
         texts,

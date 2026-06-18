@@ -17,7 +17,7 @@ create table if not exists public.chemrxiv_papers (
   categories jsonb not null default '[]'::jsonb,
   published timestamptz,
   link text,
-  embedding vector(384),
+  embedding vector(1536),
   embedding_model text,
   embedding_dim int,
   embedding_updated_at timestamptz,
