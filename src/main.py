@@ -299,6 +299,101 @@ def prepare_rerank_fallback(input_path: str, output_path: str) -> bool:
     return True
 
 
+def _score_from_retrieval_item(item: dict[str, Any]) -> float:
+    raw_score = item.get("score")
+    if isinstance(raw_score, (int, float)):
+        score = float(raw_score)
+        if score <= 1.0:
+            return max(0.0, min(10.0, score * 10.0))
+        return max(0.0, min(10.0, score))
+
+    raw_stars = item.get("star_rating")
+    if isinstance(raw_stars, (int, float)):
+        return max(0.0, min(10.0, float(raw_stars) * 2.0))
+    return 0.0
+
+
+def _safe_relpath(path: str, start: str) -> str:
+    try:
+        return os.path.relpath(path, start)
+    except ValueError:
+        return os.path.abspath(path)
+
+
+def prepare_llm_fallback(input_path: str, output_path: str, reason: str = "") -> bool:
+    if not os.path.exists(input_path):
+        print(f"[WARN] Step 4 fallback 输入不存在，无法生成兜底 llm 文件: {input_path}", flush=True)
+        return False
+
+    data = load_json_safe(input_path)
+    if not isinstance(data, dict):
+        print(f"[WARN] Step 4 fallback 输入格式非法，无法生成兜底 llm 文件: {input_path}", flush=True)
+        return False
+
+    papers = data.get("papers")
+    paper_by_id: dict[str, dict[str, Any]] = {}
+    raw_id_by_id: dict[str, str] = {}
+    if isinstance(papers, list):
+        for paper in papers:
+            if isinstance(paper, dict):
+                raw_pid = str(paper.get("id") or paper.get("paper_id") or paper.get("link") or "").strip()
+                pid = normalize_arxiv_id(raw_pid)
+                if pid:
+                    paper_by_id[pid] = paper
+                    raw_id_by_id[pid] = raw_pid or pid
+
+    merged: dict[str, dict[str, Any]] = {}
+    queries = data.get("queries")
+    if isinstance(queries, list):
+        for query in queries:
+            if not isinstance(query, dict):
+                continue
+            query_tag = str(query.get("paper_tag") or query.get("tag") or "").strip()
+            query_text = str(query.get("query_text") or query.get("query") or "").strip()
+            ranked = query.get("ranked")
+            if not isinstance(ranked, list):
+                continue
+            for item in ranked:
+                if not isinstance(item, dict):
+                    continue
+                raw_pid = str(item.get("paper_id") or item.get("id") or "").strip()
+                pid = normalize_arxiv_id(raw_pid)
+                if not pid:
+                    continue
+                output_pid = raw_id_by_id.get(pid) or raw_pid or pid
+                score = _score_from_retrieval_item(item)
+                prev = merged.get(output_pid)
+                if prev is not None and score <= float(prev.get("score", 0.0)):
+                    continue
+                title = str((paper_by_id.get(pid) or {}).get("title") or "").strip()
+                merged[output_pid] = {
+                    "paper_id": output_pid,
+                    "score": score,
+                    "evidence_en": "retrieval relevance fallback",
+                    "evidence_cn": "检索相关性兜底",
+                    "canonical_evidence": "检索相关性兜底",
+                    "tldr_en": title[:120] if title else "Selected by retrieval fallback.",
+                    "tldr_cn": title[:60] if title else "由检索兜底选出。",
+                    "matched_requirement_id": "",
+                    "matched_query_tag": query_tag,
+                    "matched_query_text": query_text,
+                }
+
+    data["llm_ranked"] = sorted(merged.values(), key=lambda item: item.get("score", 0), reverse=True)
+    data["llm_ranked_at"] = datetime.now(timezone.utc).isoformat()
+    data["llm_fallback"] = {
+        "reason": reason or "Step 4 unavailable; used retrieval ranking fallback.",
+        "source": _safe_relpath(input_path, ROOT_DIR),
+    }
+    save_json(output_path, data)
+    print(
+        f"[INFO] 已生成 Step 4 fallback 结果: {output_path} "
+        f"(llm_ranked={len(data['llm_ranked'])})",
+        flush=True,
+    )
+    return True
+
+
 def resolve_summary_step_env() -> dict[str, str]:
     env = os.environ.copy()
     summary_api_key = _read_env_text("SUMMARY_API_KEY", "BLT_SUMMARY_API_KEY")
@@ -694,24 +789,56 @@ def main() -> None:
     if trace_ids:
         print_trace_retrieval("RRF", rrf_path, trace_ids)
     skip_rerank, rerank_base = should_skip_rerank()
-    if skip_rerank:
-        print(
-            f"[INFO] Step 3 - Rerank 已跳过：当前主 LLM base 不属于柏拉图/BLT，"
-            f"缺少稳定 /rerank 能力。base={rerank_base}",
-            flush=True,
-        )
+    rerank_api_key = _read_env_text("BLT_API_KEY")
+    if skip_rerank or not rerank_api_key:
+        if not rerank_api_key:
+            print(
+                "[INFO] Step 3 - Rerank 已跳过：缺少 BLT_API_KEY，"
+                "将使用 RRF 结果生成兜底 rerank 文件。",
+                flush=True,
+            )
+        else:
+            print(
+                f"[INFO] Step 3 - Rerank 已跳过：当前主 LLM base 不属于柏拉图/BLT，"
+                f"缺少稳定 /rerank 能力。base={rerank_base}",
+                flush=True,
+            )
         prepare_rerank_fallback(rrf_path, rerank_path)
     else:
-        run_step(
-            "Step 3 - Rerank",
-            [python, os.path.join(SRC_DIR, "3.rank_papers.py")],
-        )
+        try:
+            run_step(
+                "Step 3 - Rerank",
+                [python, os.path.join(SRC_DIR, "3.rank_papers.py")],
+            )
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"[WARN] Step 3 - Rerank 失败，将使用 RRF 结果兜底：exit={exc.returncode}",
+                flush=True,
+            )
+            prepare_rerank_fallback(rrf_path, rerank_path)
     if trace_ids:
         print_trace_retrieval("RERANK", rerank_path, trace_ids)
-    run_step(
-        "Step 4 - LLM refine",
-        [python, os.path.join(SRC_DIR, "4.llm_refine_papers.py")],
-    )
+
+    llm_api_key = _read_env_text("BLT_API_KEY")
+    if not llm_api_key:
+        print(
+            "[INFO] Step 4 - LLM refine 已跳过：缺少 BLT_API_KEY，"
+            "将使用 rerank/RRF 结果生成兜底 llm 文件。",
+            flush=True,
+        )
+        prepare_llm_fallback(rerank_path, llm_path, reason="missing BLT_API_KEY")
+    else:
+        try:
+            run_step(
+                "Step 4 - LLM refine",
+                [python, os.path.join(SRC_DIR, "4.llm_refine_papers.py")],
+            )
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"[WARN] Step 4 - LLM refine 失败，将使用 rerank/RRF 结果兜底：exit={exc.returncode}",
+                flush=True,
+            )
+            prepare_llm_fallback(rerank_path, llm_path, reason=f"step4 failed exit={exc.returncode}")
     if trace_ids:
         print_trace_llm("LLM", llm_path, trace_ids)
     run_step(
