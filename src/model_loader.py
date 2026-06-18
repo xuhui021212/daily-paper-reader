@@ -19,9 +19,8 @@ MODELSCOPE_ENDPOINT = "https://modelscope.cn/hf"
 _DEFAULT_RETRIES = 3
 _DEFAULT_HF_BACKOFF_RETRIES = 1
 _DEFAULT_REMOTE_TIMEOUT_SECONDS = 60
-_DEFAULT_REMOTE_EMBED_ENDPOINT = "https://embed.zwwen.online/embed"
-# 当前服务使用固定 API key 接入。
-_DEFAULT_REMOTE_EMBED_API_KEY = "26932a86d772001af60cbd9d2c162bfda3a90e094f797f3d6806f6077478b27a"
+_DEFAULT_REMOTE_EMBED_ENDPOINT = ""
+_DEFAULT_REMOTE_EMBED_API_KEY = ""
 
 
 def _log_default(message: str) -> None:
@@ -29,7 +28,7 @@ def _log_default(message: str) -> None:
 
 
 def is_remote_embedding_enabled() -> bool:
-  return bool(str(_DEFAULT_REMOTE_EMBED_ENDPOINT or "").strip())
+  return bool(str(os.getenv("DPR_EMBED_API_URL") or _DEFAULT_REMOTE_EMBED_ENDPOINT or "").strip())
 
 
 class RemoteSentenceTransformer:
@@ -328,8 +327,8 @@ def load_sentence_transformer(
     ("modelscope", MODELSCOPE_ENDPOINT),
   ),
 ):
-  remote_endpoint = _DEFAULT_REMOTE_EMBED_ENDPOINT
-  remote_api_key = _DEFAULT_REMOTE_EMBED_API_KEY
+  remote_endpoint = str(os.getenv("DPR_EMBED_API_URL") or _DEFAULT_REMOTE_EMBED_ENDPOINT or "").strip()
+  remote_api_key = str(os.getenv("DPR_EMBED_API_KEY") or _DEFAULT_REMOTE_EMBED_API_KEY or "").strip()
   if allow_remote and remote_endpoint:
     remote_timeout_text = os.getenv("DPR_EMBED_API_TIMEOUT", str(_DEFAULT_REMOTE_TIMEOUT_SECONDS))
     try:
